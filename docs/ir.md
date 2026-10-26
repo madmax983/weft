@@ -3982,6 +3982,44 @@ applied summary, and a `muts` place of a closure summary, removed by hand at the
 the run fails; stored function values pass). It found one defect: part `reads` had no
 place of an `rc` object (fixed, 6.7).
 
+**As built (F13-fix): what the summary oracle checks, and what it does not.** The review of
+stage F13 found that A3 did not check the parts `puts` and `put_fns` (a missing
+`points_into` of the value that a callee puts into a place of the caller passed:
+`so02`, `so03`, `so04` of the review).
+
+- Now each write of a callee (also a write of a new place, such as `push`) whose value
+  holds references (in its parts, boxes, buffers, and the captured cells of its closures)
+  is checked against each frame below that can name the place
+  (`FactOracle::check_put`): each reference that the frame can name is inside a
+  `points_into` place of a variable that holds the place (a variable of the local that owns
+  it, or a version of the heap slot that overlaps it; `Emitted::slots`). Tests:
+  `crates/weft-interp/tests/summary_oracle.rs` (`a_missing_put_fns_place_*`,
+  `a_missing_puts_place_of_an_rc_object_*`, each seen passing the broken facts before).
+- The report counts what A3 does not check (`FactReport::summary_unnamed`,
+  `summary_skipped`; the note of `weft run --fact-oracle`): an access or a reference that the
+  frame below cannot name (a local of the callee, a place that no IR place of the frame
+  reaches), a captured cell of a closure that a callee puts there (the cell root of a
+  variable is not named), a place of another body of the component, and the frames that it
+  does not follow: a frame below that unwinds or that is a copied frame of a continuation
+  (`uid` 0, group D), and each op of such a frame.
+- Limits that stay: at most `SUMMARY_DEPTH` = 16 frames below the callee (a write 18
+  frames down is not checked); the frees and the pointers of the result are not compared
+  (C4 and C1 of the frame check them at its own nodes); a fresh write is checked for the
+  references that it puts, not for the change cover; a `Deref`, the read of the buffer
+  handle of an array and an access of a cell that the op frees are skipped; only the frames
+  of the current task are walked (a task that writes a place of its parent is not checked
+  against the spawn node); only the IR engine has A3 (the AST engine has no facts).
+- Code of a caller reads the places behind the parameters of the body and the `rc` groups
+  that they reach (6.7, `transfer::caller_reads`): the four A3 failures of the review rows
+  of stage F12-fix3 were reads there (`n1c/x08` passes now). A write there through the
+  value of the caller is not in the facts of the body by design (map N2): `fc/c19`,
+  `lcv/cr_h_vecref` and `h2w/w04` still fail A3, and the checker rejects all three (W0312
+  or W0301 at the caller), so the gate does not run them.
+- σ of a run of a closure behind a reference argument (`run_all(&fs)`) takes the places of
+  the environment from the closures that the reference reaches, not the places that the
+  reference itself points into: the facts had `reads_at` of `fs.entities`, a place that
+  does not exist (`so04`).
+
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program
 and a concrete step, found before a review finds it.

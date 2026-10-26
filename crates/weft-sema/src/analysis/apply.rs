@@ -479,11 +479,14 @@ pub fn made_sigma(
             } else {
                 crate::factgen::alpha::Alpha::default()
             };
-            let v = transfer::operand(cx, callee_body, st, callee)?.flat();
-            // A value behind a reference argument (a run of `fs[i]` in a
-            // callee that gets `&fs`): the places of its environment.
-            let mut refs: Vec<PlaceId> = v.refs.into_iter().collect();
-            refs.extend(transfer::reach_refs(cx, callee_body, st, callee)?);
+            // The places of the environment: the references of the value,
+            // or of a value behind a reference argument (a run of `fs[i]` in
+            // a callee that gets `&fs`). The places that the reference
+            // itself points into (`fs`) are no environment (the summary
+            // oracle found `fs.entities` in the review of stage F13, `so04`).
+            let mut refs: Vec<PlaceId> = transfer::reach_refs(cx, callee_body, st, callee)?
+                .into_iter()
+                .collect();
             refs.sort();
             refs.dedup();
             (a.places, refs)

@@ -233,6 +233,11 @@ impl super::Machine<'_, '_> {
             return Err(self.fault("internal: the code has no instruction here"));
         };
         if uid == 0 {
+            // The fact oracle does not follow a copied frame: the summary
+            // oracle does not check its op either.
+            if let Some(fo) = self.facts.as_mut() {
+                fo.report.summary_skipped += 1;
+            }
             return self.exec(op);
         }
         if let Err(m) = self.before_op(uid, &code, pc, op) {
@@ -345,6 +350,7 @@ impl super::Machine<'_, '_> {
             .take(crate::oracle::facts::SUMMARY_DEPTH);
         for c in below {
             if c.uid == 0 || c.chain.is_some() {
+                fo.report.summary_skipped += 1;
                 continue;
             }
             fo.check_summary(c.uid, &c.code, &c.slots, &self.heap, &events)?;

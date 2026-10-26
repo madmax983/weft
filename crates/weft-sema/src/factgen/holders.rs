@@ -160,6 +160,17 @@ pub struct PartVersions {
     pub vars: Vec<VarId>,
 }
 
+/// The variables of a heap slot ([`Holders::finish`]): the summary oracle
+/// checks that the values that a callee puts there are in the facts of the
+/// run node (`docs/ir.md` 8.5).
+#[derive(Clone, Debug)]
+pub struct SlotVersions {
+    /// The fact place of the slot.
+    pub key: PlaceId,
+    /// The variables of the versions of the slot.
+    pub vars: Vec<VarId>,
+}
+
 /// True if `a` is a prefix of `b` (or equal to it).
 fn is_prefix(a: &[PathStep], b: &[PathStep]) -> bool {
     a.len() <= b.len() && a.iter().zip(b).all(|(x, y)| x == y)
@@ -277,9 +288,14 @@ impl Holders {
     }
 
     /// Makes the versions and writes their facts (see the module comment).
-    /// Returns the versions of each part.
-    pub fn finish(self, facts: &mut FnFacts) -> Vec<PartVersions> {
-        self.finish_slots(facts);
+    /// Returns the versions of each part and of each heap slot.
+    pub fn finish(self, facts: &mut FnFacts) -> (Vec<PartVersions>, Vec<SlotVersions>) {
+        let slots = self.finish_slots(facts);
+        (self.finish_parts(facts), slots)
+    }
+
+    /// The versions of the parts ([`Holders::finish`]).
+    fn finish_parts(self, facts: &mut FnFacts) -> Vec<PartVersions> {
         if self.parts.is_empty() {
             return Vec::new();
         }
@@ -438,7 +454,8 @@ impl Holders {
 
     /// Makes the versions of each heap slot and writes their facts (see the
     /// module comment).
-    fn finish_slots(&self, facts: &mut FnFacts) {
+    fn finish_slots(&self, facts: &mut FnFacts) -> Vec<SlotVersions> {
+        let mut out = Vec::new();
         for (i, slot) in self.slots.iter().enumerate() {
             // Each place that the slot can hold at some node.
             let held: BTreeSet<PlaceId> = self
@@ -500,6 +517,15 @@ impl Holders {
                     }
                 }
             }
+            let mut vars: Vec<VarId> = versions.iter().map(|(_, v)| *v).collect();
+            if vars.is_empty() {
+                vars.push(slot.var);
+            }
+            out.push(SlotVersions {
+                key: slot.key,
+                vars,
+            });
         }
+        out
     }
 }

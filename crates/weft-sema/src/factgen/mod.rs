@@ -438,6 +438,8 @@ pub struct Emitted {
     pub vars: vars::Vars,
     /// The versions of each part with a variable of its own.
     pub parts: Vec<holders::PartVersions>,
+    /// The versions of each heap slot.
+    pub slots: Vec<holders::SlotVersions>,
     /// The entry node: the parameters bind there.
     pub entry_node: weft_facts::NodeId,
     /// The type table, with the types that the fact generator interned.
@@ -642,7 +644,7 @@ pub fn emit_parts(
         closure_entries.push((cb, n));
         unions.insert(cb, st);
     }
-    let parts = holders.finish(facts);
+    let (parts, slots) = holders.finish(facts);
     let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored)?;
     diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     // Each local with a root owns it, and the cell of a local that a closure
@@ -672,6 +674,7 @@ pub fn emit_parts(
         table,
         vars,
         parts,
+        slots,
         entry_node,
         tys,
         entry_nodes,

@@ -164,3 +164,96 @@ fn stored_function_values_pass_the_summary_oracle() {
     assert!(r.skipped.is_none(), "{:?}", r.skipped);
     assert!(r.summary > 0, "{r:?}");
 }
+
+/// The facts of `main` with no `points_into` of the variable `var` into a
+/// place whose text starts with `into`.
+fn drop_points(f: &mut FnFacts, var: &str, into: &str) {
+    if f.name != "main" {
+        return;
+    }
+    let drop: Vec<(weft_facts::VarId, weft_facts::PlaceId)> = f
+        .points_into
+        .iter()
+        .filter(|&&(v, q)| f.var(v).name == var && f.place(q).display.starts_with(into))
+        .copied()
+        .collect();
+    assert!(!drop.is_empty(), "no points_into({var}, {into}..)");
+    f.points_into.retain(|x| !drop.contains(x));
+}
+
+#[test]
+fn a_missing_put_fns_place_of_a_closure_in_a_field_fails_the_summary_oracle() {
+    // Part `put_fns`: `reg` puts a closure that points into `w` into `cb.f`
+    // (review of stage F13, `so02`): the variable of `cb` must point into
+    // `w`.
+    let src = "struct Entity { hp: i32 }\n\
+        struct World { entities: Vec<Entity> }\n\
+        struct Cb { f: fn() }\n\
+        fn noop() { print(0) }\n\
+        fn reg(cb: &Cb, w: &World) / mut(cb.f, w.entities) { cb.f = || w.entities.clear() }\n\
+        fn run_ref(cb: &Cb) { let g = cb.f\n g() }\n\
+        fn main() {\n\
+        let w = World { entities: Vec.new() }\n\
+        w.entities.push(Entity { hp: 1 })\n\
+        let cb = Cb { f: noop }\n\
+        reg(&cb, &w)\n\
+        run_ref(&cb)\n\
+        print(w.entities.len())\n\
+        }\n";
+    let m = broken(src, |f| drop_points(f, "cb", "w"));
+    assert!(m.starts_with("summary oracle (A3)"), "{m}");
+    assert!(m.contains("puts a reference"), "{m}");
+}
+
+#[test]
+fn a_missing_puts_place_of_an_rc_object_fails_the_summary_oracle() {
+    // Part `puts`: `fill_self` puts a reference into `Cache.data[]` into
+    // `Cache.refs` (review of stage F13, `so03`): the heap slot of the group
+    // must point into it.
+    let src = "struct Cache { refs: Vec<&u64>, data: Vec<u64> }\n\
+        fn fill_self(c: Rc<Cache>) / mut(Cache) {\n\
+        c.data.push(7)\n\
+        c.refs.push(&c.data[0])\n\
+        }\n\
+        fn read0(c: Rc<Cache>) { let r = c.refs[0]\n print(r + 0) }\n\
+        fn main() / mut(Cache) {\n\
+        let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })\n\
+        fill_self(c.clone())\n\
+        read0(c.clone())\n\
+        }\n";
+    let m = broken(src, |f| {
+        drop_points(f, "value in `Cache.refs`", "Cache.data");
+    });
+    assert!(m.starts_with("summary oracle (A3)"), "{m}");
+    assert!(m.contains("puts a reference"), "{m}");
+}
+
+#[test]
+fn a_missing_put_fns_place_of_a_closure_in_a_vec_fails_the_summary_oracle() {
+    // Part `put_fns`: `add_own` pushes a closure that points into `w` into
+    // `fs` (review of stage F13, `so04`).
+    let src = "struct Entity { hp: i32 }\n\
+        struct World { entities: Vec<Entity> }\n\
+        fn add_own(fs: &Vec<fn()>, w: &World) / mut(fs, w.entities) { fs.push(|| print(w.entities.len())) }\n\
+        fn run_all(fs: &Vec<fn()>) { let i = 0\n while i < fs.len() { let f = fs[i]\n f()\n i += 1 } }\n\
+        fn main() {\n\
+        let w = World { entities: Vec.new() }\n\
+        w.entities.push(Entity { hp: 1 })\n\
+        let fs: Vec<fn()> = Vec.new()\n\
+        add_own(&fs, &w)\n\
+        run_all(&fs)\n\
+        }\n";
+    let m = broken(src, |f| drop_points(f, "fs", "w"));
+    assert!(m.starts_with("summary oracle (A3)"), "{m}");
+    assert!(m.contains("puts a reference"), "{m}");
+}
+
+#[test]
+fn the_report_counts_what_the_summary_oracle_does_not_check() {
+    // A callee writes its own locals: the frame below cannot name them.
+    let c = check_abc(GROW);
+    let o = run_main_with_facts(&c, &opts(), |_| {}).unwrap_or_else(|e| panic!("{}", e.message));
+    let r = o.fact_oracle.expect("a fact oracle report");
+    assert!(r.summary > 0, "{r:?}");
+    assert!(r.summary_unnamed > 0, "{r:?}");
+}

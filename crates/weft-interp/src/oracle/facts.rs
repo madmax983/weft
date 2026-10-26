@@ -60,9 +60,11 @@
 //!   `lends_mut` at its run node for a place at or above it, and each read a
 //!   `reads_at` that overlaps it: the facts of the summary that the run node
 //!   applies (σ maps the interface of the callee to the places of the
-//!   frame). A place that the frame cannot name (a local of the callee) is
-//!   not checked. At most [`SUMMARY_DEPTH`] frames below the callee are
-//!   checked.
+//!   frame). A reference that a callee writes into a place of such a frame
+//!   (parts `puts` and `put_fns`) is inside a `points_into` place of a
+//!   variable that holds the place. A place that the frame cannot name (a
+//!   local of the callee) is not checked, and the report counts it. At most
+//!   [`SUMMARY_DEPTH`] frames below the callee are checked.
 //!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
@@ -123,8 +125,18 @@ pub struct FactReport {
     /// The concrete places that the cell-to-root map cannot name.
     pub unnamed: u64,
     /// The checks of the summary oracle (A3): an access of a callee that a
-    /// frame that waits at a run node can name.
+    /// frame that waits at a run node can name, and a reference that a
+    /// callee puts into a place of such a frame.
     pub summary: u64,
+    /// The accesses and references of a callee that the summary oracle did
+    /// not check: a place that the frame below cannot name, a captured cell
+    /// of a closure that a callee puts there, a place of another body.
+    pub summary_unnamed: u64,
+    /// The frames that the summary oracle did not check: a frame below the
+    /// callee that unwinds, or that the oracle does not follow (`uid` 0: a
+    /// copied frame of a continuation), at each op of a callee; and each op
+    /// of a frame that the oracle does not follow.
+    pub summary_skipped: u64,
 }
 
 /// What the IR of a run gives the fact oracle: the IR and the components.
@@ -194,6 +206,9 @@ struct Comp {
     /// `U`, `C`, `W` and `N` variables of its places.
     of_local: HashMap<LocalId, Vec<VarId>>,
     parts: Vec<PartVersions>,
+    /// The variables of each heap slot of the entry body, by the fact place
+    /// of the slot.
+    slots: Vec<(PlaceId, Vec<VarId>)>,
     /// The roots of the locals that the facts name.
     local_roots: HashMap<LocalId, PlaceId>,
     /// The blocks that end with `Return`, and the local `_0`.
@@ -478,6 +493,12 @@ impl Comp {
             e_of,
             of_local,
             parts: c.emitted.parts.clone(),
+            slots: c
+                .emitted
+                .slots
+                .iter()
+                .map(|x| (x.key, x.vars.clone()))
+                .collect(),
             local_roots,
             returns,
             ret,
@@ -1199,6 +1220,7 @@ impl FactOracle {
             let Some((names, ty)) =
                 self.name(uid, code, slots, heap, &Target::Place(place.clone()))
             else {
+                self.report.summary_unnamed += 1;
                 continue;
             };
             if kind == "read" && self.is_array(fr.comp, ty) {
@@ -1239,6 +1261,115 @@ impl FactOracle {
                     comp.facts.name,
                     nodes.join(", "),
                     shown.join("` or `"),
+                ));
+            }
+        }
+        for e in events {
+            if let HeapEvent::Write(place, _) = e {
+                self.check_put(uid, code, slots, heap, place)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A3 for the parts `puts` and `put_fns`: a callee writes a value with
+    /// references (or a closure with references in its environment) into
+    /// `place` of the frame `uid`, which waits at a run node. Each reference
+    /// that the frame can name is inside a `points_into` place of a variable
+    /// that holds `place`: a variable of the local that owns it, or a
+    /// version of the heap slot that overlaps it.
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure.
+    fn check_put(
+        &mut self,
+        uid: u64,
+        code: &Code,
+        slots: &[Option<CellId>],
+        heap: &Heap,
+        place: &Place,
+    ) -> Result<(), String> {
+        let Some(fr) = self.frames.get(&uid) else {
+            return Ok(());
+        };
+        let comp_ix = fr.comp;
+        let cur = fr.cur.clone();
+        let Ok(v) = heap.peek(place) else {
+            return Ok(());
+        };
+        let mut targets = Vec::new();
+        let mut cells = 0;
+        put_targets(heap, v, 0, &mut targets, &mut cells);
+        self.report.summary_unnamed += cells;
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let Some((dest, _)) = self.name(uid, code, slots, heap, &Target::Place(place.clone()))
+        else {
+            self.report.summary_unnamed += 1;
+            return Ok(());
+        };
+        let Some(comp) = self.comps.get(comp_ix) else {
+            return Ok(());
+        };
+        // The variables that hold the place.
+        let mut vars: Vec<VarId> = Vec::new();
+        let mut other = false;
+        for &q in &dest {
+            match comp.roots.path_of(&comp.facts, q) {
+                Some((k, _)) if k.0 == comp.body => {
+                    vars.extend(comp.of_local.get(&k.1).into_iter().flatten().copied());
+                }
+                Some(_) => other = true,
+                None => {
+                    for (key, vs) in &comp.slots {
+                        if comp.below(q, *key) || comp.below(*key, q) {
+                            vars.extend(vs.iter().copied());
+                        }
+                    }
+                }
+            }
+        }
+        if vars.is_empty() {
+            // A place of another body of the component (a variable of the
+            // maker of a closure), or a place with no holder: not checked.
+            if other || !dest.is_empty() {
+                self.report.summary_unnamed += 1;
+            }
+            return Ok(());
+        }
+        for t in targets {
+            let Some((names, _)) = self.name(uid, code, slots, heap, &t) else {
+                self.report.summary_unnamed += 1;
+                continue;
+            };
+            self.report.summary += 1;
+            let Some(comp) = self.comps.get(comp_ix) else {
+                return Ok(());
+            };
+            let ok = names.iter().any(|&q| {
+                vars.iter().any(|v| {
+                    comp.points
+                        .get(v)
+                        .is_some_and(|ps| ps.iter().any(|&d| comp.ref_inside(q, d)))
+                })
+            });
+            if !ok {
+                let shown = |ps: &[PlaceId]| -> String {
+                    ps.iter()
+                        .map(|&q| comp.facts.place(q).display.clone())
+                        .collect::<Vec<_>>()
+                        .join("` or `")
+                };
+                let group = comp.group(&cur);
+                let nodes: Vec<String> = group.iter().map(|&n| comp.node_text(n)).collect();
+                return Err(format!(
+                    "summary oracle (A3): in `{}` at {}, a callee puts a reference to `{}` into `{}`, and no `points_into` place of a variable that holds it covers it",
+                    comp.facts.name,
+                    nodes.join(", "),
+                    shown(&names),
+                    shown(&dest),
                 ));
             }
         }
@@ -1645,6 +1776,55 @@ fn refs_of(
         Value::List(vs) => {
             for f in vs {
                 refs_of(heap, f, at, skip, false, depth + 1, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The targets of the references in value `v` that a callee writes into a
+/// place of a caller ([`FactOracle::check_put`]): the references in it, in its
+/// boxes and buffers, and in the captured cells of its closures. A captured
+/// cell of a closure (a capture by reference) counts in `cells`: its root is
+/// the cell root of the variable, which this check does not name.
+fn put_targets(heap: &Heap, v: &Value, depth: usize, out: &mut Vec<Target>, cells: &mut u64) {
+    if depth > 64 || out.len() > 4096 {
+        return;
+    }
+    match v {
+        Value::Ref(p) => out.push(Target::Place(p.clone())),
+        Value::Slice { buf, .. } => out.push(Target::Elems(*buf)),
+        Value::Struct(o) => {
+            for f in &o.fields {
+                put_targets(heap, f, depth + 1, out, cells);
+            }
+        }
+        Value::Tuple(vs) | Value::List(vs) => {
+            for f in vs {
+                put_targets(heap, f, depth + 1, out, cells);
+            }
+        }
+        Value::Enum(e) => {
+            for f in &e.fields {
+                put_targets(heap, f, depth + 1, out, cells);
+            }
+        }
+        Value::Boxed(c) | Value::Vec(c) => {
+            if let Ok(s) = heap.slot(*c) {
+                put_targets(heap, &s.val, depth + 1, out, cells);
+            }
+        }
+        Value::Closure(k) => {
+            for c in &k.cells {
+                // A capture by reference shares the cell of the variable:
+                // the cell itself is not named here, the references in its
+                // value are.
+                if !k.owned.contains(c) {
+                    *cells += 1;
+                }
+                if let Ok(s) = heap.slot(*c) {
+                    put_targets(heap, &s.val, depth + 1, out, cells);
+                }
             }
         }
         _ => {}
