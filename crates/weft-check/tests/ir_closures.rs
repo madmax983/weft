@@ -256,3 +256,12 @@ fn a_change_after_a_rebind_of_a_capture_invalidates_the_new_value() {
     // rebind are at `Ret` too (part `late_muts`).
     check("rebind_then_change.wf");
 }
+
+#[test]
+fn a_container_of_closures_holds_the_places_of_the_closures() {
+    // Review of the ABC preview, hole H4: a `Vec` that gets a closure with
+    // a `ByRef` capture, or a `ByMove` capture that holds references, holds
+    // the places of the closure, so a change or the end of them makes the
+    // vector invalid.
+    check("closures_in_containers.wf");
+}

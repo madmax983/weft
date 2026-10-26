@@ -3017,6 +3017,13 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   or `Kept` capture to each place that the value points into as well as to the value
   itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
   its `ByRef` capture.
+- A container that gets a closure holds its places (F12-fix H4): at the `Ret` node of a
+  call that changes a place whose local can hold a function value, the holder of the
+  place (its `S` variable or heap slot, `templates::store`) gets the places that the
+  environments of the closures of the arguments point into (`templates::fn_stores`, the
+  facts of `transfer::store_fns`). So the end of a `ByRef` capture or a change below a
+  reference of a `ByMove` capture makes the `Vec` invalid; in a loop the next `push` is
+  the first use.
 - Part `ret` has `linear` (`Ret::linear`, F12-fix H3): `_0` can hold a linear value at a
   `Return` and its type has a function part (no type parameter, not linear by its
   type), so a linear closure that the body gives back (also in a `Vec`, a field or an

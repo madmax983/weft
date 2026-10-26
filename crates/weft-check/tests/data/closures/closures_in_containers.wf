@@ -1,0 +1,110 @@
+// A vector or an array that holds a closure holds the places of the closure:
+// the cell of a `ByRef` capture, and the references of a `ByMove` capture
+// (review of the ABC preview, hole H4: `h5/cv_*_vec_*`, `h4/lp_*`, `fa/a13`,
+// `fe/e1_05`, `lcv2/r5_e`; and the old hole `h6/m09_made_ref_ends_vec.wf`).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn eat_h(h: Vec<&u64>) { print(h[0]) }
+fn shower(v: &Vec<u64>) -> fn() { || print(v[0]) }
+fn byref_ends() {
+    let fs = Vec.new()
+    {
+        let w = mkw()
+        fs.push(|| print(w.entities[0].hp))
+    }
+    let g = fs[0] //~ W0301
+    g()
+}
+fn byref_in_array_ends() {
+    let g0 = || print(0)
+    {
+        let v = mk_v()
+        let a = [|| print(v[0])]
+        g0 = a[0]
+    }
+    g0() //~ W0301
+}
+fn held_ref_cleared() {
+    let v = mk_v()
+    let h = Vec.new()
+    h.push(&v[0])
+    let ks = Vec.new()
+    ks.push(|| eat_h(h))
+    v.clear()
+    let g = ks[0] //~ W0301
+    g()
+}
+fn held_ref_ends() {
+    let ks = Vec.new()
+    {
+        let v = mk_v()
+        let h = Vec.new()
+        h.push(&v[0])
+        ks.push(|| eat_h(h))
+    }
+    match ks.pop() { Some(f) => f(), None => {} } //~ W0301
+}
+// In a loop the push of the next iteration is a use of the vector after the
+// places of the closure of the iteration before ended.
+fn loop_byref() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 {
+        let v = mk_v()
+        ks.push(|| print(v[0])) //~ W0301
+        i += 1
+    }
+    match ks.pop() { Some(f) => f(), None => {} }
+}
+fn loop_held_ref() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 {
+        let v = mk_v()
+        let h = Vec.new()
+        h.push(&v[0])
+        ks.push(|| eat_h(h)) //~ W0301
+        i += 1
+    }
+    let g = ks[0]
+    g()
+}
+fn loop_outer_change() {
+    let v = mk_v()
+    let ks = Vec.new()
+    let i = 0
+    while i < 2 {
+        let h = Vec.new()
+        h.push(&v[0])
+        ks.push(|| eat_h(h))
+        i += 1
+    }
+    v.clear()
+    let g = ks[0] //~ W0301
+    g()
+}
+fn made_ends() {
+    let fs = Vec.new()
+    {
+        let v = mk_v()
+        fs.push(shower(&v))
+    }
+    let g = fs[0] //~ W0301
+    g()
+}
+// Clean: the closure runs while its places are valid.
+fn runs_in_scope() {
+    let v = mk_v()
+    let h = Vec.new()
+    h.push(&v[0])
+    let ks = Vec.new()
+    ks.push(|| eat_h(h))
+    let g = ks[0]
+    g()
+    v.clear()
+}
+fn main() {
+    runs_in_scope()
+}

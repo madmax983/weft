@@ -4011,3 +4011,29 @@ repro = [
 ]
 code = "W0601"
 note = "a linear closure that a function or a closure gives back (also in a Vec, a field or an Option) is a linear value of the caller (`Ret::linear`): a caller that drops it is W0601. The old pipeline rejects most of these programs only by the R3RT5 W0204 at the maker (hole H3 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-H4"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h4/cv_byref_vec_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_byref_arr_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_mvh_vec_clear.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_mvh_vec_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_mvh_arr_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_a_loopvec_ref.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_b_loopvec_byref.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_d_block_vec.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_e_loop_vec_index.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_g_outer_change.wf",
+    "tests/gate/probes/fixes/f12/h4/a13_loop_made_closures_byref.wf",
+    "tests/gate/probes/fixes/f12/h4/e1_05_vec_byref_closure_ends.wf",
+    "tests/gate/probes/fixes/f12/h4/e1_06_array_byref_ends.wf",
+    "tests/gate/probes/fixes/f12/h4/r5_e_loopholdref.wf",
+    "tests/gate/probes/fixes/f12/oldholes/m09_made_ref_ends_vec.wf",
+]
+code = "W0301"
+note = "a vector or an array that gets a closure holds the places of the closure: the cell of a `ByRef` capture and the references of a `ByMove` capture (`templates::fn_stores`, `transfer::store_fns`, `place_value`); a change or the end of them makes the container invalid (hole H4 of the review of the ABC preview, and the old hole m09)"

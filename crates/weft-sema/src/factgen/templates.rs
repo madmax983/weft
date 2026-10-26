@@ -2338,6 +2338,13 @@ pub fn call(
         for (q, refs) in &out.stores {
             store(em, r, *q, refs, at, true);
         }
+        let changed: Vec<PlaceId> = out
+            .muts
+            .iter()
+            .chain(out.apps.iter().flat_map(|a| a.muts.iter()))
+            .map(|(q, _)| *q)
+            .collect();
+        fn_stores(em, r, st, args, &changed, at)?;
         apps_at_ret(em, r, st, &out.apps, at)?;
         em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }
@@ -2432,6 +2439,12 @@ fn call_value(
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
+        let changed: Vec<PlaceId> = out
+            .apps
+            .iter()
+            .flat_map(|a| a.muts.iter().map(|(q, _)| *q))
+            .collect();
+        fn_stores(em, r, st, args, &changed, at)?;
         apps_at_ret(em, r, st, &out.apps, at)?;
         em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }
@@ -2823,6 +2836,71 @@ fn apps_at_ret(em: &mut Em<'_>, r: NodeId, st: &State, apps: &[transfer::Applied
         hit.sort();
         hit.dedup();
         em.facts.mutates_at.extend(hit.into_iter().map(|q| (r, q)));
+    }
+    Ok(())
+}
+
+/// A run node that changes the places `changed` can put a function value of
+/// an argument there (`v.push(f)`, `transfer::store_fns`): the holder of each
+/// such place whose local can hold a function value gets the places that the
+/// environments of the closures of the arguments point into, at the `Ret`
+/// node `r` (hole H4 of the review of the ABC preview: a `Vec` of closures
+/// holds the cell of a `ByRef` capture and the references of a `ByMove`
+/// capture).
+///
+/// # Errors
+///
+/// The errors of α.
+fn fn_stores(
+    em: &mut Em<'_>,
+    r: NodeId,
+    st: &State,
+    args: &[Operand],
+    changed: &[PlaceId],
+    at: Span,
+) -> R {
+    let body = em.body;
+    let mut refs: Vec<PlaceId> = Vec::new();
+    for op in args {
+        let (Operand::Copy(q) | Operand::Move(q)) = op else {
+            continue;
+        };
+        let Some(t) = em.place_ty(q) else { continue };
+        if !crate::props::ir_has_fns(em.tys, t) || matches!(em.tys.try_get(t), Some(Ty::Ref(_))) {
+            continue;
+        }
+        let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+        if v.fns.iter().any(|f| {
+            matches!(
+                f,
+                crate::analysis::FnVal::Closure(_) | crate::analysis::FnVal::Made(_)
+            )
+        }) {
+            refs.extend(v.refs);
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    if refs.is_empty() {
+        return Ok(());
+    }
+    let mut done: Vec<PlaceId> = Vec::new();
+    for &q in changed {
+        if done.contains(&q) {
+            continue;
+        }
+        done.push(q);
+        let Some((k, _)) = em.roots.path_of(em.facts, q) else {
+            continue;
+        };
+        let holds =
+            em.p.bodies
+                .get(k.0.index())
+                .and_then(|b| b.locals.get(k.1.index()))
+                .is_some_and(|d| crate::props::ir_has_fns(em.tys, d.ty));
+        if holds {
+            store(em, r, q, &refs, at, false);
+        }
     }
     Ok(())
 }

@@ -1,0 +1,21 @@
+// F12 review (ABC preview), hole H4: a closure with a ByRef capture, or a ByMove capture that holds references, in a Vec or an array, runs after its places end or change (old W0301) (h4/lp_a_loopvec_ref.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn mk_release(t: Tx) -> fn() { || rollback(t) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn eat_h(h: Vec<&u64>) { print(h[0]) }
+fn run(f: fn()) { f() }
+struct K { f: fn() }
+fn main() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 {
+        let v = mk_v()
+        let h = Vec.new()
+        h.push(&v[0])
+        ks.push(|| eat_h(h))
+        i += 1
+    }
+    match ks.pop() { Some(f) => f(), None => {} }
+}
