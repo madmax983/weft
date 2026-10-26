@@ -3100,6 +3100,21 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   (`templates::put_linear`, as `fn_linear_args` for a closure argument): W0601 where
   the caller can drop it (`fn add(ks: &Vec<fn()>, t: Tx) { ks.push(|| rollback(t)) }`,
   a hole of stage F13 that the rerun of the review sets found).
+- The result of a run of a value of a parameter is `FnVal::ParamResult(i)`, not the
+  parameter again, and part `runs` keeps a run of the result apart from a run of the
+  parameter (`Run::result`). A caller applies to a run of the result only the values
+  that the runs of its values give back (`transfer::results_of`), and a run of a
+  parameter and a run of its result are not two values that run in each order. So a
+  `once` maker that `fn go(m) { let g = m(); g() }` runs one time runs once (the W0502
+  class of the third review of the ABC preview); a maker that a callee runs two times is
+  still W0502. Part `ret` gives back `RetFn::Param(i)` for a result, as before.
+- Stricter than the old pipeline by design (map N2): a result of code of a caller
+  (`let g = m()`) can point into `Caller..`, so a later run of code of a caller, or a
+  `fail` operation through a callee, between `m()` and the use of `g` makes it invalid
+  (W0301; `twice(m) { let g = m(); let h = m(); g(); h() }`). A `fail` operation does
+  not resume, but its clause runs before the body unwinds and an `on abort` function can
+  read a reference that the clause invalidated, so the lend stays on both edges: the
+  facts have no node for effects of the abort edge only. Ledger `new-fp` (`stricter`).
 - The result of a closure maker keeps its effects in a second closure and in a callee
   (F12-fix2, hole N1 of the second review of the ABC preview: `let mk2 = || mk()`,
   `|| run(mk())`, `fn go(m) { let g = m(); g() }`):

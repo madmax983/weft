@@ -1792,3 +1792,12 @@ files = [
 codes = ["W0204", "W0601"]
 reason = "a callee stores a closure with a linear capture into a vector of its caller (`fn add(ks: &Vec<fn()>, t: Tx) { ks.push(|| rollback(t)) }`): the old pipeline reports `add` (W0204 for the by-value `t`, a false positive, and W0601 at the closure); the ir pipeline (groups A, B and C, F12-fix3 `templates::put_linear`) reports W0601 where the caller can drop the vector with the linear closure (and at the push of the next iteration in a loop, as F12-fix H6). Each program is rejected in both pipelines"
 stage = "F13"
+
+[[entry]]
+class = "new-fp"
+files = [
+    "tests/gate/probes/fixes/f12c/n2/tw.wf",
+]
+reason_class = "stricter"
+reason = "map N2 (ADR 0012, ir 6.7), third review of the ABC preview (`fpx2/tw.wf`; the review rows `fpx2/ab1.wf`, `n1b/y06`, `h3b/u10` are the same class and are not probes: the gate allows one `new-fp` probe in 1000): a result of code of a caller (`let g = m()`) can point into `Caller..`, and a later run of code of a caller (`let h = m()`, a `fail` operation through `risky(n)`) can change `Caller..`, so the use of `g` is W0301 (as `ln1.wf`). A `fail` operation does not resume, but its clause runs before the body unwinds, and an `on abort` function can read a reference that the clause invalidated; the lend must stay on the abort path, and the facts have no node for effects on the abort edge only. The old pipeline accepts these programs"
+stage = "F13"

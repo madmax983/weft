@@ -206,6 +206,7 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                 &Run {
                     param: u(i),
                     capture: false,
+                    result: false,
                     many: true,
                     task: true,
                     args: args.clone(),
@@ -422,7 +423,7 @@ impl Inferred {
 pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
     let Some(x) = runs
         .iter_mut()
-        .find(|x| x.param == r.param && x.capture == r.capture)
+        .find(|x| x.param == r.param && x.capture == r.capture && x.result == r.result)
     else {
         runs.push(r.clone());
         runs.sort();

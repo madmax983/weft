@@ -319,3 +319,12 @@ fn a_linear_closure_that_a_callee_stores_into_a_place_of_the_caller_is_linear_th
     // put a linear closure into `ks`, and `ks` went out of scope with it.
     check("stored_linear.wf");
 }
+
+#[test]
+fn a_once_maker_that_a_callee_runs_one_time_runs_once() {
+    // Third review of the ABC preview, the W0502 class: `fn go(m) { let g =
+    // m(); g() }` ran `m` two times in its summary, because the result of a
+    // run of a parameter was the parameter again. The result is
+    // `FnVal::ParamResult`, and a run of it is a run of the result.
+    check("once_maker_runs.wf");
+}

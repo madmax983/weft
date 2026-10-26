@@ -4419,3 +4419,18 @@ repro = [
 ]
 code = "W0601"
 note = "a callee that stores a closure with a linear capture into a place of the caller (part `put_fns`) makes the local of the place linear (`templates::put_linear`): W0601 if it can go out of scope with the closure (`ah6/h6_08`, a hole of stage F13 that the rerun of the review sets found)"
+
+[[claim]]
+finding = "F12R3-W0502"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/w0502/c04_once_maker_callee.wf",
+    "tests/gate/probes/fixes/f12c/w0502/o01_once_maker.wf",
+    "tests/gate/probes/fixes/f12c/w0502/o02_once_maker.wf",
+    "tests/gate/probes/fixes/f12c/w0502/o03_once_maker.wf",
+    "tests/gate/probes/fixes/f12c/w0502/p18_once_maker_through_go2.wf",
+]
+note = "the result of a run of a parameter is `FnVal::ParamResult`, and part `runs` keeps a run of the result apart from a run of the parameter (`Run::result`): a `once` maker that a callee runs one time, and whose result it runs one time, runs once (W0502 class of the third review of the ABC preview)"

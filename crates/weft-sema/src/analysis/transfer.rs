@@ -1382,6 +1382,9 @@ pub struct RunOf {
     pub param: u32,
     /// True for a capture of a closure.
     pub capture: bool,
+    /// True for a run of a result of a run of the parameter
+    /// (`FnVal::ParamResult`).
+    pub result: bool,
     /// The places that the run node gives to the run.
     pub places: Vec<PlaceId>,
     /// Code of a caller there can resume more than once (the row of the
@@ -1755,7 +1758,11 @@ pub fn value_out(
 pub fn once_value(p: &Program, fv: &FnVal) -> bool {
     match fv {
         FnVal::Closure(c) | FnVal::Made(c) => p.closures.get(c.index()).is_some_and(|d| d.once),
-        FnVal::Item(..) | FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => false,
+        FnVal::Item(..)
+        | FnVal::Param(_)
+        | FnVal::ParamResult(_)
+        | FnVal::Capture(_)
+        | FnVal::Unknown => false,
     }
 }
 
@@ -2124,7 +2131,9 @@ fn task_unsafe(cx: &mut Cx<'_>, fv: &FnVal) -> bool {
             cx.sums.closure(*c).ok()
         }
         FnVal::Item(f, _) => cx.sums.get(*f).ok(),
-        FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => return false,
+        FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => {
+            return false
+        }
     };
     sum.is_none_or(|s| !s.muts.is_empty() || !s.lends.is_empty() || !s.puts.is_empty())
 }
@@ -2161,8 +2170,11 @@ fn apply_runs(
     apps: &mut Apps,
 ) -> Result<(), AlphaError> {
     // A body that runs two values can run them in each order: each run can
-    // come after the other one.
-    let two = runs.len() > 1;
+    // come after the other one. A run of a parameter and a run of its
+    // result are one value and the values that it gives back: the body runs
+    // the result after the run that gives it.
+    let keys: BTreeSet<(u32, bool)> = runs.iter().map(|x| (x.param, x.capture)).collect();
+    let two = keys.len() > 1;
     for run in runs {
         let many = run.many || two;
         let Some((fns, src, src_body)) = of(cx, run)? else {
@@ -2277,7 +2289,7 @@ fn apply_value(
     let p = cx.p;
     let (body, st) = (r.body, r.st);
     match fv {
-        FnVal::Unknown | FnVal::Param(_) | FnVal::Capture(_) => {
+        FnVal::Unknown | FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) => {
             let (params, fn_ret, row) = fn_type(cx, cb, callee);
             let fn_ret = ret_ty.or(fn_ret).unwrap_or_else(|| cx.tys.unit());
             let pairs: Vec<(TyId, TyId)> = params.iter().map(|&t| (t, t)).collect();
@@ -2326,18 +2338,26 @@ fn apply_value(
                 None => None,
             };
             let run = match (fv, given) {
-                (FnVal::Param(i) | FnVal::Capture(i), Given::Args(args)) => Some(RunOf {
+                (
+                    FnVal::Param(i) | FnVal::ParamResult(i) | FnVal::Capture(i),
+                    Given::Args(args),
+                ) => Some(RunOf {
                     param: *i,
                     capture: matches!(fv, FnVal::Capture(_)),
+                    result: matches!(fv, FnVal::ParamResult(_)),
                     places: given_places(cx, body, st, args)?,
                     multi: summary.multi,
                     task: false,
                     block: r.block,
                     maybe: false,
                 }),
-                (FnVal::Param(i) | FnVal::Capture(i), Given::Opaque(ps, _)) => Some(RunOf {
+                (
+                    FnVal::Param(i) | FnVal::ParamResult(i) | FnVal::Capture(i),
+                    Given::Opaque(ps, _),
+                ) => Some(RunOf {
                     param: *i,
                     capture: matches!(fv, FnVal::Capture(_)),
+                    result: matches!(fv, FnVal::ParamResult(_)),
                     places: ps.to_vec(),
                     multi: summary.multi,
                     task: false,
@@ -2365,7 +2385,13 @@ fn apply_value(
                 // result is not `Unknown` (second review of the ABC
                 // preview: `Unknown` there made code of a caller change the
                 // environment of each closure that the result reaches).
-                fs.insert(fv.clone());
+                // A run of a value of a parameter gives a result of it
+                // (`FnVal::ParamResult`): a run of the result is not a run of
+                // the parameter again.
+                fs.insert(match fv {
+                    FnVal::Param(i) | FnVal::ParamResult(i) => FnVal::ParamResult(*i),
+                    other => other.clone(),
+                });
                 ret = Some(with_fns(cx, t, rt, (fs, reach_at)));
             }
             let name = match callee {
@@ -2770,7 +2796,11 @@ fn param_fns(
                 return Ok(None);
             };
             let reach = reach_fns(cx, r.body, r.st, a)?;
-            let fns = with_results(cx, r, reach)?;
+            let fns = if run.result {
+                results_of(cx, r, &reach)?
+            } else {
+                with_results(cx, r, reach)?
+            };
             Ok(Some((fns, a.clone(), r.body)))
         }
         Given::Opaque(..) => Ok(Some((
@@ -2837,6 +2867,40 @@ fn with_results(
     Err(AlphaError::Later(
         "a chain of function values that give back function values (stage F13)",
     ))
+}
+
+/// The values that runs of the function values `fns` give back, not the
+/// values themselves (a run of `FnVal::ParamResult` in a callee): what a
+/// closure or an item gives back (part `ret`, [`with_results`]); a run of a
+/// value of a parameter of this body gives a result of it again; a value
+/// that the analysis does not know gives a value that it does not know.
+///
+/// # Errors
+///
+/// The errors of [`with_results`].
+fn results_of(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    fns: &BTreeSet<FnVal>,
+) -> Result<BTreeSet<FnVal>, AlphaError> {
+    let mut out = BTreeSet::new();
+    let mut known = BTreeSet::new();
+    for f in fns {
+        match f {
+            FnVal::Param(i) | FnVal::ParamResult(i) => {
+                out.insert(FnVal::ParamResult(*i));
+            }
+            FnVal::Capture(_) | FnVal::Unknown => {
+                out.insert(f.clone());
+            }
+            FnVal::Item(..) | FnVal::Closure(_) | FnVal::Made(_) => {
+                known.insert(f.clone());
+            }
+        }
+    }
+    let all = with_results(cx, r, known.clone())?;
+    out.extend(all.into_iter().filter(|f| !known.contains(f)));
+    Ok(out)
 }
 
 /// The most levels of [`with_results`].

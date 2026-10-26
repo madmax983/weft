@@ -45,6 +45,12 @@ pub enum FnVal {
     /// reference): a value of a caller. A call of it is code of a caller,
     /// and the summary of the body runs it (part `runs`).
     Param(u32),
+    /// The result of a run of a value of parameter `i` (`let g = m()`): a
+    /// value that a run of the value of the caller gives back. A run of it
+    /// is a run of the result, not of the parameter, so a `once` maker that
+    /// the body runs one time, and whose result it runs one time, runs
+    /// once (the W0502 class of the third review of the ABC preview).
+    ParamResult(u32),
     /// A function value that capture `k` of the closure body holds, in the
     /// summary of the closure (its interface): the run node of the closure
     /// runs the value of the capture (part `runs`).

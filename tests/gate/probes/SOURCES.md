@@ -309,3 +309,6 @@ that names the class and the review file.
 - `fixes/f12c/h6/*.wf`: a callee stores a linear closure into a place of its caller
   (`variants2/ah6/h6_08` of the rerun after F13, and two F12-fix3 variants; claim
   F12R3-H6).
+- `fixes/f12c/w0502/*.wf`: the W0502 class, a `once` maker that a callee runs one
+  time (claim F12R3-W0502).
+- `fixes/f12c/n2/tw.wf`: a map N2 row (by design; ledger `new-fp`, `stricter`).

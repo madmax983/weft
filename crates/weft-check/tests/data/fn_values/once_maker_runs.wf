@@ -1,0 +1,30 @@
+// A run of a parameter and a run of its result are two runs of two values
+// (`FnVal::ParamResult`): a `once` maker that a callee runs one time, and
+// whose result it runs one time, runs once (the W0502 class of the third
+// review of the ABC preview). A maker that a callee runs two times is still
+// W0502.
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn go2(m: fn() -> fn()) { go(m) }
+fn give(m: fn() -> fn()) -> fn() { m() }
+// fpx2/o01, o02, o03, fpa/p18.
+fn o01() { let b = mkbuf(); go(|| || eat(b)) }
+fn o02() { let b = mkbuf(); let mk = || || eat(b); go(mk) }
+fn o03() { let b = mkbuf(); let k = |m: fn() -> fn()| { let g = m(); g() }; k(|| || eat(b)) }
+fn p18() { let b = mkbuf(); go2(|| || eat(b)) }
+// The maker runs two times: through two calls, or through `give` and two
+// runs of the result.
+fn twice_go() {
+    let b = mkbuf()
+    let mk = || || eat(b)
+    go(mk)
+    go(mk) //~ W0502
+}
+fn give_twice() {
+    let b = mkbuf()
+    let g = give(|| || eat(b))
+    g()
+    g() //~ W0502
+}

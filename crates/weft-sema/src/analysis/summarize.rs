@@ -320,7 +320,9 @@ fn runs_of(
         // that a callee does on some paths only does not count (H5b).
         let blocks: std::collections::BTreeSet<weft_ir::BlockId> = runs
             .iter()
-            .filter(|(x, _)| x.param == r.param && x.capture == r.capture && !x.maybe)
+            .filter(|(x, _)| {
+                x.param == r.param && x.capture == r.capture && x.result == r.result && !x.maybe
+            })
             .map(|(x, _)| x.block)
             .collect();
         // A function body has no capture.
@@ -333,6 +335,7 @@ fn runs_of(
         let run = super::summary::Run {
             param: r.param,
             capture: r.capture,
+            result: r.result,
             many: *many,
             task: r.task,
             args,
@@ -342,7 +345,7 @@ fn runs_of(
         // A second run node of the value runs it again.
         if let Some(x) = out
             .iter_mut()
-            .find(|x| x.param == run.param && x.capture == run.capture)
+            .find(|x| x.param == run.param && x.capture == run.capture && x.result == run.result)
         {
             x.many = true;
         }
@@ -419,7 +422,10 @@ fn fn_parts_of(
     let one = |f: &FnVal| match f {
         FnVal::Item(g, t) => RetFn::Item(*g, t.clone()),
         FnVal::Closure(c) | FnVal::Made(c) => RetFn::Made(*c),
-        FnVal::Param(i) => RetFn::Param(*i),
+        // For a result of a run of a parameter, the caller gives back the
+        // values of the argument and what their runs give back
+        // (`transfer::with_results`).
+        FnVal::Param(i) | FnVal::ParamResult(i) => RetFn::Param(*i),
         FnVal::Capture(k) => RetFn::Capture(*k),
         FnVal::Unknown => RetFn::Unknown,
     };

@@ -2569,7 +2569,9 @@ fn gives_linear(em: &Em<'_>, fns: &std::collections::BTreeSet<FnVal>) -> bool {
             let sum = match &f {
                 FnVal::Closure(c) | FnVal::Made(c) => em.sums.closure(*c).ok(),
                 FnVal::Item(g, _) => em.sums.get(*g).ok(),
-                FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => None,
+                FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => {
+                    None
+                }
             };
             let Some(sum) = sum else {
                 continue;
@@ -2831,7 +2833,7 @@ fn fn_arg_effects(
             let sum = match fv {
                 FnVal::Closure(c) | FnVal::Made(c) => em.sums.closure(*c).ok(),
                 FnVal::Item(g, _) => em.sums.get(*g).ok(),
-                FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => {
+                FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => {
                     if let Some(r) = &arg_row {
                         performed.extend(r.iter().filter_map(|e| ident(em.tys, e)));
                     }

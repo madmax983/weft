@@ -169,6 +169,10 @@ pub struct Run {
     pub param: u32,
     /// True if `param` is a capture of the closure, not a parameter.
     pub capture: bool,
+    /// True for a run of a result of a run of the parameter
+    /// (`FnVal::ParamResult`): the caller applies the values that the
+    /// runs of its values give back.
+    pub result: bool,
     /// The body can run it more than once.
     pub many: bool,
     /// The body runs it as a task.

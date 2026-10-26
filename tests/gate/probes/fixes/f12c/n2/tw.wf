@@ -1,0 +1,5 @@
+// Third review of the ABC preview, map N2 (by design, ledger new-fp stricter) (fpx2/tw.wf).
+fn twice(m: fn() -> fn()) { let g = m(); let h = m(); g(); h() }
+fn main() {
+    twice(|| || print(1))
+}
