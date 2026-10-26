@@ -1,0 +1,14 @@
+// Review of the F12 sets (variants3 h5b/w09_ctl), the lost-clean row of the F13-fix rerun: a callee runs two linear closures one time each (scratchpad f12/variants3/h5b/w09_ctl_outer_runs_after_maybe_other.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn run(f: fn()) { f() }
+fn maybe(f: fn(), c: bool) { if c { f() } }
+fn always(f: fn(), c: bool) { f() }
+fn l1(f: fn(), g: fn(), c: bool) { always(f, c); g() }
+fn main() {
+    let t = begin(1)
+    let s = begin(2)
+    l1(|| rollback(t), || rollback(s), false)
+}

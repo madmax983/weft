@@ -1931,3 +1931,41 @@ stage = "F13"
 # the gate allows one `new-fp` probe for each 1000 probes that `old` accepts,
 # and the probe of the N2 class (fixes/f12c/n2/tw.wf) has that place.
 
+
+# ----------------------------------------------------------------------
+# The final check of group C (scratchpad f13/final_check.md).
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f13c/ord/o11_capture_and_param_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q06_capture_param_and_closure_b.wf",
+]
+finding = "F13C-ORD"
+reason = "old holes of class H-ORD (final check of group C): a body that runs two values gets the same `once` value of the caller as one argument and in a closure that is the other argument (`both(h, || h())`, `both(|| h(), || h())`), so the value runs two times. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the runs of the two keys reach the same value (`Apps::reached`): W0502. Drop this entry when group C is on (F13)"
+stage = "F13"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f13c/w4/w09_closure_param_store_b.wf"]
+finding = "F13C-HW9"
+reason = "old hole H-W9 (final check of group C; issue #41): a closure stores its reference parameter into the `rc` object of a captured handle (`let put = |x: &u64| c.refs.push(x); put(&d.data[0])`), and the reference points into a local `rc` object that goes away at the return. The store of a closure app has no handle places (`own`), so the W0204 check keeps the old rule and skips each whole local handle. The old pipeline misses it too; under the default AB the program (group C) goes to the old pipeline"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/f13c/ord/x01_linear_nested_twice_b.wf"]
+codes = ["W0502", "W0601"]
+reason = "class H-ORD (final check of group C), the linear form: a closure argument of `l1` runs the linear closure of the caller two times. Both pipelines give W0502 at the call; the old pipeline also gives W0601 (it cannot see that `l1` runs each value, as the w09_ctl row). Group C only"
+stage = "F13"
+
+# The lost-clean row of the F13-fix rerun (F12 sets, v3 h5b/w09_ctl), signed by an
+# independent review agent (scratchpad f13/final_check.md 4).
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/f13b/fp/w09_ctl_outer_runs_after_maybe_other.wf"]
+finding = "F12R3-BOTH"
+reason = "`l1` runs `f` through `always` one time and `g` one time, so each linear closure is consumed on each path and the run is clean (the old W0601 is a false positive). A body that runs two values runs each one time in each order (`Applied::order`). Each variant that drops a value or runs it again is held at the old line (W0601 or W0502): `maybe` instead of `always`, `f` or `g` run again, `twice`, `g` dropped or on one path, `f` stored and dropped, a closure that does not consume its value, a nested double run in the callee, a loop, the order swapped, one more parameter layer (scratchpad f13/final_variants/w09)"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"

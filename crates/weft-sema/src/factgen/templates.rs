@@ -1468,8 +1468,38 @@ fn rc_handles(
             same.push(r);
             continue;
         };
+        let mine = handle_sources(em, st, k);
         if own.contains(&r) {
-            same.push(r);
+            // A handle of the store. It is the handle of the object only if
+            // each other handle of the store is a handle of the same local.
+            // A join of handles (`if b { &c } else { &d }`) can store into
+            // another object: a handle whose sources are not the sources of
+            // `h` is a handle of another object (W0204, class AB-RC1-join of
+            // the final check of group C), and a handle that shares a source
+            // can be a copy.
+            let mut other = false;
+            let mut copy = false;
+            for &h in own {
+                let Some(o) = whole_or_local_handle(em, h) else {
+                    copy = true;
+                    continue;
+                };
+                if o == k {
+                    continue;
+                }
+                match (&mine, handle_sources(em, st, o)) {
+                    (Some(m), Some(x)) if m.is_disjoint(&x) => other = true,
+                    _ => copy = true,
+                }
+            }
+            if other {
+                continue;
+            }
+            if copy {
+                maybe.push(r);
+            } else {
+                same.push(r);
+            }
             continue;
         }
         // The locals and parameters that the handles of the store can come
@@ -1483,7 +1513,6 @@ fn rc_handles(
                 None => known = false,
             }
         }
-        let mine = handle_sources(em, st, k);
         let shared = mine.is_none_or(|m| m.iter().any(|x| sources.contains(x)));
         if !known || shared {
             maybe.push(r);

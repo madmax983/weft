@@ -1,0 +1,23 @@
+// Final check of group C, class H-W9: a closure stores its reference parameter into the object of a captured handle, and the reference points into a local object (w4/w09_closure_param_store_b.wf).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+struct H { c: Rc<Cache> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn same(x: Rc<Cache>) -> Rc<Cache> { x }
+fn read0(c: Rc<Cache>) {
+    if c.refs.len() > 0 {
+        let r = c.refs[0]
+        print(r + 0)
+    }
+}
+fn fill(c: Rc<Cache>) / mut(Cache) {
+    let d = newc()
+    d.data.push(1)
+    c.data.push(2)
+    let put = |x: &u64| c.refs.push(x)
+    put(&d.data[0])
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    fill(c.clone())
+    read0(c)
+}

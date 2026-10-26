@@ -2710,6 +2710,11 @@ program stayed with the old pipeline ("a function value stored behind a referenc
   a use of the references of an `rc` object (in the body, or in a callee that reads them)
   after a callee whose row allows a change of the group is W0301, also when the callee
   does not change the group at run time (a loop that runs zero times).
+- Stricter than the old pipeline by design (class AB-RC1-copy-strict of the final check of
+  group C): a reference through a copy of a local `rc` handle that the facts do not follow
+  (`let keep = h.clone()`, `let d = same(c.clone())`) that goes into the object of the
+  handle is W0204, also when the copy is a handle of the same object at run time (6.9, the
+  W0204 store forms).
 - A reference in an `rc` object points into the wildcard place of each field of the group
   that its type can point into (`Roots::group_targets`; F13-fix, false positive FP-AB-RC):
   a `&u64` in `Cache.refs` points into `Cache.data..`, so `c.refs.push(c.refs[0])` changes no
@@ -2732,6 +2737,14 @@ program stayed with the old pipeline ("a function value stored behind a referenc
   `order`): each run applies at `Main` or at `Ret`, but one time, so a `once` closure that
   it runs one time is no W0502 (`fn both(f, g) { f(); g() }`, finding (a) of stage
   F12-fix3). The same value that runs two times is W0502.
+  As built (class H-ORD of the final check of group C): the order applies only to an
+  app that runs one time. An app that a value already runs two times
+  (`both(|| { h(); h() }, g)`, `|| twice(h)`, `|| each(2, h)`) keeps `again` without
+  `order`. A value that the runs of two keys reach, also through the values that a value
+  runs (`both(h, || h())`, `both(|| h(), || h())`), runs two times: `apply_value` writes
+  each value that it is asked to apply into `Apps::reached`, also a value that it applied
+  before, and `apply_runs` gives the app of such a value `again` without `order` (not for
+  an item, which has no `once` part).
 - A copy of a function value through a pointer is a copy of the references of its
   environment (`templates::copied_refs`; F13-fix, classes H-S1 and H-RC1): a read back of a
   closure from a heap slot (`let g = cb.f`, `let g = h.f`) uses the variables of the slot.
@@ -3366,7 +3379,17 @@ living object (`other(c, d)` with `d` a handle that the caller keeps; two local 
 `main` that point into each other). A whole local handle whose value can come from the same
 local or parameter as a handle of the store (`let d = c.clone()`, `transfer` gives the clone
 the place of `c`) can be a handle of the same object: the facts cannot tell, so the program
-goes to the old pipeline ("a reference through a copy of an `rc` handle"). A store with no
+goes to the old pipeline ("a reference through a copy of an `rc` handle"). As built (class
+AB-RC1-join of the final check of group C): a handle of the store is the handle of the object
+only if each other handle of the store is a handle of the same local. A store through a
+reference that can reach the object of the caller and a local object (`let x = if b { &c }
+else { &d }; x.refs.push(&d.data[0])`, the same through an `Option` or a loop) is W0204
+when the sources of the other handle and of `d` are disjoint, and goes to the old pipeline
+when they share one. Stricter than the old pipeline by design (class AB-RC1-copy-strict of
+the final check of group C): a copy of a local handle that the facts do not follow to the
+store (`let keep = h.clone()` and then a store into `h` of a reference through `keep`; `let d
+= same(c.clone())` through a callee) is a handle of another object, so W0204, also when it
+is a handle of the same object at run time. A store with no
 known handle (the `puts` of a callee with a by-value handle argument, a closure) keeps the
 rule of the old lowering; such a callee also gets W0312 for an argument that points into the
 group. The references of the part `puts` flow from the values of the arguments with their

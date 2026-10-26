@@ -1,0 +1,12 @@
+// Final check of group C, class H-ORD: the same value of the caller is one argument of a body that runs two values and runs in a closure that is the other argument (ord/o11_capture_and_param_b.wf).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn both(f: fn(), g: fn()) { f(); g() }
+fn twice(f: fn()) { f(); f() }
+fn run(f: fn()) { f() }
+fn outer(h: fn()) { both(h, || h()) }
+fn main() {
+    let b = mkbuf()
+    outer(|| eat(b))
+}

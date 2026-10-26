@@ -4723,5 +4723,89 @@ kind = "fp"
 verdict = "construction"
 group = "AC"
 stage = "F13"
-repro = ["tests/gate/probes/fixes/f13b/fp/both_once.wf"]
-note = "a callee runs two function values one time each, one a `once` closure: no W0502 (finding (a) of stage F12-fix3; `Applied::order`)"
+repro = [
+    "tests/gate/probes/fixes/f13b/fp/both_once.wf",
+    "tests/gate/probes/fixes/f13b/fp/w09_ctl_outer_runs_after_maybe_other.wf",
+]
+note = "a callee runs two function values one time each, one a `once` closure or two linear closures: no W0502, no W0601 (finding (a) of stage F12-fix3; `Applied::order`; the lost-clean row w09_ctl of the F13-fix rerun)"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/o01_nested_closure_runs_param_twice_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/o02_nested_twice_callee_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/o11_capture_and_param_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/x01_linear_nested_twice_b.wf",
+]
+code = "W0502"
+note = "a body that runs two values (`both(f, g)`) gets a closure that runs a `once` value of the caller two times, or the same value as one argument and in a closure that is the other argument: the value runs two times (class H-ORD of the final check of group C; `transfer::apply_runs`, `Apps::reached`)"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/q01_second_param_closure_twice_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q03_nested_run_layer_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q04_nested_each_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q05_both_with_param_g_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q06_capture_param_and_closure_b.wf",
+]
+code = "W0502"
+note = "the H-ORD shapes of `final_variants/ord2` (the programs define `each` with a loop): a closure argument runs the value of the caller two times, through `run`, `each` or a parameter, or both arguments run it"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/o01_nested_closure_runs_param_twice_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/o02_nested_twice_callee_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/o11_capture_and_param_c.wf",
+]
+note = "the clean twins of H-ORD: each value of the caller runs one time"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/q01_second_param_closure_twice_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/q03_nested_run_layer_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/q05_both_with_param_g_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/q06_capture_param_and_closure_c.wf",
+]
+note = "the clean twins of H-ORD of `final_variants/ord2`"
+
+[[claim]]
+finding = "F13C-JOIN"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13c/w4/w01_join_of_refs_b.wf",
+    "tests/gate/probes/fixes/f13c/w4/j03_option_of_ref_b.wf",
+]
+code = "W0204"
+note = "a store through a reference that can reach the `rc` object of the caller and a local object puts a reference into the local object there (class AB-RC1-join of the final check of group C; `templates::rc_handles`)"
+
+[[claim]]
+finding = "F13C-JOIN"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F13.1"
+repro = ["tests/gate/probes/fixes/f13c/w4/j04_loop_ref_var_b.wf"]
+code = "W0204"
+note = "AB-RC1-join with a reference variable that a loop gives a new value"

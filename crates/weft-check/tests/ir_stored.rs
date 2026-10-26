@@ -235,3 +235,14 @@ fn stored_and_returned_closures_of_the_false_positive_classes_are_accepted() {
     // F12-fix3 (`both(f, g)` with one `once` closure).
     check("fp_closures.wf");
 }
+
+#[test]
+fn a_store_through_a_join_of_handles_is_a_store_of_a_local() {
+    // Class AB-RC1-join of the final check of group C: the store goes
+    // through a reference that can reach the object of the caller and a
+    // local object (`if b { &c } else { &d }`, an `Option`, a loop). The
+    // handle of the local object is a handle of the store, but not the only
+    // one: the reference into the local object can go into the object of
+    // the caller. Both pipelines accepted it before the fix.
+    check_ab("rc_join.wf");
+}

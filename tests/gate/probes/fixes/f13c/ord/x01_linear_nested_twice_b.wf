@@ -1,0 +1,16 @@
+// Final check of group C, class H-ORD: a closure argument of a body that runs two values runs a value of the caller two times (ord3/x01_linear_nested_twice_b.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn run(f: fn()) { f() }
+fn maybe(f: fn(), c: bool) { if c { f() } }
+fn always(f: fn(), c: bool) { f() }
+fn twice(f: fn()) { f(); f() }
+struct K { f: fn() }
+fn l1(f: fn(), g: fn(), c: bool) { always(f, c); g() }
+fn outer(h: fn()) { l1(|| { h(); h() }, || print(1), false) }
+fn main() {
+    let t = begin(1)
+    outer(|| rollback(t))
+}

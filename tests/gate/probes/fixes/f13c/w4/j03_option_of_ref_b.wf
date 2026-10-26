@@ -1,0 +1,20 @@
+// Final check of group C, class AB-RC1-join: a store through a reference that can reach the object of the caller and a local object (w4b/j03_option_of_ref_b.wf).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn read0(c: Rc<Cache>) {
+    if c.refs.len() > 0 {
+        let r = c.refs[0]
+        print(r + 0)
+    }
+}
+fn fill(c: Rc<Cache>, b: bool) / mut(Cache) {
+    let d = newc()
+    d.data.push(1)
+    let o = if b { Some(&c) } else { Some(&d) }
+    match o { Some(x) => x.refs.push(&d.data[0]), None => {} }
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    fill(c.clone(), true)
+    read0(c)
+}

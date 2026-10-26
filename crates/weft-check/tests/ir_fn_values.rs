@@ -328,3 +328,12 @@ fn a_once_maker_that_a_callee_runs_one_time_runs_once() {
     // `FnVal::ParamResult`, and a run of it is a run of the result.
     check("once_maker_runs.wf");
 }
+
+#[test]
+fn a_value_that_runs_a_value_of_the_caller_two_times_runs_it_two_times() {
+    // Class H-ORD of the final check of group C: `both(|| { h(); h() }, g)`
+    // runs `h` two times, and `both(h, || h())` too. The order of the two
+    // runs of `both` (`Applied::order`) is no reason to run `h` one time.
+    // The controls run each value of the caller one time.
+    check("run_order.wf");
+}

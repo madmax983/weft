@@ -345,3 +345,26 @@ names the class and the review file.
   F13B-FP-AB-RC), FP-S2 (claim F13B-FP-S2), FP-K4 (claim F13B-FP-K4), and `both_once`
   (finding (a) of stage F12-fix3, claim F12R3-BOTH).
 
+- `fixes/f13b/fp/w09_ctl_outer_runs_after_maybe_other.wf`: the lost-clean row of the
+  F13-fix rerun (F12 sets, `variants3/h5b/w09_ctl`): a callee runs two linear closures
+  one time each (claim F12R3-BOTH; ledger `lost-clean`, signed in scratchpad
+  `f13/final_check.md` 4).
+
+## Programs that the final check of group C added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the final check of group C
+(scratchpad `f13/final_check.md`, `f13/final_variants/`), with one line of header
+that names the class and the file of the check.
+
+- `fixes/f13c/ord/*.wf`: class H-ORD, a body that runs two values gets a closure that
+  runs a `once` value of the caller two times, or gets the same value as one argument
+  and in a closure (claim F13C-ORD), and clean twins (`q04_nested_each_c` runs the
+  value in a loop: W0502 in both pipelines). `o11` and `q06`: the old pipeline misses
+  them (ledger `open-old` while group C is off).
+- `fixes/f13c/w4/w01_*.wf`, `j03_*.wf`, `j04_*.wf`: class AB-RC1-join, a store through
+  a reference that can reach the `rc` object of the caller and a local object (claim
+  F13C-JOIN; the old pipeline misses them).
+- `fixes/f13c/w4/w09_closure_param_store_b.wf`: class H-W9, a closure stores its
+  reference parameter into the object of a captured handle (both pipelines miss it;
+  ledger `open-old`, issue #41).

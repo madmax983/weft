@@ -20,7 +20,7 @@
 //! - α of `Deref(Ref)` reads the state: the places that the reference points
 //!   into ([`held_at`]).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::{FnFacts, PlaceId};
 use weft_ir::ty::AdtKind;
@@ -1701,6 +1701,11 @@ struct Apps {
     out: Vec<Applied>,
     /// The first summary of each value that the node applies.
     seen: std::collections::HashMap<FnVal, usize>,
+    /// Each value that the node asks to apply, in order, also a value that
+    /// it applied before (a value applies one time, so `seen` does not show
+    /// a second run of it). [`apply_runs`] finds a value that two runs reach
+    /// with it (class H-ORD of the final check of group C: `both(h, || h())`).
+    reached: Vec<FnVal>,
 }
 
 /// The run node of a `Call` of the function value `callee` of block `block`
@@ -2203,7 +2208,11 @@ fn apply_runs(
     // the result after the run that gives it.
     let keys: BTreeSet<(u32, bool)> = runs.iter().map(|x| (x.param, x.capture)).collect();
     let two = keys.len() > 1;
+    // The values that the runs of each key reach, also through the values
+    // that a value runs (`Apps::reached`).
+    let mut reached: BTreeMap<(u32, bool), BTreeSet<FnVal>> = BTreeMap::new();
     for run in runs {
+        let first = apps.reached.len();
         let many = run.many || two;
         let Some((fns, src, src_body)) = of(cx, run)? else {
             continue;
@@ -2269,10 +2278,18 @@ fn apply_runs(
             }
             if many {
                 match (fresh, apps.seen.get(g)) {
+                    // A run of the value and of each value that it runs
+                    // happens again. With two values and one run of each
+                    // (`!run.many`), it happens one time, in either order.
+                    // An app that is already `again` runs two times inside
+                    // the value (`both(|| { h(); h() }, g)`): it keeps its
+                    // flags (class H-ORD of the final check of group C).
                     (true, _) => {
                         for a in apps.out.iter_mut().skip(start) {
-                            a.again = true;
-                            a.order = !run.many;
+                            if !a.again {
+                                a.again = true;
+                                a.order = !run.many;
+                            }
                         }
                     }
                     // The same value runs a second time.
@@ -2284,6 +2301,29 @@ fn apply_runs(
                     }
                     _ => {}
                 }
+            }
+        }
+        let key = (run.param, run.capture);
+        let got = apps.reached.get(first..).unwrap_or_default();
+        reached.entry(key).or_default().extend(got.iter().cloned());
+    }
+    // A value that the runs of two keys reach runs two times
+    // (`both(h, || h())`, `both(|| h(), || h())`): its app happens again,
+    // not in one order only. An item has no `once` part to lose.
+    if two {
+        let mut keys_of: BTreeMap<&FnVal, usize> = BTreeMap::new();
+        for vals in reached.values() {
+            for v in vals {
+                *keys_of.entry(v).or_default() += 1;
+            }
+        }
+        for (v, n) in keys_of {
+            if n < 2 || matches!(v, FnVal::Item(..)) {
+                continue;
+            }
+            if let Some(a) = apps.seen.get(v).and_then(|&k| apps.out.get_mut(k)) {
+                a.again = true;
+                a.order = false;
             }
         }
     }
@@ -2347,6 +2387,7 @@ fn apply_value(
             "a chain of function values that run each other deeper than 64 (stage F12)",
         ));
     }
+    apps.reached.push(fv.clone());
     if apps.seen.contains_key(fv) {
         return Ok(());
     }
