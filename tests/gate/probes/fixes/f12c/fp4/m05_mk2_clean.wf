@@ -1,0 +1,16 @@
+// Third review of the ABC preview, false positive FP4: a wrong capture mapping of a made closure (st/m05_mk2_clean.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let rs = Vec.new()
+    let mk = || || rs.push(&w.entities[0])
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    print(rs.len())
+}

@@ -1,0 +1,19 @@
+// Third review of the ABC preview, clean twin of hole H7 (it failed the fact oracle) (h7b/m05_ctl_maker_two_refs.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mkw2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 2 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let o = None
+    let a = &w.entities[0]
+    let mk = || || { o = Some(a) }
+    let g = mk()
+    g()
+    let r = match o { Some(e) => e, None => a }
+    print(w.entities.len())
+    print(r.hp)
+}

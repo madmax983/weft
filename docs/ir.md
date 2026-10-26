@@ -3062,6 +3062,17 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   or `Kept` capture to each place that the value points into as well as to the value
   itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
   its `ByRef` capture.
+- A `Kept` or `ByRef` capture of a `Made` closure whose variable is a variable of the
+  body of the run node, through the `Kept` and `ByRef` captures of its makers
+  (`let mk = || || { o = Some(first) }` in the same body), maps to that variable only,
+  as for a closure of the component (`apply::made_capture_source`; hole H7 and false
+  positive FP4 of the third review of the ABC preview). The closure changes and reads
+  each captured variable at its own place, and a reference that it stores into one
+  capture goes into the value of that variable (`Some(e)` points into the referent).
+  Before, each such capture mapped to all the references of the value: a push into
+  `rs` was a change of `w`, and the variable `o` did not get the reference. A capture
+  whose variable is not in the body (a maker that a callee gives back) keeps the
+  mapping to the value and its references.
 - The result of a closure maker keeps its effects in a second closure and in a callee
   (F12-fix2, hole N1 of the second review of the ABC preview: `let mk2 = || mk()`,
   `|| run(mk())`, `fn go(m) { let g = m(); g() }`):

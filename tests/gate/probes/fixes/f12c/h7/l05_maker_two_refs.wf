@@ -1,0 +1,19 @@
+// Third review of the ABC preview, H7 shape that failed the fact oracle (h7b/l05_maker_two_refs.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mkw2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 2 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let o = None
+    let a = &w.entities[0]
+    let mk = || || { o = Some(a) }
+    let g = mk()
+    g()
+    let r = match o { Some(e) => e, None => a }
+    w.entities.clear()
+    print(r.hp)
+}

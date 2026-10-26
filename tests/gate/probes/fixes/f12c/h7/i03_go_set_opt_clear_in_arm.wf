@@ -1,0 +1,13 @@
+// Third review of the ABC preview, H7 shape that ABC rejected only through the wrong fact of FP4 (pi/i03_go_set_opt_clear_in_arm.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let o = None
+    go(|| || { o = Some(&w.entities[0]) })
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} }
+}

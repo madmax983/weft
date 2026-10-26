@@ -4233,3 +4233,64 @@ repro = ["tests/gate/probes/fixes/f13/kept_rebind_ret.wf"]
 code = "W0204"
 line = 14
 note = "a closure that leaves the body (a result, a heap slot) sees the value of a `Kept` variable at the return: a reference there into a local is W0204 (`factgen::kept_escapes`; class K3 of stage F12, the late stores of the old lowering)"
+
+[[claim]]
+finding = "F12R3-H7"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/h7/i01_maker_set_opt_clear_in_arm.wf",
+    "tests/gate/probes/fixes/f12c/h7/i03_go_set_opt_clear_in_arm.wf",
+    "tests/gate/probes/fixes/f12c/h7/i04_give_set_opt_clear_in_arm.wf",
+    "tests/gate/probes/fixes/f12c/h7/i05_maker_set_opt_copy_out_then_clear.wf",
+    "tests/gate/probes/fixes/f12c/h7/i09_maker_set_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/i10_go_set_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j01_maker_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j02_go_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j07_maker_opt_read_after_clear_outside.wf",
+    "tests/gate/probes/fixes/f12c/h7/j08_maker_tuple_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j10_maker_in_fn_param_world.wf",
+    "tests/gate/probes/fixes/f12c/h7/j11_closure_param_maker_opt.wf",
+    "tests/gate/probes/fixes/f12c/h7/l05_maker_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/h7/l06_maker_opt_assign_in_loop.wf",
+    "tests/gate/probes/fixes/f12c/h7/m07_go_fault_clear.wf",
+    "tests/gate/probes/fixes/f12c/h7/m08_give_fault_clear.wf",
+    "tests/gate/probes/fixes/f12c/h7/m09_mk2_fault_clear_run.wf",
+    "tests/gate/probes/fixes/f12c/h7/m11_go_store_then_go_clear.wf",
+]
+code = "W0301"
+note = "a closure that a maker gives back (a made closure) stores a reference that it holds by value into a variable that it captures `Kept` or `ByRef`: σ maps the capture to the variable of the body (`apply::made_capture_source`), so the value that the caller takes out of the variable points into the referent, and a change of the referent then a use is W0301 at the line of the use (hole H7 of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-FP4"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/fp4/i08_ctl_maker_set_opt_read.wf",
+    "tests/gate/probes/fixes/f12c/fp4/j12_maker_opt_from_param_ref.wf",
+    "tests/gate/probes/fixes/f12c/fp4/k03_ctl_give_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m02_maker_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m03_give_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m04_go_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m05_mk2_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/q03_store_ref_option.wf",
+    "tests/gate/probes/fixes/f12c/fp4/q04_store_ref_in_vec_of_world2.wf",
+    "tests/gate/probes/fixes/f12c/fp4/s1_z1_ctl_store_then_read_no_change.wf",
+    "tests/gate/probes/fixes/f12c/h7/i14_ctl_maker_set_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k01_ctl_maker_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k02_ctl_go_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k05_ctl_maker_rebinds_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k06_ctl_go_rebinds_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k07_ctl_maker_opt_read_after_clear_outside.wf",
+    "tests/gate/probes/fixes/f12c/h7/k08_ctl_maker_tuple_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k10_ctl_maker_in_fn_param_world.wf",
+    "tests/gate/probes/fixes/f12c/h7/k11_ctl_closure_param_maker_opt.wf",
+    "tests/gate/probes/fixes/f12c/h7/k12_ctl_maker_opt_from_param_ref.wf",
+    "tests/gate/probes/fixes/f12c/h7/m05_ctl_maker_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/h7/m06_ctl_maker_opt_assign_in_loop.wf",
+]
+note = "a made closure changes each captured variable at its own place: a push into `rs` is no change of `w`, and a store into `o` is no change of `first` (false positive FP4 of the third review of the ABC preview: W0301 `w : &World in rs.entities[]`, W0703 `g mutates first`)"

@@ -504,7 +504,7 @@ pub fn made_sigma(
     }
     deep.sort();
     deep.dedup();
-    for cap in &decl.captures {
+    for (k, cap) in decl.captures.iter().enumerate() {
         if matches!(
             cap.mode,
             weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
@@ -512,6 +512,26 @@ pub fn made_sigma(
             return Err(AlphaError::Later(
                 "a closure that captures a capability or a continuation (stage F14)",
             ));
+        }
+        // A `Kept` or `ByRef` capture whose variable is a variable of this
+        // body (through the `Kept` and `ByRef` captures of the makers) is
+        // that variable, as for a closure of the component: the closure
+        // changes it and reads it, and no other capture (hole H7 and false
+        // positive FP4 of the third review of the ABC preview).
+        if let Some(src) = made_capture_source(p, c, k, body) {
+            let a = transfer::alpha(cx, body, st, &src)?;
+            let v = transfer::place_value(cx, body, st, &src)?.flat();
+            let refs: Vec<PlaceId> = v.refs.into_iter().collect();
+            let mut deeps = Vec::new();
+            for &q in &refs {
+                deeps.extend(transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None)?);
+            }
+            deeps.sort();
+            deeps.dedup();
+            s.cap_deeps.push(deeps);
+            s.captures.push(a.places);
+            s.cap_helds.push(refs);
+            continue;
         }
         // A `ByRef` capture points into the place of its variable, and a
         // `Kept` capture names the variable: the closure value holds that
@@ -533,6 +553,51 @@ pub fn made_sigma(
         s.cap_deeps.push(deep.clone());
     }
     Ok(s)
+}
+
+/// The place in body `body` that capture `k` of closure `c` names, if the
+/// capture is `Kept` or `ByRef` and its variable is a variable of `body`
+/// through the `Kept` and `ByRef` captures of the makers of `c` (`env.j`
+/// of a `Kept` capture, `(*env.j)` of a `ByRef` capture). A `ByMove` capture
+/// on the way is a value of a closure, not a variable: `None`.
+fn made_capture_source(
+    p: &weft_ir::Program,
+    c: weft_ir::ClosureId,
+    k: usize,
+    body: BodyId,
+) -> Option<weft_ir::Place> {
+    use weft_ir::{CaptureMode, DerefKind, Proj};
+    let decl = p.closures.get(c.index())?;
+    let cap = decl.captures.get(k)?;
+    if !matches!(cap.mode, CaptureMode::Kept | CaptureMode::ByRef) {
+        return None;
+    }
+    let (mut maker, mut src) = (decl.maker, cap.source.clone());
+    // A maker has a lower id than its closures, so the walk ends.
+    for _ in 0..=p.closures.len() {
+        if maker == body {
+            return Some(src);
+        }
+        let (c2, j, mode) = crate::factgen::alpha::env_capture(p, maker, &src)?;
+        let rest = match mode {
+            CaptureMode::Kept => src.proj.get(1..)?.to_vec(),
+            CaptureMode::ByRef => match src.proj.get(1) {
+                Some(Proj::Deref(DerefKind::Ref)) => src.proj.get(2..)?.to_vec(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let d2 = p.closures.get(c2.index())?;
+        let cap2 = d2.captures.get(j as usize)?;
+        let mut proj = cap2.source.proj.clone();
+        proj.extend(rest);
+        maker = d2.maker;
+        src = weft_ir::Place {
+            local: cap2.source.local,
+            proj,
+        };
+    }
+    None
 }
 
 /// The split id of the split at parameter `label` of run node `inst`: each

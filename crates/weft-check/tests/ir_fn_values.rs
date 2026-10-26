@@ -280,3 +280,13 @@ fn a_once_closure_that_a_callee_runs_from_behind_a_reference_moves() {
     // closure again. The run moves the owners of the referent.
     check("once_run_through_ref.wf");
 }
+
+#[test]
+fn a_made_closure_changes_each_captured_variable_at_its_own_place() {
+    // Third review of the ABC preview, hole H7 and false positive FP4: σ of
+    // a closure that a maker gives back mapped each `Kept` or `ByRef`
+    // capture to all the references of the value. A store of a reference
+    // into `o` lost the reference (`Some(e)` pointed into nothing), and a
+    // push into `rs` was a change of `w`.
+    check("made_capture_places.wf");
+}

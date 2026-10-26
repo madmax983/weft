@@ -282,3 +282,17 @@ them again if it runs. Each one has one line of header.
   (ABC accepted it before F13; claim F13-S3).
 - `fixes/f13/kept_rebind_ret.wf`: a returned closure keeps a variable that gets a
   reference into a local later (class K3 of stage F12; claim F13-K3).
+
+## Programs that the third F12 fixes added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the third review of the ABC
+preview (scratchpad `f12/review3.md`, `f12/variants3/`), with one line of header
+that names the class and the review file.
+
+- `fixes/f12c/h7/*.wf`: hole H7, a closure that a maker gives back stores a
+  reference into a variable that it captures (claim F12R3-H7), the H7 shapes that
+  ABC rejected only through the wrong fact of FP4, and their clean twins (claim
+  F12R3-FP4; they failed the fact oracle).
+- `fixes/f12c/fp4/*.wf`: false positive FP4, a wrong capture mapping of a made
+  closure (claim F12R3-FP4).

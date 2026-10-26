@@ -358,7 +358,10 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
 /// The failure of the fact oracle in a run, if any.
 fn failure(r: &Result<weft_interp::RunOutcome, weft_interp::RuntimeError>) -> Option<String> {
     let m = &r.as_ref().err()?.message;
-    (m.starts_with("fact oracle") || m.starts_with("trace conformance")).then(|| m.clone())
+    (m.starts_with("fact oracle")
+        || m.starts_with("trace conformance")
+        || m.starts_with("summary oracle"))
+    .then(|| m.clone())
 }
 
 #[test]
