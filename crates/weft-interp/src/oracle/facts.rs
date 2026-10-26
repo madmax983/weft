@@ -1237,7 +1237,7 @@ impl FactOracle {
         }
         let input = Rc::clone(&self.input);
         let p = &input.built.program;
-        let body = self.comps.get(ci)?.body;
+        let comp_body = self.comps.get(ci)?.body;
         let mut out: Vec<PlaceId> = Vec::new();
         let mut ty = None;
         for (place, param) in bases {
@@ -1249,6 +1249,14 @@ impl FactOracle {
             }
             let Some(comp) = self.comps.get_mut(ci) else {
                 continue;
+            };
+            // A place through a `ByRef` capture of a closure body is the
+            // place of the captured variable in the maker (second review of
+            // the ABC preview, 5): the facts of the instantiated body name
+            // the variable itself.
+            let (body, place, param) = match param {
+                None => through_env(p, comp_body, place),
+                Some(i) => (comp_body, place, Some(i)),
             };
             let name_of = p
                 .bodies
@@ -1340,6 +1348,60 @@ fn coarse(steps: &[weft_facts::Step]) -> Vec<weft_facts::Step> {
             _ => *s,
         })
         .collect()
+}
+
+/// The place `place` of body `body` with each step through a `ByRef`
+/// capture of a closure body replaced by the source of the capture in the
+/// maker (`(*env.k).f` is `x.f` for a capture of `x`), and the index of the
+/// parameter that the place then starts at, if any.
+///
+/// A `ByRef` capture holds a reference to the cell of the variable of the
+/// maker, so the target is the current value of the variable (`docs/ir.md`
+/// 6.3). The facts of an instantiated closure body name it with the place
+/// of the variable.
+fn through_env(
+    p: &weft_ir::Program,
+    mut body: BodyId,
+    mut place: weft_ir::Place,
+) -> (BodyId, weft_ir::Place, Option<u32>) {
+    // Each step goes to the maker, a body with a lower id: the walk ends.
+    for _ in 0..=p.bodies.len() {
+        let Some((_, decl)) = p.closure_of(body) else {
+            break;
+        };
+        let env = p.body(body).and_then(|b| b.params.first().copied());
+        if env != Some(place.local) {
+            break;
+        }
+        let [Proj::Field(k), Proj::Deref(DerefKind::Ref), rest @ ..] = place.proj.as_slice() else {
+            break;
+        };
+        let Some(cap) = decl.captures.get(k.0 as usize) else {
+            break;
+        };
+        if cap.mode != weft_ir::CaptureMode::ByRef {
+            break;
+        }
+        let mut proj = cap.source.proj.clone();
+        proj.extend(rest.iter().cloned());
+        place = weft_ir::Place {
+            local: cap.source.local,
+            proj,
+        };
+        body = decl.maker;
+    }
+    // The environment of a closure has no index: a reference in it stays
+    // with no name. A parameter of a function body starts at its `Param`
+    // root.
+    let param = p.body(body).and_then(|b| {
+        let closure = p.closure_of(body).is_some();
+        b.params
+            .iter()
+            .position(|&l| l == place.local)
+            .filter(|&i| !(closure && i == 0))
+            .map(u32_of)
+    });
+    (body, place, param)
 }
 
 /// The text of variable `v`.

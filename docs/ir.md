@@ -2650,6 +2650,15 @@ place, a copy of a reference out of it, a read through a chain of references, an
 argument of a call that reaches the slot). As in the old pipeline, a use of `out` that
 reaches the slot after the change (`out.len()`, a call with `out`) is W0301 too.
 
+A vector of closures is a vector of references for this rule (group C, F12-fix H4): a
+closure that a loop pushes and that borrows a local of the iteration (a `ByRef` capture,
+or a `ByMove` capture that holds `&v[0]`) makes the vector invalid at the end of the
+iteration, so the next push and each later use of the vector is W0301, also when no
+code runs the closures after the iteration (`while .. { let v = mk_v(); ks.push(|| print(v[0])) };
+print(ks.len())`). The old pipeline accepts that program, and it rejects the same loop
+with `rs.push(&v[0])`. This is stricter than the old pipeline by design (FP2 of the
+second review of the ABC preview), not unsound.
+
 **The post-passes of today**, and where each one goes:
 
 | Today | In this design |
@@ -3703,10 +3712,17 @@ table, the roots, the variables, the versions of the parts, the entry node).
   gives the fact places; each IR place that reaches a cell gives its places. A place with
   no name is counted, not checked. In a frame of a closure body (F12-fix), captured cell
   `k` is `env.k` and the targets of the references in it are `(*env.k)` and below: α of
-  the instantiated body names them with the places of the maker (the cell root of a
+  the instantiated body names `env.k` with the places of the maker (the cell root of a
   `ByRef` capture, the place of the variable of a `Kept` capture), so C1, C5 and D1
   check the captured cells too (a move of a whole `ByMove` capture is a move of its `E`
-  variable). The oracle reads the heap with `Heap::peek`: a look at a freed cell does not
+  variable). A place through a `ByRef` capture (`(*env.k).f`) is the place of the
+  source of the capture in the maker (`x.f`, `oracle::facts::through_env`), through
+  each closure that makes the closure, and a place below a parameter of a function
+  body starts at its `Param` root. Before F12-fix2 such a place had no name: a change
+  or a read of a `ByRef` capture in a closure body was not checked (second review of
+  the ABC preview, 5; tests `a_missing_*_of_a_borrowed_*` of `fact_oracle.rs`). A
+  reference inside a `ByMove` or `Kept` capture of a closure body still has no name
+  (counted, not checked). The oracle reads the heap with `Heap::peek`: a look at a freed cell does not
   flag the memory oracle.
 - C1: at the entry of each node, each reference that a used `S(l)` (the value of `l`
   outside the parts with variables of their own) or a used version of a part holds is

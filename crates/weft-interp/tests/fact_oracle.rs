@@ -190,6 +190,84 @@ fn a_missing_reads_at_of_a_captured_cell_fails_the_change_cover() {
     assert!(m.starts_with("fact oracle (C5)"), "{m}");
 }
 
+/// Closures that change and read variables that they borrow (`ByRef`): a
+/// whole local, a field of a local, and through a closure in a closure.
+/// No `Kept` capture: the oracle must name the variable through the
+/// reference in the environment (second review of the ABC preview, 5).
+const BORROWED: &str = "struct W { items: Vec<u64> }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    let f = || { v.push(2) }\n\
+    f()\n\
+    let g = || print(v.len())\n\
+    g()\n\
+    let w = W { items: Vec.new() }\n\
+    let h = || { w.items.push(3) }\n\
+    h()\n\
+    let k = || { let i = || w.items.push(4); i() }\n\
+    k()\n\
+    print(w.items.len())\n\
+    }\n";
+
+/// True if fact place `p` of `f` is the variable `root` or a place below it.
+fn below_root(f: &FnFacts, p: weft_facts::PlaceId, root: &str) -> bool {
+    let d = &f.places[p.index()].display;
+    d == root || d.starts_with(&format!("{root}.")) || d.starts_with(&format!("{root}["))
+}
+
+#[test]
+fn a_missing_mutates_at_of_a_borrowed_variable_in_a_closure_fails_the_change_cover() {
+    let m = broken_abc(BORROWED, |f| {
+        let e = in_closures(f);
+        let keep: Vec<bool> = (0..f.places.len())
+            .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), "v"))
+            .collect();
+        f.mutates_at
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+        f.lends_mut
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    });
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_missing_mutates_at_of_a_borrowed_field_in_a_nested_closure_fails_the_change_cover() {
+    let m = broken_abc(BORROWED, |f| {
+        let e = in_closures(f);
+        let keep: Vec<bool> = (0..f.places.len())
+            .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), "w"))
+            .collect();
+        f.mutates_at
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+        f.lends_mut
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    });
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_missing_reads_at_of_a_borrowed_variable_in_a_closure_fails_the_change_cover() {
+    let m = broken_abc(BORROWED, |f| {
+        let e = in_closures(f);
+        let keep: Vec<bool> = (0..f.places.len())
+            .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), "v"))
+            .collect();
+        f.reads_at
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    });
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("read"),
+        "{m}"
+    );
+}
+
 /// The clean twins of the holes of the review of the ABC preview
 /// (`tests/captured_cells/`, closures that keep, borrow or move captures,
 /// in vectors and through calls) that the `ir` pipeline accepts pass with
