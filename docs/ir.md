@@ -3673,7 +3673,13 @@ table, the roots, the variables, the versions of the parts, the entry node).
   the handle; the target of a reference in a parameter at the entry of the frame is the
   `Param` root of the parameter, a target behind it the `Held` root. α of the IR place
   gives the fact places; each IR place that reaches a cell gives its places. A place with
-  no name is counted, not checked.
+  no name is counted, not checked. In a frame of a closure body (F12-fix), captured cell
+  `k` is `env.k` and the targets of the references in it are `(*env.k)` and below: α of
+  the instantiated body names them with the places of the maker (the cell root of a
+  `ByRef` capture, the place of the variable of a `Kept` capture), so C1, C5 and D1
+  check the captured cells too (a move of a whole `ByMove` capture is a move of its `E`
+  variable). The oracle reads the heap with `Heap::peek`: a look at a freed cell does not
+  flag the memory oracle.
 - C1: at the entry of each node, each reference that a used `S(l)` (the value of `l`
   outside the parts with variables of their own) or a used version of a part holds is
   inside a `points_into` place of the variable (at or below it by stable steps, or below

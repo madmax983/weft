@@ -131,6 +131,86 @@ fn a_missing_mutates_at_fails_the_change_cover() {
     assert!(m.starts_with("fact oracle (C5)"), "{m}");
 }
 
+/// The error message of a run of `src` with the groups A, B and C whose
+/// facts `edit` changes.
+fn broken_abc(src: &str, edit: fn(&mut FnFacts)) -> String {
+    let c = check_abc(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let ok = run_main_with_facts(&c, &opts(), |_| {});
+    assert!(ok.is_ok(), "{:?}", ok.err().map(|e| e.message));
+    match run_main_with_facts(&c, &opts(), edit) {
+        Ok(_) => panic!("the broken facts pass"),
+        Err(e) => e.message,
+    }
+}
+
+/// Removes each fact of `rel` at a node of a closure body (the nodes from
+/// the first node `closure entry` on).
+fn in_closures(f: &FnFacts) -> usize {
+    f.nodes
+        .iter()
+        .position(|n| n.label == "closure entry")
+        .unwrap_or(usize::MAX)
+}
+
+/// A closure that changes and reads a variable that it borrows (`ByRef`),
+/// and one that changes a variable that it keeps (`Kept`).
+const CAPTURED: &str = "fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    let f = || { v.push(2) }\n\
+    f()\n\
+    let g = || print(v.len())\n\
+    g()\n\
+    let n = 1\n\
+    let h = || { n = 2 }\n\
+    h()\n\
+    print(n)\n\
+    }\n";
+
+/// The oracle names a captured cell in a frame of a closure body through
+/// the environment (`env.k`, `(*env.k)`), so it checks the changes and the
+/// reads of it there (review of the ABC preview, recommendation 2).
+#[test]
+fn a_missing_mutates_at_of_a_captured_cell_fails_the_change_cover() {
+    let m = broken_abc(CAPTURED, |f| {
+        let e = in_closures(f);
+        f.mutates_at.retain(|&(n, _)| n.index() < e);
+        f.lends_mut.retain(|&(n, _)| n.index() < e);
+    });
+    assert!(m.starts_with("fact oracle (C5)"), "{m}");
+}
+
+#[test]
+fn a_missing_reads_at_of_a_captured_cell_fails_the_change_cover() {
+    let m = broken_abc(CAPTURED, |f| {
+        let e = in_closures(f);
+        f.reads_at.retain(|&(n, _)| n.index() < e);
+    });
+    assert!(m.starts_with("fact oracle (C5)"), "{m}");
+}
+
+/// The clean twins of the holes of the review of the ABC preview
+/// (`tests/captured_cells/`, closures that keep, borrow or move captures,
+/// in vectors and through calls) that the `ir` pipeline accepts pass with
+/// the captured cells named.
+#[test]
+fn the_clean_twins_of_the_abc_review_pass_with_named_captured_cells() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/captured_cells");
+    let mut ran = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check_abc(&src);
+        if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+        ran += 1;
+    }
+    assert!(ran >= 5, "only {ran} runs");
+}
+
 /// A linear value is live in `main` when the callee aborts.
 const ABORT: &str = "linear struct Tx { n: u64 }\n\
     on abort = rollback\n\

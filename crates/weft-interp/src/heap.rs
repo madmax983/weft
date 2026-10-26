@@ -277,6 +277,24 @@ impl Heap {
         Ok(v)
     }
 
+    /// The value at a place for an observer (the fact oracle): no check of
+    /// the memory oracle and no log, so a look does not change the run. A
+    /// freed cell has no value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cell is freed or the place does not exist.
+    pub fn peek(&self, p: &Place) -> Result<&Value, String> {
+        if self
+            .slots
+            .get(p.cell)
+            .is_some_and(|s| s.kind == SlotKind::Free)
+        {
+            return Err("a freed cell".to_string());
+        }
+        self.get_quiet(p)
+    }
+
     /// Returns the value at a place for writing.
     pub fn get_mut(&mut self, p: &Place) -> Result<&mut Value, String> {
         if self.facts_log.is_some() {

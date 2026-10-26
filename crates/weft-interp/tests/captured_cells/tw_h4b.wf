@@ -1,0 +1,12 @@
+// Clean twin of the review of the ABC preview (tw/tw_h4b.wf): the fact oracle checks the captured cells.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn eat_h(h: Vec<&u64>) { print(h[0]) }
+fn main() {
+    let v = mk_v()
+    let h = Vec.new()
+    h.push(&v[0])
+    let ks = Vec.new()
+    ks.push(|| eat_h(h))
+    let g = ks[0]
+    g()
+}

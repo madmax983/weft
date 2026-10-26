@@ -542,7 +542,7 @@ impl<'r, 'a> Machine<'r, 'a> {
         };
         if follow {
             if let Some(f) = self.facts.as_mut() {
-                f.enter(uid, &code, &slots, &self.heap);
+                f.enter(uid, &code, &slots, &caps, &self.heap);
             }
         }
         Ok(CodeFrame {

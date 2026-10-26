@@ -1,0 +1,6 @@
+// Clean twin of the review of the ABC preview (tw/tw_h5.wf): the fact oracle checks the captured cells.
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn runif(f: fn(), c: bool) { if c { f() } }
+fn main() { let t = Tx { id: 1 }; runif(|| rollback(t), true) }

@@ -1,0 +1,9 @@
+// Clean twin of the review of the ABC preview (tw/tw_h1.wf): the fact oracle checks the captured cells.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn main() {
+    let v = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; v.push(3) }
+    h()
+    print(v.len())
+}

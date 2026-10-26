@@ -8,9 +8,11 @@
 //! of the parts. Each frame of the entry body of a component has a state,
 //! and so has each frame of a closure body of the component (stage F11: the
 //! closure body is a component of the facts of its function, from its node
-//! `closure entry`). A captured cell of a closure frame is a cell of its
-//! maker: the map names it only through the maker, so a closure frame counts
-//! it as unnamed.
+//! `closure entry`). A captured cell of a closure frame is the cell of
+//! `env.k` (capture `k`), and the targets of the references in it are
+//! `(*env.k)` and below: α of the instantiated closure body names them with
+//! the places of the maker (F12-fix). A move of a whole `ByMove` capture is
+//! a move of its `E` variable.
 //!
 //! - **Trace conformance (A1).** Each op of the IR engine has its IR
 //!   location. When the location of the next op of a frame changes, the
@@ -168,6 +170,9 @@ struct Comp {
     may_abort: Vec<bool>,
     roles: HashMap<VarId, VarRole>,
     s_of: HashMap<LocalId, VarId>,
+    /// The `E` variable of each `ByMove` capture of a closure body, by the
+    /// index of the capture.
+    e_of: HashMap<u32, VarId>,
     /// The variables of each local: `S`, the versions of its parts, and the
     /// `U`, `C`, `W` and `N` variables of its places.
     of_local: HashMap<LocalId, Vec<VarId>>,
@@ -186,15 +191,17 @@ enum Target {
     Elems(CellId),
 }
 
-/// The target of a reference parameter at the entry of a frame.
+/// The target of a reference parameter at the entry of a frame, or a
+/// captured cell of a frame of a closure body.
 #[derive(Clone, Debug)]
 struct Anchor {
     /// The concrete place.
     place: Place,
-    /// The parameter local.
+    /// The parameter local (the environment for a captured cell).
     local: LocalId,
-    /// The index of the parameter.
-    param: u32,
+    /// The index of the parameter. A captured cell has none: α names the
+    /// places of the environment itself.
+    param: Option<u32>,
     /// The projections from the parameter local to the place.
     proj: Vec<Proj>,
 }
@@ -376,6 +383,14 @@ impl Comp {
                 }
             }
         }
+        let mut e_of = HashMap::new();
+        for key in c.emitted.vars.keys() {
+            if let VarKey::E(b, k) = key {
+                if let (true, Some(v)) = (*b == body_id, c.emitted.vars.get(key)) {
+                    e_of.insert(*k, v);
+                }
+            }
+        }
         let mut of_local: HashMap<LocalId, Vec<VarId>> = HashMap::new();
         for key in c.emitted.vars.keys() {
             let local = match key {
@@ -435,6 +450,7 @@ impl Comp {
             may_abort,
             roles,
             s_of,
+            e_of,
             of_local,
             parts: c.emitted.parts.clone(),
             local_roots,
@@ -447,7 +463,13 @@ impl Comp {
     fn node_text(&self, n: NodeId) -> String {
         self.facts.nodes.get(n.index()).map_or_else(
             || format!("{n}"),
-            |i| format!("{n} `{}` ({})", i.label, i.detail),
+            |i| {
+                if i.kind.is_empty() {
+                    format!("{n} `{}` ({})", i.label, i.detail)
+                } else {
+                    format!("{n} `{}` ({}, {})", i.label, i.kind, i.at)
+                }
+            },
         )
     }
 
@@ -581,9 +603,21 @@ impl FactOracle {
             .is_some_and(|l| self.by_body.contains_key(&l.body))
     }
 
-    /// A frame `uid` of `code` starts with the cells `slots`: its state, and
-    /// the targets of the references in its parameters.
-    pub fn enter(&mut self, uid: u64, code: &Code, slots: &[Option<CellId>], heap: &Heap) {
+    /// A frame `uid` of `code` starts with the cells `slots` and the
+    /// captured cells `caps`: its state, the targets of the references in
+    /// its parameters, and the captured cells of a closure body. Capture `k`
+    /// is the cell of `env.k` (`docs/ir.md` 5.1.7: a `Kept` capture shares
+    /// the cell of the variable, a `ByMove` capture has a cell of its own,
+    /// a `ByRef` capture holds a reference to the cell of the variable), and
+    /// the targets of the references in it are `(*env.k)` and below.
+    pub fn enter(
+        &mut self,
+        uid: u64,
+        code: &Code,
+        slots: &[Option<CellId>],
+        caps: &[CellId],
+        heap: &Heap,
+    ) {
         let Some(&ci) = code.locs.first().and_then(|l| self.by_body.get(&l.body)) else {
             return;
         };
@@ -612,9 +646,38 @@ impl FactOracle {
                     anchors.push(Anchor {
                         place,
                         local: l,
-                        param: u32_of(i),
+                        param: Some(u32_of(i)),
                         proj,
                     });
+                }
+            }
+            let env = b.params.first().copied().filter(|&l| {
+                matches!(b.kind, weft_ir::BodyKind::Closure(_))
+                    && b.local(l)
+                        .is_some_and(|d| matches!(d.kind, weft_ir::LocalKind::Env))
+            });
+            if let Some(env) = env {
+                for (k, &cell) in caps.iter().enumerate() {
+                    let field = vec![Proj::Field(FieldIdx(u32_of(k)))];
+                    anchors.push(Anchor {
+                        place: Place::root(cell),
+                        local: env,
+                        param: None,
+                        proj: field.clone(),
+                    });
+                    let Ok(s) = heap.slot(cell) else {
+                        continue;
+                    };
+                    let mut found = Vec::new();
+                    param_targets(heap, &s.val, &mut field.clone(), 0, &mut found);
+                    for (proj, place) in found {
+                        anchors.push(Anchor {
+                            place,
+                            local: env,
+                            param: None,
+                            proj,
+                        });
+                    }
                 }
             }
         }
@@ -912,6 +975,21 @@ impl FactOracle {
             Some(c) => c.group(&fr.cur),
             None => return Ok(()),
         };
+        // The captured cell of each capture of a frame of a closure body.
+        let cap_cells: Vec<(CellId, u32)> = self
+            .frames
+            .get(&uid)
+            .map(|f| {
+                f.anchors
+                    .iter()
+                    .filter(|a| a.param.is_none() && a.place.path.is_empty())
+                    .filter_map(|a| match a.proj.as_slice() {
+                        [Proj::Field(k)] => Some((a.place.cell, k.0)),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         for e in events {
             let (place, kind) = match e {
                 HeapEvent::Read(p) => (p, "read"),
@@ -1004,7 +1082,19 @@ impl FactOracle {
                     names.iter().any(|&q| cs.iter().any(|&m| comp.below(q, m)))
                 }
                 _ => {
-                    let whole = names.iter().any(|&q| comp.facts.place(q).steps.is_empty());
+                    // A move of a whole `ByMove` capture moves its `E`
+                    // variable.
+                    let cap = cap_cells
+                        .iter()
+                        .find(|(c, _)| *c == place.cell && place.path.is_empty())
+                        .and_then(|(_, k)| comp.e_of.get(k));
+                    let cap_moved = cap.is_some_and(|v| {
+                        group
+                            .iter()
+                            .any(|n| comp.moved.get(n.index()).is_some_and(|vs| vs.contains(v)))
+                    });
+                    let whole =
+                        cap_moved || names.iter().any(|&q| comp.facts.place(q).steps.is_empty());
                     let local = cell_local(code, slots, place.cell);
                     let var_moved = local.and_then(|l| comp.s_of.get(&l)).is_some_and(|v| {
                         group
@@ -1139,7 +1229,7 @@ impl FactOracle {
                     let Some(a) = fr.anchors.get(i) else {
                         continue;
                     };
-                    (a.local, Some(a.param), a.proj.clone())
+                    (a.local, a.param, a.proj.clone())
                 }
             };
             full.extend(proj);
@@ -1375,7 +1465,7 @@ fn param_targets(
         Value::Ref(p) => {
             proj.push(Proj::Deref(DerefKind::Ref));
             out.push((proj.clone(), Place::new(p.cell, p.path.clone())));
-            if let Ok(t) = heap.get(&Place::new(p.cell, p.path.clone())) {
+            if let Ok(t) = heap.peek(&Place::new(p.cell, p.path.clone())) {
                 param_targets(heap, t, proj, refs + 1, out);
             }
             proj.pop();
@@ -1488,7 +1578,7 @@ fn locate(
     for (i, a) in anchors.iter().enumerate() {
         if a.place.cell == cell && path.starts_with(&a.place.path) {
             let rest = path.get(a.place.path.len()..).unwrap_or_default();
-            if let Some(p) = heap.get(&a.place).ok().and_then(|v| translate(v, rest)) {
+            if let Some(p) = heap.peek(&a.place).ok().and_then(|v| translate(v, rest)) {
                 out.push((Base::Anchor(i), p));
             }
         }
@@ -1505,7 +1595,7 @@ fn locate(
         }
     }
     for (i, a) in anchors.iter().enumerate() {
-        if let Ok(v) = heap.get(&a.place) {
+        if let Ok(v) = heap.peek(&a.place) {
             roots.push((Base::Anchor(i), v));
         }
     }
