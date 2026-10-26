@@ -184,6 +184,9 @@ struct Comp {
     may_abort: Vec<bool>,
     roles: HashMap<VarId, VarRole>,
     s_of: HashMap<LocalId, VarId>,
+    /// The `S` variable of each local of each body of the component (the
+    /// maker of a closure body names a captured reference with it).
+    s_any: HashMap<(u32, LocalId), VarId>,
     /// The `E` variable of each `ByMove` capture of a closure body, by the
     /// index of the capture.
     e_of: HashMap<u32, VarId>,
@@ -390,8 +393,12 @@ impl Comp {
         }
         let mut roles = HashMap::new();
         let mut s_of = HashMap::new();
+        let mut s_any = HashMap::new();
         for key in c.emitted.vars.keys() {
             if let VarKey::S(b, l) = key {
+                if let Some(v) = c.emitted.vars.get(key) {
+                    s_any.insert((b.0, *l), v);
+                }
                 if *b == body_id {
                     if let Some(v) = c.emitted.vars.get(key) {
                         roles.insert(v, VarRole::Local(*l));
@@ -467,6 +474,7 @@ impl Comp {
             may_abort,
             roles,
             s_of,
+            s_any,
             e_of,
             of_local,
             parts: c.emitted.parts.clone(),
@@ -1366,6 +1374,19 @@ impl FactOracle {
                 .get(body.index())
                 .and_then(|b| b.locals.get(place.local.index()))
                 .map_or_else(String::new, |d| alpha::local_text(&comp.tys, d));
+            // A local of the maker that holds a reference (a capture of a
+            // reference, `through_env`): its target is a place that the
+            // variable of the local points into (gap FO-G1 of the third
+            // review of the ABC preview).
+            let held: Option<Vec<PlaceId>> = match (param, place.proj.first()) {
+                (None, Some(Proj::Deref(DerefKind::Ref))) => comp
+                    .s_any
+                    .get(&(body.0, place.local))
+                    .and_then(|v| comp.points.get(v))
+                    .filter(|ps| !ps.is_empty())
+                    .cloned(),
+                _ => None,
+            };
             let mut derefs = 0u32;
             let mut pointees = |facts: &mut FnFacts,
                                 roots: &mut Roots,
@@ -1373,9 +1394,13 @@ impl FactOracle {
                                 _: Option<(weft_ir::AdtId, u32)>|
              -> Result<Vec<PlaceId>, alpha::AlphaError> {
                 let Some(i) = param else {
-                    return Err(alpha::AlphaError::Later(
-                        "a reference that is not a parameter",
-                    ));
+                    derefs += 1;
+                    return match (&held, derefs) {
+                        (Some(ps), 1) => Ok(ps.clone()),
+                        _ => Err(alpha::AlphaError::Later(
+                            "a reference that is not a parameter",
+                        )),
+                    };
                 };
                 derefs += 1;
                 Ok(vec![if derefs == 1 {
@@ -1453,15 +1478,18 @@ fn coarse(steps: &[weft_facts::Step]) -> Vec<weft_facts::Step> {
         .collect()
 }
 
-/// The place `place` of body `body` with each step through a `ByRef`
-/// capture of a closure body replaced by the source of the capture in the
-/// maker (`(*env.k).f` is `x.f` for a capture of `x`), and the index of the
+/// The place `place` of body `body` with each step through a capture of a
+/// closure body replaced by the source of the capture in the maker
+/// (`(*env.k).f` is `x.f` for a `ByRef` capture of `x`, and `(*x).f` for a
+/// `ByMove` or `Kept` capture of a reference `x`), and the index of the
 /// parameter that the place then starts at, if any.
 ///
 /// A `ByRef` capture holds a reference to the cell of the variable of the
 /// maker, so the target is the current value of the variable (`docs/ir.md`
 /// 6.3). The facts of an instantiated closure body name it with the place
-/// of the variable.
+/// of the variable. A capture that holds a reference names the target of
+/// the reference of the variable ([`FactOracle::name`] follows a local of
+/// the maker through its `points_into` places).
 fn through_env(
     p: &weft_ir::Program,
     mut body: BodyId,
@@ -1482,10 +1510,20 @@ fn through_env(
         let Some(cap) = decl.captures.get(k.0 as usize) else {
             break;
         };
-        if cap.mode != weft_ir::CaptureMode::ByRef {
-            break;
-        }
         let mut proj = cap.source.proj.clone();
+        match cap.mode {
+            // The reference in the environment points into the cell of the
+            // variable: `(*env.k).f` is `x.f`.
+            weft_ir::CaptureMode::ByRef => {}
+            // The capture holds a reference (a copy of it, or the cell of the
+            // variable): `(*env.k).f` is `(*x).f` (gap FO-G1 of the third
+            // review of the ABC preview: `fn go(w: &W) { let f = ||
+            // w.items.push(10); f() }`).
+            weft_ir::CaptureMode::ByMove | weft_ir::CaptureMode::Kept => {
+                proj.push(Proj::Deref(DerefKind::Ref));
+            }
+            _ => break,
+        }
         proj.extend(rest.iter().cloned());
         place = weft_ir::Place {
             local: cap.source.local,

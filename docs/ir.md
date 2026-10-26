@@ -3837,8 +3837,13 @@ table, the roots, the variables, the versions of the parts, the entry node).
   body starts at its `Param` root. Before F12-fix2 such a place had no name: a change
   or a read of a `ByRef` capture in a closure body was not checked (second review of
   the ABC preview, 5; tests `a_missing_*_of_a_borrowed_*` of `fact_oracle.rs`). A
-  reference inside a `ByMove` or `Kept` capture of a closure body still has no name
-  (counted, not checked). The oracle reads the heap with `Heap::peek`: a look at a freed cell does not
+  place behind a reference that a `ByMove` or `Kept` capture holds (`(*env.k).f` for a
+  capture of a reference `x`) is `(*x).f` in the maker (F12-fix3, gap FO-G1 of the third
+  review of the ABC preview: `fn go(w: &W) { let f = || w.items.push(10); f() }` was not
+  checked): a parameter starts at its `Param` root, and a local of the maker names the
+  `points_into` places of its variable (`Comp::s_any`; tests
+  `a_missing_mutates_at_behind_a_captured_reference_*`). A deeper reference with no
+  parameter still has no name (counted, not checked). The oracle reads the heap with `Heap::peek`: a look at a freed cell does not
   flag the memory oracle.
 - C1: at the entry of each node, each reference that a used `S(l)` (the value of `l`
   outside the parts with variables of their own) or a used version of a part holds is

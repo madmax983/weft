@@ -268,6 +268,67 @@ fn a_missing_reads_at_of_a_borrowed_variable_in_a_closure_fails_the_change_cover
     );
 }
 
+/// A closure that changes a place behind a reference that it captures by
+/// value: a reference parameter of the maker (`fo23`), and a local that
+/// holds a reference (`fo15`, `fo21`). The oracle names the place through
+/// the source of the capture (gap FO-G1 of the third review of the ABC
+/// preview: the change was not checked).
+const PARAM_CAPTURED: &str = "struct W { items: Vec<u64> }\n\
+    fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }\n\
+    fn go(w: &W) / mut(w.items) {\n\
+    let f = || w.items.push(10)\n\
+    f()\n\
+    }\n\
+    fn main() {\n\
+    let w = W { items: mk_v() }\n\
+    go(&w)\n\
+    print(w.items.len())\n\
+    }\n";
+
+const LOCAL_REF_CAPTURED: &str = "struct W { items: Vec<u64> }\n\
+    fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }\n\
+    fn main() {\n\
+    let w = W { items: mk_v() }\n\
+    let r = &w\n\
+    let f = || r.items.push(8)\n\
+    f()\n\
+    let q = &w.items\n\
+    let g = || { let h = || q.push(9); h() }\n\
+    g()\n\
+    print(w.items.len())\n\
+    }\n";
+
+/// Removes the `mutates_at` and `lends_mut` facts at the nodes of the
+/// closure bodies for the places at or below variable `root`.
+fn without_changes_of(f: &mut FnFacts, root: &str) {
+    let e = in_closures(f);
+    let keep: Vec<bool> = (0..f.places.len())
+        .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), root))
+        .collect();
+    f.mutates_at
+        .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    f.lends_mut
+        .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+}
+
+#[test]
+fn a_missing_mutates_at_behind_a_captured_reference_parameter_fails_the_change_cover() {
+    let m = broken_abc(PARAM_CAPTURED, |f| without_changes_of(f, "w"));
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_missing_mutates_at_behind_a_captured_reference_local_fails_the_change_cover() {
+    let m = broken_abc(LOCAL_REF_CAPTURED, |f| without_changes_of(f, "w"));
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
 /// The clean twins of the holes of the review of the ABC preview
 /// (`tests/captured_cells/`, closures that keep, borrow or move captures,
 /// in vectors and through calls) that the `ir` pipeline accepts pass with
