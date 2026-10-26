@@ -1,0 +1,51 @@
+// A linear closure in a part of a local, behind a reference, in a `Box` or
+// in an `rc` object (class H-LIN of the review of stage F13): the local, or
+// the handle, holds a linear value. It must run on each path; an overwrite
+// (also in a callee) drops it, and the unwinder drops it with no `on abort`.
+struct K { f: fn() }
+struct Hk { f: fn() }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn risky(n: u64) / fail { if n > 0 { fail("no") } }
+fn run_ref(cb: &K) {
+    let g = cb.f
+    g()
+}
+fn calm(cb: &K) / mut(cb.f) { cb.f = || print(2) }
+fn behind_ref() {
+    let t = begin(1)
+    let cb = K { f: || print(0) }
+    let c = &cb
+    c.f = || rollback(t)
+}   //~ W0601
+fn boxed() {
+    let t = begin(1)
+    let b = Box.new(K { f: || print(0) })
+    b.f = || rollback(t)
+}   //~ W0601
+fn st(h: Rc<Hk>, t: Tx) / mut(Hk) { h.f = || rollback(t) }   //~ W0601
+fn overwritten_by_callee() {
+    let t = begin(1)
+    let cb = K { f: || print(0) }
+    let c = &cb
+    c.f = || rollback(t)
+    calm(&cb)   //~ W0601
+    run_ref(&cb)
+}
+fn across_abort() / fail {
+    let t = begin(1)
+    let cb = K { f: || print(0) }
+    let c = &cb
+    c.f = || rollback(t)
+    risky(1)   //~ W0602
+    run_ref(&cb)
+}
+fn main() {
+    let t = begin(1)
+    let cb = K { f: || print(0) }
+    let c = &cb
+    c.f = || rollback(t)
+    run_ref(&cb)
+}

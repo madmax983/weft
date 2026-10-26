@@ -1,0 +1,22 @@
+// Review of stage F13, class H-RC1: a closure in an rc object keeps a reference into the group and runs after a change of the group (s2d/d04_callee_sets_fn_change_b.wf).
+struct Entity { hp: i32 }
+struct Hook { f: fn(), data: Vec<Entity> }
+fn noop() { print(0) }
+fn newh() -> Rc<Hook> { Rc.new(Hook { f: noop, data: Vec.new() }) }
+fn run_hook(h: Rc<Hook>) {
+    let g = h.f
+    g()
+}
+fn setr(h: Rc<Hook>) / mut(Hook) {
+    h.data.push(Entity { hp: 4 })
+    let r = &h.data[0]
+    h.f = || print(r.hp)
+}
+fn go(h: Rc<Hook>) / mut(Hook) {
+    setr(h.clone())
+    h.data.clear()
+    run_hook(h.clone())
+}
+fn main() / mut(Hook) {
+    go(newh())
+}

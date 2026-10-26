@@ -200,7 +200,7 @@ pub fn summarize(
     // The values that the body puts into the heap slots of interface places
     // (stage F13): the closures there have their effects in the row too.
     for (into, (fns, places, caps)) in
-        stored_parts_of(ir, facts, roots, fv.returns, fv.made, &place, false)
+        stored_parts_of(ir, facts, roots, fv.returns, fv.made, entry, &place, false)
     {
         made_effects(sums, sig, (&fns, &caps), &mut changed);
         if !places.is_empty() {
@@ -401,7 +401,18 @@ fn ret_fns_of(
         .iter()
         .map(|st| (st, st.value((body, b.ret), &[]).flat()))
         .collect();
-    fn_parts_of(ir, &values, made, place)
+    fn_parts_of(ir, &values, made, body, place)
+}
+
+/// The move path of the leading field and variant projections of `proj`.
+fn field_path(proj: &[weft_ir::Proj]) -> Vec<super::PathStep> {
+    proj.iter()
+        .map_while(|p| match p {
+            weft_ir::Proj::Field(f) => Some(super::PathStep::Field(f.0)),
+            weft_ir::Proj::Variant(v) => Some(super::PathStep::Variant(v.0)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The function values `v` of each pair (`st`, `v`) of `values` in the
@@ -412,6 +423,7 @@ fn fn_parts_of(
     ir: &weft_ir::Program,
     values: &[(&super::State, super::AbsVal)],
     made: Option<&super::State>,
+    body: BodyId,
     place: &dyn Fn(PlaceId) -> Option<IPlace>,
 ) -> RetParts {
     use super::summary::RetFn;
@@ -441,7 +453,12 @@ fn fn_parts_of(
                 continue;
             }
             fns.insert(one(&f));
-            let FnVal::Closure(c) = f else {
+            // A closure of the body, or a closure that a closure of the body
+            // made (`let m = || || print(r.hp); m()`): a `Kept` capture
+            // shares a variable of the body through the captures of the
+            // makers, so it holds the value of the variable at the `Return`
+            // (class K3-Made of the review of stage F13).
+            let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
                 continue;
             };
             let Some(decl) = ir.closures.get(c.index()) else {
@@ -454,14 +471,34 @@ fn fn_parts_of(
                 ) {
                     continue;
                 }
-                let Ok(k) = crate::factgen::alpha::owner_local(ir, decl.maker, cap.source.local)
-                else {
-                    fns.insert(RetFn::Unknown);
-                    continue;
+                let shared = (cap.mode == weft_ir::CaptureMode::Kept)
+                    .then(|| super::apply::made_capture_source(ir, c, ki, body))
+                    .flatten();
+                let (k, path) = match shared {
+                    Some(src) => {
+                        let Ok(k) = crate::factgen::alpha::owner_local(ir, body, src.local) else {
+                            fns.insert(RetFn::Unknown);
+                            continue;
+                        };
+                        (k, field_path(&src.proj))
+                    }
+                    // A made closure of another maker holds its environment
+                    // in its value.
+                    None if decl.maker != body && matches!(f, FnVal::Made(_)) => continue,
+                    // A `ByMove` capture: the value where the closure is made.
+                    None => {
+                        let Ok(k) =
+                            crate::factgen::alpha::owner_local(ir, decl.maker, cap.source.local)
+                        else {
+                            fns.insert(RetFn::Unknown);
+                            continue;
+                        };
+                        (k, Vec::new())
+                    }
                 };
-                let mut src = st.value(k, &[]).flat();
+                let mut src = st.value(k, &path).flat();
                 if let Some(m) = made {
-                    src.join(&m.value(k, &[]).flat());
+                    src.join(&m.value(k, &path).flat());
                 }
                 let ps: Vec<IPlace> = src.refs.iter().filter_map(|&q| place(q)).collect();
                 caps.entry((c, u32::try_from(ki).unwrap_or(u32::MAX)))
@@ -485,12 +522,14 @@ fn fn_parts_of(
 /// counts; else only a slot of an `rc` object and a slot with function
 /// values (a function has the part `stores` from its signature for the
 /// other references).
+#[allow(clippy::too_many_arguments)]
 fn stored_parts_of(
     ir: &weft_ir::Program,
     facts: &FnFacts,
     roots: &Roots,
     returns: &[super::State],
     made: Option<&super::State>,
+    body: BodyId,
     place: &dyn Fn(PlaceId) -> Option<IPlace>,
     all: bool,
 ) -> Vec<(IPlace, RetParts)> {
@@ -521,7 +560,7 @@ fn stored_parts_of(
                 (st, v)
             })
             .collect();
-        let parts = fn_parts_of(ir, &values, made, place);
+        let parts = fn_parts_of(ir, &values, made, body, place);
         match out.iter_mut().find(|(k, _)| *k == into) {
             Some((_, have)) => {
                 have.0.extend(parts.0);
@@ -1118,7 +1157,9 @@ pub fn closure(
     out.ret.fns = fns.into_iter().collect();
     // The function values that the body puts into the heap slots of
     // interface places, with the places of their environments (stage F13).
-    for (into, (fs, ps, _)) in stored_parts_of(ir, facts, roots, returns, fv.made, &iface, true) {
+    for (into, (fs, ps, _)) in
+        stored_parts_of(ir, facts, roots, returns, fv.made, body, &iface, true)
+    {
         if !ps.is_empty() {
             puts.entry(into.clone()).or_default().extend(ps);
         }

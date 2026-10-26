@@ -330,4 +330,14 @@ names the class and the review file.
 - `fixes/f13b/ab_rc3/*.wf`: class AB-RC3, a callee reads the references of an `rc`
   object after a change of the group (claim F13B-AB-RC3), clean twins, and the old
   hole `e17` (ledger `open-old`).
-
+- `fixes/f13b/hs1/*.wf`: class H-S1, a made closure (or a closure that captures a
+  reference parameter) in a heap slot of a parameter runs or is read back after a
+  change of its referent (claim F13B-HS1; old holes: ledger `open-old`), and clean
+  twins.
+- `fixes/f13b/hrc1/*.wf`: class H-RC1, a closure in an `rc` object keeps a reference
+  into the group (claim F13B-HRC1; old holes: ledger `open-old`), and clean twins.
+- `fixes/f13b/k3made/*.wf`: class K3-Made, a closure that a closure makes sees the late
+  value of a kept variable (claim F13B-K3MADE), clean twins, and `m01x` (an F13-fix
+  variant: the late value is a place of a parameter that `main` clears).
+- `fixes/f13b/hlin/*.wf`: class H-LIN, a linear closure in a part of a local, behind
+  a reference, in a `Box` or in an `rc` object (claim F13B-HLIN).

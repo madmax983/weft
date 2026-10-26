@@ -1,0 +1,83 @@
+// A closure in a heap slot reads the references of its environment where it
+// runs (classes H-S1 and H-RC1 of the review of stage F13). A run of the slot
+// in a callee, a read back of the slot, and a copy of the closure out of an
+// `rc` object use the variables of the slot, so a change of the referent
+// before them is W0301.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+struct Hook { f: fn(), data: Vec<Entity> }
+fn noop() { print(0) }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn newh() -> Rc<Hook> { Rc.new(Hook { f: noop, data: Vec.new() }) }
+fn run_ref(cb: &Cb) {
+    let g = cb.f
+    g()
+}
+fn run_hook(h: Rc<Hook>) {
+    let g = h.f
+    g()
+}
+fn mk(r: &Entity) -> fn() { || print(r.hp) }
+// H-S1: a made closure in a slot of a parameter, run by a callee.
+fn made_run_by_callee(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    let g = mk(&world.entities[0])
+    cb.f = g
+    world.entities.clear()
+    run_ref(cb)   //~ W0301
+}
+// H-S1: the same, read back from the slot.
+fn made_read_back(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    cb.f = mk(&world.entities[0])
+    world.entities.clear()
+    let g = cb.f   //~ W0301
+    g()
+}
+fn made_clean(world: &World, cb: &Cb) / mut(cb.f) {
+    cb.f = mk(&world.entities[0])
+    run_ref(cb)
+}
+fn setr(h: Rc<Hook>) / mut(Hook) {
+    h.data.push(Entity { hp: 4 })
+    let r = &h.data[0]
+    h.f = || print(r.hp)
+}
+// H-RC1: a closure in an `rc` object keeps a reference into the group.
+fn rc_change_run() / mut(Hook) {
+    let h = newh()
+    setr(h.clone())
+    h.data.clear()
+    run_hook(h.clone())   //~ W0301
+}
+fn rc_read_back() / mut(Hook) {
+    let h = newh()
+    setr(h.clone())
+    h.data.clear()
+    let g = h.f   //~ W0301
+    g()
+}
+// H-RC1: a copy of the closure out of another object, then a new value of
+// the handle of that object.
+fn rc_other_object() / mut(Hook) {
+    let h = newh()
+    let d = newh()
+    setr(d.clone())
+    h.f = d.f   //~ W0204
+    d = newh()
+    run_hook(h.clone())   //~ W0301
+}
+fn rc_clean() / mut(Hook) {
+    let h = newh()
+    setr(h.clone())
+    run_hook(h.clone())
+}
+fn main() / mut(Hook) {
+    let w = mkw(1)
+    let cb = Cb { f: noop }
+    made_clean(&w, &cb)
+    rc_clean()
+}

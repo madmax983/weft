@@ -439,7 +439,22 @@ pub fn place_value(
                 v.fns.extend(by_handle.iter().cloned());
                 let slot = stored_fns_at(cx.facts, st, at);
                 if !props.holds_refs && has_closure(&slot) {
-                    v.refs.extend(stored_at(cx.facts, st, at));
+                    let stored = stored_at(cx.facts, st, at);
+                    // A closure in an `rc` object that points into the group
+                    // can point into the object itself: the copy depends on
+                    // the handles on the way, as a reference through them
+                    // (class H-RC1 of the review of stage F13: `h.f = d.f;
+                    // d = newh()` frees the object that the closure reads).
+                    let into_group = stored.iter().any(|r| {
+                        cx.facts
+                            .places
+                            .get(r.index())
+                            .is_some_and(|i| matches!(cx.roots.role(i.root), Some(Role::Group)))
+                    });
+                    if into_group {
+                        v.refs.extend(a.handles.iter().copied());
+                    }
+                    v.refs.extend(stored);
                 }
                 v.fns.extend(slot);
                 continue;
@@ -1455,6 +1470,11 @@ pub struct Applied {
     /// The function values that the run puts into places of the caller
     /// (part `put_fns`, stage F13). Their references are in `stores`.
     pub put_fns: Vec<(PlaceId, BTreeSet<FnVal>)>,
+    /// The places that code of a caller can read and that the body can
+    /// name: the places behind the parameters of the body and the `rc`
+    /// groups that their types reach (`reads_at` at the node; the summary
+    /// oracle found them, `docs/ir.md` 8.5).
+    pub reads: Vec<PlaceId>,
 }
 
 /// What a `Call` of a function value gives: the summaries that it applies
@@ -2261,6 +2281,40 @@ fn apply_runs(
     Ok(())
 }
 
+/// The places that code of a caller can read and that body `body` can
+/// name: the wildcard place of the interface root of each parameter (what
+/// the parameter points into, and what the references behind it point
+/// into), and the wildcard place of each `rc` group that a parameter type
+/// reaches. A function value of a caller can point into each of them (the
+/// four summary-oracle rows of stage F12-fix3, and FO-A3b of the review of
+/// stage F13: `let g = h.f; g()` reads `Hook.data[]`).
+///
+/// # Errors
+///
+/// The errors of α.
+fn caller_reads(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>, AlphaError> {
+    let mut out = super::unknown::param_places(cx, body)?;
+    let tys: Vec<TyId> =
+        cx.p.bodies
+            .get(body.index())
+            .map(|b| {
+                b.params
+                    .iter()
+                    .filter_map(|l| b.locals.get(l.index()).map(|d| d.ty))
+                    .collect()
+            })
+            .unwrap_or_default();
+    for t in tys {
+        for inner in rc_inners(cx.tys, t) {
+            let g = cx.roots.group(cx.tys, cx.facts, inner);
+            out.push(cx.facts.wildcard(g));
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// Applies the function value `fv` at the run node `r`: its summary, and the
 /// summary of each value that it runs, at depth `depth`. `callee` is the
 /// operand of the value; `ret_ty` is the type of the result of a value of
@@ -2424,6 +2478,7 @@ fn apply_value(
                 code: true,
                 lends: env,
                 put_fns: Vec::new(),
+                reads: caller_reads(cx, body)?,
             });
             let places = match given {
                 Given::Args(args) => {
@@ -2542,6 +2597,7 @@ fn apply_value(
                 code: false,
                 lends: Vec::new(),
                 put_fns,
+                reads: Vec::new(),
             });
             apply_runs(
                 cx,
@@ -2706,6 +2762,7 @@ fn apply_value(
                 code: false,
                 lends: Vec::new(),
                 put_fns,
+                reads: Vec::new(),
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: they apply as values of the callee. A capture

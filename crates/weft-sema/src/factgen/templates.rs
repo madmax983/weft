@@ -772,14 +772,17 @@ pub(super) fn once_read(em: &mut Em<'_>, st: &State, q: &Place) -> Result<bool, 
 /// A read of the value at `q` through a pointer that copies references out
 /// of a place of another local, or a borrow of such a place (R3RT2,
 /// `docs/ir.md` 5.13): the access uses the variables of the move paths that
-/// own the places, as an access of the local itself does.
+/// own the places, as an access of the local itself does. A function value
+/// carries the references of its environment, so a copy of one is a copy of
+/// references too: a read back of a closure from a heap slot (`let g = cb.f`)
+/// uses the slot (classes H-S1 and H-RC1 of the review of stage F13).
 fn copied_refs(em: &mut Em<'_>, q: &Place, al: &Alpha, a: &mut Access) -> R {
     if !q.has_deref() {
         return Ok(());
     }
     let holds = em
         .place_ty(q)
-        .is_some_and(|t| ir_props(em.tys, t).holds_refs);
+        .is_some_and(|t| ir_props(em.tys, t).holds_refs || crate::props::ir_has_fns(em.tys, t));
     if !holds {
         return Ok(());
     }
@@ -1144,7 +1147,8 @@ fn relocate(
 /// The destination of an `Assign` is the whole local with key `k`.
 fn whole(em: &mut Em<'_>, n: NodeId, st: &State, k: Key, v: &Tree) {
     let flat = v.flat();
-    mark_fn_linear(em, k, &flat);
+    let inside = v.kids.values().any(|t| t.flat().linear);
+    mark_fn_linear_in(em, k, &flat, inside);
     let s = em.s_var(k);
     if let Some(s) = s {
         em.facts.rebound_at.push((s, n));
@@ -1220,6 +1224,10 @@ fn part(
         .map(|(_, v)| v)
         .or(s);
     em.give_value(n, k, path, v, above);
+    // A linear closure in a part of the local (`cb.f = || rollback(t)`):
+    // the local holds a linear value (class H-LIN of the review of stage
+    // F13).
+    mark_fn_linear_in(em, k, &v.flat(), true);
     let al = em.alpha(st, place)?;
     em.facts
         .mutates_at
@@ -1257,12 +1265,19 @@ fn element(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
     if let Some(h) = holder {
         em.hold(Some(n), h, &refs);
     }
+    mark_fn_linear_in(em, k, &v.flat(), true);
     if let (Some(s), Some(t)) = (s, em.place_ty(place)) {
         if ir_props(em.tys, t).linear {
             em.facts.overwrites.push((s, n));
         }
     }
     Ok(())
+}
+
+/// True if the type of `place` can hold a function value.
+fn place_has_fns(em: &mut Em<'_>, place: &Place) -> bool {
+    let t = em.place_ty(place);
+    t.is_some_and(|t| crate::props::ir_has_fns(em.tys, t))
 }
 
 /// The destination of an `Assign` goes through a reference.
@@ -1318,6 +1333,44 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
     };
     let f = kernel::write_through(&a, via.as_ref().map(|(s, r)| (*s, r.as_slice())), &below);
     em.apply(n, f);
+    // A linear closure through a pointer (`c.f = || rollback(t)` with
+    // `c = &cb`, a `Box`, an `rc` object): the local that owns the place, or
+    // the local of each handle on the way, holds a linear value (class H-LIN
+    // of the review of stage F13). A place of a caller gets it from the part
+    // `put_fns` ([`put_linear`]).
+    // The store gives the local a new linear value (`overwrites`): it is
+    // live after the node, and a linear value there before is overwritten.
+    // A store of another value over a linear closure overwrites it too.
+    let flat = v.flat();
+    let fns = place_has_fns(em, place);
+    let mut keys: Vec<Key> = Vec::new();
+    for &q in &al.places {
+        if let Some((k, path)) = em.roots.path_of(em.facts, q) {
+            let before = st.value(k, &path).flat();
+            if fns && (flat.linear || before.linear) {
+                keys.push(k);
+            }
+        }
+    }
+    if fns && flat.linear {
+        keys.extend(
+            al.handles
+                .iter()
+                .filter_map(|&h| whole_or_local_handle(em, h)),
+        );
+    }
+    keys.sort();
+    keys.dedup();
+    for k in keys {
+        let mut lin = flat.clone();
+        lin.linear = true;
+        mark_fn_linear_in(em, k, &lin, true);
+        if let Some(s) = em.s_var(k) {
+            if em.facts.var(s).linear {
+                em.facts.overwrites.push((s, n));
+            }
+        }
+    }
     // A store of a reference into a local through a pointer: a weak
     // definition of the variable of the place (no `rebound_at`).
     let refs: Vec<PlaceId> = v.flat().refs.into_iter().collect();
@@ -2813,6 +2866,10 @@ fn emit_apps(
                 kind,
             )?;
             slot_reads(em, n, read);
+            // Code of a caller reads the places behind the parameters of the
+            // body and the `rc` groups that they reach (no slot use: the
+            // caller applies the value that it gives).
+            em.facts.reads_at.extend(app.reads.iter().map(|&q| (n, q)));
             let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
             fn_linear_args(em, st, args, &places)?;
             put_linear(em, &app.put_fns);
@@ -3582,6 +3639,16 @@ fn linear_fn_captures(em: &mut Em<'_>, st: &State, c: weft_ir::ClosureId, ops: &
 /// not by its type, so its variable `S` gets the flags `linear` and
 /// `has_on_abort` (W0601 at its end, W0602 across an abort).
 fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
+    mark_fn_linear_in(em, k, v, false);
+}
+
+/// [`mark_fn_linear`] for a linear closure that can be `inside` a part of
+/// the value (a field, an element, a payload: `cb.f = || rollback(t)`). The
+/// unwinder drops the value of the local, and the drop of an aggregate does
+/// not run the `on abort` functions of the captures of a closure in it, so
+/// the variable gets no `has_on_abort` (W0602 across an abort; class H-LIN
+/// of the review of stage F13).
+fn mark_fn_linear_in(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal, inside: bool) {
     if !v.linear {
         return;
     }
@@ -3596,7 +3663,7 @@ fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
     if !fnty {
         return;
     }
-    let on_abort = closure_on_abort(em, v);
+    let on_abort = !inside && closure_on_abort(em, v);
     let Some(var) = em.s_var(k) else {
         return;
     };
@@ -3705,10 +3772,15 @@ fn gets_linear(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId]) {
 
 /// [`gets_linear`] for each local but the locals `but`.
 fn gets_linear_but(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId], but: &[Key]) {
-    let keys: Vec<Key> = transfer::can_get_linear(&em.cx(), changed)
-        .into_iter()
-        .map(|(k, _)| k)
+    let paths = transfer::can_get_linear(&em.cx(), changed);
+    // The locals with a changed place of a function type (`cb.f`): a callee
+    // that changes it puts another value there.
+    let fn_slots: Vec<Key> = paths
+        .iter()
+        .filter(|(k, path)| fn_typed(em, *k, path))
+        .map(|(k, _)| *k)
         .collect();
+    let keys: Vec<Key> = paths.into_iter().map(|(k, _)| k).collect();
     let mut done: Vec<Key> = but.to_vec();
     for k in keys {
         if done.contains(&k) {
@@ -3729,13 +3801,43 @@ fn gets_linear_but(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId], 
                         && !crate::props::ir_maybe_linear(em.tys, d.ty)
                 });
         let first_run = fn_part && em.cycles.has(em.body, em.at.0);
-        if !st.value(k, &[]).flat().empty && !first_run {
+        // A linear closure in a part of the local with a function type that
+        // the node changes: the callee can put another value there and drop
+        // the closure (`calm(&cb)` with `cb.f = || print(2)`, class H-LIN of
+        // the review of stage F13). A change of a container (`ks.pop()`) is
+        // no overwrite.
+        let before = st.value(k, &[]).flat();
+        if fn_slots.contains(&k) && before.linear && !before.empty {
+            if let Some(v) = em.s_var(k) {
+                if em.facts.var(v).linear {
+                    em.facts.overwrites.push((v, n));
+                }
+            }
+            continue;
+        }
+        if !before.empty && !first_run {
             continue;
         }
         if let Some(v) = em.s_var(k) {
             em.facts.overwrites.push((v, n));
         }
     }
+}
+
+/// True if the part `path` of the local with key `k` has a function type.
+fn fn_typed(em: &mut Em<'_>, k: Key, path: &[crate::analysis::PathStep]) -> bool {
+    if k.0 != em.body {
+        return false;
+    }
+    let proj: Vec<Proj> = path
+        .iter()
+        .map(|s| match s {
+            crate::analysis::PathStep::Field(i) => Proj::Field(weft_ir::FieldIdx(*i)),
+            crate::analysis::PathStep::Variant(v) => Proj::Variant(weft_ir::VariantIdx(*v)),
+        })
+        .collect();
+    let t = em.place_ty(&Place { local: k.1, proj });
+    t.is_some_and(|t| matches!(em.tys.try_get(t), Some(Ty::Fn(..))))
 }
 
 /// The callee (or the clause) holds each reference argument until it

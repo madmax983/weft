@@ -1,0 +1,45 @@
+// Review of stage F13, class H-S1: a made closure (or a closure that captures a reference parameter) in a heap slot of a parameter runs after a change of the referent (s1c/s1c_05_item_maker_readback_c.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+struct Cw { f: fn(&World) }
+struct Slot { o: Option<fn()> }
+struct Fs { fs: Vec<fn()> }
+fn noop() { print(0) }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn run_ref(cb: &Cb) {
+    let g = cb.f
+    g()
+}
+fn run_slot(s: &Slot) {
+    let o = s.o
+    match o {
+        Some(f) => f(),
+        None => {}
+    }
+}
+fn run_all(fs: &Vec<fn()>) {
+    let i = 0
+    while i < fs.len() {
+        let f = fs[i]
+        f()
+        i += 1
+    }
+}
+fn mk(r: &Entity) -> fn() { || print(r.hp) }
+
+fn bad(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    cb.f = mk(&world.entities[0])
+    print(world.entities.len())
+    let g = cb.f
+    g()
+}
+fn main() {
+    let w = mkw(1)
+    let cb = Cb { f: noop }
+    bad(&w, &cb)
+}

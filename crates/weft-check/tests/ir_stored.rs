@@ -194,3 +194,29 @@ fn a_callee_that_reads_the_references_of_an_rc_object_after_a_change_is_w0301() 
     // pipelines accepted the callee forms).
     check_ab("rc_callee_reads.wf");
 }
+
+#[test]
+fn a_closure_in_a_heap_slot_reads_the_slot_where_it_runs_or_is_read_back() {
+    // Classes H-S1 and H-RC1 of the review of stage F13 (groups A, B and C):
+    // a made closure in a slot of a parameter, a closure in an `rc` object
+    // that keeps a reference into the group, a read back of the slot, and a
+    // copy out of another object whose handle gets a new value. Before the
+    // fix ABC accepted each faulting function.
+    check("slot_reads.wf");
+}
+
+#[test]
+fn a_closure_that_a_closure_makes_sees_the_last_value_of_a_kept_variable() {
+    // Class K3-Made of the review of stage F13: `let m = || || print(r.hp);
+    // let g = m()`, then a new value of `r`. The result points into the
+    // late value too (`made_ret_param`: W0301 in `main`).
+    check("kept_made.wf");
+}
+
+#[test]
+fn a_linear_closure_in_a_part_or_behind_a_reference_is_a_linear_value_of_the_owner() {
+    // Class H-LIN of the review of stage F13: a linear closure stored through
+    // a reference, in a `Box` or in an `rc` object, overwritten by a callee,
+    // or live across an abort.
+    check("linear_slots.wf");
+}

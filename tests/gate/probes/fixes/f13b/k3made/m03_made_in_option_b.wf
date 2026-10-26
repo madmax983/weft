@@ -1,0 +1,25 @@
+// Review of stage F13, class K3-Made: a closure that a closure makes leaves the body and sees the late value of a kept variable (s3b/m03_made_in_option_b.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Holder { f: fn() }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn mk(a: &World, b: &World, c: bool) -> Option<fn()> {
+    let r = &a.entities[0]
+    let m = || || print(r.hp)
+    let g = m()
+    let w = mkw(3)
+    r = &w.entities[0]
+    Some(g)
+}
+fn main() {
+    let a = mkw(1)
+    let b = mkw(2)
+    match mk(&a, &b, true) {
+        Some(f) => f(),
+        None => {}
+    }
+}

@@ -4524,3 +4524,163 @@ repro = [
     "tests/gate/probes/fixes/f13b/ab_rc3/e13_callee_fill_direct_change_callee_read_c.wf",
 ]
 note = "the clean twins of AB-RC3 that change no referent before the read"
+
+[[claim]]
+finding = "F13B-HS1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hs1/c03_callee_stores_ro_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c04_made_ro_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c05_nested_store_ro_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_08_callee_maker_stores_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_09_nested_maker_stores_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_10_nested_param_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_02_item_maker_via_local_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_04_item_maker_keep_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_05_item_maker_readback_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_09_param_closure_stores_param_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_10_fn_stores_param_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_11_fn_stores_maker_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_12_ref_local_then_store_maker_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_14_closure_maker_b.wf",
+]
+code = "W0301"
+note = "a made closure (or a closure that captures a reference parameter) in a heap slot of a parameter runs, or is read back, after a change of its referent: the run node uses the variables of the slot (class H-S1 of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-HS1"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hs1/c03_callee_stores_ro_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c04_made_ro_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c05_nested_store_ro_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_08_callee_maker_stores_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_09_nested_maker_stores_ref_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_10_nested_param_ref_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_02_item_maker_via_local_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_04_item_maker_keep_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_05_item_maker_readback_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_09_param_closure_stores_param_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_10_fn_stores_param_closure_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_11_fn_stores_maker_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_12_ref_local_then_store_maker_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_14_closure_maker_c.wf",
+]
+note = "the clean twins of H-S1"
+
+[[claim]]
+finding = "F13B-HRC1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hrc1/d04_callee_sets_fn_change_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g02_self_ref_closure_change_run_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g04_self_ref_readback_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g05_self_ref_two_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g06_self_ref_vec_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g07_self_ref_closure_in_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g08_self_ref_other_object_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g09_self_ref_drop_last_handle_b.wf",
+]
+code = "W0301"
+note = "a closure in an `rc` object keeps a reference into the group and runs (or is read back) after a change of the group or of the handle of its object (class H-RC1 of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-HRC1"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hrc1/d04_callee_sets_fn_change_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g02_self_ref_closure_change_run_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g04_self_ref_readback_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g05_self_ref_two_handles_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g06_self_ref_vec_handles_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g07_self_ref_closure_in_closure_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g09_self_ref_drop_last_handle_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g01_self_ref_closure_run.wf",
+]
+note = "the clean twins of H-RC1"
+
+[[claim]]
+finding = "F13B-K3MADE"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/k3made/k06_closure_returns_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/k14_projection_source_byref_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m01_maker_with_param_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m02_made_into_slot_then_rebind_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m03_made_in_option_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m04_maker_in_loop_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m05_three_levels_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m06_made_into_vec_param_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m07_made_return_direct_call_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m10_made_rebind_some_path_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m01x_param_late_value_clear.wf",
+]
+note = "a closure that a closure makes leaves the body and sees the late value of a kept variable (class K3-Made of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-K3MADE"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/k3made/k06_closure_returns_closure_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/k14_projection_source_byref_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m01_maker_with_param_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m02_made_into_slot_then_rebind_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m03_made_in_option_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m04_maker_in_loop_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m05_three_levels_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m06_made_into_vec_param_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m07_made_return_direct_call_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m10_made_rebind_some_path_c.wf",
+]
+note = "the clean twins of K3-Made"
+
+[[claim]]
+finding = "F13B-HLIN"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hlin/f6_01_linear_closure_into_slot_never_run.wf",
+    "tests/gate/probes/fixes/f13b/hlin/f6_03_linear_closure_slot_overwritten.wf",
+    "tests/gate/probes/fixes/f13b/hlin/f6_04_linear_callee_stores_one_path.wf",
+    "tests/gate/probes/fixes/f13b/hlin/f7_03_slot_linear_capture_fail.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l02_behind_ref_never_run_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l03_param_slot_store_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l04_vec_behind_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l06_box_slot_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l07_rc_slot_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l08_overwrite_in_callee_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l11_loop_store_each_iter_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l12_stored_in_closure_b.wf",
+]
+note = "a linear closure in a part of a local, behind a reference, in a `Box` or in an `rc` object is never run, is overwritten, or is live across an abort (class H-LIN of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-HLIN"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hlin/l02_behind_ref_never_run_c.wf",
+]
+note = "the clean twin of H-LIN"

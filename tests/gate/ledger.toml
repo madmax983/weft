@@ -1826,3 +1826,99 @@ files = ["tests/gate/probes/fixes/f13b/ab_rc3/e17_read_in_param_fn_b.wf"]
 finding = "F13B-AB-RC3"
 reason = "old hole AB-RC3 (review of stage F13): the caller puts a reference into an `rc` object (`fill_self`), then a callee changes the group and reads the reference (`use_it`: `grow`, then `read0`). The callee has no heap slot of its own for the references that the object holds at its entry (they point into the wildcard place of the group), so no variable gets invalid. Both pipelines miss it"
 stage = "F13"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f13b/hrc1/d04_callee_sets_fn_change_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g02_self_ref_closure_change_run_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g04_self_ref_readback_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g05_self_ref_two_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g06_self_ref_vec_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g07_self_ref_closure_in_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g08_self_ref_other_object_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g09_self_ref_drop_last_handle_b.wf",
+]
+finding = "F13B-HRC1"
+reason = "old holes H-RC1 (review of stage F13): a callee stores into an `rc` object a closure that keeps a reference into the group; the group changes (or the handle of the object gets a new value), and a run of the closure reads the old referent. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC (F13-fix) the run node uses the variables of the heap slot (`templates::slot_reads`), a read back copies the references of the closure (`copied_refs`), and a copy out of an `rc` object depends on the handle: W0301. Drop this entry when group C is on (F13)"
+stage = "F13"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f13b/hs1/c03_callee_stores_ro_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_10_nested_param_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_09_param_closure_stores_param_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_10_fn_stores_param_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_11_fn_stores_maker_b.wf",
+]
+finding = "F13B-HS1"
+reason = "old holes H-S1 (review of stage F13): a closure that captures a reference parameter (or that a maker gives) goes into a heap slot of a parameter through a callee; the referent changes, and a run of the slot reads it. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC (F13-fix) the run node uses the variables of the slot: W0301. Drop this entry when group C is on (F13)"
+stage = "F13"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f13b/k3made/m03_made_in_option_b.wf"]
+finding = "F13B-K3MADE"
+reason = "old hole K3-Made (review of stage F13): a closure that a closure makes goes into an `Option` result; the variable that it keeps gets a reference into a local later. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC (F13-fix) the result sees the late value of the variable (`summarize::fn_parts_of`, `kept_escapes`): W0204. Drop this entry when group C is on (F13)"
+stage = "F13"
+
+# F13-fix: the rows of the ABC classes of the review of stage F13 (`--groups
+# ABC`; group C goes on at F13 after its review).
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f13b/hlin/f6_01_linear_closure_into_slot_never_run.wf",
+    "tests/gate/probes/fixes/f13b/hlin/f6_03_linear_closure_slot_overwritten.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l02_behind_ref_never_run_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l06_box_slot_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l08_overwrite_in_callee_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l12_stored_in_closure_b.wf",
+]
+codes = ["W0601"]
+reason = "class H-LIN (F13-fix): the old pipeline reports a linear closure that goes into a part or behind a reference at the closure literal (\"it can go out of scope without a call\"); the ir pipeline makes the local that owns the place linear and reports its end, or the overwrite (`templates::mark_fn_linear_in`, `gets_linear_but`)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f13b/hlin/f6_04_linear_callee_stores_one_path.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l03_param_slot_store_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l04_vec_behind_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l07_rc_slot_b.wf",
+]
+codes = ["W0204", "W0601"]
+reason = "class H-LIN (F13-fix): a callee puts a closure that moves its by-value linear parameter `t` into a place of the caller. The old pipeline gives W0204 (\"puts a closure that captures `t`\") and W0601 at the literal; the closure moves `t`, so it holds no reference into the parameter: the ir pipeline gives W0601 only, at the end of the local of the caller that gets the closure (or of the handle)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/f13b/hlin/l11_loop_store_each_iter_b.wf"]
+codes = ["W0601"]
+reason = "class H-LIN (F13-fix): a loop stores a new linear closure through a reference in each iteration. The old pipeline gives three W0601 at the literal; the ir pipeline gives W0601 for the overwrite in the next iteration and for the end of the local"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/f13b/hlin/f7_03_slot_linear_capture_fail.wf"]
+codes = ["W0601", "W0602"]
+reason = "class H-LIN (F13-fix): a linear closure in a part of a local is live across a call that can abort. The old pipeline gives W0601 at the literal; the ir pipeline gives W0602 at the call: the drop of the aggregate does not run the `on abort` of the captures (the run leaks the value), so the local has no `has_on_abort`"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/f13b/hs1/s1c_05_item_maker_readback_b.wf"]
+codes = ["W0301"]
+reason = "class H-S1 (F13-fix): a made closure in a slot is read back after a change of its referent. The ir pipeline reports the read back (`let g = cb.f`: a copy of a function value copies the references of its environment); the old pipeline reports the run of `g` one line later"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f13b/k3made/m02_made_into_slot_then_rebind_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m06_made_into_vec_param_b.wf",
+]
+codes = ["W0204"]
+reason = "class K3-Made (F13-fix): a closure that a closure makes goes into a slot of a parameter, then the kept variable gets a reference into a local. The ir pipeline reports the store (the closure that the callee gets, `kept_escapes`); the old pipeline reports the next line"
+stage = "F13"

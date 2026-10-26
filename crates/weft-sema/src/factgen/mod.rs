@@ -1292,20 +1292,41 @@ fn kept_escapes(
                 if !done.insert(f.clone()) {
                     continue;
                 }
-                let FnVal::Closure(c) = f else {
+                // A closure of the component, or a closure that a closure of
+                // the component made (class K3-Made of the review of stage
+                // F13: `let m = || || print(r.hp); let g = m()`).
+                let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
                     continue;
                 };
                 let Some(decl) = p.closures.get(c.index()) else {
                     continue;
                 };
-                for cap in &decl.captures {
-                    if cap.mode != weft_ir::CaptureMode::Kept || !cap.source.proj.is_empty() {
+                for (j, cap) in decl.captures.iter().enumerate() {
+                    if cap.mode != weft_ir::CaptureMode::Kept {
                         continue;
                     }
-                    let Ok(k) = alpha::owner_local(p, decl.maker, cap.source.local) else {
+                    // The variable of the entry body that the capture shares,
+                    // through the `Kept` and `ByRef` captures of the makers (a
+                    // capture of a capture, `env.j`, has a projection).
+                    let Some(src) = crate::analysis::apply::made_capture_source(p, c, j, entry)
+                    else {
                         continue;
                     };
-                    let src = st.value(k, &[]).flat();
+                    let Ok(k) = alpha::owner_local(p, entry, src.local) else {
+                        continue;
+                    };
+                    let path: Vec<crate::analysis::PathStep> = src
+                        .proj
+                        .iter()
+                        .map_while(|pr| match pr {
+                            weft_ir::Proj::Field(f) => Some(crate::analysis::PathStep::Field(f.0)),
+                            weft_ir::Proj::Variant(v) => {
+                                Some(crate::analysis::PathStep::Variant(v.0))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let src = st.value(k, &path).flat();
                     work.extend(src.fns.iter().cloned());
                     for &r in &src.refs {
                         let Some(root) = facts.places.get(r.index()).map(|i| i.root) else {

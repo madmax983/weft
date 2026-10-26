@@ -115,7 +115,7 @@ pub fn op_of_caller(
 /// reference parameter, the pointees of the references of a by-value
 /// parameter, and the pointees of the references behind a reference
 /// parameter.
-fn param_places(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>, AlphaError> {
+pub(super) fn param_places(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>, AlphaError> {
     let p = cx.p;
     let b = p
         .bodies

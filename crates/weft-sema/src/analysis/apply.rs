@@ -560,7 +560,7 @@ pub fn made_sigma(
 /// through the `Kept` and `ByRef` captures of the makers of `c` (`env.j`
 /// of a `Kept` capture, `(*env.j)` of a `ByRef` capture). A `ByMove` capture
 /// on the way is a value of a closure, not a variable: `None`.
-fn made_capture_source(
+pub(crate) fn made_capture_source(
     p: &weft_ir::Program,
     c: weft_ir::ClosureId,
     k: usize,

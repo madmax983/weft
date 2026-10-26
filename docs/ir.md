@@ -2706,6 +2706,23 @@ program stayed with the old pipeline ("a function value stored behind a referenc
   `tests/gate/probes/fixes/f13b/ab_rc3/e17_read_in_param_fn_b.wf`): the body has no heap
   slot of its own for the references that the object holds at its entry (both pipelines
   miss it; ledger `open-old`).
+- A copy of a function value through a pointer is a copy of the references of its
+  environment (`templates::copied_refs`; F13-fix, classes H-S1 and H-RC1): a read back of a
+  closure from a heap slot (`let g = cb.f`, `let g = h.f`) uses the variables of the slot.
+  A closure that an `rc` object holds and that points into the group can point into the
+  object itself, so a copy of it out of the object depends on the handles on the way
+  (`transfer::place_value`): `h.f = d.f; d = newh(); run_hook(h)` and a block value `d.f`
+  after the end of `d` are W0301.
+- A linear closure in a part of a local (`cb.f = || rollback(t)`), through a pointer, in a
+  `Box`, or through an `rc` handle makes the local (or the local of the handle) linear
+  (`templates::mark_fn_linear_in`; F13-fix, class H-LIN). The store gives `overwrites` of
+  the variable, so a linear value there before is overwritten. The drop of an aggregate
+  does not run the `on abort` functions of the captures of a closure in it, so such a
+  variable has no `has_on_abort` (W0602 across an abort; the interpreter leaks the value).
+  A callee that changes a part of a function type of a local that holds a linear closure
+  (`calm(&cb)` with `cb.f = || print(2)`) overwrites it; a change of a container
+  (`ks.pop()`) does not. This is as strict as the old pipeline, which rejects each such
+  store at the closure ("it can go out of scope without a call").
 
 **The post-passes of today**, and where each one goes:
 
@@ -3012,7 +3029,12 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   `Caller..`, and can be each function value of the arguments and the value of the parameter
   again; it can abort (`raises`), and it is `multi` if an effect of the row of its type has a
   `multi` operation (with no row: an effect of the program). It runs each function value that its
-  arguments reach, more than once.
+  arguments reach, more than once. As built (F13-fix): it also reads (`reads_at`, no `lends_mut`) the wildcard
+  places of the parameters of the body and of the `rc` groups that their types reach
+  (`transfer::caller_reads`): the value of a caller can point there, and the summary oracle
+  found the reads (`let g = h.f; g()` reads `Hook.data[]`). A change there through the value
+  is not in the facts of the body: the caller applies the value that it gives, and its W0312
+  check rejects a value that changes a place of another argument (map N2).
 - Part `runs`: each run node of a `Param(i)` or `Capture(k)` value records a run with the places of
   its arguments (`transfer::RunOf`); `many` for two run nodes, a node in a cycle, or a run again.
   At a call of an item or a closure, `apply_runs` applies each value that the argument (or the
@@ -3330,6 +3352,16 @@ each variable that it keeps at the `Return`, and a reference there into a local 
 closure keeps the references of the variable where the closure is made only (class K3 of
 stage F12), so the facts alone did not see `r = &w.entities[0]` after `let f = || print(r.hp)`
 (`fixes/f13/kept_rebind_ret.wf`, a hole of ABC before F13).
+
+As built (F13-fix, class K3-Made of the review of stage F13): the check and the summary
+part `ret` follow a closure that a closure of the body makes (`FnVal::Made`) and a capture
+of a capture (`env.j`): `apply::made_capture_source` gives the variable of the body that the
+capture shares through the `Kept` and `ByRef` captures of the makers, and its value at the
+`Return` counts (`kept_escapes`, `summarize::fn_parts_of`). So `let m = || || print(r.hp);
+let g = m(); r = &w.entities[0]; g` is W0204, and with `r = &b.entities[0]` (a parameter) the
+result points into `b.entities[]` too: a caller that clears `b` before the run is W0301
+(the run of the result read the late value, and the summary oracle failed on the clean
+twins).
 
 As built (plan stage F8a): `_0` has the variable kind `Result` (`weft-facts`), and its
 name tells the frame: `the result` (a function or a test), `the closure result`,
