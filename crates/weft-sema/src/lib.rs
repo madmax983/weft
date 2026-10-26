@@ -46,10 +46,12 @@ pub struct Options {
     pub ir_groups: Groups,
 }
 
-/// The construct groups that are on by default (plan §2.6). Stage F8 turns
-/// group A on, and stage F10 turns group B (loops) on. Each later group stage
-/// adds its group.
-pub const DEFAULT_GROUPS: Groups = Groups::of(Group::A).with(Group::B);
+/// The construct groups that are on by default (plan §2.6).
+///
+/// Stage F8 turns group A on, stage F10 turns group B (loops) on, and stage
+/// F13 turns group C (closures and function values) on. Each later group
+/// stage adds its group.
+pub const DEFAULT_GROUPS: Groups = Groups::of(Group::A).with(Group::B).with(Group::C);
 
 impl Default for Options {
     /// A program that is not a library, with the standard runtime, the old

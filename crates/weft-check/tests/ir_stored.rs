@@ -25,10 +25,12 @@ fn abc(src: &str) -> Options {
     }
 }
 
-/// The options of the `ir` pipeline with the default groups (A and B).
+/// The options of the `ir` pipeline with the groups A and B (the default
+/// groups before stage F13 part 2).
 fn ab(src: &str) -> Options {
     Options {
         facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("AB").unwrap_or(weft_sema::Groups::NONE),
         ..Options::from_markers(src)
     }
 }
@@ -67,7 +69,7 @@ fn abc_codes(name: &str, src: &str) -> Vec<(String, usize)> {
 }
 
 /// The codes and lines of the diagnostics of `src` with the `ir` pipeline
-/// and the default groups. The program must be in scope.
+/// and the groups A and B. The program must be in scope.
 fn ab_codes(name: &str, src: &str) -> Vec<(String, usize)> {
     let a = analyze_source(src, ab(src))
         .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
@@ -108,7 +110,7 @@ fn check(name: &str) {
     assert_eq!(abc_codes(name, &src), markers(&src), "{name}");
 }
 
-/// Checks program `name` with the default groups and with the groups A, B
+/// Checks program `name` with the groups A and B and with the groups A, B
 /// and C: its diagnostics are its markers in both.
 fn check_ab(name: &str) {
     let src = program(name);
@@ -159,7 +161,7 @@ fn a_closure_that_leaves_the_body_sees_the_last_value_of_a_kept_variable() {
 
 #[test]
 fn a_reference_through_another_handle_of_the_rc_type_is_a_store_of_a_local() {
-    // Classes AB-RC1 and AB-RC2 of the review of stage F13 (default groups):
+    // Classes AB-RC1 and AB-RC2 of the review of stage F13 (groups A and B):
     // a reference through a handle in a local `Vec`, struct or tuple, through
     // a whole local handle of a new object, or through a second by-value
     // handle parameter goes into the `rc` object of the store. Before the
@@ -188,7 +190,7 @@ fn a_reference_through_a_copy_of_the_handle_of_the_store_goes_to_the_old_pipelin
 
 #[test]
 fn a_callee_that_reads_the_references_of_an_rc_object_after_a_change_is_w0301() {
-    // Class AB-RC3 of the review of stage F13 (default groups): the run node
+    // Class AB-RC3 of the review of stage F13 (groups A and B): the run node
     // of a callee that reads `c.refs[0]` uses the variables of the heap slot
     // of the group. Before the fix only a read in the body was W0301 (both
     // pipelines accepted the callee forms).
@@ -223,7 +225,7 @@ fn a_linear_closure_in_a_part_or_behind_a_reference_is_a_linear_value_of_the_own
 
 #[test]
 fn a_copy_of_a_reference_of_an_rc_object_into_the_object_is_accepted() {
-    // False positive FP-AB-RC of the review of stage F13 (default groups):
+    // False positive FP-AB-RC of the review of stage F13 (groups A and B):
     // `c.refs.push(c.refs[0])` gave W0312 and W0301, because a reference in
     // an `rc` object pointed into the wildcard place of the whole group.
     check_ab("rc_copy_ref.wf");

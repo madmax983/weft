@@ -111,13 +111,14 @@ fn tier1_has_no_blocker() {
         out.display(),
         r.blockers.join("\n")
     );
-    // Stage F8 turns group A on, and stage F10 turns group B (loops) on
-    // (plan §2.6): the programs that use only the groups A and B are in
-    // scope (1373 of 3509 at F10b; 1275 with group A only). A program out of
-    // scope gets its old record as its `ir` record, so it is `same` or
-    // `open`.
+    // Stage F8 turns group A on, stage F10 turns group B (loops) on, and
+    // stage F13 turns group C (closures and function values) on (plan
+    // §2.6): the programs that use only the groups A, B and C are in scope
+    // (2132 of 3871 at F13; 1413 with the groups A and B, 1373 of 3509 at
+    // F10b). A program out of scope gets its old record as its `ir` record,
+    // so it is `same` or `open`.
     let scope = r.rows.iter().filter(|row| row.in_scope).count();
-    assert!(scope > 1350, "only {scope} programs are in scope");
+    assert!(scope > 2100, "only {scope} programs are in scope");
     let other: Vec<String> = r
         .rows
         .iter()

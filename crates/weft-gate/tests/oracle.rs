@@ -396,7 +396,7 @@ fn the_committed_caches_cover_tier_1() {
 
 /// The fact oracle (stage F9, `docs/ir.md` 8.5): a program in scope that the
 /// `ir` pipeline accepts runs with it and passes; a program that the `ir`
-/// pipeline rejects, and a program out of scope (a closure, group C), do not
+/// pipeline rejects, and a program out of scope (a handler, group D), do not
 /// run. The child processes get `--fact-oracle`.
 #[test]
 fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
@@ -414,7 +414,7 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
             vec![
                 entry("clean.wf"),
                 entry("w0301.wf"),
-                entry("fact_closure.wf"),
+                entry("fact_handler.wf"),
             ],
             s,
         );
@@ -429,10 +429,10 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
             "{out:?}"
         );
     }
-    // With the groups A and B on (the default groups from stage F10, and
-    // `--groups AB`), the loops are in scope: a program whose loops end
-    // passes the fact oracle. (`--groups` adds to the default groups, so no
-    // flag turns group B off.)
+    // With the groups A and B on (the default groups from stage F10; A to
+    // C from stage F13; and `--groups AB`), the loops are in scope: a
+    // program whose loops end passes the fact oracle. (`--groups` adds to
+    // the default groups, so no flag turns group B off.)
     let ab = weft_sema::Groups::parse("AB").ok();
     for groups in [None, ab] {
         let child = Settings {

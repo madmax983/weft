@@ -234,8 +234,9 @@ fn a_rebind_of_a_capture_that_holds_no_linear_value_is_no_overwrite() {
 }
 
 #[test]
-fn a_closure_program_is_out_of_scope_with_the_default_groups() {
-    // Group C stays off by default in stage F11 (plan: F13 turns it on).
+fn a_closure_program_is_in_scope_with_the_default_groups() {
+    // Group C stayed off by default in stages F11 and F12. Stage F13 turns
+    // it on (plan §2.6): the ir pipeline checks a closure program.
     let src = program("rr7_late_ref.wf");
     let opts = Options {
         facts: weft_sema::FactGen::Ir,
@@ -244,7 +245,7 @@ fn a_closure_program_is_out_of_scope_with_the_default_groups() {
     let a = analyze_source(&src, opts).unwrap_or_else(|d| panic!("{}", d.message));
     let fallback = a.ir_scope.as_ref().and_then(|s| s.fallback.clone());
     assert!(
-        fallback.as_deref().is_some_and(|f| f.contains("group C")),
+        a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
         "{fallback:?}"
     );
 }

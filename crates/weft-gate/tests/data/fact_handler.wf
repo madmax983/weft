@@ -1,0 +1,5 @@
+// A handler (group D): out of the scope of the default groups.
+effect Log { fn log(msg: String) }
+fn main() {
+    handle Log { fn log(msg) { print(msg); resume(()) } } in log("a")
+}

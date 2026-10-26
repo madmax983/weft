@@ -91,31 +91,16 @@ stage = "G6"
 
 [[entry]]
 class = "open-old"
-files = ["tests/gate/probes/ir/judge_sound/j5_kept_borrow.wf"]
-finding = "J5"
-reason = "dangling reference: a closure borrows a captured plain value after its scope"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/ir/judge_sound/j5d_maker_borrow.wf"]
-finding = "J5d"
-reason = "dangling reference: a closure that a maker returns borrows a captured plain value after its scope"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
 files = ["tests/gate/probes/ir/work/map/opres.wf"]
 finding = "map-N1"
 reason = "dangling read: the result of an operation of a handler of a caller has no places"
 stage = "G6"
 
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/ir/work/map/fnres2.wf"]
-finding = "map-N2"
-reason = "dangling read: the result of a call of a function parameter has no places of the caller"
-stage = "G6"
+# Stage F13 removed the entries of j5_kept_borrow.wf (J5),
+# j5d_maker_borrow.wf (J5d), fnres2.wf (map-N2) and the four RR7 programs
+# (stale_mut.wf, nc7_late_mut.wf, rr10_eff.wf, nc6_late_eff.wf): group C is
+# on, and the `ir` pipeline rejects them (`fixed`; claims J5, J5d, map-N2 and
+# RR7).
 
 # Stage I5 removed the entries of p2_late_operand_ref.wf (sem-N1) and
 # p9_print_late.wf (sem-N2): from stage I5 the gate reads the oracle of the
@@ -197,16 +182,18 @@ stage = "G6"
 [[entry]]
 class = "open-old"
 files = [
-    "tests/gate/probes/r3/fidelity/p/cl1.wf",
-    "tests/gate/probes/r3/fidelity/p/cl2.wf",
     "tests/gate/probes/r3/fidelity/p/st2.wf",
     "tests/gate/probes/r3/fidelity/p/st3.wf",
     "tests/gate/probes/r3/fidelity/p/st6.wf",
     "tests/gate/probes/r3/fidelity/p/st7.wf",
 ]
 finding = "F3-2"
-reason = "dangling reference: a closure or a clause keeps its reference parameter in an outer local; a callee gives a reference into its own local"
+reason = "dangling reference: a clause keeps its reference parameter in an outer local; a callee gives a reference into its own local"
 stage = "G6"
+
+# Stage F13 removed cl1.wf and cl2.wf (the closure forms of F3-2) from the
+# entry above: group C is on, and the `ir` pipeline rejects them (`fixed`;
+# claim F3-2, group AC). The clause forms wait for group D.
 
 # Stage F8 removed the entries of i2_refenum.wf and i4_matchref.wf (R3RT2)
 # and of q1_held.wf (R3RT3): the `ir` pipeline rejects them (`fixed`; claims
@@ -224,26 +211,6 @@ class = "open-old"
 files = ["tests/gate/probes/verify/s5/R2d/p/c2_box_borrow_nouse.wf"]
 finding = "OL-R2d-box"
 reason = "data race: a borrow through a `Box` does not read the `Box` while a task gives it a new value"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/stale_mut.wf",
-    "tests/gate/probes/verify/s5/R2e_diff/p/nc7_late_mut.wf",
-]
-finding = "RR7"
-reason = "dangling read: a closure captures a function-value local that gets a mutating function after the closure is made; the call of the closure keeps the old summary"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_eff.wf",
-    "tests/gate/probes/verify/s5/R2e_diff/p/nc6_late_eff.wf",
-]
-finding = "RR7"
-reason = "no handler: a closure captures a function-value local that gets a function with an effect after the closure is made; the call of the closure keeps the old effects"
 stage = "G6"
 
 [[entry]]
@@ -878,90 +845,29 @@ stage = "F10"
 
 # ----------------------------------------------------------------------------
 # F12-fix: the fixes of the holes of the review of the ABC preview
-# (scratchpad f12/review.md). Group C stays off by default.
-
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/fixes/f12/oldholes/hv_m_vec_ret_fn.wf"]
-finding = "F12-H2"
-reason = "old hole that the ABC preview kept (review of the ABC preview, 4.7): `mkfs(w) -> Vec<fn()>` gives back a closure that clears `w.entities`; the old pipeline loses its effects, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the vector holds the places of the environment of the closure (F12-fix H2): W0301. Drop this entry when group C is on (F13)"
-stage = "F12"
+# (scratchpad f12/review.md). Group C stayed off by default until stage F13.
 
 [[entry]]
 class = "changed"
 files = ["tests/programs/169_returned_linear_closures.wf"]
 codes = ["W0204", "W0601"]
-reason = "a closure owns its `ByMove` capture (R3RT5): the old W0204 at the maker is its false positive; the `ir` pipeline (groups A, B and C) reports the caller that drops the linear closure (W0601, F12-fix H3). Under the default groups the program uses group C and the old pipeline checks it"
-stage = "F12"
-
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/fixes/f12/oldholes/m09_made_ref_ends_vec.wf"]
-finding = "F12-H4"
-reason = "old hole that the ABC preview kept (review of the ABC preview, 4.7): `fs.push(shower(&v))` in a block, and a run of `fs[0]` after the block reads the dead `v`; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the vector holds the places of the closure (F12-fix H4): W0301. Drop this entry when group C is on (F13)"
+reason = "a closure owns its `ByMove` capture (R3RT5): the old W0204 at the maker is its false positive; the `ir` pipeline (groups A, B and C) reports the caller that drops the linear closure (W0601, F12-fix H3). From stage F13 group C is on by default"
 stage = "F12"
 
 [[entry]]
 class = "moved"
 files = ["tests/programs/170_closures_in_containers.wf"]
 codes = ["W0301"]
-reason = "the vector holds the places of its closures (F12-fix H4): the `ir` pipeline (groups A, B and C) reports the read of the element of the invalid vector, the old pipeline the call of the copy one line later. Under the default groups the program uses group C and the old pipeline checks it"
+reason = "the vector holds the places of its closures (F12-fix H4): the `ir` pipeline (groups A, B and C) reports the read of the element of the invalid vector, the old pipeline the call of the copy one line later. From stage F13 group C is on by default"
 stage = "F12"
 
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf"]
-finding = "F12-OH1"
-reason = "old hole that the ABC preview kept (review of the ABC preview, 4.7): `first(fs: &Vec<fn()>) -> fn() { fs[0] }` copies a `once` closure out of the vector, and the caller runs two copies; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the call moves the referent (F12-fix, `templates::once_copied_out`): W0302 at the second copy. Drop this entry when group C is on (F13)"
-stage = "F12"
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/f12b/oldholes/b14_09_runfirst_twice.wf",
-    "tests/gate/probes/fixes/f12b/oldholes/b14_11_closure_copies_out.wf",
-    "tests/gate/probes/fixes/f12b/oldholes/q01_runfirst_then_direct.wf",
-    "tests/gate/probes/fixes/f12b/oldholes/q03_closure_runs_ref_twice.wf",
-    "tests/gate/probes/fixes/f12b/oldholes/q04_runfirst_loop.wf",
-    "tests/gate/probes/fixes/f12b/oldholes/q06_runfirst_ret_after.wf",
-]
-finding = "F12R2-OH2"
-reason = "old holes b14-run (second review of the ABC preview, 4.5): a callee (`fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }`) or a closure runs a `once` closure that it copies out of a vector, and the caller runs it again; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the run moves the owners of the referent (F12-fix2, `templates::emit_apps`, `once_copied_out` at a call of a closure): W0302 at the second run. Drop this entry when group C is on (F13)"
-stage = "F12"
-
-# ----------------------------------------------------------------------
-# F12-fix3 (third review of the ABC preview): old holes that group C closes.
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/f12c/b14agg/g04_option_of_ref.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/g06_tuple_holding_ref.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/g17_ref_stored_in_local_struct_closure.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/h01_vec_of_refs_by_value.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/h03_tuple_two_refs.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/h04_option_tuple_ref.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/h06_tuple_param_returns_copy.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/h08_option_ref_then_direct.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/h09_option_ref_loop.wf",
-    "tests/gate/probes/fixes/f12c/b14agg/h10_tuple_ref_closure_returns_copy.wf",
-]
-finding = "F12R3-OH3"
-reason = "old holes b14-agg (third review of the ABC preview, 1.1): a callee copies a `once` closure out of a referent that an argument holds inside an `Option`, a tuple or a `Vec` (`ro(Some(&fs))` two times), and the closure runs again; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the copy moves the owners of the referent (F12-fix3, `templates::through_ref`, `once_vars`): W0302 (W0301 for `g17`). Drop this entry when group C is on (F13)"
-stage = "F12"
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/f12c/n1d/e01_maker_gives_struct.wf",
-    "tests/gate/probes/fixes/f12c/n1d/e02_maker_gives_option.wf",
-    "tests/gate/probes/fixes/f12c/n1d/e03_maker_gives_vec.wf",
-    "tests/gate/probes/fixes/f12c/n1d/e04_maker_gives_tuple.wf",
-    "tests/gate/probes/fixes/f12c/n1d/e08_maker_gives_struct_param_world.wf",
-]
-finding = "F12R3-OH4"
-reason = "old holes N1-aggregate (third review of the ABC preview, 3): a maker gives back a closure that clears the world inside a struct, an `Option`, a `Vec` or a tuple, and a callee runs it (`gok(|| K { f: || w.entities.clear() })`); the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the made closure keeps its effects (F12-fix2 N1): W0301 at the use. Drop this entry when group C is on (F13)"
-stage = "F12"
+# Stage F13 removed the `open-old` entries of the old holes that the F12
+# fixes close under group C: hv_m_vec_ret_fn.wf (F12-H2),
+# m09_made_ref_ends_vec.wf (F12-H4), b14_vec_first_twice.wf (F12-OH1), the six
+# b14-run programs of f12b/oldholes (F12R2-OH2), the ten b14-agg programs of
+# f12c/b14agg (F12R3-OH3) and the five N1-aggregate programs of f12c/n1d
+# (F12R3-OH4). Group C is on, and the `ir` pipeline rejects each of them
+# (`fixed`; the claims with the same finding ids).
 
 # ----------------------------------------------------------------------
 # Stage F13: the rows of the gate with the groups A, B and C (`--groups ABC`;
@@ -1827,41 +1733,11 @@ finding = "F13B-AB-RC3"
 reason = "old hole AB-RC3 (review of stage F13): the caller puts a reference into an `rc` object (`fill_self`), then a callee changes the group and reads the reference (`use_it`: `grow`, then `read0`). The callee has no heap slot of its own for the references that the object holds at its entry (they point into the wildcard place of the group), so no variable gets invalid. Both pipelines miss it"
 stage = "F13"
 
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/f13b/hrc1/d04_callee_sets_fn_change_b.wf",
-    "tests/gate/probes/fixes/f13b/hrc1/g02_self_ref_closure_change_run_b.wf",
-    "tests/gate/probes/fixes/f13b/hrc1/g04_self_ref_readback_b.wf",
-    "tests/gate/probes/fixes/f13b/hrc1/g05_self_ref_two_handles_b.wf",
-    "tests/gate/probes/fixes/f13b/hrc1/g06_self_ref_vec_handles_b.wf",
-    "tests/gate/probes/fixes/f13b/hrc1/g07_self_ref_closure_in_closure_b.wf",
-    "tests/gate/probes/fixes/f13b/hrc1/g08_self_ref_other_object_b.wf",
-    "tests/gate/probes/fixes/f13b/hrc1/g09_self_ref_drop_last_handle_b.wf",
-]
-finding = "F13B-HRC1"
-reason = "old holes H-RC1 (review of stage F13): a callee stores into an `rc` object a closure that keeps a reference into the group; the group changes (or the handle of the object gets a new value), and a run of the closure reads the old referent. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC (F13-fix) the run node uses the variables of the heap slot (`templates::slot_reads`), a read back copies the references of the closure (`copied_refs`), and a copy out of an `rc` object depends on the handle: W0301. Drop this entry when group C is on (F13)"
-stage = "F13"
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/f13b/hs1/c03_callee_stores_ro_b.wf",
-    "tests/gate/probes/fixes/f13b/hs1/s1b_10_nested_param_ref_b.wf",
-    "tests/gate/probes/fixes/f13b/hs1/s1c_09_param_closure_stores_param_b.wf",
-    "tests/gate/probes/fixes/f13b/hs1/s1c_10_fn_stores_param_closure_b.wf",
-    "tests/gate/probes/fixes/f13b/hs1/s1c_11_fn_stores_maker_b.wf",
-]
-finding = "F13B-HS1"
-reason = "old holes H-S1 (review of stage F13): a closure that captures a reference parameter (or that a maker gives) goes into a heap slot of a parameter through a callee; the referent changes, and a run of the slot reads it. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC (F13-fix) the run node uses the variables of the slot: W0301. Drop this entry when group C is on (F13)"
-stage = "F13"
-
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/fixes/f13b/k3made/m03_made_in_option_b.wf"]
-finding = "F13B-K3MADE"
-reason = "old hole K3-Made (review of stage F13): a closure that a closure makes goes into an `Option` result; the variable that it keeps gets a reference into a local later. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC (F13-fix) the result sees the late value of the variable (`summarize::fn_parts_of`, `kept_escapes`): W0204. Drop this entry when group C is on (F13)"
-stage = "F13"
+# Stage F13 removed the `open-old` entries of the old holes that the F13 fixes
+# close under group C: the eight programs of f13b/hrc1 (F13B-HRC1), the five
+# programs of f13b/hs1 (F13B-HS1) and m03_made_in_option_b.wf (F13B-K3MADE).
+# Group C is on, and the `ir` pipeline rejects each of them (`fixed`; the
+# claims with the same finding ids).
 
 # F13-fix: the rows of the ABC classes of the review of stage F13 (`--groups
 # ABC`; group C goes on at F13 after its review).
@@ -1935,15 +1811,9 @@ stage = "F13"
 # ----------------------------------------------------------------------
 # The final check of group C (scratchpad f13/final_check.md).
 
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/f13c/ord/o11_capture_and_param_b.wf",
-    "tests/gate/probes/fixes/f13c/ord/q06_capture_param_and_closure_b.wf",
-]
-finding = "F13C-ORD"
-reason = "old holes of class H-ORD (final check of group C): a body that runs two values gets the same `once` value of the caller as one argument and in a closure that is the other argument (`both(h, || h())`, `both(|| h(), || h())`), so the value runs two times. The old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the runs of the two keys reach the same value (`Apps::reached`): W0502. Drop this entry when group C is on (F13)"
-stage = "F13"
+# Stage F13 part 2 removed the `open-old` entry of o11_capture_and_param_b.wf
+# and q06_capture_param_and_closure_b.wf (F13C-ORD): group C is on, and the
+# `ir` pipeline rejects them (`fixed`; claim F13C-ORD).
 
 [[entry]]
 class = "open-old"
@@ -1968,4 +1838,90 @@ files = ["tests/gate/probes/fixes/f13b/fp/w09_ctl_outer_runs_after_maybe_other.w
 finding = "F12R3-BOTH"
 reason = "`l1` runs `f` through `always` one time and `g` one time, so each linear closure is consumed on each path and the run is clean (the old W0601 is a false positive). A body that runs two values runs each one time in each order (`Applied::order`). Each variant that drops a value or runs it again is held at the old line (W0601 or W0502): `maybe` instead of `always`, `f` or `g` run again, `twice`, `g` dropped or on one path, `f` stored and dropped, a closure that does not consume its value, a nested double run in the callee, a loop, the order swapped, one more parameter layer (scratchpad f13/final_variants/w09)"
 signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+# ----------------------------------------------------------------------
+# Stage F13 part 2: the signature diff with the groups A, B and C (the
+# default groups from F13; `weft-gate sigdiff --tier 1|2`). Tier 1: 1841
+# functions differ in 2154 programs in scope; tier 2: 3503 functions in 4048
+# programs. Each class below has one entry. The rows of
+# `verify/p/v06_ret_paths.wf` (`ret_passthrough`, `mk2`) and of
+# `m01258_43_loops.wf` (`item_later_pub`) have no entry: the old `muts` part
+# there is a change that the `ir` summary does not have, and a caller of the
+# function misses it (holes of group C, reported at stage F13 part 2).
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "lent", "ret", "stores", "reaches", "reach_given", "reach_repeats", "tasks", "task_runs", "repeats", "fn_stores", "ret_refs", "group_stores", "fn_store_refs"]
+files = ["**"]
+reason = "the parts of the old inference for the function values of a body. `sig::to_effect_sig` does not give them, and `sig::unsupported` does not count them for a function with a body: the summary of the body holds the same facts in its own parts, and the `ir` pipeline applies the summary at each call (docs/ir.md 6.7). passthrough, lent, reaches, reach_given, reach_repeats, repeats: the part `runs` and code of a caller; ret, ret_refs: the part `ret` with function values (`RetFn`); stores, fn_stores, fn_store_refs, group_stores: the parts `puts` and `put_fns` and the R3RT6 half of `stores`; tasks, task_runs: the old inference marks a function value that a later task can run, and a task is group E (out of scope). No check of the `ir` pipeline reads these parts from the signature"
+stage = "F13"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "passthrough", "stores", "reaches", "repeats"]
+files = [
+    "tests/programs/39_multi_params.wf",
+    "tests/gate/probes/r2/fidelity/p/e1_call_multi.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt13_variants.wf",
+    "r2/fidelity/p/e1_call_multi.wf",
+    "verify/review_core/Core_S2/probes/rt13_variants.wf",
+    "verify/s5/S5c/mut/progs/m*_39_multi_params.wf",
+]
+reason = "`multi` of a run of a function value that the body reads from a field or a parameter (`let g = s.f; g()`). The old inference marks the function `multi`. The `ir` summary has the run in the part `runs` (a `Param` value), and the caller applies the `multi` of the value that it gives (or of code of a caller) at the call. `sig::to_effect_sig` gives `multi` only for an unknown function value in the body. The W0503 markers of 39_multi_params.wf hold in both pipelines (`via_callee`, `via_method`)"
+stage = "F13"
+
+[[entry]]
+class = "sig"
+parts = ["muts", "ret", "ret_refs"]
+files = [
+    "tests/programs/44_returned_fns.wf",
+    "tests/gate/probes/fixes/f12b/n1/z0*.wf",
+    "fixes/f12b/n1/z0*.wf",
+    "verify/s5/S5c/mut/progs/m*_44_returned_fns.wf",
+]
+reason = "a maker of a maker (`mkmk(w) -> fn() -> fn() { || || w.entities.clear() }`): the old inference puts the change of the closure that the result makes into the `muts` of the maker. The maker does not change `w` itself. The `ir` summary keeps the change in the made closure (`RetFn::Made`), and the caller applies it where it runs the closure (F12-fix2 N1; claims F12R2-N1 hold). The `ir` signature is more precise, and W0701 of a public maker does not ask for the place"
+stage = "F13"
+
+[[entry]]
+class = "sig"
+parts = ["named"]
+files = [
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_eff*.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc6_late_eff.wf",
+    "verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_eff*.wf",
+    "verify/s5/R2e_diff/p/nc6_late_eff.wf",
+]
+reason = "old hole RR7: a closure captures a function-value local that gets a function with an effect after the closure is made. The old inference keeps the old effects and misses `main.Note`; the `ir` summary has the effect (the gate class is `fixed`: W0805, claim RR7)"
+stage = "F13"
+
+[[entry]]
+class = "sig"
+parts = ["muts"]
+files = [
+    "tests/gate/probes/verify/p/v19_pos.wf",
+    "verify/p/v19_pos.wf",
+]
+reason = "precision: `swap_apply(f, a, b) { f(b, a) }` runs its function parameter with two reference arguments. The `ir` summary gives each run the other arguments of the call too (`Sigma::others`, stage F12 note 5), so the caller changes `a.entities` and `b.entities`; the old inference maps the parameters of the closure one by one. The `ir` place set is larger (sound); the gate row is `changed` (entry of the ABC preview, W0301 at line 12)"
+stage = "F13"
+
+[[entry]]
+class = "sig"
+parts = ["muts text"]
+files = [
+    "tests/gate/probes/redteam/m02_shared_paths.wf",
+    "redteam/m02_shared_paths.wf",
+    "r2/redteam/p/zz_deep.wf",
+    "verify/infer1.wf",
+    "verify/review_edge/Edge/f9_*.wf",
+    "verify/review_edge/Edge/infer/*.wf",
+]
+reason = "the text of a changed place, not the place (the steps are the same). A segment step has the text `[]` in the `ir` pipeline and `[..k]` in the old one (m02_shared_paths.wf). A place deeper than the cut of the summary has the text `..` at the cut (zz_deep.wf as entry of stage F6; the generated `infer` and `f9` probes of tier 2, groups A and B). W0701 shows the text"
+stage = "F13"
+
+[[entry]]
+class = "sig"
+parts = ["muts"]
+files = ["verify/infer2.wf"]
+reason = "a place deeper than the cut of the summary (groups A and B, tier 2): the `ir` summary changes `x.a[].b[].a[].a[]..` (a wildcard step at the cut) where the old inference keeps `x.a[].b[].a[].a[].b[]`. The `ir` place covers each old place (sound); only W0701 shows the wider place"
 stage = "F13"

@@ -1,5 +1,0 @@
-// A closure (group C): out of the scope of the default groups.
-fn main() {
-    let g = || 1
-    print(g())
-}

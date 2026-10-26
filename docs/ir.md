@@ -2247,7 +2247,7 @@ As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 - `emit` writes the facts of a body of group A with no `Call`, `Perform` or `Resume`, no
   loop and no `OnAbort` action. Another construct gives `Unsupported`, and the old pipeline
   checks the program. `factgen::preview` gives the facts of one body.
-- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B), no program is in scope, also a program
+- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B, from F13 the groups A, B and C), no program is in scope, also a program
   whose bodies have no IR and so use no group. `weft check|facts|agree|lint|run|test`
   take `--groups=LETTERS` to turn groups on.
 - A node `entry` before the entry block binds the parameters: `rebound_at`, `points_into`
@@ -2451,8 +2451,8 @@ spec sees the real aliasing between two captures or two parameters inside the cl
 The summary (6.7) stays in interface terms.
 
 As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
-`emit_closure`; group C stays off by default until F13, so this is a preview with
-`--groups ABC`):
+`emit_closure`; group C was a preview with `--groups ABC` until stage F13 puts it in
+the default set):
 
 - A closure body is a component of the `FnFacts` of its function: a node `closure entry`
   (its parameters and the `E` variables of its `ByMove` captures bind there, `rebound_at`,
@@ -2988,7 +2988,7 @@ behind a parameter: a heap slot).
   `tests/programs/165_store_through_held_ref.wf` (claim F10-HC).
 
 As built (plan stage F11, `analysis::transfer::value_out`, `apply::closure_sigma`,
-`summarize::closure`; group C is a preview until F13):
+`summarize::closure`; group C was a preview until stage F13 put it in the default set):
 
 - The analysis gives a closure aggregate the value `fns = {Closure(c)}`, the cell root
   `x (cell)` of the variable of each `ByRef` capture (owned by `C(x)`: only `Dead(x)` and
@@ -3048,7 +3048,8 @@ As built (plan stage F11, `analysis::transfer::value_out`, `apply::closure_sigma
   summaries at its own node.
 
 As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknown::code_of_caller`,
-`summarize::runs_of`, `summarize::ret_fns_of`; group C is a preview until F13):
+`summarize::runs_of`, `summarize::ret_fns_of`; group C was a preview until stage F13 put it
+in the default set):
 
 - Function sets (`domain::FnVal`): an item, a closure of the component, `Made(c)` (a closure that a
   callee made and gave back: the value holds its environment, so σ maps each capture to the place
@@ -3057,8 +3058,8 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   and `Unknown`. A function parameter starts with `Param(i)`; a read through a pointer or of an
   element gives the values of the places (`transfer::fns_at`). A set with more than
   `domain::FNS_MAX` (32) values drops its items for `Unknown` (the widening; the other values are
-  finite). A value with a function part that goes behind a reference (a heap slot) is stage F13: the
-  program stays with the old pipeline.
+  finite). A value with a function part that goes behind a reference (a heap slot) was stage F13:
+  until F13 the program stayed with the old pipeline (heap slots of function values: 6.6).
 - A closure aggregate holds the references of its `Kept` captures too (a closure that leaves its
   maker, or that a closure gives back, reads them). A call of a value that the analysis does not
   know (`Param`, `Capture`, `Unknown`) is code of a caller (map N2): it reads and lends the places
@@ -3273,7 +3274,8 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   pipeline does not give, `44_returned_fns`).
 
 As built (plan stage F13, `analysis::summarize::stored_parts_of`, `transfer::put_values`;
-group C stays off until the review of the C shapes passes):
+group C stayed off until the review of the C shapes passed, and F13 part 2 put it in the
+default set):
 
 - Part `stores` of a function body has two halves. The signature gives the references
   that go behind a reference parameter (R3RT6, F10.2, as before). The body gives the
@@ -3338,6 +3340,40 @@ analysis (`Analysis::sigs`, `BodyFacts::effects`) are these, so W0701, `weft dep
 the interpreter read them; W0701 comes from them, with the text of the old lowering.
 `weft-gate sigdiff` compares them with the old ones on each program in scope; each
 difference needs a ledger entry of class `sig`.
+
+As built (plan stage F13 part 2, group C on): `DEFAULT_GROUPS` is A, B and C, so the
+`ir` pipeline checks closures, function values and stored function values by default.
+The signature diff with the groups A to C has these classes (one `sig` entry each in
+`tests/gate/ledger.toml`):
+
+- The parts of the old inference for the function values of a body (`passthrough`,
+  `lent`, `ret`, `stores`, `reaches`, `reach_given`, `reach_repeats`, `repeats`,
+  `ret_refs`, `fn_stores`, `fn_store_refs`, `group_stores`, `tasks`, `task_runs`):
+  `to_effect_sig` does not give them. The summary holds the same facts in its parts
+  `runs`, `ret`, `puts` and `put_fns` (6.7), and the `ir` pipeline applies the summary
+  at each call. This is most of the difference (1813 of 1841 functions on tier 1).
+- `multi` of a run of a function value that the body reads from a field or a
+  parameter: the summary has the run in `runs`, and the caller applies the `multi` of
+  the value that it gives.
+- `muts` of a maker of a maker (`|| || w.entities.clear()`): the old inference puts the
+  change of the made closure into the maker; the summary keeps it in the made closure
+  (more precise).
+- `named` of the old hole RR7 (a rebind of a captured function value): the `ir` summary
+  has the effect, the old one does not.
+- `muts` of `Sigma::others` (a function parameter that runs with two reference
+  arguments changes both): larger than the old place set, sound.
+- The text of a place (a segment step, a cut place with `..`), and a wider place at the
+  cut of the summary (generated probes of tier 2, groups A and B).
+
+The diff also found two holes of group C (follow-up F13.2 of the plan; no ledger entry
+accepts their rows): an unknown function value that runs in a body (a capture of a made closure that
+holds a function parameter of the maker, `mk_call(push1, world)()`; a function-value
+local that a closure gives a new value, `let set = || { g = grow }; set(); g(world)`)
+is code of a caller, and its `lends_mut` of the reference parameter and of `a place of a
+caller` do not reach the summary of the body. A caller of the body then misses the
+change (`verify/p/v06_ret_paths.wf` `ret_passthrough` and the mutant
+`m01258_43_loops.wf` `item_later_pub` show it in the diff; the summary oracle fails on
+a caller).
 
 ### 6.9 Checks in Rust, and diagnostics
 

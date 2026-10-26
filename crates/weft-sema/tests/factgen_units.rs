@@ -2742,8 +2742,8 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
 
 // -------------------------------------------------------------- closures
 
-/// The options of the `ir` pipeline with the groups A, B and C on (stage
-/// F11: group C stays off by default).
+/// The options of the `ir` pipeline with the groups A, B and C on (the
+/// default groups from stage F13).
 fn abc() -> Options {
     Options {
         facts: weft_sema::FactGen::Ir,
