@@ -216,6 +216,13 @@ fn asi_return_at_line_end() {
 fn asi_line_break_after_type_arguments_ends_a_statement() {
     assert_eq!(sx_body("let x: Vec<T>\nx"), "(let x: Vec<T>); x");
     assert_eq!(sx_body("let x: &T in w..\nx"), "(let x: (& T in w..)); x");
+    // A next statement that starts with a step token (`[`, `.`, `..`) is a
+    // new statement, not a step after the wildcard (a seed of the
+    // `generated_statements_round_trip` property).
+    assert_eq!(
+        sx_body("let x: &T in w..\n[]"),
+        "(let x: (& T in w..)); (array)"
+    );
     let f = parse("struct S {\n a: Vec<T>\n b: u32\n}");
     let ItemKind::Struct(s) = &f.items[0].kind else {
         panic!()
