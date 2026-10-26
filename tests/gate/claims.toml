@@ -4108,3 +4108,50 @@ repro = [
 ]
 code = "W0301"
 note = "the result of a closure maker keeps the effects of the closure that it makes in a second closure (`|| mk()`, `|| run(mk())`) and in a callee (`fn go(m) { let g = m(); g() }`): a run of a capture applies the results of its values (`with_results`), a capture that a closure gives back carries the places of their environments (`capture_refs`), and a cell root in the environment of a `Made` closure or of code of a caller is the value of its variable too (`cell_values`) (hole N1 of the second review of the ABC preview)"
+
+[[claim]]
+finding = "F12R2-H5b"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/h5b/h5_05_nested_callee_maybe.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m01_three_levels.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m02_closure_wraps_maybe.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m03_outer_with_local_closure.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m05_outer_via_run.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m09_struct_field_through_outer.wf",
+]
+code = "W0601"
+note = "a callee that gives a linear closure to a second callee that runs it on some paths only can drop it: a run that a callee gives is `maybe` at the run node when it is `maybe` in the callee or code of a caller gets it (`RunOf::maybe`, `summarize::runs_of`) (hole H5b of the second review of the ABC preview)"
+
+[[claim]]
+finding = "F12R2-H3b"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/h3b/p01_callee_drops_made_of_param.wf",
+    "tests/gate/probes/fixes/f12b/h3b/p04_callee_gets_param_result_returns.wf",
+]
+code = "W0601"
+note = "a callee that gets a closure maker whose result is linear can drop that result: the call is W0601 (`templates::gives_linear`, `dropped_fn_args`), as in the old pipeline (hole H3b of the second review of the ABC preview)"
+
+[[claim]]
+finding = "F12R2-OH2"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/oldholes/b14_09_runfirst_twice.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/b14_11_closure_copies_out.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q01_runfirst_then_direct.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q03_closure_runs_ref_twice.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q04_runfirst_loop.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q06_runfirst_ret_after.wf",
+]
+code = "W0302"
+note = "a callee or a closure that runs a `once` closure that it copies out of a referent moves the owners of the referent at the run (`emit_apps`, `once_vars`), and a closure that gives back such a copy moves them too (`once_copied_out` at a call of a closure): a second run is W0302 (old holes b14-run of the second review of the ABC preview)"

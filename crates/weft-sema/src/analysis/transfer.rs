@@ -1319,6 +1319,11 @@ pub struct RunOf {
     /// The block of the run node: a path to a `Return` that does not pass a
     /// run node can return with no run (`Run::maybe`).
     pub block: weft_ir::BlockId,
+    /// The run node can end with no run: a callee runs the value on some
+    /// paths only (its run is `maybe`), or code of a caller gets it. Its
+    /// block does not count as a block that runs the value (hole H5b of the
+    /// second review of the ABC preview).
+    pub maybe: bool,
 }
 
 /// One summary that a run node of a function value applies (`docs/ir.md`
@@ -1946,6 +1951,14 @@ fn apply_runs(
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
                 a.sigma.others.clone_from(&others);
+                // A run that the callee does on some paths only: each run
+                // that it gives is on some paths only too (hole H5b of the
+                // second review of the ABC preview: `outer(f) { maybe(f) }`).
+                if run.maybe {
+                    if let Some(x) = a.run.as_mut() {
+                        x.maybe = true;
+                    }
+                }
             }
             // A capture that holds a `once` value moves at the run of the
             // closure (`Applied::once`); a value of a parameter moves here.
@@ -2060,6 +2073,7 @@ fn apply_value(
                     multi: summary.multi,
                     task: false,
                     block: r.block,
+                    maybe: false,
                 }),
                 (FnVal::Param(i) | FnVal::Capture(i), Given::Opaque(ps, _)) => Some(RunOf {
                     param: *i,
@@ -2068,6 +2082,7 @@ fn apply_value(
                     multi: summary.multi,
                     task: false,
                     block: r.block,
+                    maybe: false,
                 }),
                 _ => None,
             };
@@ -2154,8 +2169,10 @@ fn apply_value(
                 for a in apps.out.iter_mut().skip(start) {
                     a.again = true;
                     a.kind = super::apply::RunKind::Run;
+                    // Code of a caller can drop the value with no run.
                     if let Some(r) = a.run.as_mut() {
                         r.task = true;
+                        r.maybe = true;
                     }
                 }
             }

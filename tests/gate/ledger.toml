@@ -914,3 +914,17 @@ files = ["tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf"]
 finding = "F12-OH1"
 reason = "old hole that the ABC preview kept (review of the ABC preview, 4.7): `first(fs: &Vec<fn()>) -> fn() { fs[0] }` copies a `once` closure out of the vector, and the caller runs two copies; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the call moves the referent (F12-fix, `templates::once_copied_out`): W0302 at the second copy. Drop this entry when group C is on (F13)"
 stage = "F12"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f12b/oldholes/b14_09_runfirst_twice.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/b14_11_closure_copies_out.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q01_runfirst_then_direct.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q03_closure_runs_ref_twice.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q04_runfirst_loop.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q06_runfirst_ret_after.wf",
+]
+finding = "F12R2-OH2"
+reason = "old holes b14-run (second review of the ABC preview, 4.5): a callee (`fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }`) or a closure runs a `once` closure that it copies out of a vector, and the caller runs it again; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the run moves the owners of the referent (F12-fix2, `templates::emit_apps`, `once_copied_out` at a call of a closure): W0302 at the second run. Drop this entry when group C is on (F13)"
+stage = "F12"

@@ -344,9 +344,11 @@ fn runs_of(
 ) -> Vec<super::summary::Run> {
     let mut out: Vec<super::summary::Run> = Vec::new();
     for (r, many) in runs {
+        // The blocks that run the value on each path through them: a run
+        // that a callee does on some paths only does not count (H5b).
         let blocks: std::collections::BTreeSet<weft_ir::BlockId> = runs
             .iter()
-            .filter(|(x, _)| x.param == r.param && x.capture == r.capture)
+            .filter(|(x, _)| x.param == r.param && x.capture == r.capture && !x.maybe)
             .map(|(x, _)| x.block)
             .collect();
         // A function body has no capture.

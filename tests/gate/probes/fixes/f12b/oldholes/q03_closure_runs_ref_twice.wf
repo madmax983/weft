@@ -1,0 +1,8 @@
+// F12 review 2 (ABC preview), old hole b14-run: a callee or a closure runs a once closure that it copies out of a referent, two times; old and the default AB accept it and the oracle faults; ABC rejects it after F12-fix2 (b14x/q03_closure_runs_ref_twice.wf).
+struct Buf { items: Vec<u64> }
+struct K { f: fn() }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }
+fn runk(k: &K) { let g = k.f; g() }
+fn main() { let b = mkbuf(); let fs = Vec.new(); fs.push(|| eat(b)); let rf = |v: &Vec<fn()>| { let g = v[0]; g() }; rf(&fs); rf(&fs) }

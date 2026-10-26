@@ -1,0 +1,12 @@
+// F12 review 2 (ABC preview), hole H5b: a callee gives a linear closure to a second callee that runs it on some paths only (old W0601) (h5x/m09_struct_field_through_outer.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn run(f: fn()) { f() }
+fn maybe(f: fn(), c: bool) { if c { f() } }
+fn outer(f: fn(), c: bool) { maybe(f, c) }
+struct K { f: fn() }
+fn maybe_k(k: K, c: bool) { if c { let g = k.f; g() } }
+fn outer_k(f: fn(), c: bool) { maybe_k(K { f: f }, c) }
+fn main() { let t = begin(1); outer_k(|| rollback(t), false) }

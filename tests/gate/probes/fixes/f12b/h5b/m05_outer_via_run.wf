@@ -1,0 +1,11 @@
+// F12 review 2 (ABC preview), hole H5b: a callee gives a linear closure to a second callee that runs it on some paths only (old W0601) (h5x/m05_outer_via_run.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn run(f: fn()) { f() }
+fn maybe(f: fn(), c: bool) { if c { f() } }
+fn outer(f: fn(), c: bool) { maybe(f, c) }
+fn outer_r(f: fn(), c: bool) { if c { run(f) } }
+fn outer_r2(f: fn(), c: bool) { outer_r(f, c) }
+fn main() { let t = begin(1); outer_r2(|| rollback(t), false) }

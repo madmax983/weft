@@ -34,7 +34,7 @@ use super::alpha::{Alpha, AlphaError, Roots};
 use super::kernel::{self, Access, Frag};
 use super::vars::{PartKind, VarKey, Vars};
 use crate::analysis::transfer::{self, Cx};
-use crate::analysis::{Key, PathStep, State, Tree};
+use crate::analysis::{FnVal, Key, PathStep, State, Tree};
 use crate::irbuild::subst;
 use crate::props::ir_props;
 
@@ -2306,11 +2306,16 @@ pub fn call(
             .runs
             .iter()
             .any(|r| !r.capture && r.param as usize == i && !r.maybe);
-        if runs {
+        // A maker whose result is linear: the callee does not know that
+        // the result is linear, so it can drop it also when it runs the
+        // maker (hole H3b of the second review of the ABC preview).
+        let reach = transfer::reach_fns(&mut em.cx(), body, st, op)?;
+        let results = gives_linear(em, &reach);
+        if runs && !results {
             continue;
         }
         let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
-        if !v.linear || v.fns.is_empty() {
+        if !(v.linear || results) || v.fns.is_empty() {
             continue;
         }
         let mut info = weft_facts::VarInfo::plain(
@@ -2453,6 +2458,13 @@ fn call_value(
             .collect();
         fn_stores(em, r, st, args, &changed, at)?;
         apps_at_ret(em, r, st, &out.apps, at)?;
+        // A closure that gives back a function value of a reference
+        // argument copies it out of the referent (b14-run).
+        for app in &out.apps {
+            if app.kind == crate::analysis::apply::RunKind::Closure {
+                once_copied_out(em, r, st, &app.summary, args)?;
+            }
+        }
         em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }
     end_frames(em, nodes, &frames);
@@ -2494,8 +2506,14 @@ fn dropped_fn_args(
         {
             continue;
         }
+        // A maker whose result is linear: a value of the callee that gets
+        // it can drop its result (hole H3b of the second review of the ABC
+        // preview).
+        let reach = transfer::reach_fns(&mut em.cx(), body, st, op)?;
+        let results = gives_linear(em, &reach);
         let drops = apps.iter().any(|a| match a.kind {
             RunKind::Unknown => true,
+            RunKind::Item | RunKind::Closure if results => true,
             // A value that the callee runs on some paths only can go away
             // with no run (hole H5 of the review of the ABC preview).
             RunKind::Item | RunKind::Closure => !a
@@ -2509,7 +2527,7 @@ fn dropped_fn_args(
             continue;
         }
         let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
-        if !v.linear || v.fns.is_empty() {
+        if !(v.linear || results) || v.fns.is_empty() {
             continue;
         }
         let mut info = weft_facts::VarInfo::plain(
@@ -2525,6 +2543,51 @@ fn dropped_fn_args(
         out.push(var);
     }
     Ok(out)
+}
+
+/// True if a run of one of the function values `fns` can give back a linear
+/// value (part `ret`, `Ret::linear`), also through a value that the result
+/// gives back (a maker of makers).
+///
+/// A callee that runs such a maker (code of a caller there) does not know
+/// that the result is linear, so it can drop the result (hole H3b of the
+/// second review of the ABC preview). A chain that is too long counts as
+/// linear.
+fn gives_linear(em: &Em<'_>, fns: &std::collections::BTreeSet<FnVal>) -> bool {
+    use crate::analysis::summary::RetFn;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut level: Vec<FnVal> = fns.iter().cloned().collect();
+    for _ in 0..16 {
+        let mut next = Vec::new();
+        for f in level {
+            if !seen.insert(f.clone()) {
+                continue;
+            }
+            let sum = match &f {
+                FnVal::Closure(c) | FnVal::Made(c) => em.sums.closure(*c).ok(),
+                FnVal::Item(g, _) => em.sums.get(*g).ok(),
+                FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => None,
+            };
+            let Some(sum) = sum else {
+                continue;
+            };
+            if sum.ret.linear {
+                return true;
+            }
+            for rf in &sum.ret.fns {
+                match rf {
+                    RetFn::Item(g, t) => next.push(FnVal::Item(*g, t.clone())),
+                    RetFn::Made(c) => next.push(FnVal::Made(*c)),
+                    RetFn::Param(_) | RetFn::Capture(_) | RetFn::Unknown => {}
+                }
+            }
+        }
+        if next.is_empty() {
+            return false;
+        }
+        level = next;
+    }
+    true
 }
 
 /// The facts of the summaries `apps` that a run node applies (`Main`, and
@@ -2626,6 +2689,20 @@ fn emit_apps(
                         }
                     }
                 }
+            } else {
+                // A run of a `once` closure behind a reference argument
+                // copies it out of the referent (the closure-copy rule): the
+                // run moves the owners of the referent, so a second run is
+                // W0302 (old hole b14-run of the second review of the ABC
+                // preview: `fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }`).
+                for (mb, op) in &app.once_args {
+                    if !through_ref(em, *mb, op) {
+                        continue;
+                    }
+                    for v in once_vars(em, st, *mb, op)? {
+                        em.facts.moved_at.push((v, n));
+                    }
+                }
             }
             for (k, _) in &app.rebinds {
                 let linear =
@@ -2705,7 +2782,6 @@ fn fn_arg_effects(
     args: &[Operand],
     spans: &[Span],
 ) -> R {
-    use crate::analysis::FnVal;
     let body = em.body;
     let ident = |tys: &TyTable, e: &weft_ir::EffectId| {
         tys.effects().get(e.index()).map(|d| d.identity.clone())
@@ -2811,6 +2887,15 @@ fn once_copied_out(
         em.facts.moved_at.extend(vs.into_iter().map(|v| (v, r)));
     }
     Ok(())
+}
+
+/// True if operand `op` of body `mb` is a place of a reference type.
+fn through_ref(em: &mut Em<'_>, mb: BodyId, op: &Operand) -> bool {
+    let (Operand::Copy(q) | Operand::Move(q)) = op else {
+        return false;
+    };
+    super::alpha::place_ty(em.p, em.tys, mb, q)
+        .is_some_and(|t| matches!(em.tys.try_get(t), Some(weft_ir::Ty::Ref(_))))
 }
 
 /// The variables of the value of operand `op` of body `mb` that holds a

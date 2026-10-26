@@ -251,3 +251,32 @@ fn the_result_of_a_closure_maker_in_a_closure_or_a_callee_keeps_its_effects() {
     // to a variable that it captures `ByRef`.
     check("maker_results.wf");
 }
+
+#[test]
+fn a_run_that_a_callee_does_on_some_paths_only_is_on_some_paths_only_for_its_caller() {
+    // Second review of the ABC preview, hole H5b: `outer(f, c) { maybe(f, c) }`
+    // ran `f` on each path for its caller, because the block of the call of
+    // `maybe` runs it. A run that a callee gives is `maybe` when the callee
+    // says so (`RunOf::maybe`), through closures, `run`, three levels and a
+    // field of a struct argument.
+    check("maybe_through_callees.wf");
+}
+
+#[test]
+fn a_callee_that_gets_a_maker_of_a_linear_closure_can_drop_its_result() {
+    // Second review of the ABC preview, hole H3b: `fn go(m) { let g = m() }`
+    // with `go(|| || rollback(t))` dropped the linear closure that the
+    // maker gives back, and the callee does not know that it is linear. The
+    // call is W0601, also when the callee runs the maker or gives back its
+    // result (as the old pipeline).
+    check("maker_to_callee.wf");
+}
+
+#[test]
+fn a_once_closure_that_a_callee_runs_from_behind_a_reference_moves() {
+    // Second review of the ABC preview, old holes b14-run:
+    // `fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }` called two times,
+    // and a closure that copies a closure out of a reference, ran a `once`
+    // closure again. The run moves the owners of the referent.
+    check("once_run_through_ref.wf");
+}

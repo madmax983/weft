@@ -259,3 +259,11 @@ names the variant.
 
 - `fixes/f12b/n1/*.wf`: hole N1, the result of a closure maker, called or given
   back in a second closure or in a callee (claim F12R2-N1).
+- `fixes/f12b/h5b/*.wf`: hole H5b, a callee gives a linear closure to a second
+  callee that runs it on some paths only (claim F12R2-H5b).
+- `fixes/f12b/h3b/*.wf`: hole H3b, a callee drops or gives back the linear result
+  of a closure maker of its caller (claim F12R2-H3b).
+- `fixes/f12b/oldholes/*.wf`: old holes b14-run (review 2, 4.5): a callee or a
+  closure runs a `once` closure that it copies out of a referent, two times; the
+  default pipeline gives them to the old pipeline (ledger `open-old`, claim
+  F12R2-OH2).

@@ -3035,7 +3035,11 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   `first(fs: &Vec<fn()>) -> fn() { fs[0] }`) copies the value out of the referent: when
   it can be a `once` closure, the `Ret` node moves the owners of the referent
   (`templates::once_copied_out`, the closure-copy rule of 5.22; old hole `b14` of the
-  review of the ABC preview, F12-fix).
+  review of the ABC preview, F12-fix). A closure that gives back such a copy does the
+  same at its call. A callee or a closure that runs a `once` closure that it copies out
+  of a referent (`fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }`) moves the owners
+  of the referent at the run node (`templates::emit_apps`, `once_args`), so a second
+  run is W0302 (old holes b14-run of the second review of the ABC preview, F12-fix2).
 - A run in part `runs` has `maybe` (`Run::maybe`, F12-fix H5): a normal path of the body
   from its entry to a `Return` passes no block whose terminator runs the value
   (`summarize::returns_without`). A linear closure that goes to such a parameter can go
@@ -3043,7 +3047,17 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   closure literal gives the `E` variable of a `ByMove` capture of a type with a function
   part the flags of a linear value when the captured value is a linear closure
   (`templates::linear_fn_captures`): a closure that runs it on some paths only is W0601
-  at its `Return`.
+  at its `Return`. A run that a callee gives (part `runs` of its summary) is on some
+  paths only at the run node when it is `maybe` in the callee, and a run that code of
+  a caller can do is on some paths only (`RunOf::maybe`): the block of such a run node
+  is not a block that runs the value (hole H5b of the second review of the ABC
+  preview, F12-fix2: `fn outer(f, c) { maybe(f, c) }`).
+- A closure maker whose result is linear (`Ret::linear` of one of its values, also
+  through a maker of makers, `templates::gives_linear`) that goes to a callee is
+  W0601 at the call, also when the callee runs the maker: the callee does not know
+  that the result is linear, so it can drop it (hole H3b of the second review of the
+  ABC preview, F12-fix2: `fn go(m) { let g = m() }`). The old pipeline rejects each
+  of these programs too.
 - A run node in a cycle that changes a local whose type has a function part (and cannot
   be linear by its type) gives it `overwrites` (`templates::gets_linear_but`) also when
   the state joins a linear value of the back edge: the local starts empty
