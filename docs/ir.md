@@ -4018,14 +4018,18 @@ stage F13 found that A3 did not check the parts `puts` and `put_fns` (a missing
   is checked against each frame below that can name the place
   (`FactOracle::check_put`): each reference that the frame can name is inside a
   `points_into` place of a variable that holds the place (a variable of the local that owns
-  it, or a version of the heap slot that overlaps it; `Emitted::slots`). Tests:
+  it, or a version of the heap slot that overlaps it; `Emitted::slots`). A closure that
+  captures a local by reference points into the cell root of the local in the facts, and
+  the run gives the place of the local: the cell root covers it (review rows `fc/c20`,
+  `fc/c21` of stage F12 failed the first form of the check). Tests:
   `crates/weft-interp/tests/summary_oracle.rs` (`a_missing_put_fns_place_*`,
   `a_missing_puts_place_of_an_rc_object_*`, each seen passing the broken facts before).
 - The report counts what A3 does not check (`FactReport::summary_unnamed`,
   `summary_skipped`; the note of `weft run --fact-oracle`): an access or a reference that the
   frame below cannot name (a local of the callee, a place that no IR place of the frame
-  reaches), a captured cell of a closure that a callee puts there (the cell root of a
-  variable is not named), a place of another body of the component, and the frames that it
+  reaches), a captured cell of a closure that a callee puts there (the cell itself is not
+  named; the references in its value are), a place of another body of the component, and the
+  frames that it
   does not follow: a frame below that unwinds or that is a copied frame of a continuation
   (`uid` 0, group D), and each op of such a frame.
 - Limits that stay: at most `SUMMARY_DEPTH` = 16 frames below the callee (a write 18

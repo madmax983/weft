@@ -257,3 +257,24 @@ fn the_report_counts_what_the_summary_oracle_does_not_check() {
     assert!(r.summary > 0, "{r:?}");
     assert!(r.summary_unnamed > 0, "{r:?}");
 }
+
+#[test]
+fn a_closure_that_captures_a_local_by_reference_and_that_a_callee_stores_passes() {
+    // The closure points into the cell root `w (cell)` in the facts; the run
+    // gives the place of `w` (review rows `fc/c20`, `fc/c21` of stage F12,
+    // which failed the first form of the check of `put_fns`). Without the
+    // `points_into` of the cell, the check fails.
+    let src = "struct W { xs: Vec<u64> }\n\
+        fn put(out: &Vec<fn()>, f: fn()) / mut(out) { out.push(f) }\n\
+        fn run_all(fs: &Vec<fn()>) { let i = 0\n while i < fs.len() { let f = fs[i]\n f()\n i += 1 } }\n\
+        fn main() {\n\
+        let w = W { xs: Vec.new() }\n\
+        w.xs.push(1)\n\
+        let fs: Vec<fn()> = Vec.new()\n\
+        put(&fs, || print(w.xs.len()))\n\
+        run_all(&fs)\n\
+        }\n";
+    let m = broken(src, |f| drop_points(f, "fs", "w"));
+    assert!(m.starts_with("summary oracle (A3)"), "{m}");
+    assert!(m.contains("puts a reference"), "{m}");
+}

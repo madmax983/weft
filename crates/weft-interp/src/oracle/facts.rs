@@ -1348,11 +1348,26 @@ impl FactOracle {
             let Some(comp) = self.comps.get(comp_ix) else {
                 return Ok(());
             };
+            // A closure that captures a local by reference points into the
+            // cell root of the local in the facts (`docs/ir.md` 6.5): the run
+            // gives the place of the local.
+            let cell_of = |q: PlaceId| -> Option<weft_facts::RootId> {
+                let root = comp.facts.places.get(q.index())?.root;
+                comp.roots.cell_roots().find_map(|(k, c)| {
+                    let local = comp.local_roots.get(&k.1)?;
+                    (k.0 == comp.body && comp.facts.place(*local).root == root)
+                        .then(|| comp.facts.place(c).root)
+                })
+            };
             let ok = names.iter().any(|&q| {
+                let cell = cell_of(q);
                 vars.iter().any(|v| {
-                    comp.points
-                        .get(v)
-                        .is_some_and(|ps| ps.iter().any(|&d| comp.ref_inside(q, d)))
+                    comp.points.get(v).is_some_and(|ps| {
+                        ps.iter().any(|&d| {
+                            comp.ref_inside(q, d)
+                                || cell.is_some_and(|c| comp.facts.place(d).root == c)
+                        })
+                    })
                 })
             });
             if !ok {
