@@ -1,0 +1,18 @@
+// Third review of the ABC preview, false positive W0204 at a unit tail call (fpa/p19_tail_call_plain_closure.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn main() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || print(first.hp)
+    let k = || mk()
+    let g = k()
+    g()
+}

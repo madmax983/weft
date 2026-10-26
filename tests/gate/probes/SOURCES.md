@@ -296,3 +296,16 @@ that names the class and the review file.
   F12R3-FP4; they failed the fact oracle).
 - `fixes/f12c/fp4/*.wf`: false positive FP4, a wrong capture mapping of a made
   closure (claim F12R3-FP4).
+- `fixes/f12c/fp3/*.wf`: false positive FP3, the result of a callee that runs code
+  of a caller (claim F12R3-FP3).
+- `fixes/f12c/w0204/*.wf`: the W0204 class at a unit tail call (claim
+  F12R3-W0204), and made closures that read a reference that the maker took
+  (`c05*`, claim F12R3-N1c; two of them are F12-fix3 variants).
+- `fixes/f12c/b14agg/*.wf`: old holes b14-agg, a `once` closure copied out through
+  a reference inside an aggregate argument, and their clean twins (claim
+  F12R3-OH3, ledger `open-old`).
+- `fixes/f12c/n1d/*.wf`: old holes N1-aggregate that ABC closes (claim
+  F12R3-OH4, ledger `open-old`).
+- `fixes/f12c/h6/*.wf`: a callee stores a linear closure into a place of its caller
+  (`variants2/ah6/h6_08` of the rerun after F13, and two F12-fix3 variants; claim
+  F12R3-H6).

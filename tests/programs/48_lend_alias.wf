@@ -22,7 +22,7 @@ fn give_closure(g: fn(fn(), &World), world: &World) {
 // A closure argument lends its parameter and reads a capture inside it.
 fn lend_and_read(f: fn(&World), w: &World) {
     let r = &w.entities[0]
-    apply(|x| { f(x); print(r.hp) }, w)   //~ W0312
+    apply(|x| { f(x); print(r.hp) }, w)   //~ W0312 ir: W0301
 }
 
 // Controls: places that do not overlap.

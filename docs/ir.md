@@ -3073,6 +3073,33 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   `rs` was a change of `w`, and the variable `o` did not get the reference. A capture
   whose variable is not in the body (a maker that a callee gives back) keeps the
   mapping to the value and its references.
+- A run that a callee does late (at `Ret`, `Applied::late`) lends at `Main`: the callee
+  runs the value before it returns, so the lend invalidates each reference that lives
+  across the call, but not the result of the call. The body of the callee checks that a
+  run leaves its result valid. A capture that the call rebinds at `Ret` keeps the lends
+  at `Ret` (`templates::emit_apps`; false positive FP3 of the third review of the ABC
+  preview: `fn g2(m) { let g = give(m); g() }` was W0301 at `g()`).
+- The result of a run node whose type holds no reference and no function value (no
+  type parameter) gets none (`transfer::typed_result`): the values of a run join their
+  results, so the `()` result of a tail call `g()` pointed into the environment of a
+  closure that a maker gives back (W0204 class of the third review of the ABC preview).
+- The result of a run of a closure maker through a closure or a callee (`|| mk()`,
+  `give(mk)`) points into the environment of the closure that the maker makes: the
+  places of part `ret` of the maker with σ of the maker at the run node
+  (`transfer::result_refs`, for a maker with no parameter, through `RESULT_DEPTH`
+  captures that give back captures). Before, only the W0204 of a unit tail call caught
+  a made closure that reads a reference that its maker took (`n1c/c05`).
+- The closure-copy rule of a callee (`once_copied_out`, the copy-out at a run node)
+  also holds for an argument of a type that holds references (an `Option`, a tuple,
+  a `Vec` of references, `templates::through_ref`): the call moves the owners of each
+  referent behind which a `once` closure can be (`templates::once_vars`, two levels),
+  and the argument itself if it holds a `once` closure by value (old holes b14-agg of
+  the third review of the ABC preview: `ro(Some(&fs))` two times).
+- A callee that puts a closure with a linear capture into a place of its caller (part
+  `put_fns`) makes the local of that place linear in the facts
+  (`templates::put_linear`, as `fn_linear_args` for a closure argument): W0601 where
+  the caller can drop it (`fn add(ks: &Vec<fn()>, t: Tx) { ks.push(|| rollback(t)) }`,
+  a hole of stage F13 that the rerun of the review sets found).
 - The result of a closure maker keeps its effects in a second closure and in a callee
   (F12-fix2, hole N1 of the second review of the ABC preview: `let mk2 = || mk()`,
   `|| run(mk())`, `fn go(m) { let g = m(); g() }`):

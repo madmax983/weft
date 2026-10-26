@@ -1,0 +1,14 @@
+// F12-fix3 variant of n1c/c05: a made closure reads a reference that its maker took, through give or mk2 (c_give).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn main() {
+    let w = mkw()
+    let mk = || { let first = &w.entities[0]; || print(first.hp) }
+    let g = give(mk)
+    w.entities.clear()
+    g()
+}

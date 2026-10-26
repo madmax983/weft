@@ -1867,6 +1867,9 @@ fn rets_fns(
                 Given::Args(args) => match args.get(*i as usize) {
                     Some(a) => {
                         let reach = reach_fns(cx, r.body, r.st, a)?;
+                        for fv in &reach {
+                            refs.extend(result_refs(cx, r, fv, (a, r.body), 0)?);
+                        }
                         out.extend(with_results(cx, r, reach)?);
                         refs.extend(reach_refs(cx, r.body, r.st, a)?);
                     }
@@ -2900,10 +2903,93 @@ fn capture_refs(
         .and_then(|d| d.captures.get(k as usize).map(|cap| (d.maker, cap)));
     match cap {
         Some((maker, cap)) if !made && cap.mode != weft_ir::CaptureMode::ByMove => {
-            reach_refs(cx, maker, r.st, &Operand::Copy(cap.source.clone()))
+            let src = Operand::Copy(cap.source.clone());
+            let mut out = reach_refs(cx, maker, r.st, &src)?;
+            for fv in reach_fns(cx, maker, r.st, &src)? {
+                out.extend(result_refs(cx, r, &fv, (&src, maker), 0)?);
+            }
+            Ok(out)
         }
         _ => Ok(callee.clone()),
     }
+}
+
+/// The places that the result of a run of the function value `fv` with no
+/// arguments points into, if its result can be a closure that its body
+/// makes (part `ret`): the environment of that closure (for example a
+/// reference that the maker takes before it makes the closure). A value
+/// that gives back a capture gives what a run of the capture gives back
+/// ([`RESULT_DEPTH`] levels). `callee` is the operand that holds `fv` and
+/// its body.
+///
+/// A closure that a maker gives back holds these places where a closure
+/// or a callee gives back the result of a run of the maker (`|| mk()`,
+/// `give(mk)`): hole of class N1 of the third review of the ABC preview
+/// (`n1c/c05`, the made closure reads a reference that the maker took).
+///
+/// # Errors
+///
+/// The errors of σ and of α.
+fn result_refs(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    fv: &FnVal,
+    (callee, cb): (&Operand, BodyId),
+    depth: usize,
+) -> Result<BTreeSet<PlaceId>, AlphaError> {
+    use super::summary::RetFn;
+    let mut out = BTreeSet::new();
+    let (FnVal::Closure(c) | FnVal::Made(c)) = fv else {
+        return Ok(out);
+    };
+    if depth > RESULT_DEPTH {
+        return Ok(out);
+    }
+    let Ok(summary) = cx.sums.closure(*c).cloned() else {
+        return Ok(out);
+    };
+    if summary.ret.fns.is_empty() {
+        return Ok(out);
+    }
+    let p = cx.p;
+    let Some(decl) = p.closures.get(c.index()) else {
+        return Ok(out);
+    };
+    let Some(cb_decl) = p.bodies.get(decl.body.index()) else {
+        return Ok(out);
+    };
+    // A run with arguments is code of a caller in the body that runs it:
+    // its result points into its wildcard places there.
+    if cb_decl.params.len() > 1 {
+        return Ok(out);
+    }
+    let Some(ret_ty) = cb_decl.locals.first().map(|d| d.ty) else {
+        return Ok(out);
+    };
+    let sigma = if matches!(fv, FnVal::Made(_)) {
+        super::apply::made_sigma(cx, r.body, r.st, *c, (callee, cb), Given::Args(&[]), r.inst)?
+    } else {
+        super::apply::closure_sigma(cx, r.body, r.st, *c, (callee, cb), Given::Args(&[]), r.inst)?
+    };
+    let v = super::apply::ret_value(cx, &summary, &sigma, ret_ty)?;
+    v.places(&mut out);
+    if matches!(fv, FnVal::Made(_)) {
+        return Ok(out);
+    }
+    for rf in &summary.ret.fns {
+        let RetFn::Capture(k) = rf else { continue };
+        let Some(cap) = decl.captures.get(*k as usize) else {
+            continue;
+        };
+        if cap.mode == weft_ir::CaptureMode::ByMove {
+            continue;
+        }
+        let src = Operand::Copy(cap.source.clone());
+        for g in reach_fns(cx, decl.maker, r.st, &src)? {
+            out.extend(result_refs(cx, r, &g, (&src, decl.maker), depth + 1)?);
+        }
+    }
+    Ok(out)
 }
 
 /// True if `place` of body `body` holds a `once` value.
@@ -3041,6 +3127,46 @@ fn perform_row(
     bind_result(cx, body, st, args, dest, out.ret)
 }
 
+/// The result `ret` of a run node as a value of the type of `dest`.
+///
+/// A type that holds no reference and no function value gets none. The
+/// values of a run can be more than one function value, and their results
+/// join (`with_results` keeps the maker too), so the `()` result of `g()`
+/// could point into the environment of a closure that a maker gives back
+/// (the W0204 class of the third review of the ABC preview).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn typed_result(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    dest: &Place,
+    mut ret: Tree,
+) -> Result<Tree, AlphaError> {
+    let t = place_ty(cx, body, dest)?;
+    let pr = ir_props(cx.tys, t);
+    // A function value holds its environment, so a type with a function
+    // part keeps its references.
+    if !pr.generic && !pr.holds_refs && !pr.callable && !crate::props::ir_has_fns(cx.tys, t) {
+        ret.map_refs(&mut |r| {
+            let had = !r.is_empty();
+            r.clear();
+            had
+        });
+        no_fns(&mut ret);
+    }
+    Ok(ret)
+}
+
+/// Removes the function values of each part of `t`.
+fn no_fns(t: &mut Tree) {
+    t.top.fns.clear();
+    for k in t.kids.values_mut() {
+        no_fns(k);
+    }
+}
+
 /// The result `ret` of a run node with the arguments `args` binds to
 /// `dest`: the moved arguments leave no value, then a move path gets the
 /// value (a strong update), and another place joins it (a weak update).
@@ -3056,6 +3182,7 @@ fn bind_result(
     dest: &Place,
     ret: Tree,
 ) -> Result<(), AlphaError> {
+    let ret = typed_result(cx, body, dest, ret)?;
     let target = match move_path(cx.p, body, dest)? {
         Some(d) => Some(d),
         None => kept_whole(cx, body, st, dest)?.map(|k| (k, Vec::new())),

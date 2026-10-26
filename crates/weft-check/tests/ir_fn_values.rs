@@ -290,3 +290,32 @@ fn a_made_closure_changes_each_captured_variable_at_its_own_place() {
     // push into `rs` was a change of `w`.
     check("made_capture_places.wf");
 }
+
+#[test]
+fn the_result_of_a_call_that_runs_a_function_value_is_valid_after_the_call() {
+    // Third review of the ABC preview, false positive FP3: a callee that runs
+    // code of a caller (`give(m)` in `fn g2(m) { let g = give(m); g() }`)
+    // lent the places of a caller at `Ret`, where its result binds, so the
+    // result was invalid. The W0204 class: the `()` result of a tail call
+    // `g()` pointed into the environment of a made closure. A reference that
+    // lives across the call is still invalid after a change.
+    check("call_results.wf");
+}
+
+#[test]
+fn a_once_closure_that_a_callee_copies_out_through_an_aggregate_moves() {
+    // Third review of the ABC preview, old holes b14-agg: a reference to a
+    // vector of `once` closures inside an `Option`, a tuple or a `Vec`
+    // argument (`ro(Some(&fs))` two times). The copy-out rule looked only at
+    // arguments of a reference type; a value that holds references moves the
+    // owners of the referents behind which a `once` closure can be.
+    check("once_through_aggregates.wf");
+}
+
+#[test]
+fn a_linear_closure_that_a_callee_stores_into_a_place_of_the_caller_is_linear_there() {
+    // A hole of stage F13 that the rerun of the review sets found
+    // (`ah6/h6_08`): `fn add(ks: &Vec<fn()>, t: Tx) { ks.push(|| rollback(t)) }`
+    // put a linear closure into `ks`, and `ks` went out of scope with it.
+    check("stored_linear.wf");
+}

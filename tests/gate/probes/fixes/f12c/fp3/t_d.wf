@@ -1,0 +1,5 @@
+// Third review of the ABC preview, false positive FP3: the result of a callee that runs code of a caller (fpx2/t_d.wf).
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn g2(m: fn() -> fn()) { run(give(m)) }
+fn main() { g2(|| || print(1)) }

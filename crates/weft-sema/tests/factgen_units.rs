@@ -1887,11 +1887,11 @@ fn holds(t: Tx) / log {
     keep(t)
 }
 
-extern fn mk() -> u64
+extern fn mk() -> Vec<&u64>
 
 fn frame() {
     let a = mk()
-    print(a)
+    print(a.len())
 }
 
 fn extend(dst: &Vec<&Entity>, src: &Vec<&Entity>) / mut(dst) {
@@ -2031,7 +2031,9 @@ fn a_callee_frame_place_in_a_result_ends_at_frame_end() {
     let Outcome::Built(entry) = b.entries[i].outcome else {
         panic!("`frame` has no IR");
     };
-    // A summary of `mk` whose result points into a local of `mk`.
+    // A summary of `mk` whose result points into a local of `mk` (the
+    // result type holds references: a result of a type with none gets none,
+    // `transfer::typed_result`).
     let mut sums = weft_sema::factgen::summaries(&a, &b);
     let mk = b
         .program

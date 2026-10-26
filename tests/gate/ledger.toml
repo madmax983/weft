@@ -930,6 +930,40 @@ reason = "old holes b14-run (second review of the ABC preview, 4.5): a callee (`
 stage = "F12"
 
 # ----------------------------------------------------------------------
+# F12-fix3 (third review of the ABC preview): old holes that group C closes.
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f12c/b14agg/g04_option_of_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/g06_tuple_holding_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/g17_ref_stored_in_local_struct_closure.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h01_vec_of_refs_by_value.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h03_tuple_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h04_option_tuple_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h06_tuple_param_returns_copy.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h08_option_ref_then_direct.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h09_option_ref_loop.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h10_tuple_ref_closure_returns_copy.wf",
+]
+finding = "F12R3-OH3"
+reason = "old holes b14-agg (third review of the ABC preview, 1.1): a callee copies a `once` closure out of a referent that an argument holds inside an `Option`, a tuple or a `Vec` (`ro(Some(&fs))` two times), and the closure runs again; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the copy moves the owners of the referent (F12-fix3, `templates::through_ref`, `once_vars`): W0302 (W0301 for `g17`). Drop this entry when group C is on (F13)"
+stage = "F12"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f12c/n1d/e01_maker_gives_struct.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e02_maker_gives_option.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e03_maker_gives_vec.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e04_maker_gives_tuple.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e08_maker_gives_struct_param_world.wf",
+]
+finding = "F12R3-OH4"
+reason = "old holes N1-aggregate (third review of the ABC preview, 3): a maker gives back a closure that clears the world inside a struct, an `Option`, a `Vec` or a tuple, and a callee runs it (`gok(|| K { f: || w.entities.clear() })`); the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the made closure keeps its effects (F12-fix2 N1): W0301 at the use. Drop this entry when group C is on (F13)"
+stage = "F12"
+
+# ----------------------------------------------------------------------
 # Stage F13: the rows of the gate with the groups A, B and C (`--groups ABC`;
 # group C goes on at F13 after its review). The `lost-clean` entries are the
 # TOML that independent review agents signed (scratchpad f12/review.md 2.4,
@@ -1196,8 +1230,8 @@ class = "changed"
 files = [
     "tests/programs/48_lend_alias.wf",
 ]
-codes = ["W0405"]
-reason = "task runs (stage F18): the ir pipeline has no facts of tasks for the runs of a callee (W0405 of the old pipeline only); the program stays rejected"
+codes = ["W0301", "W0405"]
+reason = "task runs (stage F18): the ir pipeline has no facts of tasks for the runs of a callee (W0405 of the old pipeline only); the program stays rejected. W0301 at 25 (ir only, F12-fix3 FP3): `apply` runs the closure late, and the closure gives `w` to code of a caller `f`, which can change `w.entities`, before it reads `r`; the lend is at `Main` now, so the read of `r` at `Ret` sees it (a true positive; both pipelines give W0312 there too)"
 stage = "F13"
 
 [[entry]]
@@ -1746,4 +1780,15 @@ class = "changed"
 files = ["verify/s5/r2a/t/fv2.wf"]
 codes = ["W0301"]
 reason = "In scope since F12 (F11: out of scope). `self_wrap` and `nest` (8, 21, 35, 36, 42): the old W0301 at the copies of the closures in the loop are false positives; `nest` (42) and `self_wrap_bad` (26) are true positives in both (claim F12-R9: a closure that a loop makes keeps the last value of a local of the loop body)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12c/h6/h6_08_callee_adds.wf",
+    "tests/gate/probes/fixes/f12c/h6/h6_a_one_dropped.wf",
+    "tests/gate/probes/fixes/f12c/h6/h6_c_two_one_run.wf",
+]
+codes = ["W0204", "W0601"]
+reason = "a callee stores a closure with a linear capture into a vector of its caller (`fn add(ks: &Vec<fn()>, t: Tx) { ks.push(|| rollback(t)) }`): the old pipeline reports `add` (W0204 for the by-value `t`, a false positive, and W0601 at the closure); the ir pipeline (groups A, B and C, F12-fix3 `templates::put_linear`) reports W0601 where the caller can drop the vector with the linear closure (and at the push of the next iteration in a loop, as F12-fix H6). Each program is rejected in both pipelines"
 stage = "F13"

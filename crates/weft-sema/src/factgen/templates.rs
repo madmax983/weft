@@ -2117,6 +2117,8 @@ fn via_receiver(
 /// destination of an `Assign` ([`assign`]).
 fn bind_dest(em: &mut Em<'_>, n: NodeId, st: &State, dest: &Place, v: &Tree) -> R {
     let body = em.body;
+    let typed = transfer::typed_result(&mut em.cx(), body, dest, v.clone())?;
+    let v = &typed;
     let target = match transfer::move_path(em.p, body, dest)? {
         Some(d) => Some(d),
         None => transfer::kept_whole(&mut em.cx(), body, st, dest)?.map(|k| (k, Vec::new())),
@@ -2249,6 +2251,7 @@ pub fn call(
     via_receiver(em, main, st, args, sum.only_self, &changed)?;
     let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
     fn_linear_args(em, st, args, &places)?;
+    put_linear(em, &out.put_fns);
     gets_linear(em, main, st, &places);
     // The callee frame root: a local of the callee that the result points
     // into.
@@ -2618,6 +2621,7 @@ fn emit_apps(
     let mut abort = false;
     let mut frames = Vec::new();
     let cyclic = em.cycles.has(em.body, block);
+    let rebinds = apps.iter().any(|a| !a.rebinds.is_empty());
     for app in apps {
         let n_runs = if app.again {
             vec![Some(main), nodes.ret]
@@ -2640,6 +2644,7 @@ fn emit_apps(
                 }
                 k => k,
             };
+            let lent = em.facts.lends_mut.len();
             let changed = crate::analysis::apply::main(
                 &mut em.cx(),
                 n,
@@ -2650,6 +2655,7 @@ fn emit_apps(
             )?;
             let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
             fn_linear_args(em, st, args, &places)?;
+            put_linear(em, &app.put_fns);
             // A capture that the closure rebinds gets its new value at
             // `Ret` (`whole`): the change at `n` is no overwrite of it.
             let rebound: Vec<Key> = app.rebinds.iter().map(|(k, _)| *k).collect();
@@ -2673,6 +2679,21 @@ fn emit_apps(
             for &q in &app.lends {
                 em.facts.lends_mut.push((n, q));
                 em.facts.reads_at.push((n, q));
+            }
+            // A late run lends at `Main`: the callee runs the value before
+            // it returns, so the lend invalidates each reference that lives
+            // across the call, but not the result of the call, which the
+            // callee gives back after the run (its body checks that a run
+            // leaves its result valid). A capture that the call rebinds at
+            // `Ret` keeps the lends at `Ret` (false positive FP3 of the
+            // third review of the ABC preview: `fn g2(m) { let g = give(m);
+            // g() }`).
+            if n != main && !rebinds {
+                for (at, _) in em.facts.lends_mut.iter_mut().skip(lent) {
+                    if *at == n {
+                        *at = main;
+                    }
+                }
             }
             // A `once` closure that a callee runs more than once (part
             // `runs`): the run moves the value that holds it, and the run
@@ -2870,13 +2891,10 @@ fn once_copied_out(
     let body = em.body;
     for f in &sum.ret.fns {
         let RetFn::Param(i) = f else { continue };
-        let Some(op @ (Operand::Copy(q) | Operand::Move(q))) = args.get(*i as usize) else {
+        let Some(op @ (Operand::Copy(_) | Operand::Move(_))) = args.get(*i as usize) else {
             continue;
         };
-        let is_ref = em
-            .place_ty(q)
-            .is_some_and(|t| matches!(em.tys.try_get(t), Some(Ty::Ref(_))));
-        if !is_ref {
+        if !through_ref(em, body, op) {
             continue;
         }
         let reach = transfer::reach_fns(&mut em.cx(), body, st, op)?;
@@ -2889,13 +2907,16 @@ fn once_copied_out(
     Ok(())
 }
 
-/// True if operand `op` of body `mb` is a place of a reference type.
+/// True if operand `op` of body `mb` is a place of a reference type, or of
+/// a type that holds references (an `Option`, a tuple, a `Vec` of
+/// references; old holes b14-agg of the third review of the ABC preview).
 fn through_ref(em: &mut Em<'_>, mb: BodyId, op: &Operand) -> bool {
     let (Operand::Copy(q) | Operand::Move(q)) = op else {
         return false;
     };
-    super::alpha::place_ty(em.p, em.tys, mb, q)
-        .is_some_and(|t| matches!(em.tys.try_get(t), Some(weft_ir::Ty::Ref(_))))
+    super::alpha::place_ty(em.p, em.tys, mb, q).is_some_and(|t| {
+        crate::analysis::sig::is_ref(em.tys, t) || crate::analysis::sig::byval_refs(em.tys, t)
+    })
 }
 
 /// The variables of the value of operand `op` of body `mb` that holds a
@@ -2914,20 +2935,54 @@ fn once_vars(
     let (Operand::Copy(q) | Operand::Move(q)) = op else {
         return Ok(Vec::new());
     };
-    let is_ref = super::alpha::place_ty(em.p, em.tys, mb, q)
-        .is_some_and(|t| matches!(em.tys.try_get(t), Some(weft_ir::Ty::Ref(_))));
-    if !is_ref {
+    let ty = super::alpha::place_ty(em.p, em.tys, mb, q);
+    let is_ref = ty.is_some_and(|t| crate::analysis::sig::is_ref(em.tys, t));
+    let holds = ty.is_some_and(|t| crate::analysis::sig::byval_refs(em.tys, t));
+    if !is_ref && !holds {
         return Ok(em.base_var(mb, q)?.into_iter().collect());
     }
     let v = transfer::place_value(&mut em.cx(), mb, st, q)?.flat();
     let base = transfer::key(em.p, mb, q.local)?;
     let mut out = Vec::new();
+    // A value that holds references (old holes b14-agg of the third review
+    // of the ABC preview: `ro(Some(&fs))`, `rt((&fs, 1))`): the value itself,
+    // and the owners of each referent behind which a `once` closure can be
+    // (two levels).
+    if holds && v.fns.iter().any(|f| transfer::once_value(em.p, f)) {
+        out.extend(em.base_var(mb, q)?);
+    }
     for r in v.refs {
+        if holds && !once_behind(em, st, r) {
+            continue;
+        }
         out.extend(em.owner_vars(r, base));
     }
     out.sort();
     out.dedup();
     Ok(out)
+}
+
+/// True if a `once` closure can be at place `r` or behind a reference
+/// there (two levels, as `transfer::reach_fns`).
+fn once_behind(em: &mut Em<'_>, st: &State, r: PlaceId) -> bool {
+    let mut level = vec![r];
+    for _ in 0..3 {
+        let mut next = Vec::new();
+        for &q in &level {
+            let cx = em.cx();
+            if transfer::fns_at(&cx, st, q)
+                .iter()
+                .any(|f| transfer::once_value(em.p, f))
+            {
+                return true;
+            }
+            if let Ok(h) = transfer::held_at(em.p, st, em.facts, em.roots, q, None) {
+                next.extend(h);
+            }
+        }
+        level = next;
+    }
+    false
 }
 
 /// The facts of the summaries `apps` at the `Ret` node `r`: the values that
@@ -3343,6 +3398,50 @@ fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
             info.has_on_abort = on_abort;
         }
     }
+}
+
+/// The places `put_fns` that a callee puts closures into (part `put_fns`,
+/// stage F13): a closure that the callee made with a linear capture
+/// (`ks.push(|| rollback(t))` in `fn add(ks: &Vec<fn()>, t: Tx)`) is a linear
+/// value there, so the local of the place gets the flags of a linear value
+/// ([`mark_fn_linear`]): W0601 if it can go out of scope with the closure
+/// (a hole of stage F13 that the rerun of the review sets found,
+/// `ah6/h6_08`).
+fn put_linear(
+    em: &mut Em<'_>,
+    put_fns: &[(PlaceId, std::collections::BTreeSet<crate::analysis::FnVal>)],
+) {
+    for (q, fns) in put_fns {
+        let linear = fns.iter().any(|f| match f {
+            crate::analysis::FnVal::Made(c) | crate::analysis::FnVal::Closure(c) => {
+                linear_captures(em, *c)
+            }
+            _ => false,
+        });
+        if !linear {
+            continue;
+        }
+        let Some((k, _)) = em.roots.path_of(em.facts, *q) else {
+            continue;
+        };
+        let v = crate::analysis::AbsVal::of_type(true);
+        mark_fn_linear(em, k, &v);
+    }
+}
+
+/// True if closure `c` moves a value that can be linear into its
+/// environment (a `ByMove` capture of a type that can be linear).
+fn linear_captures(em: &mut Em<'_>, c: weft_ir::ClosureId) -> bool {
+    let Some(decl) = em.p.closures.get(c.index()) else {
+        return false;
+    };
+    (0..decl.captures.len()).any(|k| {
+        decl.captures.get(k).is_some_and(|cap| {
+            cap.mode == weft_ir::CaptureMode::ByMove
+                && super::alpha::capture_ty(em.p, em.tys, c, u32::try_from(k).unwrap_or(u32::MAX))
+                    .is_some_and(|t| crate::props::ir_maybe_linear(em.tys, t))
+        })
+    })
 }
 
 /// A run node `n` with the arguments `args` that changes the places

@@ -4294,3 +4294,128 @@ repro = [
     "tests/gate/probes/fixes/f12c/h7/m06_ctl_maker_opt_assign_in_loop.wf",
 ]
 note = "a made closure changes each captured variable at its own place: a push into `rs` is no change of `w`, and a store into `o` is no change of `first` (false positive FP4 of the third review of the ABC preview: W0301 `w : &World in rs.entities[]`, W0703 `g mutates first`)"
+
+[[claim]]
+finding = "F12R3-FP3"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/fp3/g2.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_a.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_b.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_c.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_d.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_e.wf",
+    "tests/gate/probes/fixes/f12c/fp3/u03_ctl_give_back_chain_dropped.wf",
+    "tests/gate/probes/fixes/f12c/fp3/z14_ctl_give2_result.wf",
+]
+note = "a late run of code of a caller that a callee does (`give(m)`) lends the places of a caller at `Main`: it invalidates each reference that lives across the call, but not the result of the call (false positive FP3 of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-W0204"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/w0204/p19_tail_call_plain_closure.wf",
+    "tests/gate/probes/fixes/f12c/w0204/u_a.wf",
+    "tests/gate/probes/fixes/f12c/w0204/u_d.wf",
+    "tests/gate/probes/fixes/f12c/w0204/u_e.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x01_ctl_made_reads_ref_mk2.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x02_ctl_made_reads_ref_give.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x03_ctl_made_reads_ref_struct.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x04_ctl_made_reads_ref_vec.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x05_ctl_made_reads_elem_inside.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x06_ctl_made_reads_ref_three.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x07_ctl_made_reads_ref_opt.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x09_ctl_made_reads_ref_loop.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x10_ctl_tuple_of_made.wf",
+]
+note = "the result of a run node whose type holds no reference and no function value gets none (`transfer::typed_result`): the `()` result of a tail call `g()` of a made closure does not point into its environment (W0204 class of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-N1c"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/w0204/c05_c_give.wf",
+    "tests/gate/probes/fixes/f12c/w0204/c05_e_mk2_notail.wf",
+    "tests/gate/probes/fixes/f12c/w0204/c05_made_reads_elem_inside.wf",
+]
+code = "W0301"
+note = "the result of a run of a closure maker through a closure or a callee (`|| mk()`, `give(mk)`) points into the environment of the closure that the maker makes (`transfer::result_refs`): a reference that the maker took before it made the closure (`n1c/c05` of the third review of the ABC preview; before F12-fix3 only the W0204 of a unit tail caught it)"
+
+[[claim]]
+finding = "F12R3-OH3"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/b14agg/g04_option_of_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/g06_tuple_holding_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/g17_ref_stored_in_local_struct_closure.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h01_vec_of_refs_by_value.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h03_tuple_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h04_option_tuple_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h06_tuple_param_returns_copy.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h08_option_ref_then_direct.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h09_option_ref_loop.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h10_tuple_ref_closure_returns_copy.wf",
+]
+note = "a callee that copies a `once` closure out of a referent that an argument holds inside an `Option`, a tuple or a `Vec` (`ro(Some(&fs))` two times) moves the owners of the referents behind which a `once` closure can be (`templates::through_ref`, `once_vars`, `once_copied_out`): a second copy is W0302 (old holes b14-agg of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-OH3"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/b14agg/s01_ctl_vec_of_refs_by_value.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s03_ctl_tuple_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s04_ctl_option_tuple_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s06_ctl_tuple_param_returns_copy.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s08_ctl_option_ref_then_direct.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s09_ctl_option_ref_loop.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s10_ctl_tuple_ref_closure_returns_copy.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/t04_ctl_option_of_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/t06_ctl_tuple_holding_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/t17_ctl_ref_stored_in_local_struct_closure.wf",
+]
+note = "the clean twins of the old holes b14-agg: the closure that a callee copies out through an aggregate argument is not `once`"
+
+[[claim]]
+finding = "F12R3-OH4"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/n1d/e01_maker_gives_struct.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e02_maker_gives_option.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e03_maker_gives_vec.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e04_maker_gives_tuple.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e08_maker_gives_struct_param_world.wf",
+]
+code = "W0301"
+note = "a maker that gives back a closure inside a struct, an `Option`, a `Vec` or a tuple keeps the effects of the closure (F12-fix2 N1): W0301 at the use after the run (old holes N1-aggregate of the third review of the ABC preview, `n1d/e01`..`e04`, `e08`)"
+
+[[claim]]
+finding = "F12R3-H6"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/h6/h6_08_callee_adds.wf",
+    "tests/gate/probes/fixes/f12c/h6/h6_a_one_dropped.wf",
+    "tests/gate/probes/fixes/f12c/h6/h6_c_two_one_run.wf",
+]
+code = "W0601"
+note = "a callee that stores a closure with a linear capture into a place of the caller (part `put_fns`) makes the local of the place linear (`templates::put_linear`): W0601 if it can go out of scope with the closure (`ah6/h6_08`, a hole of stage F13 that the rerun of the review sets found)"

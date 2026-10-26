@@ -1,0 +1,15 @@
+// Rerun of the review sets after F13: a callee stores a linear closure into a place of the caller (variants2/ah6/h6_08_callee_adds.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn run(f: fn()) { f() }
+struct K { f: fn() }
+struct FS { fs: Vec<fn()> }
+fn add(ks: &Vec<fn()>, t: Tx) / mut(ks) { ks.push(|| rollback(t)) }
+fn main() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 2 { add(&ks, begin(i)); i += 1 }
+    match ks.pop() { Some(f) => f(), None => {} }
+}
