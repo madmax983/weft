@@ -1,0 +1,223 @@
+fn f0 World.load(FsCap) -> World / Fs: b0
+fn f1 step(&World, &Entity) -> () / (): b1
+fn f2 simulate(&World) -> () / main.Log: b2
+fn f3 main(Env) -> () / Async, Blocking, Clock, Fs, Log, Net, Rand: b3
+fn f4 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f5 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f6 Stdout.write_all(&Stdout, Vec<String>) -> () / Async, Blocking, Clock, Fs, Log, Net, Rand: extern
+handler h0 main.Log: handled b4, site b3, clauses [log: b5]
+cap_env e0
+cap_env e1: parent e0, main.Log _1
+
+body b0: fn World.load; cap_env e0; unwind_exit bb2
+  _0: World (Return)
+  _1: FsCap (Param(0) `fs`)
+  _2: Vec<Entity> (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<Entity>() / e0 -> [bb1]
+  bb1:
+    _0 = World { move _2 }
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b1: fn step; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: &Entity (Param(1) `e`)
+  _3: i32 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = Sub<i32>(copy (*_2).1, const 1i32)
+    (*_2).1 = move _3
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn simulate; cap_env e0; unwind_exit bb12
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: Iter<&Entity> (Iterator)
+  _3: &Entity (Temp(Scrutinee))
+  _4: &Entity (User `e`)
+  _5: () (Temp(Discarded))
+  _6: () (Temp(Discarded))
+  _7: String (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Iter(elems (*_1).0[])
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb13]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    _5 = call step(copy _1, copy _4) / e0 -> [bb3, unwind: bb7]
+  bb3:
+    Dead(_5)
+    Live(_6)
+    Live(_7)
+    _7 = Concat(const "stepped ", copy (*_4).0)
+    _6 = perform Row(main.Log).log(move _7) -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_7)
+    Dead(_6)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb5 (cleanup):
+    Dead(_7)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb7 (cleanup):
+    Dead(_5)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_4)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+  bb13:
+    Dead(_3)
+    Goto(bb14)
+  bb14:
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+
+body b3: fn main; cap_env e0; unwind_exit bb11
+  _0: () (Return)
+  _1: Env (Param(0) `env`)
+  _2: World (User `world`)
+  _3: Vec<String> (User `lines`)
+  _4: () (Temp(Discarded))
+  _5: Vec<String> (Temp(Operand))
+  _6: &Stdout (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call World.load(copy _1.0) / e0 -> [bb1, unwind: bb9]
+  bb1:
+    Live(_3)
+    _3 = call Vec.new<String>() / e0 -> [bb2]
+  bb2:
+    Live(_4)
+    _4 = handle h0 -> [bb3, unwind: bb7]
+  bb3:
+    Dead(_4)
+    Live(_5)
+    _5 = move _3
+    Live(_6)
+    _6 = &_1.2
+    _0 = call Stdout.write_all(move _6, move _5) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_3)
+    Dead(_2)
+    Dead(_6)
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb8)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b4: handled h0; parent b3; cap_env e1; unwind_exit bb4
+  _0: () (Return)
+  _1: Cap<main.Log> (Cap(main.Log) `Log`)
+  _2: &World (Temp(Operand))
+  _3: World (Upvar(_2) `world`)
+  bb0:
+    Live(_2)
+    _2 = &_3
+    _0 = call simulate(move _2) / e1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b5: clause h0 log; parent b3; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: String (Param(0) `msg`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  _4: Vec<String> (Upvar(_3) `lines`)
+  _5: String (Temp(Operand))
+  _6: &Vec<String> (Temp(Receiver))
+  bb0:
+    Live(_3)
+    Live(_5)
+    _5 = copy _1
+    Live(_6)
+    _6 = &_4
+    _3 = call Vec.push<String>(move _6, move _5) / e0 -> [bb1]
+  bb1:
+    Dead(_6)
+    Dead(_5)
+    Dead(_3)
+    _0 = resume _2(const ()) -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit

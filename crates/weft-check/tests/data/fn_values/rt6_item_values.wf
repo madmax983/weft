@@ -1,0 +1,19 @@
+// RT6 (tests/gate/probes/redteam/a03_fn_item_value.wf): a call through a
+// function item value applies the summary of the item.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn via_item(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = grow
+    g(world)
+    print(first.hp)   //~ W0301
+}
+pub fn undeclared(world: &World) {   //~ W0701
+    let g = grow
+    g(world)
+}
+fn shared_via_item(world: &World @ shared) {
+    let g = grow
+    g(world)   //~ W0402
+}

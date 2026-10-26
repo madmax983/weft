@@ -1,0 +1,16 @@
+// Named arguments run in the order of the parameters (ADR 0009, `docs/ir.md`
+// 5.1.1): the THIR gives the argument of each parameter.
+
+fn sub(a: u64, b: u64) -> u64 { a - b }
+fn one() -> u64 { 1 }
+fn two() -> u64 { 2 }
+
+// `two()` (for `a`) runs before `one()` (for `b`).
+fn named() -> u64 {
+    sub(b: one(), a: two())
+}
+
+// A named argument and a positional one.
+fn mixed(x: u64) -> u64 {
+    sub(b: x, one())
+}

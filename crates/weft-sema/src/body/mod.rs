@@ -580,8 +580,11 @@ impl Summary {
 /// The state of a property query (`Lower::ty_has`).
 #[derive(Default)]
 pub(super) struct Has {
-    /// The closure summaries on the way.
-    seen: Vec<usize>,
+    /// The closure summaries that the query looked at. The query is "a part
+    /// has the property", and it stops at the first "yes". So a summary that
+    /// the query looked at gives no new "yes", and the query looks at each
+    /// summary one time (review round 3, Q3-2).
+    seen: BTreeSet<usize>,
     /// A value of a type parameter counts as linear.
     params: bool,
 }
@@ -686,6 +689,9 @@ pub struct Lowered {
     pub diags: Vec<Diagnostic>,
     /// The work of the lowering.
     pub work: crate::Work,
+    /// The decisions of the lowering for the THIR, with settled types
+    /// (`crate::thir::record`).
+    pub(crate) thir: Box<crate::thir::record::Recorder>,
 }
 
 #[derive(Clone, Debug)]
@@ -1444,8 +1450,13 @@ pub struct Lower<'p> {
     task_ends: Vec<(TaskId, NodeId)>,
     /// The work so far. A loop rewind keeps it.
     work: crate::Work,
+    /// The count of `Work::closure_queries`: a property query has `&self`.
+    closure_queries: std::cell::Cell<usize>,
     /// The most passes of one loop, for a test. `None`: [`loops::loop_pass_bound`].
     loop_bound: Option<usize>,
+    /// The recorder of the THIR tables (`crate::thir::record`). It only adds:
+    /// no decision of the lowering reads it.
+    rec: Box<crate::thir::record::Recorder>,
 }
 
 impl<'p> Lower<'p> {
@@ -1574,7 +1585,9 @@ impl<'p> Lower<'p> {
             task_run_places: BTreeMap::new(),
             task_ends: Vec::new(),
             work: crate::Work::default(),
+            closure_queries: std::cell::Cell::new(0),
             loop_bound: None,
+            rec: Box::default(),
         }
     }
 
@@ -3154,7 +3167,7 @@ impl<'p> Lower<'p> {
     /// The state of a property query in the mode of the body.
     pub(super) const fn has(&self) -> Has {
         Has {
-            seen: Vec::new(),
+            seen: BTreeSet::new(),
             params: self.generic,
         }
     }
@@ -3208,19 +3221,17 @@ impl<'p> Lower<'p> {
     /// it moves a linear capture: a call takes the value. It is nonportable if it
     /// captures a nonportable value: it refers to the variable.
     fn closure_has(&self, s: usize, p: Prop, h: &mut Has) -> bool {
-        if h.seen.contains(&s) {
+        if !h.seen.insert(s) {
             return false;
         }
+        self.closure_queries.set(self.closure_queries.get() + 1);
         let sum = &self.closures[s];
-        h.seen.push(s);
         let vars = if p == Prop::Nonportable {
             &sum.captures
         } else {
             &sum.moved_captures
         };
-        let found = vars.iter().any(|&v| self.var_has(v, p, h));
-        h.seen.pop();
-        found
+        vars.iter().any(|&v| self.var_has(v, p, h))
     }
 
     /// Returns true if variable `v` has property `p`: from the type of its local,
@@ -3338,5 +3349,55 @@ impl<'p> Lower<'p> {
             Ty::Ref(inner) => self.deref_ty(&inner),
             t => t,
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // The recorder of the THIR (`crate::thir::record`)
+    // -----------------------------------------------------------------------
+
+    /// The number of references that [`Lower::deref_ty`] follows in `t` now.
+    fn ref_depth(&self, t: &Ty) -> usize {
+        let mut n = 0;
+        let mut t = self.inf.peek(t);
+        while let Ty::Ref(inner) = t {
+            n += 1;
+            t = self.inf.peek(&inner);
+        }
+        n
+    }
+
+    /// Records the dereferences of the value of expression `e`: the
+    /// dereference of its place that the lowering found
+    /// ([`crate::thir::record::Recorder::base_deref`]), then `refs` more
+    /// references.
+    fn rec_adjust(&mut self, e: ast::ExprId, refs: usize) {
+        let mut steps: Vec<crate::thir::DerefKind> = self.rec.take_base(e).into_iter().collect();
+        steps.extend(std::iter::repeat_n(crate::thir::DerefKind::Ref, refs));
+        self.rec.adjust(e, steps);
+    }
+
+    /// Records that an operator or a condition follows the references of the
+    /// value of expression `e`, of type `t` ([`Lower::deref_ty`]).
+    fn rec_peel(&mut self, e: ast::ExprId, t: &Ty) {
+        let n = self.ref_depth(t);
+        self.rec_adjust(e, n);
+    }
+
+    /// Records the use of local `l` at name expression `e`: its type and its
+    /// binding. A place through a local of a reference type follows the
+    /// reference (`through`).
+    fn rec_local(&mut self, e: &Expr, l: usize, through: bool) {
+        let (var, ty) = (self.locals[l].var, self.locals[l].ty.clone());
+        self.rec.res(e.id, crate::thir::record::RawRes::Local(var));
+        self.rec.expr_ty(e.id, &ty);
+        if through {
+            self.rec.base_deref = Some(e.id);
+        }
+    }
+
+    /// Records a binding of local `l`.
+    fn rec_bind(&mut self, b: crate::thir::Binder, l: usize) {
+        let local = &self.locals[l];
+        self.rec.bind(b, local.var, &local.name, &local.ty);
     }
 }

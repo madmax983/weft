@@ -1,0 +1,29 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    let j = || k()
+    c = || eat(b)
+    j()
+    j()   //~ W0502
+}
+fn late_once_capture() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    c = || eat(b)
+    k()
+}
+fn counter_write() {
+    let count = 0
+    let f = || count += 1
+    f()
+    f()
+    print(count)
+}
+fn main() {
+    late_once_capture()
+    counter_write()
+}

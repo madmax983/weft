@@ -1,0 +1,75 @@
+// A closure that a function or another closure gives back keeps its effects
+// and the places of its environment when it goes into a vector, through a
+// call (`id`, `run`), or into an `Option`, a field or a tuple. A run of it
+// after a reference into what it changes makes the reference invalid.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn id(f: fn()) -> fn() { f }
+fn clr(w: &World) -> fn() / mut(w.entities) { || w.entities.clear() }
+
+fn maker_into_vec() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let fs = Vec.new()
+    fs.push(mk())
+    let g = fs[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+
+fn maker_into_field() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let k = K { f: mk() }
+    let g = k.f
+    g()
+    print(first.hp)   //~ W0301
+}
+
+fn maker_run() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let first = &w.entities[0]
+    run(mk())
+    print(first.hp)   //~ W0301
+}
+
+fn item_id() {
+    let w = mkw()
+    let g = id(clr(&w))
+    let first = &w.entities[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+
+fn item_into_vec() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(clr(&w))
+    let first = &w.entities[0]
+    let g = fs[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+
+// The reference comes after the run.
+fn run_then_ref() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(clr(&w))
+    let g = fs[0]
+    g()
+    w.entities.push(Entity { hp: 2 })
+    let first = &w.entities[0]
+    print(first.hp)
+}
+
+fn main() {
+    run_then_ref()
+}

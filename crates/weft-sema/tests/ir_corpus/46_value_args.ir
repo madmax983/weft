@@ -1,0 +1,895 @@
+fn f0 clear_with((&u64, u64), &Vec<u64>) -> () / (): b0
+fn f1 opt_fn(Option<&u64>, &Vec<u64>) -> () / (): b1
+fn f2 tuple_call() -> (): b2
+fn f3 option_call() -> (): b3
+fn f4 tuple_closure() -> (): b4
+fn f5 closure_perform() -> (): b6
+fn f6 option_perform() -> (): b10
+fn f7 tuple_param() -> (): b13
+fn f8 tuple_other() -> (): b16
+fn f9 closure_first() -> (): b17
+fn f10 Vec.clear<T0>(&Vec<T0>) -> () / (): extern
+fn f11 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f12 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+closure c0: body b5, maker b4, cap_env e0, captures [ByRef _1]
+closure c1: body b9, maker b7, cap_env e1, captures [Kept _3]
+closure c2: body b20, maker b18, cap_env e4, captures [Kept _3]
+handler h0 main.Run: handled b7, site b6, clauses [run: b8]
+handler h1 main.Opt: handled b11, site b10, clauses [opt: b12]
+handler h2 main.Pair: handled b14, site b13, clauses [pair: b15]
+handler h3 main.Run: handled b18, site b17, clauses [run: b19]
+cap_env e0
+cap_env e1: parent e0, main.Run _1
+cap_env e2: parent e0, main.Opt _1
+cap_env e3: parent e0, main.Pair _1
+cap_env e4: parent e0, main.Run _1
+
+body b0: fn clear_with; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: (&u64, u64) (Param(0) `t`)
+  _2: &Vec<u64> (Param(1) `v`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<u64> (Temp(Receiver))
+  _5: (&u64, u64) (Temp(Scrutinee))
+  _6: &u64 (User `r`)
+  _7: u64 (User `n`)
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_2)
+    _3 = call Vec.clear<u64>(move _4) / e0 -> [bb1]
+  bb1:
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = copy _1
+    Live(_6)
+    _6 = copy _5.0
+    Live(_7)
+    _7 = copy _5.1
+    Dead(_5)
+    Print(copy _6)
+    _0 = const ()
+    Dead(_7)
+    Dead(_6)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b1: fn opt_fn; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: Option<&u64> (Param(0) `x`)
+  _2: &Vec<u64> (Param(1) `v`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<u64> (Temp(Receiver))
+  _5: usize (Temp(Scrutinee))
+  _6: &u64 (User `r`)
+  _7: usize (Temp(Scrutinee))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_2)
+    _3 = call Vec.clear<u64>(move _4) / e0 -> [bb1]
+  bb1:
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = Discriminant(_1)
+    switch move _5 -> [0: bb2, otherwise: bb3]
+  bb2:
+    Dead(_5)
+    Live(_6)
+    _6 = copy (_1 as #0).0
+    Print(copy _6)
+    _0 = const ()
+    Dead(_6)
+    Goto(bb6)
+  bb3:
+    Dead(_5)
+    Goto(bb4)
+  bb4:
+    Live(_7)
+    _7 = Discriminant(_1)
+    switch move _7 -> [1: bb5, otherwise: bb7]
+  bb5:
+    Dead(_7)
+    Print(const 0i64)
+    _0 = const ()
+    Goto(bb6)
+  bb6:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb7:
+    Dead(_7)
+    Goto(bb8)
+  bb8:
+    Unreachable
+  bb9 (cleanup):
+    UnwindExit
+
+body b2: fn tuple_call; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: (&u64, u64) (Temp(Operand))
+  _5: &u64 (Temp(Operand))
+  _6: usize (Temp(Operand))
+  _7: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_1, copy _6)
+    _5 = &_1[_6]
+    _4 = (move _5, const 1u64)
+    Live(_7)
+    _7 = &_1
+    _0 = call clear_with(move _4, move _7) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_1)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Return
+  bb4 (cleanup):
+    Dead(_7)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b3: fn option_call; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: Option<&u64> (Temp(Operand))
+  _5: &u64 (Temp(Operand))
+  _6: usize (Temp(Operand))
+  _7: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_1, copy _6)
+    _5 = &_1[_6]
+    _4 = Option<&u64>::Some(move _5)
+    Live(_7)
+    _7 = &_1
+    _0 = call opt_fn(move _4, move _7) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_1)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Return
+  bb4 (cleanup):
+    Dead(_7)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b4: fn tuple_closure; cap_env e0; unwind_exit bb11
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: fn((&u64, u64)) -> () (User `f`)
+  _5: &Vec<u64> (Temp(Operand))
+  _6: fn((&u64, u64)) -> () (Temp(Callee))
+  _7: (&u64, u64) (Temp(Operand))
+  _8: &u64 (Temp(Operand))
+  _9: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = closure c0(move _5)
+    Dead(_5)
+    Live(_6)
+    _6 = copy _4
+    Live(_7)
+    Live(_8)
+    Live(_9)
+    _9 = const 0usize
+    Bounds(_1, copy _9)
+    _8 = &_1[_9]
+    _7 = (move _8, const 1u64)
+    _0 = call (copy _6)(move _7) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_4)
+    Dead(_1)
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Return
+  bb4 (cleanup):
+    Dead(_9)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_8)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_7)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b5: closure c0; parent b4; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn((&u64, u64)) -> () (Env)
+  _2: (&u64, u64) (Param(0) `t`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<u64> (Temp(Receiver))
+  _5: (&u64, u64) (Temp(Scrutinee))
+  _6: &u64 (User `r`)
+  _7: u64 (User `n`)
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_1.0)
+    _3 = call Vec.clear<u64>(move _4) / e0 -> [bb1]
+  bb1:
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = copy _2
+    Live(_6)
+    _6 = copy _5.0
+    Live(_7)
+    _7 = copy _5.1
+    Dead(_5)
+    Print(copy _6)
+    _0 = const ()
+    Dead(_7)
+    Dead(_6)
+    Dead(_2)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b6: fn closure_perform; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: &u64 (User `r`)
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds(_1, copy _5)
+    _4 = &_1[_5]
+    Dead(_5)
+    _0 = handle h0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b7: handled h0; parent b6; cap_env e1; unwind_exit bb4
+  _0: () (Return)
+  _1: Cap<main.Run> (Cap(main.Run) `Run`)
+  _2: fn() -> () (Temp(Operand))
+  _3: &u64 (Upvar(_4) `r`)
+  bb0:
+    Live(_2)
+    _2 = closure c1(copy _3)
+    _0 = perform Local(_1).run(move _2) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b8: clause h0 run; parent b6; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: fn() -> () (Param(0) `f`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  _4: Vec<u64> (Upvar(_1) `v`)
+  _5: &Vec<u64> (Temp(Receiver))
+  _6: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    Live(_5)
+    _5 = &_4
+    _3 = call Vec.clear<u64>(move _5) / e0 -> [bb1]
+  bb1:
+    Dead(_5)
+    Dead(_3)
+    Live(_6)
+    _6 = call (copy _1)() / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Dead(_6)
+    _0 = resume _2(const ()) -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb7)
+  bb5 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b9: closure c1; parent b7; cap_env e1; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy _1.0)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn option_perform; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    _0 = handle h1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b11: handled h1; parent b10; cap_env e2; unwind_exit bb6
+  _0: () (Return)
+  _1: Cap<main.Opt> (Cap(main.Opt) `Opt`)
+  _2: Option<&u64> (Temp(Operand))
+  _3: &u64 (Temp(Operand))
+  _4: Vec<u64> (Upvar(_1) `v`)
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    Live(_5)
+    _5 = const 0usize
+    Bounds(_4, copy _5)
+    _3 = &_4[_5]
+    _2 = Option<&u64>::Some(move _3)
+    _0 = perform Local(_1).opt(move _2) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_5)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_5)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b12: clause h1 opt; parent b10; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Option<&u64> (Param(0) `x`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  _4: Vec<u64> (Upvar(_1) `v`)
+  _5: &Vec<u64> (Temp(Receiver))
+  _6: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    Live(_5)
+    _5 = &_4
+    _3 = call Vec.clear<u64>(move _5) / e0 -> [bb1]
+  bb1:
+    Dead(_5)
+    Dead(_3)
+    Live(_6)
+    Print(const 0i64)
+    _6 = const ()
+    Dead(_6)
+    _0 = resume _2(const ()) -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b13: fn tuple_param; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    _0 = handle h2 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b14: handled h2; parent b13; cap_env e3; unwind_exit bb7
+  _0: () (Return)
+  _1: Cap<main.Pair> (Cap(main.Pair) `Pair`)
+  _2: &u64 (User `r`)
+  _3: Vec<u64> (Upvar(_1) `v`)
+  _4: usize (Temp(Operand))
+  _5: () (Temp(Discarded))
+  _6: (&Vec<u64>, u64) (Temp(Operand))
+  _7: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_4)
+    _4 = const 0usize
+    Bounds(_3, copy _4)
+    _2 = &_3[_4]
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    Live(_7)
+    _7 = &_3
+    _6 = (move _7, const 1u64)
+    _5 = perform Local(_1).pair(move _6) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_7)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_6)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b15: clause h2 pair; parent b13; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: (&Vec<u64>, u64) (Param(0) `t`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: (&Vec<u64>, u64) (Temp(Scrutinee))
+  _4: &Vec<u64> (User `a`)
+  _5: u64 (User `n`)
+  _6: () (Temp(Discarded))
+  _7: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_3)
+    _3 = copy _1
+    Live(_4)
+    _4 = copy _3.0
+    Live(_5)
+    _5 = copy _3.1
+    Dead(_3)
+    Live(_6)
+    Live(_7)
+    _7 = &(*_4)
+    _6 = call Vec.clear<u64>(move _7) / e0 -> [bb1]
+  bb1:
+    Dead(_7)
+    Dead(_6)
+    _0 = resume _2(const ()) -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b16: fn tuple_other; cap_env e0; unwind_exit bb13
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: Vec<u64> (User `w`)
+  _5: () (Temp(Discarded))
+  _6: &Vec<u64> (Temp(Receiver))
+  _7: (&u64, u64) (Temp(Operand))
+  _8: &u64 (Temp(Operand))
+  _9: usize (Temp(Operand))
+  _10: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = call Vec.new<u64>() / e0 -> [bb3]
+  bb3:
+    Live(_5)
+    Live(_6)
+    _6 = &_4
+    _5 = call Vec.push<u64>(move _6, const 2u64) / e0 -> [bb4]
+  bb4:
+    Dead(_6)
+    Dead(_5)
+    Live(_7)
+    Live(_8)
+    Live(_9)
+    _9 = const 0usize
+    Bounds(_4, copy _9)
+    _8 = &_4[_9]
+    _7 = (move _8, const 1u64)
+    Live(_10)
+    _10 = &_1
+    _0 = call clear_with(move _7, move _10) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_4)
+    Dead(_1)
+    Dead(_10)
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Return
+  bb6 (cleanup):
+    Dead(_10)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_9)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_8)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_7)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_0)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindExit
+
+body b17: fn closure_first; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: Vec<u64> (User `w`)
+  _5: () (Temp(Discarded))
+  _6: &Vec<u64> (Temp(Receiver))
+  _7: &u64 (User `r`)
+  _8: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = call Vec.new<u64>() / e0 -> [bb3]
+  bb3:
+    Live(_5)
+    Live(_6)
+    _6 = &_4
+    _5 = call Vec.push<u64>(move _6, const 2u64) / e0 -> [bb4]
+  bb4:
+    Dead(_6)
+    Dead(_5)
+    Live(_7)
+    Live(_8)
+    _8 = const 0usize
+    Bounds(_4, copy _8)
+    _7 = &_4[_8]
+    Dead(_8)
+    _0 = handle h3 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_7)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_7)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b18: handled h3; parent b17; cap_env e4; unwind_exit bb4
+  _0: () (Return)
+  _1: Cap<main.Run> (Cap(main.Run) `Run`)
+  _2: fn() -> () (Temp(Operand))
+  _3: &u64 (Upvar(_7) `r`)
+  bb0:
+    Live(_2)
+    _2 = closure c2(copy _3)
+    _0 = perform Local(_1).run(move _2) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b19: clause h3 run; parent b17; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: fn() -> () (Param(0) `f`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  _4: () (Temp(Discarded))
+  _5: Vec<u64> (Upvar(_1) `v`)
+  _6: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_3)
+    _3 = call (copy _1)() / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    Live(_6)
+    _6 = &_5
+    _4 = call Vec.clear<u64>(move _6) / e0 -> [bb2]
+  bb2:
+    Dead(_6)
+    Dead(_4)
+    _0 = resume _2(const ()) -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb7)
+  bb5 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b20: closure c2; parent b18; cap_env e4; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy _1.0)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit

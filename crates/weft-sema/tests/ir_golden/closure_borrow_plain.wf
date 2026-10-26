@@ -1,0 +1,20 @@
+// A closure that borrows a plain-data capture holds a reference to its cell
+// (`ByRef`), not the cell itself (J5, `docs/ir.md` 5.1.7). A borrow through a
+// captured reference does not borrow the cell of the reference: that capture
+// stays `Kept`.
+
+struct Point { x: u64, y: u64 }
+fn norm(p: &Point) -> u64 { p.x * p.x + p.y * p.y }
+
+fn main() {
+    let g = {
+        let n = 5
+        || { let r = &n
+ print(r + 1) }
+    }
+    g()
+}
+
+fn through(p: &Point) -> fn() -> u64 {
+    || norm(&p)
+}

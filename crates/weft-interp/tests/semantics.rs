@@ -329,6 +329,7 @@ fn no_runtime_has_no_root_handlers() {
         Options {
             library: false,
             no_runtime: true,
+            ..Options::default()
         },
     );
     let o = RunOptions {
@@ -638,4 +639,815 @@ fn rc_cycle_leaks_and_is_counted() {
 fn rc_without_cycle_frees_everything() {
     let src = "struct Node { v: u64 }\nfn main() {\n let a = Rc.new(Node { v: 1 })\n let b = a.clone()\n print(b.v)\n}";
     assert_eq!(ok(src, 0).leaked_rc, 0);
+}
+
+// ---------------------------------------------------------------------------
+// 10. The ops of the IR compiler (`docs/ir.md` 8.4)
+// ---------------------------------------------------------------------------
+
+mod ir_ops {
+    use std::collections::BTreeSet;
+    use std::rc::Rc;
+
+    use weft_interp::code::{
+        CapHold, ClauseSpec, Code, CodeKind, HandleSpec, Op, UnwindStep, VarRef,
+    };
+    use weft_interp::compile::{Compiler, Exports};
+    use weft_interp::runtime::Runtime;
+    use weft_interp::{run_runtime_main, RunOptions, RunOutcome, RuntimeError};
+    use weft_sema::program::ItemRef;
+    use weft_sema::{AdtId, Options};
+    use weft_syntax::ast::Span;
+
+    const SRC: &str = "enum E { A, B(u64) }\nlinear struct T { x: u64 }\n\
+        linear struct U { x: u64 }\n    on abort = undo\n\
+        fn undo(u: U) { let U(x) = u\n print(\"undo\", x) }\n\
+        effect Ask { fn ask() -> u64 }\nfn main() {}";
+
+    /// Runs `main` with hand-made code: `ops`, with `slots` slots, of which
+    /// the last `temps` hold temporary cells.
+    fn run_ops(ops: Vec<Op>, slots: u32, temps: u32) -> Result<RunOutcome, RuntimeError> {
+        run_units(ops, slots, temps, Vec::new())
+    }
+
+    /// The id of the first code unit that `run_units` adds.
+    fn first_extra_unit() -> usize {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        Compiler::compile(&a.program, &a.sigs, &Exports::default())
+            .codes
+            .len()
+    }
+
+    /// A closure code unit with hand-made code and `params` parameters.
+    fn closure_unit(ops: Vec<Op>, slots: u32, params: u32) -> Code {
+        unit(CodeKind::Closure, ops, slots, params)
+    }
+
+    /// A code unit of `kind` with hand-made code and `params` parameters.
+    fn unit(kind: CodeKind, ops: Vec<Op>, slots: u32, params: u32) -> Code {
+        let n = ops.len();
+        Code {
+            name: "closure".into(),
+            kind,
+            ops,
+            spans: vec![Span::default(); n],
+            n_slots: slots,
+            n_params: params,
+            unit: 0,
+            temp_slots: 0,
+            locs: Vec::new(),
+            slot_locals: Vec::new(),
+            pads: Vec::new(),
+        }
+    }
+
+    /// Runs `main` as `run_ops` does, with the code units `extra` after the
+    /// code units of the program.
+    fn run_units(
+        ops: Vec<Op>,
+        slots: u32,
+        temps: u32,
+        extra: Vec<Code>,
+    ) -> Result<RunOutcome, RuntimeError> {
+        run_code(ops, slots, temps, Vec::new(), extra)
+    }
+
+    /// Runs `main` as `run_units` does. `pads` is the landing-pad table of
+    /// `main` (`Code::pads`).
+    fn run_code(
+        ops: Vec<Op>,
+        slots: u32,
+        temps: u32,
+        pads: Vec<(usize, usize)>,
+        extra: Vec<Code>,
+    ) -> Result<RunOutcome, RuntimeError> {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        let mut compiled = Compiler::compile(&a.program, &a.sigs, &Exports::default());
+        let Some(ItemRef::Fn(f)) = a.program.mods[a.program.root].items.get("main").copied() else {
+            panic!("no main");
+        };
+        let id = compiled.fn_code[f.index()].unwrap();
+        let n = ops.len();
+        compiled.codes[id] = Rc::new(Code {
+            name: "main".into(),
+            kind: CodeKind::Fn(f),
+            ops,
+            spans: vec![Span::default(); n],
+            n_slots: slots,
+            n_params: 0,
+            unit: 0,
+            temp_slots: temps,
+            locs: Vec::new(),
+            slot_locals: Vec::new(),
+            pads,
+        });
+        compiled.codes.extend(extra.into_iter().map(Rc::new));
+        let rt = Runtime::with_code(&a.program, &a.sigs, BTreeSet::new(), compiled);
+        let opts = RunOptions {
+            max_steps: Some(10_000),
+            oracle: true,
+            ..RunOptions::default()
+        };
+        run_runtime_main(&rt, &opts)
+    }
+
+    fn adt(name: &str) -> AdtId {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        AdtId(a.program.adts.iter().position(|d| d.name == name).unwrap())
+    }
+
+    const fn var(s: u32) -> Op {
+        Op::Var(VarRef::Local(s))
+    }
+
+    /// The ops that print the value of the place on top, then return `()`.
+    fn print_end() -> Vec<Op> {
+        vec![Op::Read, Op::Print(1), Op::Pop, Op::Unit, Op::Return]
+    }
+
+    fn out(ops: Vec<Op>, slots: u32, temps: u32) -> String {
+        match run_ops(ops, slots, temps) {
+            Ok(o) => o.stdout,
+            Err(e) => panic!("run failed: {e}"),
+        }
+    }
+
+    fn fault(ops: Vec<Op>, slots: u32, temps: u32) -> String {
+        run_ops(ops, slots, temps).unwrap_err().message
+    }
+
+    #[test]
+    fn part_names_a_part_of_a_value() {
+        let mut ops = vec![
+            Op::Int(1),
+            Op::Int(2),
+            Op::Tuple(2),
+            Op::Bind(0),
+            var(0),
+            Op::Part(1),
+        ];
+        ops.extend(print_end());
+        assert_eq!(out(ops, 1, 0), "2\n");
+        let ops = vec![Op::Int(1), Op::Tuple(1), Op::Bind(0), var(0), Op::Part(3)];
+        assert!(fault(ops, 1, 0).contains("no part 3"));
+    }
+
+    #[test]
+    fn deref_follows_a_reference_and_keeps_a_slice() {
+        let mut ops = vec![Op::Int(7), Op::Bind(0), var(0), Op::Borrow, Op::Bind(1)];
+        ops.extend([var(1), Op::Deref]);
+        ops.extend(print_end());
+        assert_eq!(out(ops, 2, 0), "7\n");
+        // `(*s)` of a slice `s` is the slice: `Len` reads its range there.
+        let mut ops = vec![
+            Op::Int(1),
+            Op::Int(2),
+            Op::Int(3),
+            Op::MakeVec(3),
+            Op::Bind(0),
+        ];
+        ops.extend([
+            var(0),
+            Op::BorrowAll,
+            Op::Bind(1),
+            var(1),
+            Op::Deref,
+            Op::Len,
+        ]);
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 2, 0), "3\n");
+        let ops = vec![Op::Int(7), Op::Bind(0), var(0), Op::Deref];
+        assert!(fault(ops, 1, 0).contains("a pointer is needed"));
+    }
+
+    #[test]
+    fn len_counts_the_elements() {
+        let mut ops = vec![
+            Op::Int(1),
+            Op::Int(2),
+            Op::MakeVec(2),
+            Op::Bind(0),
+            var(0),
+            Op::Len,
+        ];
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 1, 0), "2\n");
+    }
+
+    #[test]
+    fn tag_reads_the_variant() {
+        let e = adt("E");
+        let mut ops = vec![
+            Op::Int(5),
+            Op::MakeEnum {
+                adt: e,
+                variant: 1,
+                n: 1,
+            },
+            Op::Bind(0),
+            var(0),
+            Op::Tag,
+        ];
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 1, 0), "1\n");
+    }
+
+    #[test]
+    fn jump_table_jumps_to_the_arm_of_the_value() {
+        for (v, want) in [
+            (Op::Int(2), "two\n"),
+            (Op::Int(9), "other\n"),
+            (Op::Bool(true), "one\n"),
+        ] {
+            let ops = vec![
+                v,
+                Op::JumpTable {
+                    arms: vec![(1, 2), (2, 6)],
+                    otherwise: 10,
+                },
+                Op::Str("one".into()),
+                Op::Print(1),
+                Op::Pop,
+                Op::Jump(13),
+                Op::Str("two".into()),
+                Op::Print(1),
+                Op::Pop,
+                Op::Jump(13),
+                Op::Str("other".into()),
+                Op::Print(1),
+                Op::Pop,
+                Op::Unit,
+                Op::Return,
+            ];
+            assert_eq!(out(ops, 0, 0), want);
+        }
+    }
+
+    #[test]
+    fn bounds_faults_at_an_index_past_the_end() {
+        let base = vec![Op::Int(4), Op::MakeVec(1), Op::Bind(0)];
+        let mut ops = base.clone();
+        ops.extend([var(0), Op::Int(0), Op::Bounds, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 1, 0), "");
+        let mut ops = base;
+        ops.extend([var(0), Op::Int(1), Op::Bounds, Op::Unit, Op::Return]);
+        assert!(fault(ops, 1, 0).contains("index 1 is out of bounds (length 1)"));
+    }
+
+    #[test]
+    fn take_moves_the_value_out_also_a_copy_value() {
+        // `Read` copies a copy value; `Take` (a `move` of the IR) leaves no
+        // value.
+        let mut ops = vec![
+            Op::Int(4),
+            Op::Bind(0),
+            var(0),
+            Op::Take,
+            Op::Print(1),
+            Op::Pop,
+        ];
+        ops.push(var(0));
+        ops.extend(print_end());
+        let e = run_ops(ops, 1, 0).unwrap_err();
+        assert_eq!(e.outcome.stdout, "4\n");
+        assert!(
+            e.message.contains("used after it was moved"),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn drop_place_drops_the_value_and_leaves_no_value() {
+        let mut ops = vec![
+            Op::Int(4),
+            Op::MakeVec(1),
+            Op::Bind(0),
+            var(0),
+            Op::DropPlace,
+        ];
+        ops.push(var(0));
+        ops.extend(print_end());
+        assert!(fault(ops, 1, 0).contains("used after it was moved"));
+    }
+
+    #[test]
+    fn consume_finishes_the_linear_record() {
+        let t = adt("T");
+        let base = vec![
+            Op::Int(1),
+            Op::MakeStruct {
+                adt: t,
+                fields: vec![0],
+                total: 1,
+            },
+            Op::Bind(0),
+            var(0),
+            Op::Consume,
+        ];
+        let mut ops = base.clone();
+        ops.extend([Op::Unit, Op::Return]);
+        // The oracle finds no live linear value at the end.
+        assert_eq!(out(ops, 1, 0), "");
+        let mut ops = base;
+        ops.extend([var(0), Op::Consume, Op::Unit, Op::Return]);
+        assert!(fault(ops, 1, 0).contains("consumed twice"));
+    }
+
+    #[test]
+    fn end_temp_ends_the_temporary_cell() {
+        // Slot 1 is a temporary cell: `Live`, a value, a borrow into it,
+        // then `Dead`. A read through the reference after it dangles.
+        let mut ops = vec![
+            Op::LiveTemp(1),
+            Op::Int(4),
+            Op::MakeVec(1),
+            var(1),
+            Op::Store,
+        ];
+        ops.extend([var(1), Op::Borrow, Op::Bind(0), var(0), Op::Deref, Op::Len]);
+        ops.extend([
+            Op::Print(1),
+            Op::Pop,
+            Op::EndTemp(1),
+            var(0),
+            Op::Deref,
+            Op::Len,
+        ]);
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        let e = run_ops(ops, 2, 1).unwrap_err();
+        assert_eq!(e.outcome.stdout, "1\n");
+        assert!(e.message.contains("dangling"), "{}", e.message);
+        // After `Dead` the slot has no cell.
+        let ops = vec![Op::LiveTemp(0), Op::EndTemp(0), var(0), Op::Read];
+        assert!(fault(ops, 1, 1).contains("before it has a value"));
+    }
+
+    #[test]
+    fn make_closure_ir_shares_kept_cells_and_owns_the_other_captures() {
+        // Slot 0 is `x`, slot 1 is a `Vec` `v`, slot 2 is the closure. The
+        // closure shares the cell of `x` (`Kept`), takes `v` (`ByMove`) and
+        // holds `&x` (`ByRef`). After a write of `x`, the closure reads 5
+        // through the shared cell and through the reference, and the `Vec`
+        // that it took.
+        let code = first_extra_unit();
+        let body = vec![
+            Op::Var(VarRef::Cap(0)),
+            Op::Read,
+            Op::Var(VarRef::Cap(1)),
+            Op::Len,
+            Op::Var(VarRef::Cap(2)),
+            Op::Deref,
+            Op::Read,
+            Op::Print(3),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let mut ops = vec![Op::Int(1), Op::Bind(0), Op::Int(4), Op::MakeVec(1)];
+        ops.extend([Op::Bind(1), var(0), var(1), Op::Take, var(0), Op::Borrow]);
+        ops.extend([
+            Op::MakeClosureIr {
+                code,
+                holds: vec![CapHold::Shared, CapHold::Moved, CapHold::Ref],
+                span: Span::default(),
+            },
+            Op::Bind(2),
+            Op::Int(5),
+            var(0),
+            Op::Store,
+        ]);
+        ops.extend([var(2), Op::Read, Op::CallValue(0), Op::Pop, var(1)]);
+        ops.extend(print_end());
+        let e = run_units(ops, 3, 0, vec![closure_unit(body, 0, 0)]).unwrap_err();
+        assert_eq!(e.outcome.stdout, "5 1 5\n");
+        // The closure moved `v` when it was made.
+        assert!(
+            e.message.contains("used after it was moved"),
+            "{}",
+            e.message
+        );
+    }
+
+    fn effect(name: &str) -> weft_sema::EffectId {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        weft_sema::EffectId(
+            a.program
+                .effects
+                .iter()
+                .position(|d| d.name == name)
+                .unwrap(),
+        )
+    }
+
+    /// A `Handle` of `Ask` whose handled body is code unit `body` and whose
+    /// clause is code unit `clause`. The handled body takes the capability.
+    fn handle_ask(body: usize, clause: usize, body_caps: Vec<VarRef>) -> Op {
+        Op::Handle(Rc::new(HandleSpec {
+            effect: effect("Ask"),
+            clauses: vec![ClauseSpec {
+                op: 0,
+                code: clause,
+                caps: Vec::new(),
+            }],
+            body,
+            body_caps,
+            cap: true,
+        }))
+    }
+
+    /// The clause of `ask`: `resume(41)`. Its parameter is the continuation.
+    fn ask_clause() -> Code {
+        let ops = vec![var(0), Op::Read, Op::Int(41), Op::CallValue(1), Op::Return];
+        unit(CodeKind::Clause, ops, 1, 1)
+    }
+
+    #[test]
+    fn perform_cap_performs_through_the_capability_of_a_handled_body() {
+        // The handled body (unit `first`) gets the capability of the handler
+        // in slot 0. `PerformCap` reads the effect from it: `ask()` gives 41.
+        let first = first_extra_unit();
+        let body = vec![
+            var(0),
+            Op::Read,
+            Op::PerformCap { op: 0, n: 0 },
+            Op::Int(1),
+            Op::Bin(weft_syntax::ast::BinOp::Add),
+            Op::Return,
+        ];
+        let ops = vec![
+            handle_ask(first, first + 1, Vec::new()),
+            Op::Print(1),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let units = vec![unit(CodeKind::HandleBody, body, 1, 1), ask_clause()];
+        let o = run_units(ops, 0, 0, units).unwrap();
+        assert_eq!(o.stdout, "42\n");
+        // A capability that is not a capability of a handler is a fault.
+        let ops = vec![Op::Int(1), Op::PerformCap { op: 0, n: 0 }];
+        assert!(fault(ops, 0, 0).contains("capability"));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "the handler of the capability")]
+    fn perform_cap_asserts_that_the_machine_finds_the_handler_of_the_capability() {
+        // The outer handled body (unit `first`) gives its capability to the
+        // inner handled body (unit `first + 1`), which performs through it.
+        // The machine finds the inner handler (lexical): the IR never does
+        // this, and the debug assertion stops it.
+        let first = first_extra_unit();
+        let outer = vec![
+            handle_ask(first + 1, first + 2, vec![VarRef::Local(0)]),
+            Op::Return,
+        ];
+        let inner = vec![
+            Op::Var(VarRef::Cap(0)),
+            Op::Read,
+            Op::PerformCap { op: 0, n: 0 },
+            Op::Return,
+        ];
+        let ops = vec![
+            handle_ask(first, first + 2, Vec::new()),
+            Op::Print(1),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let units = vec![
+            unit(CodeKind::HandleBody, outer, 1, 1),
+            unit(CodeKind::HandleBody, inner, 1, 1),
+            ask_clause(),
+        ];
+        let _ = run_units(ops, 0, 0, units);
+    }
+
+    #[test]
+    fn make_closure_ir_copies_a_copied_capture_into_a_cell_of_its_own() {
+        // A `Cap` or a `multi` `Kont` capture (`CapHold::Copied`): the closure
+        // holds a copy of the value in a cell of its own, and a call does not
+        // take it. A later write of the variable does not change the copy.
+        let code = first_extra_unit();
+        let body = vec![
+            Op::Var(VarRef::Cap(0)),
+            Op::Read,
+            Op::Print(1),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let mut ops = vec![Op::Int(1), Op::Bind(0), var(0), Op::Read];
+        ops.extend([
+            Op::MakeClosureIr {
+                code,
+                holds: vec![CapHold::Copied],
+                span: Span::default(),
+            },
+            Op::Bind(1),
+            Op::Int(5),
+            var(0),
+            Op::Store,
+        ]);
+        ops.extend([var(1), Op::Read, Op::CallValue(0), Op::Pop]);
+        ops.extend([
+            var(1),
+            Op::Read,
+            Op::CallValue(0),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ]);
+        let o = run_units(ops, 2, 0, vec![closure_unit(body, 0, 0)]).unwrap();
+        assert_eq!(o.stdout, "1\n1\n");
+    }
+
+    /// The ops that put a struct `name { x: x }` into slot `slot`.
+    fn make(name: &str, x: i64, slot: u32) -> Vec<Op> {
+        vec![
+            Op::Int(x),
+            Op::MakeStruct {
+                adt: adt(name),
+                fields: vec![0],
+                total: 1,
+            },
+            Op::Bind(slot),
+        ]
+    }
+
+    /// Runs `main`: `setup`, then an `Assert` that fails, with a landing
+    /// pad into the cleanup code `chain`. Returns the output and the
+    /// error message.
+    fn abort_with(setup: Vec<Op>, slots: u32, chain: Vec<Op>) -> (String, String) {
+        let mut ops = setup;
+        ops.extend([Op::Bool(false), Op::Assert]);
+        let at = ops.len() - 1;
+        ops.extend([Op::Unit, Op::Return]);
+        let pad = ops.len();
+        ops.extend(chain);
+        let e = run_code(ops, slots, 0, vec![(at, pad)], Vec::new()).unwrap_err();
+        (e.outcome.stdout.clone(), e.message)
+    }
+
+    #[test]
+    fn unwind_value_runs_the_on_abort_of_the_value_at_its_place() {
+        // The chain decides the order: the unwinder runs the `on abort` of
+        // each value when the chain gets to it.
+        let mut setup = make("U", 1, 0);
+        setup.extend(make("U", 2, 1));
+        let finish = |s: u32| {
+            [
+                Op::UnwindValue {
+                    var: VarRef::Local(s),
+                    path: Vec::new(),
+                },
+                Op::DropSlots(vec![s]),
+            ]
+        };
+        let mut chain: Vec<Op> = finish(1).into_iter().chain(finish(0)).collect();
+        chain.push(Op::UnwindExit);
+        let (out, e) = abort_with(setup.clone(), 2, chain);
+        assert_eq!(out, "undo 2\nundo 1\n");
+        assert!(e.contains("the condition is false"), "{e}");
+        let mut chain: Vec<Op> = finish(0).into_iter().chain(finish(1)).collect();
+        chain.push(Op::UnwindExit);
+        assert_eq!(abort_with(setup, 2, chain).0, "undo 1\nundo 2\n");
+    }
+
+    #[test]
+    fn unwind_value_follows_the_path_and_skips_another_variant() {
+        // `(_0 as B).0` of the value `E::A` names no value: the unwinder
+        // does nothing (`docs/ir.md` 5.1.6). A part of a tuple is a part.
+        let setup = vec![
+            Op::MakeEnum {
+                adt: adt("E"),
+                variant: 0,
+                n: 0,
+            },
+            Op::Bind(0),
+        ];
+        let chain = vec![
+            Op::UnwindValue {
+                var: VarRef::Local(0),
+                path: vec![UnwindStep::Variant(1), UnwindStep::Part(0)],
+            },
+            Op::DropSlots(vec![0]),
+            Op::UnwindExit,
+        ];
+        let (out, e) = abort_with(setup, 1, chain);
+        assert_eq!(out, "");
+        assert!(e.contains("the condition is false"), "{e}");
+        let mut setup = vec![Op::Int(0)];
+        setup.extend(make("U", 3, 0));
+        setup.extend([var(0), Op::Read, Op::Tuple(2), Op::Bind(0)]);
+        let chain = vec![
+            Op::UnwindValue {
+                var: VarRef::Local(0),
+                path: vec![UnwindStep::Part(1)],
+            },
+            Op::DropSlots(vec![0]),
+            Op::UnwindExit,
+        ];
+        assert_eq!(abort_with(setup, 1, chain).0, "undo 3\n");
+    }
+
+    #[test]
+    fn the_oracle_finds_a_value_that_a_cleanup_chain_misses() {
+        // `docs/ir.md` 8.2: after the chain of a frame, the scan of its
+        // cells finds no live linear value. A hand-made chain that misses
+        // the value of slot 0 fails the check.
+        let (_, e) = abort_with(make("U", 1, 0), 1, vec![Op::UnwindExit]);
+        assert!(e.contains("left after the cleanup chain of `main`"), "{e}");
+        // A chain that ends the cell with no `UnwindValue` drops the value:
+        // a linear leak.
+        let chain = vec![Op::DropSlots(vec![0]), Op::UnwindExit];
+        let (_, e) = abort_with(make("U", 1, 0), 1, chain);
+        assert!(e.contains("linear leak"), "{e}");
+        // A linear value with no `on abort` is a fault at its `UnwindValue`.
+        let chain = vec![
+            Op::UnwindValue {
+                var: VarRef::Local(0),
+                path: Vec::new(),
+            },
+            Op::DropSlots(vec![0]),
+            Op::UnwindExit,
+        ];
+        let (_, e) = abort_with(make("T", 1, 0), 1, chain);
+        assert!(e.contains("has no `on abort`"), "{e}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 11. Variant steps on the IR engine (`docs/ir.md` 5.8, 8.1)
+// ---------------------------------------------------------------------------
+
+/// Runs the unchecked program `src` on the IR engine with the oracle checks.
+/// Returns the output and the error message, if any.
+fn run_ir_unchecked(src: &str) -> (String, Option<String>) {
+    run_unchecked(src, weft_interp::Engine::Ir)
+}
+
+/// Runs the unchecked program `src` on `engine` with the oracle checks.
+/// Returns the output and the error message, if any.
+fn run_unchecked(src: &str, engine: weft_interp::Engine) -> (String, Option<String>) {
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let o = RunOptions {
+        max_steps: Some(1_000_000),
+        oracle: true,
+        engine,
+        ..RunOptions::default()
+    };
+    match run_analysis_main(&a, &o) {
+        Ok(out) => {
+            assert_eq!(out.fallback, None);
+            (out.stdout, None)
+        }
+        Err(e) => {
+            assert_eq!(e.outcome.fallback, None);
+            (e.outcome.stdout.clone(), Some(e.message))
+        }
+    }
+}
+
+#[test]
+fn a_variant_step_checks_the_tag_at_each_read_and_write() {
+    // Third review of stage F8 (hole R1). The IR tests the variant of a
+    // receiver place before the arguments and reads the payload after
+    // them. An argument that gives the base another variant must not let
+    // the engine read or write the payload of the other variant as the
+    // wrong type: each place step `(p as V)` checks the tag again, and
+    // another variant stops the run with the text of the `o.Some` test.
+    let head = "struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+struct Other { b: i32, a: Vec<i32> }
+enum Two { A(Entity), B(Other) }
+";
+    let bad = [
+        // A read through the receiver (y01: the run printed 1000).
+        "fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.plus({ e = Two.B(Other { b: 1000, a: Vec.new() }); 0 })) }",
+        // A write through the receiver (y02: the run printed 1005 1005).
+        "fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.bump({ e = Two.B(Other { b: 1000, a: Vec.new() }); 5 })) }",
+        // An element of a `Vec` (y08).
+        "fn main() { let v = Vec.new(); v.push(Two.A(Entity { hp: 1 })); print(v[0].A.plus({ v[0] = Two.B(Other { b: 1000, a: Vec.new() }); 0 })) }",
+        // `Option` (x02).
+        "fn main() { let o = Some(Entity { hp: 1 }); print(o.Some.plus({ o = None; 0 })) }",
+    ];
+    for b in bad {
+        let src = format!("{head}{b}");
+        let (out, err) = run_ir_unchecked(&src);
+        assert_eq!(out, "", "{b}");
+        let err = err.unwrap_or_default();
+        assert!(
+            err.contains("this value is another variant: it has no such field"),
+            "{b}: {err}"
+        );
+    }
+    // The same variant: the steps read and write the payload.
+    let good = "fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.plus(2)); print(e.A.bump({ e = Two.A(Entity { hp: 4 }); 5 })) }";
+    let (out, err) = run_ir_unchecked(&format!("{head}{good}"));
+    assert_eq!((out.as_str(), err), ("3\n9\n", None));
+}
+
+// ---------------------------------------------------------------------------
+// 12. References into the payload of an enum value (oracle)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_reference_into_an_enum_payload_ends_when_the_enum_gets_a_new_value() {
+    // Third review of stage F8, addendum (a15, b07): a reference into the
+    // payload of an enum value stayed valid when the enum got another
+    // variant, and the run read the payload of the new variant as the old
+    // type (it printed 1000). The checker rejects these programs (W0301:
+    // the variant step is unstable). With the oracle on, a new value of the
+    // enum (a whole write of it or of a place above it) ends each reference
+    // into its parts, and a read through one is a dangling read. `Entity`
+    // is not plain data, so a pattern binds it by reference.
+    let head = "struct Entity { hp: i32, v: Vec<i32> }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn me(self, n: i32) -> &Entity in self { self }
+}
+fn ent(hp: i32) -> Entity { Entity { hp: hp, v: Vec.new() } }
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+struct H { t: Two }
+fn flip(h: &H) -> i32 / mut(h.t) { h.t = Two.B(Other { b: 1000 }); 0 }
+fn mkh() -> H { H { t: Two.A(ent(1)) } }
+";
+    let ir_only = [
+        // a15: a match binds `x` into the payload, an argument flips it.
+        "fn main() { let h = mkh(); let r = &h.t; match r { Two.A(x) => print(x.plus(flip(&h))), Two.B(o) => {} } }",
+        // b07: a returned reference into the payload, then a flip.
+        "fn main() { let h = mkh(); let x = h.t.A.me(0); let n = flip(&h); print(x.hp + n) }",
+        // A new value of the same variant is a new value too.
+        "fn main() { let h = mkh(); let x = h.t.A.me(0); h.t = Two.A(ent(7)); print(x.hp) }",
+        // A new value of a place above the enum.
+        "fn main() { let h = mkh(); let x = h.t.A.me(0); h = mkh(); print(x.hp) }",
+        // An enum in an element of a `Vec`.
+        "fn main() { let v = Vec.new(); v.push(Two.A(ent(1))); let x = v[0].A.me(0); v[0] = Two.B(Other { b: 1000 }); print(x.hp) }",
+    ];
+    // A match through a reference binds by reference on both engines.
+    let both = [
+        "fn main() { let h = mkh(); let r = &h.t; match r { Two.A(x) => { let n = flip(&h); print(x.hp + n) }, Two.B(o) => {} } }",
+        "fn main() { let o = Some(ent(1)); let r = &o; match r { Some(x) => { o = None; print(x.hp) }, None => {} } }",
+    ];
+    let engines = [weft_interp::Engine::Ast, weft_interp::Engine::Ir];
+    let runs = ir_only
+        .iter()
+        .map(|b| (*b, weft_interp::Engine::Ir))
+        .chain(both.iter().flat_map(|b| engines.map(|e| (*b, e))));
+    for (b, e) in runs {
+        let (out, err) = run_unchecked(&format!("{head}{b}"), e);
+        assert_eq!(out, "", "{e:?} {b}");
+        let err = err.unwrap_or_default();
+        assert!(
+            err.contains("oracle:")
+                && err.contains("an enum value")
+                && err.contains("(a dangling reference)"),
+            "{e:?} {b}: {err}"
+        );
+    }
+}
+
+#[test]
+fn a_write_inside_the_payload_keeps_the_references_into_the_enum_value() {
+    // Controls of the test above. A write to a field of the payload does
+    // not give the enum a new value: a reference to another field stays
+    // valid (as for a struct). A reference to the enum value itself (not
+    // into its payload) stays valid when the enum gets a new value. A
+    // reference made after the new value is valid.
+    let head = "struct P2 { a: i32, b: i32 }
+enum E2 { P(P2), Q(i32) }
+fn setb(p: &P2) -> i32 / mut(p.b) { p.b = 5; 0 }
+struct Other { b: i32 }
+struct Entity { hp: i32 }
+enum Two { A(Entity), B(Other) }
+struct H { t: Two }
+fn flip(h: &H) -> i32 / mut(h.t) { h.t = Two.B(Other { b: 1000 }); 0 }
+fn mkh() -> H { H { t: Two.A(Entity { hp: 1 }) } }
+";
+    let good = [
+        (
+            "fn main() { let e = E2.P(P2 { a: 1, b: 2 }); match &e { E2.P(p) => { let ra = &p.a; let n = setb(&p); print(ra); print(p.b + n) }, E2.Q(_) => {} } }",
+            "1\n5\n",
+        ),
+        (
+            "fn main() { let h = mkh(); let r = &h.t; let n = flip(&h); match r { Two.A(x) => print(x.hp), Two.B(o) => print(o.b + n) } }",
+            "1000\n",
+        ),
+        (
+            "fn main() { let h = mkh(); match &h.t { Two.A(x) => print(x.hp), Two.B(_) => {} }; let n = flip(&h); match &h.t { Two.B(o) => print(o.b + n), Two.A(_) => {} } }",
+            "1\n1000\n",
+        ),
+    ];
+    for (g, want) in good {
+        for e in [weft_interp::Engine::Ast, weft_interp::Engine::Ir] {
+            let (out, err) = run_unchecked(&format!("{head}{g}"), e);
+            assert_eq!((out.as_str(), err), (want, None), "{e:?} {g}");
+        }
+    }
 }

@@ -1,0 +1,40 @@
+// The temporaries of a branch of an `if` or an arm of a `match` go out of
+// scope at the end of the branch, before the join (docs/ir.md 5.12), as in
+// Rust 2024. A reference into such a temporary cannot be the value of the
+// `if` or the `match`. The old pipeline keeps them to the end of the
+// statement and accepts these programs: the markers are those of the `ir`
+// pipeline (ORCHESTRATOR decision after stage I5).
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn show(r: &u64) { print(r + 1) }
+
+fn if_temp(c: bool) {
+    let keep = mk_v()
+    show(if c { first(&mk_v()) } else { &keep[0] })   //~ ir: W0301
+}
+
+fn match_temp(n: u64) {
+    let keep = mk_v()
+    show(match n { 0 => first(&mk_v()), _ => &keep[0] })   //~ ir: W0301
+}
+
+// Controls: a local in place of the temporary lives past the join, and a
+// temporary that the branch reads only inside the branch is valid.
+fn if_local(c: bool) {
+    let keep = mk_v()
+    let other = mk_v()
+    show(if c { first(&other) } else { &keep[0] })
+}
+
+fn match_inside(n: u64) {
+    let keep = mk_v()
+    let k = match n { 0 => first(&mk_v()) + 0, _ => keep[0] }
+    show(&k)
+}
+
+// The run reads a freed cell in `if_temp` (the oracle of the IR engine).
+fn main() {
+    if_local(true)
+    match_inside(0)
+    if_temp(true)
+}

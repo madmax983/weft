@@ -1,0 +1,85 @@
+fn f0 open(Lock) -> u64: b0
+fn f1 parts(Two) -> Lock: b1
+fn f2 none_or(Option<Lock>, Lock) -> Lock: b2
+cap_env e0
+
+body b0: fn open; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Lock (Param(0) `l`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn parts; cap_env e0; unwind_exit bb1
+  _0: Lock (Return)
+  _1: Two (Param(0) `t`)
+  _2: Lock (User `l`)
+  _3: u64 (User `n`)
+  bb0:
+    Live(_2)
+    _2 = move _1.0
+    Live(_3)
+    _3 = copy _1.1
+    Consume(_1)
+    _0 = move _2
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn none_or; cap_env e0; unwind_exit bb8
+  _0: Lock (Return)
+  _1: Option<Lock> (Param(0) `o`)
+  _2: Lock (Param(1) `d`)
+  _3: usize (Temp(Scrutinee))
+  _4: Lock (User `l`)
+  _5: u64 (User `i`)
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_3)
+    _3 = Discriminant(_1)
+    switch move _3 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    _4 = move (_1 as #0).0
+    Live(_5)
+    _5 = copy _2.0
+    Consume(_2)
+    _0 = move _4
+    Dead(_5)
+    Dead(_4)
+    Goto(bb5)
+  bb2:
+    Dead(_3)
+    Goto(bb3)
+  bb3:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [1: bb4, otherwise: bb6]
+  bb4:
+    Dead(_6)
+    Consume(_1)
+    _0 = move _2
+    Goto(bb5)
+  bb5:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6:
+    Dead(_6)
+    Goto(bb7)
+  bb7:
+    Unreachable
+  bb8 (cleanup):
+    UnwindExit

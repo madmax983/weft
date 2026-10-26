@@ -1,0 +1,35 @@
+// RT7 (tests/gate/probes/redteam/e01_effects_hidden.wf): the effects of a
+// closure through a return, an `if`, a field and a parameter.
+mod api {
+    pub fn fetch(x: u64) -> u64 / net { x + 1 }
+}
+fn pure_one(x: u64) -> u64 { x }
+// A closure returned from a function: its effect is never counted.
+fn mk() -> fn() { || log.info("hidden") }
+fn caller_mk() / clock {
+    let f = mk()   //~ W0702
+    f()   //~ W0702
+}
+// A function item chosen by `if`.
+fn caller_if(c: bool) -> u64 / clock {
+    let g = if c { api.fetch } else { pure_one }
+    g(1)   //~ W0702
+}
+// A closure stored in a struct field.
+struct Cb { f: fn() }
+fn run_cb(cb: Cb) {
+    let g = cb.f
+    g()
+}
+fn caller_struct() / clock {
+    run_cb(Cb { f: || log.info("hidden") })   //~ W0702 W0702
+}
+// A fn parameter copied into a local before the call.
+fn outer(f: fn()) {
+    let g = f
+    g()
+}
+fn caller_outer() / clock {
+    let c = || log.info("x")   //~ W0702
+    outer(c)   //~ W0702
+}

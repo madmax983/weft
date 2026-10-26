@@ -1,0 +1,13 @@
+// A clause that does not resume: its value is the value of the `handle`. The end
+// of the clause drops the continuation, and the handled body unwinds.
+effect Stop { fn stop(code: u64) -> u64 }
+
+fn run() -> u64 {
+    handle Stop {
+        fn stop(code) { code }
+    } in {
+        let v = Vec.new()
+        v.push(1)
+        stop(7)
+    }
+}

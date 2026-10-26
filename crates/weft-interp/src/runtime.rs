@@ -169,6 +169,9 @@ pub struct Runtime<'a> {
     /// The tasks that the checker marked stealable: the source unit and the
     /// span of the function value that each one runs.
     pub stealable: BTreeSet<(usize, u32, u32)>,
+    /// With the fact oracle: the IR and the components of its facts
+    /// (`crate::oracle::facts`).
+    pub facts: Option<Rc<crate::oracle::facts::FactInput>>,
 }
 
 /// Returns the qualified name of a function: `Vec.push`, `sim.net.partition`.
@@ -247,6 +250,17 @@ impl<'a> Runtime<'a> {
         exports: &Exports,
     ) -> Self {
         let compiled = Compiler::compile(prog, sigs, exports);
+        Self::with_code(prog, sigs, stealable, compiled)
+    }
+
+    /// Builds the tables of a program whose code is already compiled, for
+    /// example by [`crate::compile_ir`].
+    pub fn with_code(
+        prog: &'a Program,
+        sigs: &'a [FnSig],
+        stealable: BTreeSet<(usize, u32, u32)>,
+        compiled: Compiled,
+    ) -> Self {
         let natives = prog.fn_ids().map(|f| native_of(prog, sigs, f)).collect();
         let adts: Vec<AdtInfo> = prog
             .adts
@@ -326,6 +340,7 @@ impl<'a> Runtime<'a> {
             move_only,
             b,
             stealable,
+            facts: None,
         }
     }
 

@@ -1,0 +1,31 @@
+// Operators and literals (`docs/ir.md` 5.16) with choice A: an operand is
+// read where it is written.
+
+fn arith(a: u64, b: u64) -> u64 {
+    (a + b) * (a - b) / 2 % 7
+}
+
+fn signs(a: i32) -> i32 {
+    -a + -128
+}
+
+fn logic(a: u64, b: u64) -> bool {
+    !(a < b)
+}
+
+fn choice_a() -> u64 {
+    let x = 1
+    x + { x = 5; 1 }
+}
+
+fn strings(s: String) -> bool {
+    s == "a"
+}
+
+fn interp(n: u64, s: String) -> String {
+    "n = {n}, s = {s}"
+}
+
+fn vecs(a: Vec<u64>, b: Vec<u64>) -> bool {
+    a != b
+}

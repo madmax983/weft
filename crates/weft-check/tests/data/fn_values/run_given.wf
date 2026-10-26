@@ -1,0 +1,53 @@
+// A callee gives a run of a function argument a reference into a place of
+// its own argument. The value can read its environment and the place, but
+// it must not change what the callee gives through its environment.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+fn give(w: &World, f: fn(&Entity)) {
+    let e = &w.entities[0]
+    f(e)
+    print(e.hp)
+}
+impl World {
+    fn each(self: &World, f: fn(&Entity)) { for e in self.entities[] { f(e) } }
+}
+// Clean: the closure reads a field of the world that the callee gives into.
+fn reads_score(world: &World) {
+    give(world, |e| print(world.score))
+}
+fn method_reads_score(world: &World) {
+    world.each(|e| print(world.score))
+}
+fn reads_entity(world: &World) {
+    world.each(|e| print(e.hp))
+}
+// The closure clears the vector that the callee gives a reference into.
+fn clears(world: &World) / mut(world.entities) {
+    give(world, |e| world.entities.clear()) //~ W0312
+}
+fn clears_then_reads(world: &World) / mut(world.entities) {
+    give(world, |e| { world.entities.clear(); print(e.hp) }) //~ W0312
+}
+// The callee keeps a reference argument across the run of the value. The
+// value must not change what the other arguments point into (each order
+// of the arguments).
+fn keep_after(f: fn(), p: &u64) { f(); print(p) }
+fn keep_after2(p: &u64, f: fn()) { f(); print(p) }
+fn clears_other() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    keep_after(|| v.clear(), &v[0]) //~ W0312
+}
+fn clears_other2() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    keep_after2(&v[0], || v.clear()) //~ W0312
+}
+// Clean: the value changes a place that no other argument points into.
+fn changes_apart() {
+    let v: Vec<u64> = Vec.new()
+    let w: Vec<u64> = Vec.new()
+    v.push(1)
+    keep_after(|| w.clear(), &v[0])
+}
+fn main() { clears_other() }

@@ -1,0 +1,33 @@
+// Borrows (`docs/ir.md` 5.9): a borrow of a place, a reborrow through a
+// reference, and a borrow of a value into a temporary. A value of plain data
+// goes into a `Promoted` temporary (5.10, see promoted_borrow.wf).
+
+struct S { v: Vec<u64>, n: u64 }
+
+fn place(s: S) -> u64 {
+    let r = &s.v
+    0
+}
+
+// `&r` with `r: &S` is `&*r`.
+fn reborrow(r: &S) -> u64 {
+    let q = &r
+    0
+}
+
+// The value is plain data: its temporary is promoted and does not end.
+fn value(a: u64) -> u64 {
+    let r = &(a + 1)
+    0
+}
+
+fn block_value(a: u64) -> u64 {
+    let r = &{ let b = a
+        b }
+    0
+}
+
+fn field_through(r: &S) -> u64 {
+    let q = &r.n
+    0
+}

@@ -1,0 +1,193 @@
+fn f0 flag(bool) -> u64: b0
+fn f1 count(u64) -> u64: b1
+fn f2 block_cond(u64) -> u64: b2
+fn f3 vec_cond(Vec<u64>, Vec<u64>) -> Vec<u64>: b3
+fn f4 body_local(u64) -> u64: b4
+cap_env e0
+
+body b0: fn flag; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (User `n`)
+  _3: bool (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Goto(bb1)
+  bb1:
+    switch copy _1 -> [1: bb2, otherwise: bb3]
+  bb2:
+    Live(_3)
+    _3 = const false
+    _1 = move _3
+    Dead(_3)
+    Live(_4)
+    _4 = Add<u64>(copy _2, const 1u64)
+    _2 = move _4
+    Dead(_4)
+    Goto(bb1)
+  bb3:
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: fn count; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `i`)
+  _3: bool (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = Lt(copy _2, copy _1)
+    switch move _3 -> [1: bb2, otherwise: bb3]
+  bb2:
+    Dead(_3)
+    Live(_4)
+    _4 = Add<u64>(copy _2, const 1u64)
+    _2 = move _4
+    Dead(_4)
+    Goto(bb1)
+  bb3:
+    Dead(_3)
+    Goto(bb4)
+  bb4:
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: fn block_cond; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `i`)
+  _3: bool (Temp(Operand))
+  _4: u64 (User `k`)
+  _5: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = Add<u64>(copy _2, const 1u64)
+    _3 = Lt(copy _4, copy _1)
+    Dead(_4)
+    switch move _3 -> [1: bb2, otherwise: bb3]
+  bb2:
+    Dead(_3)
+    Live(_5)
+    _5 = Add<u64>(copy _2, const 1u64)
+    _2 = move _5
+    Dead(_5)
+    Goto(bb1)
+  bb3:
+    Dead(_3)
+    Goto(bb4)
+  bb4:
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b3: fn vec_cond; cap_env e0; unwind_exit bb5
+  _0: Vec<u64> (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: Vec<u64> (Param(1) `w`)
+  _3: i64 (User `n`)
+  _4: bool (Temp(Operand))
+  _5: &Vec<u64> (Temp(Operand))
+  _6: &Vec<u64> (Temp(Operand))
+  _7: i64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = const 0i64
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    Live(_6)
+    _6 = &_2
+    _4 = Eq(move _5, move _6)
+    switch move _4 -> [1: bb2, otherwise: bb3]
+  bb2:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Live(_7)
+    _7 = Add<i64>(copy _3, const 1i64)
+    _3 = move _7
+    Dead(_7)
+    Goto(bb1)
+  bb3:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb4)
+  bb4:
+    _0 = move _1
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b4: fn body_local; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `s`)
+  _3: u64 (User `i`)
+  _4: bool (Temp(Operand))
+  _5: u64 (User `d`)
+  _6: u64 (Temp(Operand))
+  _7: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = const 0u64
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = Lt(copy _3, copy _1)
+    switch move _4 -> [1: bb2, otherwise: bb3]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    _5 = Mul<u64>(copy _3, const 2u64)
+    Live(_6)
+    _6 = Add<u64>(copy _2, copy _5)
+    _2 = move _6
+    Dead(_6)
+    Live(_7)
+    _7 = Add<u64>(copy _3, const 1u64)
+    _3 = move _7
+    Dead(_7)
+    Dead(_5)
+    Goto(bb1)
+  bb3:
+    Dead(_4)
+    Goto(bb4)
+  bb4:
+    _0 = copy _2
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit

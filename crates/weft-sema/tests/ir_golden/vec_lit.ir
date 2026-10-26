@@ -1,0 +1,52 @@
+fn f0 one() -> u64: b0
+fn f1 nums(u64) -> Vec<u64>: b1
+fn f2 nested(Vec<u64>) -> Vec<Vec<u64>>: b2
+cap_env e0
+
+body b0: fn one; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn nums; cap_env e0; unwind_exit bb4
+  _0: Vec<u64> (Return)
+  _1: u64 (Param(0) `x`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = vec[move _2, copy _1]
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: fn nested; cap_env e0; unwind_exit bb1
+  _0: Vec<Vec<u64>> (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: Vec<u64> (Temp(Operand))
+  _3: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = move _1
+    Live(_3)
+    _3 = vec[const 1u64, const 2u64]
+    _0 = vec[move _2, move _3]
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

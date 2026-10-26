@@ -1,0 +1,12 @@
+// F12 review (ABC preview), hole H3: a linear closure that a function or a closure gives back, dropped by the caller (old W0204 at the maker, R3RT5) (fd/d20_ret_option_drop.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn peek(t: &Tx) { print(t.id) }
+fn run(f: fn()) { f() }
+fn run0(f: fn()) { }
+fn runif(f: fn(), c: bool) { if c { f() } }
+struct K { f: fn() }
+fn mko(t: Tx) -> Option<fn()> { Some(|| rollback(t)) }
+fn main() { let o = mko(begin(1)); print(0) }

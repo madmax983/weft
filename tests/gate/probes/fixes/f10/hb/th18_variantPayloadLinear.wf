@@ -1,0 +1,8 @@
+// F10 review, hole H-B: a body with no IR and no error for it (th/th18_variantPayloadLinear.wf).
+linear struct Tx { id: u64 }
+enum E { A(u64, u64), B }
+fn main() {
+    let e = E.A(1, 2)
+    let t = Tx { id: 1 }
+    print(e.A)
+}

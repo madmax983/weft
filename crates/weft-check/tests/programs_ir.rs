@@ -1,0 +1,268 @@
+//! The program corpus with the facts of the core IR (plan stage F8).
+//!
+//! The test checks each program of `tests/programs` with `--facts=ir` and the
+//! default construct groups (`weft_sema::DEFAULT_GROUPS`). For each program
+//! in scope (plan §2.6), the errors must be the `//~` markers of the `ir`
+//! pipeline (`common::expected_for`), and the checker must agree with the
+//! spec on each body. A marker that has an expectation for one pipeline only
+//! (`//~ old: W0301 ir: W0302`) changes the class of the program in the gate,
+//! so the gate ledger (`tests/gate/ledger.toml`) must name the program, unless
+//! the old pipeline accepts it (then the program is `fixed`).
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+mod common;
+
+use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use common::{actual, expected_for, has_pipeline_markers, write_disagreements, Pipeline};
+use weft_check::check_source;
+use weft_sema::{FactGen, Options};
+use weft_syntax::SourceFile;
+
+fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn corpus_paths() -> Vec<PathBuf> {
+    let mut paths: Vec<_> = fs::read_dir(root().join("tests/programs"))
+        .expect("tests/programs exists")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "wf"))
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// The result of one program with the default groups: `None` if it is out
+/// of scope, else the problems (empty if the program passes).
+fn run(path: &Path) -> Option<String> {
+    run_with(path, None)
+}
+
+/// [`run`] with the construct groups `groups` (the default groups if
+/// `None`).
+fn run_with(path: &Path, groups: Option<weft_sema::Groups>) -> Option<String> {
+    let src = fs::read_to_string(path).expect("the program is readable");
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let mut opts = Options {
+        facts: FactGen::Ir,
+        ..Options::from_markers(&src)
+    };
+    if let Some(g) = groups {
+        opts.ir_groups = g;
+    }
+    let checked = check_source(&name, &src, opts);
+    if !checked
+        .analysis
+        .ir_scope
+        .as_ref()
+        .is_some_and(weft_sema::Scope::in_scope)
+    {
+        return None;
+    }
+    let file = SourceFile::new(&name, src.as_str());
+    let found = actual(&checked, &file);
+    let (want, _) = expected_for(&src, Pipeline::Ir);
+    let mut msg = String::new();
+    if found != want {
+        let _ = writeln!(msg, "{name}: expected {want:?}\n  found {found:?}");
+        for d in &checked.diags {
+            msg.push_str(&d.render(&file));
+        }
+    }
+    write_disagreements(&name, &checked, &mut msg);
+    Some(msg)
+}
+
+#[test]
+fn the_corpus_in_scope_gives_the_markers_of_the_ir_pipeline() {
+    let (mut in_scope, mut failures) = (0, Vec::new());
+    for path in corpus_paths() {
+        if let Some(msg) = run(&path) {
+            in_scope += 1;
+            if !msg.is_empty() {
+                failures.push(msg);
+            }
+        }
+    }
+    eprintln!("{in_scope} programs of the corpus are in scope");
+    // Stage F10 turns group B (loops) on: 28 programs at F10b.
+    assert!(in_scope >= 26, "only {in_scope} programs are in scope");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn the_corpus_in_scope_of_the_groups_a_and_b_gives_the_markers_of_the_ir_pipeline() {
+    // The groups of stage F10 (the preview of F10a, the default from F10b),
+    // named here so that the test does not change when a later stage adds a
+    // group. The loop programs of the corpus keep their markers.
+    let ab = weft_sema::Groups::parse("AB").expect("the groups parse");
+    let (mut in_scope, mut failures) = (0, Vec::new());
+    for path in corpus_paths() {
+        if let Some(msg) = run_with(&path, Some(ab)) {
+            in_scope += 1;
+            if !msg.is_empty() {
+                failures.push(msg);
+            }
+        }
+    }
+    eprintln!("{in_scope} programs of the corpus are in scope of the groups A and B");
+    assert!(in_scope >= 26, "only {in_scope} programs are in scope");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn a_marker_of_one_pipeline_needs_a_ledger_entry() {
+    let ledger =
+        fs::read_to_string(root().join("tests/gate/ledger.toml")).expect("the ledger is readable");
+    let mut found = 0;
+    let mut missing = Vec::new();
+    for path in corpus_paths() {
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        // A program that the old pipeline accepts and the ir pipeline
+        // rejects is `fixed` (or `new-fp`, which the gate blocks in the
+        // corpus): it needs no entry.
+        if !has_pipeline_markers(&src) || expected_for(&src, Pipeline::Old).0.is_empty() {
+            continue;
+        }
+        found += 1;
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let rel = format!("\"tests/programs/{name}\"");
+        if !ledger.contains(&rel) {
+            missing.push(rel);
+        }
+    }
+    assert!(found > 0, "no corpus program has a marker of one pipeline");
+    assert!(
+        missing.is_empty(),
+        "these programs have a marker of one pipeline, but the ledger does not name them: {missing:?}"
+    );
+}
+
+#[test]
+fn a_pipeline_word_selects_the_codes_after_it() {
+    let src = "fn f() {\n    g()   //~ W0301 old: W0302 ir: W0303 W0304\n}\n";
+    let (old, _) = expected_for(src, Pipeline::Old);
+    let (ir, _) = expected_for(src, Pipeline::Ir);
+    let line = |c: &[&str]| -> Vec<(usize, String)> {
+        let mut v: Vec<_> = c.iter().map(|c| (2, (*c).to_string())).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(old, line(&["W0301", "W0302"]));
+    assert_eq!(ir, line(&["W0301", "W0303", "W0304"]));
+    assert!(has_pipeline_markers(src));
+    assert!(!has_pipeline_markers("fn f() {} //~ W0301\n"));
+}
+
+/// The diagnostics of `src` with the pipeline `facts` and the groups A, B
+/// and C: `None` if the ir pipeline does not check the program.
+fn diags_of(name: &str, src: &str, facts: FactGen) -> Option<Vec<(usize, String, String, String)>> {
+    let opts = Options {
+        facts,
+        ir_groups: weft_sema::Groups::parse("ABC").expect("the groups parse"),
+        ..Options::from_markers(src)
+    };
+    let checked = check_source(name, src, opts);
+    if facts == FactGen::Ir
+        && !checked
+            .analysis
+            .ir_scope
+            .as_ref()
+            .is_some_and(weft_sema::Scope::in_scope)
+    {
+        return None;
+    }
+    let file = SourceFile::new(name, src);
+    let mut out: Vec<_> = checked
+        .diags
+        .iter()
+        .map(|d| {
+            (
+                file.line(d.span),
+                d.code.to_string(),
+                d.message.clone(),
+                d.render(&file),
+            )
+        })
+        .collect();
+    out.sort();
+    Some(out)
+}
+
+#[test]
+fn a_diagnostic_at_a_call_names_the_callee_as_the_old_pipeline() {
+    // The ir pipeline labels the nodes of a call with the name of the
+    // callee (a function item, the local of a function value, an
+    // operation), as the old pipeline. Before, the text named the kind of
+    // the IR node (`call performs Note`), and a note showed the IR location
+    // (`call : b1 bb0`). Each code here names the node of a call in its
+    // message; the test compares that name.
+    const CODES: [&str; 6] = ["W0312", "W0402", "W0503", "W0602", "W0702", "W0703"];
+    let mut compared = 0;
+    let mut problems = Vec::new();
+    for path in corpus_paths() {
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let Some(ir) = diags_of(&name, &src, FactGen::Ir) else {
+            continue;
+        };
+        let old = diags_of(&name, &src, FactGen::Old).unwrap_or_default();
+        for (line, code, msg, text) in &ir {
+            let same: Vec<&String> = old
+                .iter()
+                .filter(|(l, c, _, _)| l == line && c == code)
+                .map(|(_, _, m, _)| m)
+                .collect();
+            // No text shows an IR location or the kind of a call node (a
+            // callee can have the name `call`: the old text has it then).
+            let ir_words = ["`call`", "`perform`", "call ret", "call frame end"];
+            let location = text
+                .split_whitespace()
+                .zip(text.split_whitespace().skip(1))
+                .any(|(a, b)| {
+                    a.strip_prefix('b')
+                        .is_some_and(|n| n.parse::<u32>().is_ok())
+                        && b.strip_prefix("bb")
+                            .is_some_and(|n| n.parse::<u32>().is_ok())
+                });
+            let named = src.contains("fn call(") || src.contains("fn perform(");
+            let kind = !named
+                && ir_words
+                    .iter()
+                    .any(|w| text.contains(w) && !same.iter().any(|m| m.contains(w)));
+            if location || kind {
+                problems.push(format!(
+                    "{name}:{line}: {code}: the text names the IR:\n{text}"
+                ));
+            }
+            if !CODES.contains(&code.as_str()) || same.is_empty() {
+                continue;
+            }
+            // The name of the node: the first quoted word, or the word after
+            // `live across`. The places of the message can differ (the ir
+            // pipeline can be more precise).
+            let label = |m: &str| -> String {
+                let m = m.split("live across ").nth(1).unwrap_or(m);
+                m.split('`').nth(1).unwrap_or("").to_string()
+            };
+            compared += 1;
+            if !same.iter().any(|m| label(m) == label(msg)) {
+                problems.push(format!("{name}:{line}: {code}: ir `{msg}`, old {same:?}"));
+            }
+        }
+    }
+    eprintln!("{compared} messages compared");
+    assert!(compared >= 10, "only {compared} messages compared");
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}

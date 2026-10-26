@@ -1,0 +1,301 @@
+fn f0 swap(Pair) -> Pair: b0
+fn f1 keep_head(List) -> List: b1
+fn f2 drop_rest(List) -> List: b2
+fn f3 methods(List) -> List: b3
+fn f4 arrays(List) -> List: b4
+fn f5 loops(List) -> List: b5
+fn f6 early_return(List, bool) -> List: b6
+fn f7 scopes(List) -> List: b7
+fn f8 unknown(List) -> List: extern
+fn f9 interpolated(List) -> List: b9
+fn f10 String.len(&String) -> usize / (): extern
+scope s0: body b8, site b7
+cap_env e0
+
+body b0: fn swap; cap_env e0; unwind_exit bb1
+  _0: Pair (Return)
+  _1: Pair (Param(0) `p`)
+  _2: List (User `a`)
+  _3: List (User `b`)
+  bb0:
+    Live(_2)
+    _2 = move _1.0
+    Live(_3)
+    _3 = move _1.1
+    _0 = Pair { move _3, move _2 }
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn keep_head; cap_env e0; unwind_exit bb8
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `x`)
+  _4: List (User `rest`)
+  _5: u64 (Temp(Operand))
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1 as #0).0
+    Live(_4)
+    _4 = move (_1 as #0).1
+    Live(_5)
+    _5 = Add<u64>(copy _3, const 1u64)
+    _0 = List::Cons(move _5, move _4)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb5)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [1: bb4, otherwise: bb6]
+  bb4:
+    Dead(_6)
+    _0 = List::Nil()
+    Goto(bb5)
+  bb5:
+    Dead(_1)
+    Return
+  bb6:
+    Dead(_6)
+    Goto(bb7)
+  bb7:
+    Unreachable
+  bb8 (cleanup):
+    UnwindExit
+
+body b2: fn drop_rest; cap_env e0; unwind_exit bb8
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `x`)
+  _4: List (User `rest`)
+  _5: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1 as #0).0
+    Live(_4)
+    _4 = move (_1 as #0).1
+    _0 = List::Nil()
+    Dead(_4)
+    Dead(_3)
+    Goto(bb5)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_5)
+    _5 = Discriminant(_1)
+    switch move _5 -> [1: bb4, otherwise: bb6]
+  bb4:
+    Dead(_5)
+    _0 = List::Nil()
+    Goto(bb5)
+  bb5:
+    Dead(_1)
+    Return
+  bb6:
+    Dead(_5)
+    Goto(bb7)
+  bb7:
+    Unreachable
+  bb8 (cleanup):
+    UnwindExit
+
+body b3: fn methods; cap_env e0; unwind_exit bb2
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: usize (User `n`)
+  _3: String (Temp(Promoted))
+  _4: &String (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = Concat(const 1i64)
+    Live(_4)
+    _4 = &_3
+    _2 = call String.len(move _4) / e0 -> [bb1]
+  bb1:
+    Dead(_4)
+    _0 = move _1
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b4: fn arrays; cap_env e0; unwind_exit bb1
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: Vec<i64> (User `v`)
+  _3: (i64, i64) (User `t`)
+  _4: i64 (User `i`)
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = vec[const 1i64, const 2i64]
+    Live(_3)
+    _3 = (const 1i64, const 2i64)
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds(_2, copy _5)
+    _4 = Add<i64>(copy _2[_5], copy _3.0)
+    Dead(_5)
+    _0 = move _1
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn loops; cap_env e0; unwind_exit bb7
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: i64 (User `n`)
+  _3: Iter<i64> (Iterator)
+  _4: i64 (Temp(Scrutinee))
+  _5: i64 (User `i`)
+  _6: i64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0i64
+    Goto(bb1)
+  bb1:
+    Goto(bb2)
+  bb2:
+    Live(_3)
+    _3 = Iter(const 0i64..const 3i64)
+    Goto(bb3)
+  bb3:
+    Live(_4)
+    _4 = next _3 -> [bb4, done: bb5]
+  bb4:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = Add<i64>(copy _2, copy _5)
+    _2 = move _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb3)
+  bb5:
+    Dead(_4)
+    Goto(bb6)
+  bb6:
+    Dead(_3)
+    _0 = move _1
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b6: fn early_return; cap_env e0; unwind_exit bb4
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: bool (Param(1) `flag`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    switch copy _2 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = move _1
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2:
+    _3 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_3)
+    _0 = move _1
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b7: fn scopes; cap_env e0; unwind_exit bb4
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: i64 (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b8: scope s0; parent b7; cap_env e0; unwind_exit bb4
+  _0: i64 (Return)
+  _1: Scope (ScopeCap `s`)
+  bb0:
+    _0 = const 1i64
+    scope_wait _1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b9: fn interpolated; cap_env e0; unwind_exit bb1
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: String (User `s`)
+  _3: &List (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = Concat(move _3)
+    Dead(_3)
+    _0 = move _1
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+// unknown: no IR: a type error

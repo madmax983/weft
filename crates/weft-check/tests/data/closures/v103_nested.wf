@@ -1,0 +1,27 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn nested_late(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let f = || g()
+    r = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+fn tuple_part_late(world: &World, d: &Entity) / mut(world.entities) {
+    let t = (d, 1)
+    let f = || print(t.0.hp)
+    t.0 = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+fn nested_three(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let h = || g()
+    let f = || h()
+    r = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+fn main() {}

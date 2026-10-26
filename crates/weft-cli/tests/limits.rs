@@ -2,12 +2,13 @@
 //!
 //! For each deep or long construct, the test finds the largest program that the
 //! parser accepts. That program must go through every stage on a 2 MiB thread,
-//! the stack of a test thread: parse, print, analyze, check, the spec, the
-//! interpreter and drop. The library moves its stages to a thread with a large
-//! stack (`weft_sema::on_large_stack`), so the test keeps them on the 2 MiB
-//! thread with `weft_sema::on_current_stack`. A larger program gets a parser
-//! error, never a stack overflow. A flat chain of binary operators has no
-//! limit.
+//! the stack of a test thread: parse, print, analyze, check (with the facts
+//! of the old lowering and with the facts of the IR), the spec, the builder of
+//! the IR, the interpreter and drop. The library moves its stages to
+//! a thread with a large stack (`weft_sema::on_large_stack`), so the test keeps
+//! them on the 2 MiB thread with `weft_sema::on_current_stack`. A larger program
+//! gets a parser error, never a stack overflow. A flat chain of binary
+//! operators has no limit.
 //!
 //! The derivation printer of `check --explain` does not recurse. It folds a
 //! long chain of relations that depend on each other, so a long path in a
@@ -16,7 +17,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use weft_interp::RunOptions;
-use weft_sema::Options;
+use weft_sema::{FactGen, Options};
 
 /// The stack of a test thread.
 const STACK: usize = 2 * 1024 * 1024;
@@ -37,6 +38,28 @@ fn pipeline(src: String) -> Option<String> {
                 drop(file);
                 let checked = weft_check::check_source("limit.wf", &src, Options::default());
                 assert!(weft_check::agreement(&checked).is_ok());
+                // The facts of the IR (plan §2.7.4) take the same stack and
+                // give the same verdict.
+                let ir_opts = Options {
+                    facts: FactGen::Ir,
+                    ..Options::default()
+                };
+                let ir_checked = weft_check::check_source("limit.wf", &src, ir_opts);
+                assert!(weft_check::agreement(&ir_checked).is_ok());
+                assert_eq!(ir_checked.ok(), checked.ok(), "the verdict of the ir facts");
+                drop(ir_checked);
+                let ir = weft_sema::irbuild::build(&checked.analysis);
+                assert!(ir.broken.is_empty(), "the IR breaks rules: {:?}", ir.broken);
+                // The builder is total: each body is built or has a reason for
+                // no IR (a type error of the program).
+                for e in &ir.entries {
+                    assert!(
+                        !matches!(e.outcome, weft_sema::irbuild::Outcome::Unsupported(_)),
+                        "{}: {:?}",
+                        e.name,
+                        e.outcome
+                    );
+                }
                 if !checked.ok() {
                     return None;
                 }
@@ -127,6 +150,28 @@ fn constructs() -> Vec<(&'static str, Box<dyn Fn(usize) -> String>, usize)> {
                 ))
             }),
             94,
+        ),
+        (
+            "handles",
+            Box::new(|n| {
+                format!(
+                    "effect E {{ fn op(x: u64) -> u64 }}\nfn f() -> u64 {{ let a = 1\n {}op(a){} }}\nfn main() {{ print(f()) }}\n",
+                    rep("handle E { fn op(x) { resume(x + a) } } in { ", n),
+                    rep(" }", n)
+                )
+            }),
+            46,
+        ),
+        (
+            "scopes",
+            Box::new(|n| {
+                format!(
+                    "fn f() -> u64 / async {{ let a = 1\n {}s.spawn(|| a).join(){} }}\nfn main() / async {{ print(f()) }}\n",
+                    rep("scope { s => ", n),
+                    rep(" }", n)
+                )
+            }),
+            91,
         ),
         (
             "if",

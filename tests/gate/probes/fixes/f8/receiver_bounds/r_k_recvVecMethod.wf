@@ -1,0 +1,16 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> i32 / mut(w.entities) { w.entities.push(Entity { hp: 1 })
+ 0 }
+fn shrink(w: &World) -> i32 / mut(w.entities) { w.entities.clear()
+ 0 }
+fn popit(w: &World) -> i32 / mut(w.entities) { w.entities.pop()
+ 0 }
+fn renew(w: &World) -> i32 / mut(w.entities) { w.entities = Vec.new()
+ 0 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn plusv(self: Entity, n: i32) -> i32 { self.hp + n }
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn main() { let w = mkw(); let vv = Vec.new(); vv.push(mkw()); print(vv[0].entities[0].plus({ vv.clear(); 0 })) }

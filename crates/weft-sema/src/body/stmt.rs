@@ -26,8 +26,12 @@ impl Lower<'_> {
         let entry = self.start(def.span, "entry");
         let mut bases: Vec<Vec<PlaceId>> = Vec::new();
         let mut param_locals = Vec::new();
-        for p in &sig.params {
+        for (i, p) in sig.params.iter().enumerate() {
             let l = self.new_local(&p.name, VarKind::Param, p.span, p.ty.clone(), p.uniq);
+            self.rec_bind(
+                crate::thir::Binder::Param(u32::try_from(i).unwrap_or(u32::MAX)),
+                l,
+            );
             param_locals.push(l);
             let base = if p.ty.is_ref() {
                 if p.place.is_some() {
@@ -240,14 +244,19 @@ impl Lower<'_> {
         for d in &mut self.diags {
             d.unit = unit;
         }
+        let work = crate::Work {
+            type_steps: self.inf.steps(),
+            closure_queries: self.closure_queries.get(),
+            ..self.work
+        };
+        let mut thir = self.rec;
+        thir.settle(&self.inf);
         Lowered {
             facts: self.facts,
             effects: eff,
             diags: self.diags,
-            work: crate::Work {
-                type_steps: self.inf.steps(),
-                ..self.work
-            },
+            work,
+            thir,
         }
     }
 
@@ -1087,6 +1096,7 @@ impl Lower<'_> {
             StmtKind::For { pat, iter, body } => self.for_loop(pat, iter, body, s.span),
             StmtKind::Assert(e) => {
                 let v = self.expr(e);
+                self.rec_peel(e.id, &v.ty);
                 let t = self.deref_ty(&v.ty);
                 self.unify(&Ty::Bool, &t, e.span);
                 self.emit(e.span, "assert", String::new());
@@ -1128,7 +1138,11 @@ impl Lower<'_> {
                     Vec::new(),
                 )
             }
-            ExprKind::Index { base, index: None } => self.elem_iter(base, iter.span),
+            ExprKind::Index { base, index: None } => {
+                let r = self.elem_iter(base, iter.span);
+                self.rec_elems(iter, &r.0.ty);
+                r
+            }
             _ => self.elem_iter(iter, iter.span),
         };
         // The hidden iterator points into the elements. Each iteration uses it. It
@@ -1176,6 +1190,7 @@ impl Lower<'_> {
     /// Returns the element value of `for e in x[]` and the element places.
     fn elem_iter(&mut self, base: &ast::Expr, span: Span) -> (Val, Vec<PlaceId>) {
         let lv = self.place_or_temp(base);
+        self.rec_adjust(base.id, self.ref_depth(&lv.ty));
         self.iter_uniq = lv.uniq;
         let t = self.deref_ty(&lv.ty);
         if let Some((step, elem)) = super::elem_step(self.prog, &self.inf.deep(&t)) {
@@ -1232,6 +1247,7 @@ impl Lower<'_> {
             );
             return;
         };
+        self.rec_store(target, op, &lv.ty, value, &v.ty);
         // A self-reference field of a `!Move` struct can point only into its struct.
         if op == AssignOp::Assign {
             self.check_self_ref(target, &v, value.span);
@@ -1351,6 +1367,8 @@ impl Lower<'_> {
         };
         let v = self.expr(value);
         let lt = self.locals[l].ty.clone();
+        self.rec_local(target, l, false);
+        self.rec_store(target, op, &lt, value, &v.ty);
         if op == AssignOp::Assign {
             self.unify(&lt, &v.ty, value.span);
         } else {
@@ -1555,14 +1573,21 @@ impl Lower<'_> {
     // -----------------------------------------------------------------------
 
     pub(super) fn bind_pattern(&mut self, pat: &Pattern, v: &Val, n: NodeId) {
+        self.rec.pat_ty(pat.id, &v.ty);
         match &pat.kind {
             PatternKind::Bind(id) => {
                 let l = self.new_local(&id.name, VarKind::Local, id.span, v.ty.clone(), v.uniq);
+                self.rec_bind(crate::thir::Binder::Pat(pat.id), l);
                 self.assign_local(l, v, n);
             }
             PatternKind::Wild(_) | PatternKind::Lit(..) => {}
             PatternKind::Tuple(ps, span) => {
                 let t = self.inf.shallow(&v.ty);
+                let through = usize::from(matches!(t, Ty::Ref(_)));
+                self.rec.pat_adjust(
+                    pat.id,
+                    std::iter::repeat_n(crate::thir::DerefKind::Ref, through).collect(),
+                );
                 let tys: Vec<Ty> = match t.clone() {
                     Ty::Tuple(ts) if ts.len() == ps.len() => ts,
                     Ty::Ref(inner) => match self.inf.shallow(&inner) {
@@ -1701,6 +1726,7 @@ impl Lower<'_> {
         }
         let v = self.expr(e);
         if let Ty::Ref(inner) = self.inf.shallow(&v.ty) {
+            self.rec.base_deref = Some(e.id);
             let (places, deps) = self.split_deps(&v.refs);
             let held = self.val_caps(&v);
             return LVal {
@@ -1813,6 +1839,33 @@ impl Lower<'_> {
                 }
             }
         }
+    }
+}
+
+impl Lower<'_> {
+    /// Records the type of `x[]` in `for e in x[]`: a slice of the elements.
+    /// `elem` is the type of each binding: the element, or a reference to it.
+    fn rec_elems(&mut self, iter: &ast::Expr, elem: &Ty) {
+        let t = match self.inf.peek(elem) {
+            Ty::Ref(inner) => *inner,
+            t => t,
+        };
+        self.rec.expr_ty(iter.id, &Ty::Slice(Box::new(t)));
+    }
+
+    /// Records the dereferences of an assignment `target op value`: the
+    /// target is a place of type `lt`, the value has type `vt`. A compound
+    /// assignment follows the references of both (`Lower::arith`), and has an
+    /// integer type at its right side.
+    fn rec_store(&mut self, target: &ast::Expr, op: AssignOp, lt: &Ty, value: &ast::Expr, vt: &Ty) {
+        if op == AssignOp::Assign {
+            self.rec_adjust(target.id, 0);
+            return;
+        }
+        self.rec_adjust(target.id, self.ref_depth(lt));
+        self.rec_peel(value.id, vt);
+        let t = self.deref_ty(lt);
+        self.rec.int_op(value.id, &t);
     }
 }
 

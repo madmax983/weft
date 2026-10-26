@@ -1,0 +1,169 @@
+fn f0 noisy() -> () / main.Note: b0
+fn f1 quiet() -> (): b1
+fn f2 again() -> u64: b4
+fn f3 main() -> (): b7
+handler h0 main.Note: handled b2, site b1, clauses [note: b3]
+handler h1 main.Tick: handled b5, site b4, clauses [tick: b6]
+cap_env e0
+cap_env e1: parent e0, main.Note _1
+cap_env e2: parent e0, main.Tick _1
+
+body b0: fn noisy; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = perform Row(main.Note).note(const 1u64) -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn quiet; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: handled h0; parent b1; cap_env e1; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.Note> (Cap(main.Note) `Note`)
+  bb0:
+    _0 = call noisy() / e1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: clause h0 note; parent b1; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: u64 (Param(0) `m`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  bb0:
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: fn again; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = handle h1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    _0 = const 1u64
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b5: handled h1; parent b4; cap_env e2; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.Tick> (Cap(main.Tick) `Tick`)
+  bb0:
+    _0 = perform Local(_1).tick() -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b6: clause h1 tick; parent b4; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: resume(()) -> () (Kont(once) `resume`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = perform Row(main.Tick).tick() -> [bb1, unwind: bb4]
+  bb1:
+    Dead(_2)
+    _0 = resume _1(const ()) -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb6)
+  bb4 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b7: fn main; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  _2: () (Temp(Discarded))
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call quiet() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Dead(_1)
+    Live(_2)
+    _2 = call noisy() / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Dead(_2)
+    Live(_3)
+    _3 = call again() / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Print(copy _3)
+    _0 = const ()
+    Dead(_3)
+    Return
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb7)
+  bb6 (cleanup):
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit

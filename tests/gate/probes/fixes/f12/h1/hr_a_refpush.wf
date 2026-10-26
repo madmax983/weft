@@ -1,0 +1,12 @@
+// F12 review (ABC preview), hole H1: a closure rebinds a captured reference and then changes the new referent; a read after the call (old W0301) (h1/hr_a_refpush.wf).
+struct W { items: Vec<u64> }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn grow(w: &W) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = W { items: mk_v() }
+    let r = &w.items[0]
+    let h = || { r = &w.items[0]; w.items.push(3) }
+    h()
+    print(r)
+}

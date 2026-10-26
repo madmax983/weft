@@ -1,0 +1,13 @@
+// F10 review, hole H-B: a body with no IR and no error for it (th/th16b_loopNoneTypeErrFault.wf).
+struct Entity { hp: i32 }
+fn f(es: &Vec<Entity>) / mut(es) {
+    let best = None
+    let i = 0
+    for e in es[] {
+        match best { Some(b) => { es.push(Entity { hp: 5 }); print(b.hp) }, None => {} }
+        best = Some(e)
+        i += 1
+        if i == 2 { break }
+    }
+}
+fn main() { let es = Vec.new(); es.push(Entity { hp: 1 }); es.push(Entity { hp: 2 }); f(&es) }

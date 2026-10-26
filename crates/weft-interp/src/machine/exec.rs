@@ -8,9 +8,10 @@ use weft_syntax::ast::Span;
 use weft_verified::lifecycle::LinState;
 
 use super::{CodeFrame, Flow, Frame, HandleMark, LinRec, ScopeRec, TaskResult, Wait, R};
-use crate::code::{CPat, LitPat, Op, VarRef};
+use crate::code::{CPat, CapHold, Code, LitPat, Op, VarRef};
 use crate::error::{ErrorKind, RuntimeError};
 use crate::heap::SlotKind;
+use crate::oracle::facts::IrStep;
 use crate::runtime::Native;
 use crate::trace::{SuspendReason, TraceEvent};
 use crate::value::{Cap, CellId, ClosureVal, EnumVal, HEnv, IterState, Obj, Place, ScopeId, Value};
@@ -198,13 +199,15 @@ impl super::Machine<'_, '_> {
         }
     }
 
-    /// Drops everything that a finished code frame holds.
+    /// Drops everything that a finished code frame holds. A slot of a
+    /// temporary cell is on the temporary list too, so it ends there.
     pub(crate) fn cleanup_frame(&mut self, cf: CodeFrame) {
         for v in cf.stack {
             self.heap.drop_value(v);
         }
         self.end_cells(cf.temps);
-        let slots: Vec<CellId> = cf.slots.into_iter().flatten().collect();
+        let n = cf.code.local_slots();
+        let slots: Vec<CellId> = cf.slots.into_iter().take(n).flatten().collect();
         self.end_cells(slots);
     }
 
@@ -215,12 +218,12 @@ impl super::Machine<'_, '_> {
     /// Runs one step of the current task.
     pub(crate) fn step(&mut self) -> R<Flow> {
         let cur = self.cur;
-        let (code, pc) = match self.tasks[cur].frames.last_mut() {
+        let (code, pc, uid) = match self.tasks[cur].frames.last_mut() {
             None => return Ok(Flow::Done),
             Some(Frame::Code(cf)) => {
                 let pc = cf.pc;
                 cf.pc += 1;
-                (Rc::clone(&cf.code), pc)
+                (Rc::clone(&cf.code), pc, cf.uid)
             }
             Some(Frame::Unwind(_)) => return self.unwind_step(),
             Some(Frame::Fork { .. }) => return self.fork_step(),
@@ -229,7 +232,101 @@ impl super::Machine<'_, '_> {
         let Some(op) = code.ops.get(pc) else {
             return Err(self.fault("internal: the code has no instruction here"));
         };
-        self.exec(op)
+        if uid == 0 {
+            return self.exec(op);
+        }
+        if let Err(m) = self.before_op(uid, &code, pc, op) {
+            return Err(self.fault(m));
+        }
+        let flow = self.exec(op)?;
+        if let Err(m) = self.after_op(uid, &code, op) {
+            return Err(self.fault(m));
+        }
+        Ok(flow)
+    }
+
+    /// Before op `op` at `pc` of frame `uid` (`crate::oracle::facts`): the
+    /// IR trace, trace conformance and C1 when the location changes, and C4
+    /// for an op that ends the cells of locals.
+    fn before_op(&mut self, uid: u64, code: &Code, pc: usize, op: &Op) -> Result<(), String> {
+        let Some(loc) = code.locs.get(pc).copied() else {
+            return Ok(());
+        };
+        if self.opts.ir_trace {
+            let at = (loc.body, loc.block, loc.stmt);
+            if self.trace_at.get(&uid) != Some(&at) {
+                self.trace_at.insert(uid, at);
+                self.ir_trace.push(IrStep {
+                    frame: uid,
+                    body: loc.body,
+                    block: loc.block,
+                    stmt: loc.stmt,
+                });
+            }
+        }
+        let Some(fo) = self.facts.as_mut() else {
+            return Ok(());
+        };
+        let changed = fo.step(uid, loc.block, loc.stmt)?;
+        let Some(Frame::Code(cf)) = self.tasks.get(self.cur).and_then(|t| t.frames.last()) else {
+            return Ok(());
+        };
+        if changed && cf.chain.is_none() {
+            fo.check_uses(uid, code, &cf.slots, &self.heap)?;
+        }
+        // A temporary that gets a new cell keeps the name of its old one.
+        if let Op::LiveTemp(s) = op {
+            if let (Some(Some(c)), Some(&l)) =
+                (cf.slots.get(*s as usize), code.slot_locals.get(*s as usize))
+            {
+                fo.retire(uid, *c, weft_ir::LocalId(l));
+            }
+        }
+        let ends: &[u32] = match op {
+            Op::DropSlots(ss) => ss,
+            Op::EndTemp(s) => std::slice::from_ref(s),
+            _ => &[],
+        };
+        for &s in ends {
+            let live = cf.slots.get(s as usize).is_some_and(Option::is_some);
+            if let (true, Some(&l)) = (live, code.slot_locals.get(s as usize)) {
+                fo.check_end(uid, weft_ir::LocalId(l))?;
+            }
+        }
+        let _ = self.heap.take_facts_log();
+        Ok(())
+    }
+
+    /// After op `op` of frame `uid`: C5 and D1 for the accesses of the op.
+    fn after_op(&mut self, uid: u64, code: &Code, op: &Op) -> Result<(), String> {
+        let Some(fo) = self.facts.as_mut() else {
+            return Ok(());
+        };
+        let events = self.heap.take_facts_log();
+        if matches!(op, Op::Return) {
+            fo.leave(uid);
+            return Ok(());
+        }
+        if events.is_empty() {
+            return Ok(());
+        }
+        let frame = self.tasks.get(self.cur).and_then(|t| {
+            t.frames.iter().rev().find_map(|f| match f {
+                Frame::Code(cf) if cf.uid == uid => Some(cf),
+                _ => None,
+            })
+        });
+        let Some(cf) = frame else {
+            return Ok(());
+        };
+        if cf.chain.is_some() {
+            return Ok(());
+        }
+        // A move of the program is a `move` operand (`Take`, or a `Read` of
+        // a value that is not a copy value). A take in another op (a drop,
+        // the code of a native function) changes the place.
+        let moves = matches!(op, Op::Take | Op::Read);
+        fo.check_events(uid, code, &cf.slots, &self.heap, &events, moves)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -303,6 +400,7 @@ impl super::Machine<'_, '_> {
             }
             Op::Borrow => {
                 let (p, _) = self.pop_loc()?;
+                let p = self.heap.mark(p);
                 self.push(Value::Ref(p))?;
             }
             Op::BorrowAll => {
@@ -462,10 +560,12 @@ impl super::Machine<'_, '_> {
             }
             Op::MakeEnum { adt, variant, n } => {
                 let vs = self.pop_n(*n as usize)?;
+                let id = self.heap.new_enum_id();
                 self.push(Value::Enum(Box::new(EnumVal {
                     adt: *adt,
                     variant: *variant,
                     fields: vs,
+                    id,
                 })))?;
             }
             Op::Untuple(n) => self.untuple(*n as usize)?,
@@ -513,6 +613,18 @@ impl super::Machine<'_, '_> {
                 let henv = self.fr()?.henv.clone();
                 return self.perform(*effect, *op, args, &henv);
             }
+            Op::PerformCap { op, n } => {
+                let args = self.pop_n(*n as usize)?;
+                let Value::Cap(Cap::Handler { effect, id }) = self.pop()? else {
+                    return Err(self.fault("internal: a perform has no capability of a handler"));
+                };
+                let henv = self.fr()?.henv.clone();
+                debug_assert!(
+                    self.finds_handler_of_cap(effect, *op, id, &henv),
+                    "the machine does not find the handler of the capability"
+                );
+                return self.perform(effect, *op, args, &henv);
+            }
             Op::MakeClosure {
                 code,
                 caps,
@@ -547,6 +659,38 @@ impl super::Machine<'_, '_> {
                     span: *span,
                 })))?;
             }
+            Op::MakeClosureIr { code, holds, span } => {
+                let ops = self.pop_n(holds.len())?;
+                let mut cells = Vec::with_capacity(holds.len());
+                let mut own = Vec::new();
+                for (hold, v) in holds.iter().zip(ops) {
+                    match (hold, v) {
+                        // A `Kept` capture shares the cell of the variable.
+                        (CapHold::Shared, Value::Loc(p, _)) if p.path.is_empty() => {
+                            cells.push(p.cell);
+                        }
+                        (CapHold::Shared, _) => {
+                            return Err(self.fault("internal: a kept capture is not a whole cell"));
+                        }
+                        (CapHold::Moved, v) => {
+                            let cell = self.heap.alloc(SlotKind::Local, v);
+                            cells.push(cell);
+                            own.push(cell);
+                        }
+                        (CapHold::Ref | CapHold::Copied, v) => {
+                            cells.push(self.heap.alloc(SlotKind::Local, v));
+                        }
+                    }
+                }
+                let henv = self.fr()?.henv.clone();
+                self.push(Value::Closure(Rc::new(ClosureVal {
+                    code: *code,
+                    cells,
+                    owned: own,
+                    henv,
+                    span: *span,
+                })))?;
+            }
             Op::FnValue(f) => self.push(Value::FnItem(*f))?,
             Op::Handle(spec) => {
                 let henv = self.fr()?.henv.clone();
@@ -569,7 +713,17 @@ impl super::Machine<'_, '_> {
                     clauses: Rc::from(clauses),
                     outer: henv,
                 }));
-                let f = self.code_frame(spec.body, Vec::new(), Rc::from(cells), inner)?;
+                // The handled body of the IR takes the capability of the
+                // handler (`docs/ir.md` 5.24).
+                let args = if spec.cap {
+                    vec![Value::Cap(Cap::Handler {
+                        effect: spec.effect,
+                        id,
+                    })]
+                } else {
+                    Vec::new()
+                };
+                let f = self.code_frame(spec.body, args, Rc::from(cells), inner)?;
                 self.task().frames.push(Frame::Code(f));
             }
             Op::Scope { code, caps } => {
@@ -684,8 +838,156 @@ impl super::Machine<'_, '_> {
                 }
             }
             Op::Fault(msg) => return Err(self.fault(msg.to_string())),
+            Op::Part(i) => self.part(*i)?,
+            Op::Variant(v) => self.variant(*v)?,
+            Op::Deref => self.deref_place()?,
+            Op::Len => {
+                let (p, tr) = self.pop_loc()?;
+                let (p, tr) = self.resolve(p, tr)?;
+                let (_, lo, hi, _) = self.elems_of(&p, tr)?;
+                self.push(Value::Int(i64::from(hi - lo)))?;
+            }
+            Op::Tag => {
+                let (p, _) = self.pop_loc()?;
+                self.heap.log_read(&p);
+                let tag = match self.hget(&p)? {
+                    Value::Enum(e) => e.variant,
+                    Value::Moved => return Err(self.fault("a value is used after it was moved")),
+                    _ => return Err(self.fault("internal: a variant is needed here")),
+                };
+                self.push(Value::Int(i64::from(tag)))?;
+            }
+            Op::JumpTable { arms, otherwise } => {
+                let v = self.pop()?;
+                let key = match self.deref_value(v)? {
+                    Value::Bool(b) => u128::from(b),
+                    Value::Int(i) => u128::try_from(i).unwrap_or(u128::MAX),
+                    _ => return Err(self.fault("internal: a jump table needs an integer")),
+                };
+                let to = arms
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map_or(*otherwise, |(_, t)| *t);
+                self.set_pc(to)?;
+            }
+            Op::Bounds => {
+                let i = self.pop()?;
+                let i = self.int_of(i)?;
+                let (p, tr) = self.pop_loc()?;
+                let (p, tr) = self.resolve(p, tr)?;
+                let (_, lo, hi, _) = self.elems_of(&p, tr)?;
+                if u32::try_from(i).map_or(true, |i| lo.saturating_add(i) >= hi) {
+                    return Err(
+                        self.fault(format!("index {i} is out of bounds (length {})", hi - lo))
+                    );
+                }
+            }
+            Op::Take => {
+                let (p, _) = self.pop_loc()?;
+                self.heap.log_read(&p);
+                if matches!(self.hget(&p)?, Value::Moved) {
+                    return Err(self.fault("a value is used after it was moved"));
+                }
+                let v = self.heap.take(&p).map_err(|e| self.fault(e))?;
+                self.push(v)?;
+            }
+            Op::DropPlace => {
+                let (p, _) = self.pop_loc()?;
+                let old = self.heap.take(&p).map_err(|e| self.fault(e))?;
+                self.heap.drop_value(old);
+            }
+            Op::Consume => {
+                let (p, _) = self.pop_loc()?;
+                if let Value::Struct(o) = self.hget(&p)? {
+                    if let Some(id) = o.lin {
+                        self.consume_lin(id)?;
+                    }
+                }
+            }
+            Op::LiveTemp(s) => {
+                self.end_temp(*s)?;
+                let c = self.heap.alloc(SlotKind::Temp, Value::Moved);
+                let fr = self.fr()?;
+                fr.temps.push(c);
+                if let Some(x) = fr.slots.get_mut(*s as usize) {
+                    *x = Some(c);
+                }
+            }
+            Op::EndTemp(s) => self.end_temp(*s)?,
+            Op::UnwindValue { var, path } => return self.unwind_value(*var, path),
+            Op::UnwindKont(s) => return self.unwind_kont(*s),
+            Op::UnwindExit => return self.unwind_exit(),
         }
         Ok(Flow::Continue)
+    }
+
+    /// Pops a place and pushes the place of part `i` of its value: a field
+    /// of a struct, a part of a tuple or a payload value of a variant.
+    fn part(&mut self, i: u32) -> R<()> {
+        let (p, tr) = self.pop_loc()?;
+        let n = match self.hget(&p)? {
+            Value::Struct(o) => o.fields.len(),
+            Value::Tuple(vs) => vs.len(),
+            Value::Enum(e) => e.fields.len(),
+            Value::Moved => return Err(self.fault("a value is used after it was moved")),
+            _ => 0,
+        };
+        if i as usize >= n {
+            return Err(self.fault(format!("this value has no part {i}")));
+        }
+        self.push(Value::Loc(p.child(i), tr))
+    }
+
+    /// Pops a place and pushes it again if the value there is variant `v` of
+    /// an enum. Another variant stops the run, with the text of the failed
+    /// test of a payload place (`o.Some`). The check reads only the tag: it
+    /// logs no read, as `Part` logs none.
+    fn variant(&mut self, v: u32) -> R<()> {
+        let (p, tr) = self.pop_loc()?;
+        match self.hget(&p)? {
+            Value::Enum(e) if e.variant == v => {}
+            Value::Enum(_) => {
+                return Err(self.fault("this value is another variant: it has no such field"));
+            }
+            Value::Moved => return Err(self.fault("a value is used after it was moved")),
+            _ => return Err(self.fault("internal: a variant is needed here")),
+        }
+        self.push(Value::Loc(p, tr))
+    }
+
+    /// Pops a place and pushes the place that the pointer there points to.
+    /// A slice stays at its place: the ops that read elements take its range
+    /// there.
+    fn deref_place(&mut self) -> R<()> {
+        let (p, tr) = self.pop_loc()?;
+        self.heap.log_read(&p);
+        let to = match self.hget(&p)? {
+            Value::Ref(q) => {
+                self.heap.check_ref(q);
+                self.heap.log_deref(&p);
+                (q.clone(), true)
+            }
+            Value::Boxed(c) => (Place::root(*c), tr),
+            Value::Rc(c) => (Place::root(*c), true),
+            Value::Slice { .. } => (p, true),
+            Value::Moved => return Err(self.fault("a value is used after it was moved")),
+            _ => return Err(self.fault("internal: a pointer is needed here")),
+        };
+        self.push(Value::Loc(to.0, to.1))
+    }
+
+    /// Ends the temporary cell of slot `s`, if it has one, and takes it off
+    /// the temporary list of the frame.
+    fn end_temp(&mut self, s: u32) -> R<()> {
+        let fr = self.fr()?;
+        let Some(c) = fr.slots.get_mut(s as usize).and_then(Option::take) else {
+            return Ok(());
+        };
+        if let Some(i) = fr.temps.iter().rposition(|&t| t == c) {
+            fr.temps.remove(i);
+        }
+        self.heap.end_cell(c);
+        Ok(())
     }
 
     pub(crate) fn span_now(&self) -> Option<Span> {
@@ -731,10 +1033,7 @@ impl super::Machine<'_, '_> {
         if *i >= 0 {
             return Ok(());
         }
-        let parent = Place {
-            cell: p.cell,
-            path: parent.to_vec(),
-        };
+        let parent = Place::new(p.cell, parent.to_vec());
         if let Ok(Value::Struct(o)) = self.heap.get(&parent) {
             let info = &self.rt.adts[o.adt.index()];
             if info.unsigned.get(last as usize).copied().unwrap_or(false) {
@@ -810,7 +1109,7 @@ impl super::Machine<'_, '_> {
                         self.heap.log_read(&q);
                         x
                     } else {
-                        Value::Ref(q)
+                        Value::Ref(self.heap.mark(q))
                     };
                     self.push(item)?;
                 }
@@ -846,7 +1145,7 @@ impl super::Machine<'_, '_> {
                         self.heap.log_read(&q);
                         x
                     } else {
-                        Value::Ref(q)
+                        Value::Ref(self.heap.mark(q))
                     };
                     self.push(item)?;
                 }
@@ -946,7 +1245,7 @@ impl super::Machine<'_, '_> {
                         self.heap.log_read(p);
                         x.clone()
                     } else {
-                        Value::Ref(p.clone())
+                        Value::Ref(self.heap.mark(p.clone()))
                     }
                 } else {
                     self.use_place(p)?
@@ -1119,7 +1418,7 @@ impl super::Machine<'_, '_> {
             .and_then(|s| s.params.first())
             .is_some_and(|p| p.ty.is_ref());
         let recv = if by_ref {
-            Value::Ref(p)
+            Value::Ref(self.heap.mark(p))
         } else {
             self.use_place(&p)?
         };

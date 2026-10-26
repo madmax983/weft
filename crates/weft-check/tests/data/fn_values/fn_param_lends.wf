@@ -1,0 +1,24 @@
+// A call of a function parameter is code of a caller (map N2): it lends the
+// places of its reference arguments, so a reference into them is invalid
+// after the call, and two arguments that overlap are W0312.
+fn apply(v: &Vec<u64>, f: fn(&Vec<u64>)) {
+    let r = &v[0]
+    f(v)
+    print(r)   //~ W0301
+}
+fn own_local(f: fn()) {
+    let w = Vec.new()
+    w.push(1)
+    let r = &w[0]
+    f()
+    print(r)
+}
+fn two_args(v: &Vec<u64>, f: fn(&Vec<u64>, &u64)) {
+    f(v, &v[0])   //~ W0312
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    apply(&v, |x| x.push(2))
+    own_local(|| print(1))
+}

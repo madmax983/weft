@@ -1,0 +1,33 @@
+// RT7 (tests/gate/probes/redteam/a05_closure_tuple.wf): closures through a
+// tuple, an `if` and a returned reference.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// A closure that mutates, hidden in a tuple and called after unpacking.
+fn closure_in_tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (|| world.entities.push(Entity { hp: 1 }), 1)
+    let (h, n) = t
+    h()
+    print(first.hp)   //~ W0301
+}
+// A closure chosen by `if`.
+fn closure_in_if(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = if c { || world.entities.push(Entity { hp: 1 }) } else { || world.entities.push(Entity { hp: 2 }) }
+    h()
+    print(first.hp)   //~ W0301
+}
+// A closure that returns a reference.
+fn closure_returns_ref(world: &World) / mut(world.entities) {
+    let f = || &world.entities[0]
+    let r = f()
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)   //~ W0301
+}
+// Plain closure capture (control: should be W0301).
+fn closure_capture(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = || print(first.hp)
+    world.entities.push(Entity { hp: 1 })
+    f()   //~ W0301
+}

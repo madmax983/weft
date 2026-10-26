@@ -1,0 +1,11 @@
+// F12 review (ABC preview), hole H3: a linear closure that a function or a closure gives back, dropped by the caller (old W0204 at the maker, R3RT5) (lcv3/x09_esc_ret_linear_drop.wf).
+struct W { v: Vec<u64> }
+struct Bag { items: Vec<u64> }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn take(b: Bag) -> usize { b.items.len() }
+fn run(f: fn()) { f() }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn mk_local() -> fn() { let t = Tx { id: 1 }; || rollback(t) }
+fn main() { let f = mk_local(); print(1) }

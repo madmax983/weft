@@ -1,0 +1,16 @@
+// A clause that resumes: `resume` runs the rest of the handled body, and its value
+// is the value of the handled body.
+effect Say { fn say(msg: String) }
+
+fn run() -> u64 {
+    handle Say {
+        fn say(msg) {
+            print(msg)
+            let v = resume(())
+            v + 1
+        }
+    } in {
+        say("one")
+        41
+    }
+}

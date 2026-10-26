@@ -1,0 +1,10 @@
+// F12 review (ABC preview), false positive FP1: a Vec<fn()> with no linear closure goes into another Vec, an Option or a field (old accepts, the oracle is clean) (fp/fp07_vecvec_item.wf).
+fn hi() { print(1) }
+fn main() {
+    let fs = Vec.new()
+    fs.push(hi)
+    let ffs = Vec.new()
+    ffs.push(fs)
+    let g = ffs[0][0]
+    g()
+}

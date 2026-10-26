@@ -1,0 +1,39 @@
+// OR1 (tests/gate/probes/r2/oracle/repro/OR1_returned_closure.wf): the
+// result points into the places of its captured reference (`scope_ended`:
+// at the call, not at the block value as the old pipeline).
+// OR1. A function returns a closure that captures a reference parameter.
+// The caller does not record that the result points into the argument.
+// A move, a free or a mutation of the argument does not invalidate the
+// closure, so a later call reads freed memory.
+fn reader(v: &Vec<u64>) -> fn() { || print(v.len()) }
+fn elem_reader(r: &u64) -> fn() { || print(r + 1) }
+fn take(v: Vec<u64>) {}
+
+fn moved() {
+    let v = Vec.new()
+    v.push(1)
+    let f = reader(&v)
+    take(v)
+    f()                       // stock: "a value is used after it was moved"   //~ W0301
+}
+
+fn scope_ended() {
+    let f = {
+        let v = Vec.new()
+        v.push(1)
+        reader(&v)
+    }
+    f()                       // the buffer of `v` was freed at the end of the block   //~ W0301
+}
+
+fn cleared() {
+    let v = Vec.new()
+    v.push(1)
+    let f = elem_reader(&v[0])
+    v.clear()
+    f()                       // stock: "a place does not exist"   //~ W0301
+}
+
+fn main() {
+    moved()
+}

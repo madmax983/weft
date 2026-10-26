@@ -1,0 +1,89 @@
+fn f0 keep(Frame) -> (): b0
+fn f1 make() -> Frame: b1
+fn f2 moves() -> (): b2
+fn f3 in_place() -> (): b3
+cap_env e0
+
+body b0: fn keep; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (Param(0) `f`)
+  bb0:
+    Uninit(_1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn make; cap_env e0; unwind_exit bb1
+  _0: Frame (Return)
+  _1: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = [const 0u8, const 0u8, const 0u8, const 0u8]
+    _0 = Frame { move _1, const () }
+    Uninit(_0.1)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn moves; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Frame (User `f`)
+  bb0:
+    Live(_1)
+    _1 = call make() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Uninit(_1.1)
+    _0 = call keep(move _1) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b3: fn in_place; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: &u8 (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: u8 (Temp(Operand))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = const 2usize
+    Bounds(_1.0, copy _4)
+    _3 = &_1.0[_4]
+    _1.1 = move _3
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = const 9u8
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_1.0, copy _6)
+    _1.0[_6] = move _5
+    Dead(_6)
+    Dead(_5)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

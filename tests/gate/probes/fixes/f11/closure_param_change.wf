@@ -1,0 +1,15 @@
+// Stage F11 (preview, new false positive of tier 1 rt24_apply.wf): a closure
+// that changes what its parameter points into changes a place of its
+// caller, not a parameter of the function. The row states the place of
+// the argument; the program is valid.
+struct Inner { v: Vec<u64>, n: u64 }
+struct Stats { count: u64, inner: Inner }
+pub fn clear(c: &Stats) / mut(c.inner.v) {
+    let f = |x: &Stats| x.inner.v.clear()
+    f(c)
+}
+fn main() {
+    let s = Stats { count: 0, inner: Inner { v: Vec.new(), n: 0 } }
+    clear(&s)
+    print(s.inner.v.len())
+}

@@ -1,0 +1,14 @@
+// F12 review (ABC preview), old hole kept by ABC (4.7): old and the default AB accept it and the oracle faults; ABC rejects it after F12-fix (oh/b14_vec_first_twice.wf).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn first(fs: &Vec<fn()>) -> fn() { fs[0] }
+fn main() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let g = first(&fs)
+    g()
+    let h = first(&fs)
+    h()
+}

@@ -1,0 +1,25 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn refill_only() {
+    let v = mk_v()
+    let show = || print(v.len())
+    v = mk_v()
+    show()
+}
+fn move_then_refill() {
+    let v = mk_v()
+    let show = || print(v.len())
+    print(take_v(v))
+    v = mk_v()
+    show()
+}
+fn move_no_refill() {
+    let v = mk_v()
+    let show = || print(v.len())
+    print(take_v(v))
+    show()   //~ W0302
+}
+fn main() {
+    refill_only()
+    move_then_refill()
+}

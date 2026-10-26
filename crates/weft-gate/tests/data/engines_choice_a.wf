@@ -1,0 +1,8 @@
+// Choice A (docs/ir.md 5.1.1): the IR reads the operand `x` where the source
+// writes it, before the block changes `x`. The AST engine prints 6, the IR
+// engine prints 2.
+fn main() {
+    let x = 1
+    let y = x + { x = 5; 1 }
+    print(y)
+}

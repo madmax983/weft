@@ -4,13 +4,17 @@
 //! functions that do not state them, and lowers every body to [`FnFacts`].
 //! The checker in `weft-check` runs the rules on these facts.
 
+pub mod analysis;
 pub mod body;
 pub mod effects;
+pub mod factgen;
 pub mod fip;
 pub mod ids;
 pub mod infer;
+pub mod irbuild;
 pub mod program;
 pub mod props;
+pub mod thir;
 pub mod types;
 
 use weft_facts::FnFacts;
@@ -18,7 +22,9 @@ use weft_syntax::diag::Code;
 use weft_syntax::diag::Diagnostic;
 use weft_syntax::{parse_file, ParseError};
 
+pub use factgen::{IrFacts, Scope};
 pub use ids::{AdtId, EffectId, FnId, ModId};
+pub use irbuild::scope::{Group, Groups};
 pub use program::{FnSig, Program, TaskRun, Unit};
 pub use weft_syntax::diag::{PRELUDE_UNIT, ROOT_UNIT};
 
@@ -26,12 +32,74 @@ pub use weft_syntax::diag::{PRELUDE_UNIT, ROOT_UNIT};
 pub const PRELUDE_SRC: &str = include_str!("../../../std/prelude.wf");
 
 /// Analysis options.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Options {
     /// The root unit is a library: it may not install root handlers.
     pub library: bool,
     /// The embedded profile: no `std.rt`, so `main` must handle every standard effect.
     pub no_runtime: bool,
+    /// The fact pipeline (`--facts`, plan §2.6).
+    pub facts: FactGen,
+    /// The construct groups that the `ir` pipeline checks (plan §2.6). A
+    /// program that uses a group that is off goes to the old pipeline. The
+    /// default is [`DEFAULT_GROUPS`].
+    pub ir_groups: Groups,
+}
+
+/// The construct groups that are on by default (plan §2.6). Stage F8 turns
+/// group A on, and stage F10 turns group B (loops) on. Each later group stage
+/// adds its group.
+pub const DEFAULT_GROUPS: Groups = Groups::of(Group::A).with(Group::B);
+
+impl Default for Options {
+    /// A program that is not a library, with the standard runtime, the old
+    /// fact pipeline, and the groups [`DEFAULT_GROUPS`].
+    fn default() -> Self {
+        Self {
+            library: false,
+            no_runtime: false,
+            facts: FactGen::Old,
+            ir_groups: DEFAULT_GROUPS,
+        }
+    }
+}
+
+/// The fact pipeline (`--facts`, plan §2.6 and stage F1).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FactGen {
+    /// The old lowering gives the facts (`crates/weft-sema/src/body/`).
+    #[default]
+    Old,
+    /// The fact generator of the IR gives the facts of a program in scope
+    /// (`crate::factgen`). For a program out of scope, the old lowering
+    /// gives them, and [`Analysis::ir_scope`] says why.
+    Ir,
+    /// Both: [`Analysis::bodies`] and [`Analysis::diags`] are those of the
+    /// old lowering, and [`Analysis::ir_facts`] holds those of the IR for a
+    /// program in scope.
+    Both,
+}
+
+impl FactGen {
+    /// Returns the pipeline with the name `name` (`old`, `ir`, `both`), or
+    /// `None`.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "old" => Some(Self::Old),
+            "ir" => Some(Self::Ir),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+
+    /// The name, as `--facts` takes it.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Old => "old",
+            Self::Ir => "ir",
+            Self::Both => "both",
+        }
+    }
 }
 
 /// The words of file markers.
@@ -95,6 +163,10 @@ pub struct Work {
     /// The full types whose place fields the lowering walked: each one once
     /// for a body (review round 3, Q3-4).
     pub place_types: usize,
+    /// The closure summaries that the property queries looked at
+    /// (`Lower::closure_has`). A query looks at each summary one time
+    /// (review round 3, Q3-2).
+    pub closure_queries: usize,
 }
 
 impl Work {
@@ -106,6 +178,7 @@ impl Work {
         self.holder_steps += o.holder_steps;
         self.item_steps += o.item_steps;
         self.place_types += o.place_types;
+        self.closure_queries += o.closure_queries;
     }
 }
 
@@ -138,6 +211,37 @@ pub struct Analysis {
     pub lowerings: usize,
     /// The work of the last lowering of each body.
     pub work: Work,
+    /// The THIR tables of each body, in the order of [`Analysis::bodies`]
+    /// (`docs/ir.md` 2.1). The last lowering of each body records them.
+    pub thir: Vec<thir::Tables>,
+    /// The final types of the THIR tables, with the declarations of the
+    /// program (`types::ir_ty_table`).
+    pub thir_tys: weft_ir::TyTable,
+    /// Why the declarations of the program have no final types. The type
+    /// table then has no declarations.
+    pub thir_decl_error: Option<types::IrTyError>,
+    /// The scope of the program for the `ir` pipeline (plan §2.6), with
+    /// [`FactGen::Ir`] and [`FactGen::Both`]. `None` with [`FactGen::Old`].
+    pub ir_scope: Option<Scope>,
+    /// With [`FactGen::Both`], the facts and the diagnostics of the `ir`
+    /// pipeline for a program in scope. `None` for a program out of scope:
+    /// there the `ir` pipeline gives the facts of the old lowering.
+    pub ir_facts: Option<IrFacts>,
+}
+
+impl Analysis {
+    /// The analysis as the `ir` pipeline gives it: with [`FactGen::Both`]
+    /// and a program in scope, the facts, the diagnostics and the signatures
+    /// of [`Analysis::ir_facts`]; else the analysis as it is.
+    #[must_use]
+    pub fn ir_view(mut self) -> Self {
+        if let Some(ir) = self.ir_facts.take() {
+            self.bodies = ir.bodies;
+            self.diags = ir.diags;
+            self.sigs = ir.sigs;
+        }
+        self
+    }
 }
 
 /// Parses the prelude.
@@ -234,19 +338,27 @@ pub fn on_current_stack<T>(f: impl FnOnce() -> T) -> T {
 /// row grows past the height of its lattice, the inference has a bug: it
 /// stops, and each function whose signature can still change gets W0706.
 pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
-    on_large_stack(|| analyze_bounded(units, opts, None, None))
+    on_large_stack(|| analyze_bounded(units, opts, None, None, factgen::emit))
+}
+
+/// Analyzes the units as [`analyze`] does, with the fact generator `emit` in
+/// the `ir` pipeline. A test hook (plan stage F1): a test can put a program in
+/// scope with a fact generator of its own.
+#[doc(hidden)]
+pub fn analyze_with_emit(units: &[Unit], opts: Options, emit: factgen::Emit) -> Analysis {
+    on_large_stack(|| analyze_bounded(units, opts, None, None, emit))
 }
 
 /// Analyzes the units. The row of a function may grow at most `limit` times.
 #[cfg(test)]
 pub(crate) fn analyze_with_limit(units: &[Unit], opts: Options, limit: usize) -> Analysis {
-    analyze_bounded(units, opts, Some(limit), None)
+    analyze_bounded(units, opts, Some(limit), None, factgen::emit)
 }
 
 /// Analyzes the units. The lowering of a loop may take at most `passes` passes.
 #[cfg(test)]
 pub(crate) fn analyze_with_loop_bound(units: &[Unit], opts: Options, passes: usize) -> Analysis {
-    analyze_bounded(units, opts, None, Some(passes))
+    analyze_bounded(units, opts, None, Some(passes), factgen::emit)
 }
 
 fn analyze_bounded(
@@ -254,8 +366,11 @@ fn analyze_bounded(
     opts: Options,
     limit: Option<usize>,
     loop_bound: Option<usize>,
+    emit: factgen::Emit,
 ) -> Analysis {
     let (prog, mut diags) = program::Collector::collect(units);
+    // The diagnostics that the `ir` pipeline keeps (`docs/ir.md` 2.4).
+    let mut kept = diags.clone();
     let mut sigs: Vec<FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
     let user_fns: Vec<FnId> = prog
         .fn_ids()
@@ -270,10 +385,20 @@ fn analyze_bounded(
             .lower_fn(f)
     };
     let inferred = infer::infer(&prog, &mut sigs, &user_fns, limit, &lower);
+    kept.extend(typeck_only(&inferred.diags));
     diags.extend(inferred.diags);
-    diags.extend(program::check_on_abort_rows(&prog, &sigs, opts.no_runtime));
+    // W0118 of the old inference. The `ir` pipeline asks the summaries
+    // (`factgen::checks`) and keeps these only with another emit.
+    let rows = program::check_on_abort_rows(&prog, &sigs, opts.no_runtime);
+    let old_rows = rows.clone();
+    diags.extend(rows);
     let mut bodies = Vec::new();
     let mut work = Work::default();
+    let (mut thir_tys, thir_decl_error) = match types::ir_ty_table(&prog) {
+        Ok(t) => (t, None),
+        Err(e) => (weft_ir::TyTable::new(), Some(e)),
+    };
+    let mut thir = Vec::new();
     // The runtime starts `main` and the tests of the root (`started()`). With
     // no runtime, `main` handles every effect itself (`no_runtime()`).
     let main = match prog.lookup(prog.root, "main") {
@@ -281,8 +406,15 @@ fn analyze_bounded(
         _ => None,
     };
     for (&f, mut l) in user_fns.iter().zip(inferred.lowered) {
+        kept.extend(typeck_only(&l.diags));
         diags.extend(l.diags);
         work.add(l.work);
+        thir.push(thir::record::build(
+            &prog,
+            &mut thir_tys,
+            *l.thir,
+            &l.facts.vars,
+        ));
         let unit = unit_of(&prog, prog.fns[f].module);
         l.facts.started = unit == ROOT_UNIT && main == Some(f);
         l.facts.no_runtime = l.facts.started && opts.no_runtime;
@@ -299,8 +431,15 @@ fn analyze_bounded(
         let mut l = body::Lower::new(&prog, &sigs, t.module, &name, lib)
             .with_loop_bound(loop_bound)
             .lower_test(&t.body, t.span);
+        kept.extend(typeck_only(&l.diags));
         diags.extend(l.diags);
         work.add(l.work);
+        thir.push(thir::record::build(
+            &prog,
+            &mut thir_tys,
+            *l.thir,
+            &l.facts.vars,
+        ));
         l.facts.started = unit_of(&prog, t.module) == ROOT_UNIT;
         bodies.push(BodyFacts {
             func: None,
@@ -312,21 +451,71 @@ fn analyze_bounded(
     for &f in &user_fns {
         if prog.fns[f].decl.is_fip {
             let unit = unit_of(&prog, prog.fns[f].module);
-            diags.extend(fip::check(&prog, &sigs, f).into_iter().map(|mut d| {
-                d.unit = unit;
-                d
-            }));
+            let fip: Vec<Diagnostic> = fip::check(&prog, &sigs, f)
+                .into_iter()
+                .map(|mut d| {
+                    d.unit = unit;
+                    d
+                })
+                .collect();
+            kept.extend(fip.iter().cloned());
+            diags.extend(fip);
         }
     }
     work.item_steps = prog.item_steps();
-    Analysis {
+    let mut a = Analysis {
         program: prog,
         sigs,
         bodies,
         diags,
         lowerings: inferred.lowerings,
         work,
+        thir,
+        thir_tys,
+        thir_decl_error,
+        ir_scope: None,
+        ir_facts: None,
+    };
+    if opts.facts != FactGen::Old {
+        let on_abort = factgen::OnAbortRows {
+            old: old_rows,
+            no_runtime: opts.no_runtime,
+        };
+        let (scope, ir) = factgen::run(&a, opts.ir_groups, emit, kept, on_abort);
+        a.ir_scope = Some(scope);
+        a.ir_facts = ir;
+        if opts.facts == FactGen::Ir {
+            a = a.ir_view();
+        }
     }
+    a
+}
+
+/// The codes of the old lowering that the `ir` pipeline drops.
+///
+/// These are diagnostics of the old lowering and of its effect inference
+/// (`docs/ir.md` 2.4): the fact generator of the IR gives its own, and its
+/// effect inference gives W0701 and W0706 (`docs/ir.md` 6.8). W0303 stays: a
+/// body with W0303 has no IR (`docs/ir.md` 5.36).
+pub const IR_DROPS: [Code; 8] = [
+    Code::W0204,
+    Code::W0313,
+    Code::W0314,
+    Code::W0315,
+    Code::W0701,
+    Code::W0704,
+    Code::W0706,
+    Code::W0707,
+];
+
+/// The diagnostics of the old lowering that the `ir` pipeline keeps: the
+/// checks of `typeck` (`docs/ir.md` 2.4).
+fn typeck_only(diags: &[Diagnostic]) -> Vec<Diagnostic> {
+    diags
+        .iter()
+        .filter(|d| !IR_DROPS.contains(&d.code))
+        .cloned()
+        .collect()
 }
 
 /// Parses and analyzes one source text as the root unit, on a large stack

@@ -1,0 +1,106 @@
+fn f0 one() -> u64: b0
+fn f1 pair(u64) -> Pair: b1
+fn f2 named(u64) -> Pair: b2
+fn f3 some(u64) -> Option<u64>: b3
+fn f4 none() -> Option<u64>: b4
+fn f5 tuple(u64) -> (u64, u64): b5
+cap_env e0
+
+body b0: fn one; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn pair; cap_env e0; unwind_exit bb4
+  _0: Pair (Return)
+  _1: u64 (Param(0) `x`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Pair { move _2, copy _1 }
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: fn named; cap_env e0; unwind_exit bb5
+  _0: Pair (Return)
+  _1: u64 (Param(0) `x`)
+  _2: u64 (Temp(Operand))
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    _3 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Pair { move _2, move _3 }
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b3: fn some; cap_env e0; unwind_exit bb1
+  _0: Option<u64> (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = Option<u64>::Some(copy _1)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn none; cap_env e0; unwind_exit bb1
+  _0: Option<u64> (Return)
+  bb0:
+    _0 = Option<u64>::None()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn tuple; cap_env e0; unwind_exit bb4
+  _0: (u64, u64) (Return)
+  _1: u64 (Param(0) `x`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = (move _2, copy _1)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit

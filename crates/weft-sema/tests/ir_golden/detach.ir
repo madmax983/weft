@@ -1,0 +1,110 @@
+fn f0 work() -> u64: b0
+fn f1 main() -> () / Async: b1
+closure c0: body b3, maker b2, cap_env e0, captures []
+closure c1: body b4, maker b2, cap_env e0, captures []
+scope s0: body b2, site b1
+spawn sp0: scope s0
+spawn sp1: scope s0
+cap_env e0
+
+body b0: fn work; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: scope s0; parent b1; cap_env e0; unwind_exit bb11
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<u64> (User `h`)
+  _3: fn() -> u64 (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: Task<u64> (Temp(Receiver))
+  _6: fn() -> u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0()
+    _2 = spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    detach move _2 -> [bb2]
+  bb2:
+    _4 = const ()
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    _6 = closure c1()
+    _5 = spawn sp1(copy _1, move _6) -> [bb3]
+  bb3:
+    detach move _5 -> [bb4]
+  bb4:
+    _0 = const ()
+    scope_wait _1 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_2)
+    Dead(_6)
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call work() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call work() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

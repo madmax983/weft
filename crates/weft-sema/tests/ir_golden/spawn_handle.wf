@@ -1,0 +1,14 @@
+// `h = s.spawn(f)` starts a task and gives its handle (`docs/ir.md` 5.29).
+// The spawn reads the scope capability as plain data and moves the closure
+// into the task. It does not suspend and cannot abort.
+
+fn work(x: u64) -> u64 { x + 1 }
+
+fn main() / async {
+    let x = 1
+    let r = scope { s =>
+        let h = s.spawn(|| work(x))
+        h.join()
+    }
+    print(r)
+}

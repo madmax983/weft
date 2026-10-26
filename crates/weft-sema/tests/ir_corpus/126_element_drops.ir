@@ -1,0 +1,370 @@
+fn f0 rollback(Tx) -> (): b0
+fn f1 begin() -> Tx: b1
+fn f2 reset(&Vec<Tx>) -> () / (): b2
+fn f3 clear_any<T0>(&Vec<T0>) -> () / (): b3
+fn f4 reset_generic(&Vec<Tx>) -> () / (): b4
+fn f5 detach_tx() -> () / Async: b5
+fn f6 json_tx() -> Response: b8
+fn f7 reset_ints(&Vec<u64>) -> () / (): b9
+fn f8 clear_ints() -> (): b10
+fn f9 detach_int() -> () / Async: b11
+fn f10 json_int() -> Response: b14
+fn f11 main() -> () / Async: b15
+fn f12 Vec.clear<T0>(&Vec<T0>) -> () / (): extern
+fn f13 Response.json<T0>(T0) -> Response / (): extern
+fn f14 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f15 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f16 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+closure c0: body b7, maker b6, cap_env e0, captures []
+closure c1: body b13, maker b12, cap_env e0, captures []
+scope s0: body b6, site b5
+scope s1: body b12, site b11
+spawn sp0: scope s0
+spawn sp1: scope s1
+cap_env e0
+
+body b0: fn rollback; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn begin; cap_env e0; unwind_exit bb1
+  _0: Tx (Return)
+  bb0:
+    _0 = Tx { const 1u64 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn reset; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &Vec<Tx> (Param(0) `v`)
+  _2: &Vec<Tx> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = &(*_1)
+    _0 = call Vec.clear<Tx>(move _2) / e0 -> [bb1]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b3: fn clear_any; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &Vec<T0> (Param(0) `v`)
+  _2: &Vec<T0> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = &(*_1)
+    _0 = call Vec.clear<T0>(move _2) / e0 -> [bb1]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b4: fn reset_generic; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: &Vec<Tx> (Param(0) `v`)
+  bb0:
+    _0 = call clear_any<Tx>(copy _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn detach_tx; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b6: scope s0; parent b5; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<Tx> (User `t`)
+  _3: fn() -> Tx (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0()
+    _2 = spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    detach move _2 -> [bb2]
+  bb2:
+    _0 = const ()
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b7: closure c0; parent b6; cap_env e0; unwind_exit bb3
+  _0: Tx (Return)
+  _1: fn() -> Tx (Env)
+  bb0:
+    _0 = call begin() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b8: fn json_tx; cap_env e0; unwind_exit bb5
+  _0: Response (Return)
+  _1: Tx (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call begin() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    _0 = call Response.json<Tx>(move _1) / e0 -> [bb2]
+  bb2:
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b9: fn reset_ints; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = &(*_1)
+    _0 = call Vec.clear<u64>(move _2) / e0 -> [bb1]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b10: fn clear_ints; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = &_1
+    _0 = call clear_any<u64>(move _4) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_1)
+    Dead(_4)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b11: fn detach_int; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = scope s1 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b12: scope s1; parent b11; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<i64> (User `t`)
+  _3: fn() -> i64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c1()
+    _2 = spawn sp1(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    detach move _2 -> [bb2]
+  bb2:
+    _0 = const ()
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b13: closure c1; parent b12; cap_env e0; unwind_exit bb1
+  _0: i64 (Return)
+  _1: fn() -> i64 (Env)
+  bb0:
+    _0 = const 5i64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b14: fn json_int; cap_env e0; unwind_exit bb2
+  _0: Response (Return)
+  bb0:
+    _0 = call Response.json<i64>(const 5i64) / e0 -> [bb1]
+  bb1:
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b15: fn main; cap_env e0; unwind_exit bb15
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Operand))
+  _6: () (Temp(Discarded))
+  _7: usize (Temp(Operand))
+  _8: &Vec<u64> (Temp(Receiver))
+  _9: () (Temp(Discarded))
+  _10: () (Temp(Discarded))
+  _11: Response (User `r`)
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = call reset_ints(move _5) / e0 -> [bb3, unwind: bb11]
+  bb3:
+    Dead(_5)
+    Dead(_4)
+    Live(_6)
+    Live(_7)
+    Live(_8)
+    _8 = &_1
+    _7 = call Vec.len<u64>(move _8) / e0 -> [bb4]
+  bb4:
+    Print(copy _7)
+    _6 = const ()
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Live(_9)
+    _9 = call clear_ints() / e0 -> [bb5, unwind: bb10]
+  bb5:
+    Dead(_9)
+    Live(_10)
+    _10 = call detach_int() / e0 -> [bb6, unwind: bb9]
+  bb6:
+    Dead(_10)
+    Live(_11)
+    _11 = call json_int() / e0 -> [bb7, unwind: bb8]
+  bb7:
+    _0 = const ()
+    Dead(_11)
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    Dead(_11)
+    Goto(bb13)
+  bb9 (cleanup):
+    Dead(_10)
+    Goto(bb13)
+  bb10 (cleanup):
+    Dead(_9)
+    Goto(bb13)
+  bb11 (cleanup):
+    Dead(_5)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_4)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb14)
+  bb14 (cleanup):
+    Dead(_0)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindExit

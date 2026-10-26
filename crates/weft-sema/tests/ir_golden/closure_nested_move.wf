@@ -1,0 +1,25 @@
+// An inner closure that moves a capture makes each closure around it move it
+// too (rule CAPTURE, ADR 0003): the outer closure holds `v` by move and is
+// `once`. An inner closure that borrows a capture makes the outer one borrow
+// it.
+
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+fn nested() {
+    let v = Vec.new()
+    let g = || {
+        let h = || print(take(v))
+        h()
+    }
+    g()
+}
+
+fn nested_ref() {
+    let w = Vec.new()
+    w.push(3)
+    let g = || {
+        let h = || print(w.len())
+        h()
+    }
+    g()
+}

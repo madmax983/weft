@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2"]
 
 
 # ----------------------------------------------------------------------
@@ -85,9 +85,9 @@ finding = "FD2"
 kind = "interp"
 verdict = "none"
 group = "AD"
-stage = "I3"
+stage = "I5"
 repro = ["tests/gate/probes/r2/fidelity/repro/FD2_multi_nested_drop.wf"]
-note = "Nested multi continuations share one exec record"
+note = "Nested multi continuations share one exec record. Stage I3 runs the repro on the IR engine (crates/weft-interp/tests/compile_ir.rs); the claim reads the IR oracle cache of stage I5"
 
 [[claim]]
 finding = "FD3"
@@ -339,7 +339,7 @@ finding = "F3-2"
 kind = "unsound"
 verdict = "one-rule"
 group = "AC"
-stage = "F15"
+stage = "F12"
 repro = [
     "tests/gate/probes/r3/fidelity/repro/F3-2_closure_keeps_callee_ref.wf",
     "tests/gate/probes/r3/fidelity/repro/F3-2_closure_stores_callee_ref.wf",
@@ -878,21 +878,39 @@ note = "the result of a call of a function parameter has no places of the caller
 
 [[claim]]
 finding = "sem-N1"
-kind = "unsound"
+kind = "sound"
 verdict = "construction"
 group = "A"
 stage = "F8"
 repro = ["tests/gate/probes/ir/probes/p2_late_operand_ref.wf"]
-note = "a place operand is read later than the facts say"
+note = "a place operand is read later than the facts say. Choice A (docs/ir.md 5.1.1, 5.16): the IR engine copies `r.hp` before the push, so the program is correct and the ir pipeline accepts it (stage F8). The interp claim below checks the IR oracle"
+
+[[claim]]
+finding = "sem-N1"
+kind = "interp"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/ir/probes/p2_late_operand_ref.wf"]
+note = "choice A: the oracle of the IR engine does not fault (the operand is read where it is written)"
 
 [[claim]]
 finding = "sem-N2"
-kind = "unsound"
+kind = "sound"
 verdict = "construction"
 group = "A"
 stage = "F8"
 repro = ["tests/gate/probes/ir/probes/p9_print_late.wf"]
-note = "an operand of `print` is read later than the facts say"
+note = "an operand of `print` is read later than the facts say. Choice A (docs/ir.md 5.1.1, 5.33): the IR engine copies `r.hp` before the push, so the program is correct and the ir pipeline accepts it (stage F8). The interp claim below checks the IR oracle"
+
+[[claim]]
+finding = "sem-N2"
+kind = "interp"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/ir/probes/p9_print_late.wf"]
+note = "choice A: the oracle of the IR engine does not fault (the operand is read where it is written)"
 
 [[claim]]
 finding = "sem-N3"
@@ -1033,7 +1051,7 @@ finding = "F3-2"
 kind = "unsound"
 verdict = "one-rule"
 group = "AC"
-stage = "F15"
+stage = "F12"
 repro = [
     "tests/gate/probes/r3/fidelity/p/cl1.wf",
     "tests/gate/probes/r3/fidelity/p/cl2.wf",
@@ -1292,7 +1310,7 @@ note = "A use of a reference variable as a value is not a read (W0405)"
 finding = "RT11"
 kind = "unsound"
 verdict = "construction"
-group = "ABC"
+group = "AC"
 stage = "F13"
 repro = ["tests/gate/probes/redteam/c01_closure_return.wf"]
 note = "`return`/`break` in closure, handled and scope bodies go to the wrong target"
@@ -1367,7 +1385,7 @@ note = "A closure escapes its handler through a local, a tuple or a container (W
 finding = "RT17"
 kind = "unsound"
 verdict = "construction"
-group = "ACDE"
+group = "ACD"
 stage = "F19"
 repro = ["tests/gate/probes/redteam/lib01.wf"]
 note = "`sim.run` as a value bypasses W0802"
@@ -1732,7 +1750,7 @@ note = "Reassigned function value later in a loop body (second verifier); duplic
 finding = "V031"
 kind = "unsound"
 verdict = "one-rule"
-group = "ABC"
+group = "AC"
 stage = "F20"
 repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt7_containers.wf"]
 note = "A closure that goes into a generic container is not tracked as stored"
@@ -2121,7 +2139,7 @@ note = "A local named as an if/match arm tail is not moved"
 finding = "V059"
 kind = "unsound"
 verdict = "construction"
-group = "AC"
+group = "A"
 stage = "F13"
 repro = [
     "tests/gate/probes/verify/partb/S4/p/i4_if_move2.wf",
@@ -3034,7 +3052,7 @@ note = "The scope capability in a tuple or an Option leaves the scope"
 finding = "V136"
 kind = "unsound"
 verdict = "construction"
-group = "ACE"
+group = "A"
 stage = "F19"
 repro = [
     "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g1_join_args.wf",
@@ -3043,6 +3061,306 @@ repro = [
     "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g4_join_effect.wf",
 ]
 note = "Sema ignores the arguments of `join` and `detach`; the interpreter runs them"
+
+# ----------------------------------------------------------------------
+# Stage B12: the closure modes of a local of a function type. The builder gives
+# such a local the modes that the analysis infers (linear, nonportable,
+# `once`), but its `copy` property stays the copy property of its type: the
+# analysis joins the values of a variable over the whole body, and a capture
+# of a variable that gets a `once` closure later must still share its cell.
+# So F11 and F12 must not read `LocalDecl.props.copy` of a function value as
+# "it can run twice": a call of a function value moves it if `props.once`.
+
+[[claim]]
+finding = "B12-fn-once"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/b12/fn_alias_once.wf"]
+code = "W0502"
+line = 15
+note = "`let g = f` of a once closure: `g` is `once` and `copy`; the second call of `g` is W0502 (the facts read `once`, not `copy`)"
+
+[[claim]]
+finding = "B12-late-once"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/b12/late_once_capture.wf"]
+note = "A closure captures `c` before `c` gets a once closure: the capture is `Kept` (one cell), the call runs the new value once; a correct program, the ir pipeline must accept it"
+
+# ----------------------------------------------------------------------
+# Stage F8: group A on. The holes that the review of the `lost-clean`
+# programs found (F8-H1 to F8-H3; repros in tests/gate/probes/fixes/f8,
+# copies of the variants of the reviewer), the branch temporaries
+# (docs/ir.md 5.12; ORCHESTRATOR decision after I5) and the group-A parts of
+# R3RT2, R3RT3, R3RT6 and R3RT10.
+
+[[claim]]
+finding = "F8-H1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/i_k_wholeTwice.wf",
+    "tests/gate/probes/fixes/f8/i_l_linearTwice.wf",
+    "tests/gate/probes/fixes/f8/i_a_twice.wf",
+    "tests/gate/probes/fixes/f8/i_e_wholeThenPart.wf",
+    "tests/gate/probes/fixes/f8/i_b_lenAfter.wf",
+    "tests/gate/probes/fixes/f8/i_d_refAfter.wf",
+    "tests/gate/probes/fixes/f8/i_i_blockArg.wf",
+]
+code = "W0302"
+note = "a later operand of one call reads a local that an earlier operand moves (`two(v, v)`, `consume_s(s, s.n)`, `consume_r(s.items, &s.items)`): the move is a statement before the call (docs/ir.md 5.1.1), and a bind of a part that overlaps a moved part uses `S(l)`"
+
+[[claim]]
+finding = "F8-H2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/st2_i_if_param.wf",
+    "tests/gate/probes/fixes/f8/st2_j_if_true_linear.wf",
+    "tests/gate/probes/fixes/f8/st2_h_paren.wf",
+    "tests/gate/probes/r3/oracle/probes/st2_if_semi.wf",
+]
+code = "W0302"
+note = "the tail place of the branch of an `if` with no `else` moves into a `Discarded` temporary (ADR 0003, docs/ir.md 5.1.3); a later use is W0302"
+
+[[claim]]
+finding = "F8-H3"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/fixes/f8/x_refref_tuple.wf"]
+code = "W0301"
+line = 7
+note = "`print(r)` with `r = &t.1` and `t.1` a reference into `b[]`: the read through `r` uses the variables of `t` (both pipelines accepted it before F8)"
+
+# Stage F8c: the second review of F8 (f8/review2.md). N1: the read goes
+# down the whole chain of references (a fixpoint), not one level. N2: the
+# parts of an interpolation and the operands of a comparison read through
+# their references, as `print` does. Both pipelines accepted each repro
+# before F8c (open for the old pipeline, `fixed` for ir).
+
+[[claim]]
+finding = "F8-H3b"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/h3_j_tupleOfTupleRef.wf",
+    "tests/gate/probes/fixes/f8/h3_j4_refWholeOuter.wf",
+    "tests/gate/probes/fixes/f8/h3_j5_refOfRefInTuple.wf",
+    "tests/gate/probes/fixes/f8/h3_j6_callArg.wf",
+    "tests/gate/probes/fixes/f8/h3_j6b_callArgSum.wf",
+    "tests/gate/probes/fixes/f8/h3_j7_optionNest.wf",
+    "tests/gate/probes/fixes/f8/h3_j8_vecNest.wf",
+    "tests/gate/probes/fixes/f8/n1_letCopyDeep.wf",
+    "tests/gate/probes/fixes/f8/n1_fourLevels.wf",
+]
+code = "W0301"
+note = "N1: `t = (5, &b[0]); u = (6, &t); r = &u.1; b.clear(); print(r)` (and `r = &u`, `w = (7, &u)`, a call argument, `Option` and `Vec` between two references, four levels): the read through `r` uses the owners of each place on the chain that holds a reference (templates::deep_uses, docs/ir.md 6.4)"
+
+[[claim]]
+finding = "F8-H3c"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/h3_k1_interp.wf",
+    "tests/gate/probes/fixes/f8/h3_k10_printInterp.wf",
+    "tests/gate/probes/fixes/f8/h3_k11_interpRefWhole.wf",
+    "tests/gate/probes/fixes/f8/n2_interpDeep.wf",
+    "tests/gate/probes/fixes/f8/n2_interpFour.wf",
+    "tests/gate/probes/fixes/f8/n2_eqWholeTuple.wf",
+    "tests/gate/probes/fixes/f8/n2_interpWholeTuple.wf",
+]
+code = "W0301"
+note = "N2: `\"{r}\"` with `r = &t.1` (and `r = &t`, `print(\"v={r}\")`, a chain, `\"{u}\"` and `u == u` with `u = (6, &t)`): a part of an interpolation (`Concat`) and an operand of a comparison read through the value, as a `print` operand"
+
+[[claim]]
+finding = "F8-H3b"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/ctl_cleanDeep.wf",
+    "tests/gate/probes/fixes/f8/ctl_cleanAfterRefresh.wf",
+]
+note = "controls of N1 and N2: the deep reads before the clear, and a new chain after it, are valid"
+
+[[claim]]
+finding = "F8-R1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/variant_receiver/y01_enumSilentWrongType.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y02_enumWriteWrongType.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y03_enumWriteIntoBox.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y06_enumRefPayload.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y08_enumInVecIdx.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x01_optSomeIdx.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x02_optSomeRecv.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x03_enumSwitch.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x04_enumSwitchIdx.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/z01_assignVariantField.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/z02_compoundVariantField.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a07_recvValue.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a15_assignTargetArg.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a18_idxVariantAssign.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a20_compoundCall.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a23_innerVariantChange.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a27_rcBase.wf",
+]
+code = "W0301"
+note = "R1 (third review of F8): a variant step of a receiver place is tested before the arguments and read after them (docs/ir.md 5.19); an argument that gives the base a new value (an assignment, a move, a call that changes it, a new Rc) made the IR engine read or write the payload of another variant as the wrong type. The test binds a W variable that points into the variant place and each access through the step uses it (6.3). The target of an assignment (also `+=`) is named before its value: N variables bind where the value starts (5.6). The IR engine checks the tag at each variant step too (8.1, op Variant)"
+
+[[claim]]
+finding = "F8-R1"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a13_assignOk.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a14_recvOk.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a17_someRecvOkThenNone.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a24_payloadFieldWrite.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a33_twoRecvOk.wf",
+]
+note = "controls of R1: a value or an argument that writes another local or a place below the payload, a write after the read, and a receiver argument that is a receiver of another local are valid"
+
+[[claim]]
+finding = "F9-C5"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F9"
+repro = [
+    "tests/gate/probes/fixes/f9/deep_chain_read.wf",
+    "tests/gate/probes/fixes/f9/elem_handle_read.wf",
+    "tests/gate/probes/fixes/f9/mention_index_read.wf",
+]
+note = "defects of the fact generator that the fact oracle found (stage F9, docs/ir.md 8.5): `reads_at` of the handle of a `Vec` at an element access, of each place of a chain of references, and of the pointers and index locals of a `Mention`; the programs are correct, the ir pipeline accepts them, and `crates/weft-interp/tests/fact_oracle.rs` runs them with the fact oracle"
+
+[[claim]]
+finding = "F8-RB"
+kind = "interp"
+verdict = "construction"
+group = "A"
+stage = "F8.3"
+repro = [
+    "tests/gate/probes/fixes/f8/receiver_bounds/shrink.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/pop.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/renew.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/block.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_b_recvShrink.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_c_recvPop.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_d_recvRenew.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_e_recvShrinkBlock.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_f_recvIdxVar.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_i_recvFieldOfRef.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_k_recvVecMethod.wf",
+]
+note = "receiver order and Bounds (second review of F8, 4.2; third review): in `w.entities[0].plus(shrink(&w))` the `Bounds` of the receiver index runs before the arguments, and the borrow after them (docs/ir.md 5.19). The `ir` pipeline accepts the programs (old: W0301). The IR engine checks the index again at the borrow, so the run stops with an out-of-bounds error (benign) and never reads a freed cell. Pinned by the weft-interp test compile_ir `a_receiver_index_that_a_later_argument_makes_invalid_stops_with_a_bounds_error`. In the gate the programs are `lost-clean` with the entry that the third review signed (stage F8.3). `shrink`, `pop`, `renew` and `block` are copies of crates/weft-interp/tests/receiver_bounds/"
+
+[[claim]]
+finding = "branch-temps"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/if__ref_temp__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/if__ref_temp_idx__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/match__ref_temp__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/match__ref_temp_idx__arg.wf",
+]
+code = "W0301"
+note = "the temporaries of a branch end before the join (docs/ir.md 5.12): a reference into a temporary of a branch cannot be the value of the `if` or `match`. A language change: stricter than the old pipeline, like the tail-expression temporaries of Rust 2024 (tests/programs/164_branch_temporaries.wf)"
+
+[[claim]]
+finding = "branch-temps"
+kind = "unsound"
+verdict = "construction"
+group = "ACF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_tuple__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_tuple__arg.wf",
+]
+code = "W0301"
+note = "the branch temporaries of the r3 sweep: the programs have a closure and a generic function, so they are in scope when groups C and F are on"
+
+[[claim]]
+finding = "R3RT2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/ir_targets/r3rt2_match_through_ref.wf",
+    "tests/gate/probes/r3/redteam/p/i6_destr.wf",
+]
+code = "W0301"
+note = "a `match` or a destructure through a reference keeps the places of the held reference (new true positives at group A)"
+
+[[claim]]
+finding = "R3RT3"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/p/q2_held.wf"]
+code = "W0312"
+note = "a call gives the places of the references behind a reference argument: W0312 at the aliased calls"
+
+[[claim]]
+finding = "R3RT6"
+kind = "fp"
+verdict = "partly"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/p/q8_mv_fp.wf"]
+note = "the type part of R3RT6 (F5): a `mut` reference argument gets only the held references of the other arguments whose types fit (signed lost-clean, stage F8)"
+
+[[claim]]
+finding = "R3RT10"
+kind = "fp"
+verdict = "one-rule"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/p/i8_partset_fp.wf"]
+note = "a new value of a part with an `H` variable replaces the places of the part (signed lost-clean, stage F8)"
 
 # ----------------------------------------------------------------------
 # Findings with no claim, and notes on repros with no claim. One line each.
@@ -3138,3 +3456,623 @@ note = "Sema ignores the arguments of `join` and `detach`; the interpreter runs 
 # I3-3: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
 # I3-4: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
 # Q3-3: verdict stays (NAMES, outside the lowering)
+
+[[claim]]
+finding = "F10-U1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/uniq_across_multi.wf"]
+code = "W0503"
+line = 7
+note = "a `@ uniq` reference live across a `multi` operation (stage F10a): the facts of the ir pipeline gave `uniq` and no `once_var`, so W0503 was lost; the old lowering sets `once` for each `@ uniq` value"
+
+[[claim]]
+finding = "F10-T1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/block_tail_line.wf"]
+code = "W0601"
+line = 9
+exact = ["W0302", "W0601"]
+note = "the discarded value of a block statement is its tail (stage F10a, tests/programs/127_place_statements.wf): the temporary and its `Dead` have the span of the tail, so W0601 is at the line of the tail, as in the old lowering"
+
+[[claim]]
+finding = "F10-W1"
+kind = "sound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/walk_write_through.wf"]
+note = "a write through a reference that a loop walk found (stage F10a, tests/programs/105_walk_writes.wf): the widened reference has more than one place, and the write changes the place that it points to at run time, so `writes_via` holds (rule 4); the program is correct"
+
+[[claim]]
+finding = "F10-P1"
+kind = "sound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/promoted_in_loop.wf"]
+note = "references of earlier iterations into a promoted temporary stay valid (stage F10a, docs/ir.md 5.10): the first value after `Live` writes nothing"
+
+[[claim]]
+finding = "F10-H1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/store_behind.wf"]
+code = "W0301"
+line = 12
+note = "a value stored behind a reference parameter and read back (stage F10a, from the tier-2 lost faults W3_store_behind/W3b): the heap slot of the parameter keeps the places of the stored references (docs/ir.md 6.6); the ir pipeline accepted it and the oracle faults"
+
+[[claim]]
+finding = "F10-H1"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/store_behind_loop.wf"]
+code = "W0301"
+line = 18
+note = "the loop form of F10-H1 (tier 2 `verify/s5/R2a: .../W3_store_behind.wf`): iteration i + 1 reads back what iteration i stored behind `out`"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th15_variantPayload.wf",
+    "tests/gate/probes/fixes/f10/hb/th17_variantPayloadTuple.wf",
+    "tests/gate/probes/fixes/f10/hb/th20_variantPayloadInCallee.wf",
+]
+code = "W0301"
+note = "a body with no IR and no error for it (review of stage F10, hole H-B: a variant payload of two fields): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th11_loopNoneUse.wf",
+    "tests/gate/probes/fixes/f10/hb/th16b_loopNoneTypeErrFault.wf",
+    "tests/gate/probes/fixes/f10/hb/th22_bestCompare.wf",
+    "tests/gate/probes/fixes/f10/hb/th24_noneWhileNum.wf",
+    "tests/gate/probes/fixes/f10/hb/w23_optRefNextIter.wf",
+]
+code = "W0301"
+note = "hole H-B in a loop: a local gets its type later in the loop body (a type error with no W01xx diagnostic, or a conflict in the THIR tables, before stage F10.1). The THIR tables keep the decisions of the last pass of the lowering (stage F10.1), so the body has IR and the ir pipeline rejects it; with group B off the old pipeline checks it"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th18_variantPayloadLinear.wf",
+]
+code = "W0601"
+note = "hole H-B with a linear value that nothing consumes (stage F10.1)"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th19_variantPayloadMove.wf",
+]
+code = "W0302"
+note = "hole H-B with a use after a move (stage F10.1)"
+
+[[claim]]
+finding = "F10-HA"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/ha/ha01_pushClearRead.wf",
+    "tests/gate/probes/fixes/f10/ha/ha02_pushClearReadLet.wf",
+    "tests/gate/probes/fixes/f10/ha/ha03_pushKidsClear.wf",
+    "tests/gate/probes/fixes/f10/ha/ha04_optSlot.wf",
+    "tests/gate/probes/fixes/f10/ha/ha05_popAfter.wf",
+    "tests/gate/probes/fixes/f10/ha/ha07_paramStoreBehindRefLocal.wf",
+    "tests/gate/probes/fixes/f10/ha/ha08_callStores.wf",
+    "tests/gate/probes/fixes/f10/ha/ha10_readViaCall.wf",
+    "tests/gate/probes/fixes/f10/ha/ha11_mutViaCall.wf",
+    "tests/gate/probes/fixes/f10/ha/ha12_localAlias.wf",
+    "tests/gate/probes/fixes/f10/ha/ha13_pushKidsRef.wf",
+    "tests/gate/probes/fixes/f10/ha/ha14_interp.wf",
+    "tests/gate/probes/fixes/f10/ha/ha15_compare.wf",
+    "tests/gate/probes/fixes/f10/ha/ha18_slotStillReadInCaller.wf",
+]
+code = "W0301"
+note = "a reference stored behind a reference parameter (a heap slot), read back after its referent changes (review of stage F10, hole H-A): each heap slot has variables of its own (factgen::holders, stage F10.1), and each read of the slot uses them; the ir pipeline accepted these and both oracles fault"
+
+[[claim]]
+finding = "F10-HA"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/ha/h01_storeClearRead.wf",
+    "tests/gate/probes/fixes/f10/ha/h02_storeKidsClear.wf",
+    "tests/gate/probes/fixes/f10/ha/h03_optSlot.wf",
+    "tests/gate/probes/fixes/f10/ha/h04_tupleSlot.wf",
+    "tests/gate/probes/fixes/f10/ha/h14_slotPopBack.wf",
+    "tests/gate/probes/fixes/f10/ha/h15_slotBreak.wf",
+    "tests/gate/probes/fixes/f10/ha/ha09_readViaFor.wf",
+    "tests/gate/probes/fixes/f10/ha/lc22_extendReadBackInCallee.wf",
+]
+code = "W0301"
+note = "hole H-A in a loop: iteration k stores the reference, iteration k + 1 reads it back after a change (stage F10.1)"
+
+[[claim]]
+finding = "F10-HC"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.2"
+repro = [
+    "tests/gate/probes/fixes/f10/hc/s06_slotOfSlotReadViaInnerInCaller.wf",
+    "tests/gate/probes/fixes/f10/hc/t01_storeViaHeldRefReadInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t05_putViaOptField.wf",
+    "tests/gate/probes/fixes/f10/hc/t23_putByValueOuter.wf",
+    "tests/gate/probes/fixes/f10/hc/t24_putTupleHeld.wf",
+    "tests/gate/probes/fixes/f10/hc/t25_putHeldInStructH.wf",
+    "tests/gate/probes/fixes/f10/hc/t26_putHeldOptionSlotInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t27_putHeldIndexSetInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t28_putHeldInnerReadInCallee2.wf",
+    "tests/gate/probes/fixes/f10/hc/t29_putHeldLocalRefToInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t31_paramInnerLocalOutCallee.wf",
+    "tests/gate/probes/fixes/f10/hc/t50_paramFieldViaLocalOut.wf",
+    "tests/gate/probes/fixes/f10/hc/t51_paramViaLocalOptStruct.wf",
+    "tests/gate/probes/fixes/f10/hc/t57_paramLocalRefToInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t58_paramInnerTupleLocal.wf",
+    "tests/gate/probes/fixes/f10/hc/t80_shareHeldViaCallee.wf",
+]
+code = "W0301"
+note = "a callee stores a reference through a reference that its argument holds (`out[0].push(&v[0])`, second review of stage F10, hole H-C), and the caller reads the referent after the stored referent changes: the part `stores` reaches the referents of the held references, as the part `muts` does (analysis::apply::stores, stage F10.2); the ir pipeline accepted these and both oracles fault (t31, t50, t51, t57, t58 were regressions: the old pipeline rejects them)"
+
+[[claim]]
+finding = "F10-HC"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10.2"
+repro = [
+    "tests/gate/probes/fixes/f10/hc/t40B_putHeldLoop.wf",
+    "tests/gate/probes/fixes/f10/hc/t42B_putHeldForIter.wf",
+]
+code = "W0301"
+note = "hole H-C with a loop in the callee or in the read (group B: on when stage F10b turns group B on)"
+
+[[claim]]
+finding = "F10-HC"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F10.2"
+repro = ["tests/gate/probes/fixes/f10/hc/t90_ctlPutNoChange.wf"]
+note = "control of hole H-C: the callee stores through the held reference, and the referent does not change; the program is correct (before stage F10.2 the fact oracle failed C1 on it)"
+
+# ----------------------------------------------------------------------
+# Stage F11: closures (group C, part 1; group C stays off until stage
+# F13). The defects that the preview with the groups A, B and C found
+# (repros in tests/gate/probes/fixes/f11).
+
+[[claim]]
+finding = "F11-L1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/move_linear_one_path.wf"]
+code = "W0601"
+line = 10
+note = "a closure that moves a linear capture on one path only drops it on the other path when it returns: the `E` variable of a `ByMove` capture ends at the `Return` of the closure body (lost fault of the preview: tier 1 g9_closure_branch_lin.wf)"
+
+[[claim]]
+finding = "F11-L1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/rebind_linear.wf"]
+code = "W0601"
+line = 12
+note = "a closure that gives a linear capture a new value drops the old value in its body; the call gives the variable the new value, with no second overwrite"
+
+[[claim]]
+finding = "F11-P1"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/closure_param_change.wf"]
+note = "a change through a parameter of a closure is a change of a place of a caller of the closure: the parameter roots of a closure are `Arg` roots, so W0703 does not check them in the body (new false positive of the preview: tier 1 rt24_apply.wf)"
+
+[[claim]]
+finding = "F11-M1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/closure_multi.wf"]
+code = "W0503"
+line = 9
+note = "a closure that performs a `multi` operation can resume more than once at its call: the summary of a closure has the part `multi` (the preview lost the W0503 of tier 1 u1_uniq.wf)"
+
+[[claim]]
+finding = "F11-O1"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/uniq_capture_twice.wf"]
+note = "a closure that keeps a `@ uniq` reference is `once` for a `multi` resume, but a call does not move it: a call moves the callee only if a closure that it can be moves a capture (preview: W0502 of tier 1 a1.wf)"
+
+[[claim]]
+finding = "F11-U1"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/capture_buf.wf"]
+note = "the borrow of a `ByRef` capture reads no place field of the variable (preview: W0304 of tier 1 73_immovable.wf)"
+
+[[claim]]
+finding = "F11-U1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/capture_cur.wf"]
+code = "W0304"
+line = 8
+note = "a closure that reads a place field with no value is W0304 at its call: the part `reads` of the summary names the field, and the facts of the closure body do not see where the maker gives it a value"
+
+[[claim]]
+finding = "F11-C1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/once_copy.wf"]
+code = "W0502"
+line = 12
+note = "a copy of a `once` closure (`let h = g`) shares the closure, so a call through each local runs it twice: a read of a value that can be a `once` closure moves it, as the old pipeline does (the decision of stage F11 for the class closure-copy of stage I5; the preview accepted it and the IR engine faults)"
+
+[[claim]]
+finding = "F12-R1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/verify/s5/p/or3d.wf",
+    "tests/gate/probes/r3/oracle/probes/b5_twice_moves.wf",
+    "tests/gate/probes/r2/oracle/fp/W0502_p3681.wf",
+]
+code = "W0502"
+note = "a callee that runs a `once` closure more than once (part `runs`, `Many`): the second run uses the moved value (the preview of stage F12 accepted these programs, and the IR engine faults)"
+
+[[claim]]
+finding = "F12-R2"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/r2/oracle/probes/e1_run_both.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b2_value_first.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b4_method_first.wf",
+    "tests/gate/probes/verify/s5/S5c_diff/probes/stored2.wf",
+]
+code = "W0301"
+note = "a callee that runs two function values can run them in each order, and a callee can change a place before it runs a value: each run is at `Ret` too (preview of stage F12)"
+
+[[claim]]
+finding = "F12-R3"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/r2/oracle/probes/a7_closure_returning_closure.wf"]
+code = "W0301"
+note = "a closure that a closure gives back holds the references of the `Kept` captures of its maker (preview of stage F12)"
+
+[[claim]]
+finding = "F12-R4"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/r3/oracle/probes/se1_field_lin_never.wf",
+    "tests/gate/probes/r3/oracle/probes/se2_field_lin_twice.wf",
+]
+code = "W0601"
+note = "a linear closure in a field of a struct makes the struct a linear value (the function part of a type goes through its fields; preview of stage F12)"
+
+[[claim]]
+finding = "F12-R5"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/fixes/f12/preview_fixes.wf",
+    "tests/gate/probes/fixes/f12/preview_fixes2.wf",
+]
+note = "the classes of the lost faults of the preview of stage F12 in one program (crates/weft-check/tests/data/fn_values/preview_fixes.wf)"
+
+[[claim]]
+finding = "F12-C1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/copy_once.wf"]
+code = "W0302"
+line = 11
+note = "the closure-copy rule of stage F11 for an element and a field: a read of a value that can be a `once` closure moves it (docs/ir.md 5.22)"
+
+[[claim]]
+finding = "F12-R6"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_given.wf"]
+code = "W0312"
+line = 39
+note = "a value that a callee runs must not change what the other arguments of the call point into: the callee can keep them across the run (`Sigma::others`)"
+
+[[claim]]
+finding = "F12-N2"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_given.wf"]
+code = "W0312"
+line = 16
+note = "control: a closure that captures `world: &World` (no function value behind it) and reads a field is no code of a caller at the run (`transfer::fns_at`)"
+
+[[claim]]
+finding = "F12-R7"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_results.wf"]
+code = "W0301"
+line = 28
+note = "a closure that runs a capture gives back what the run gives back: a chain of closures that give back closures (`transfer::with_results`)"
+
+[[claim]]
+finding = "F12-N3"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_results.wf"]
+code = "W0301"
+line = 12
+note = "control (a new false positive of the tier-2 preview, r3/quality/fuzz/o21/bad_21_4598_explain.wf): a closure summary has no `lends` of code of a caller at the run of a capture (`Em::run_nodes`)"
+
+[[claim]]
+finding = "F12-R8"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/value_drops.wf"]
+code = "W0601"
+line = 13
+note = "a linear closure that goes to a function value that does not run it, or to code of a caller, can go away there (`templates::dropped_fn_args`; verify/partb/S4/run/cv.wf of tier 2)"
+
+[[claim]]
+finding = "F12-R9"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/value_drops.wf"]
+code = "W0301"
+line = 44
+note = "a closure that a loop makes keeps the last value of a local of the loop body (`transfer::dead`; verify/s5/r2a/t/fv2.wf of tier 2)"
+
+[[claim]]
+finding = "F12-N1"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/verify/p/v18_stored_fp.wf",
+    "tests/gate/probes/verify/p/v17_scale.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/clean_callbacks.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/clean_field_cb.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/fp_stored_param.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_n.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc9_late_show.wf",
+    "tests/gate/probes/verify/s5/p/fp4.wf",
+]
+note = "controls (new false positives of the preview of stage F12): a run that a callee does has no check of the arguments of the call against the value, code of a caller lends the places of its arguments (not their wildcards), and a `once` closure that a callee runs one time is no W0502"
+
+# ----------------------------------------------------------------------
+# F12-fix: the holes of the review of the ABC preview (scratchpad
+# f12/review.md section 4). Group C stays off, so these claims wait for
+# stage F13 (it turns group C on).
+
+[[claim]]
+finding = "F12-H1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h1/hr_a_refpush.wf",
+    "tests/gate/probes/fixes/f12/h1/hr_b_localv.wf",
+    "tests/gate/probes/fixes/f12/h1/hr_d_clear.wf",
+    "tests/gate/probes/fixes/f12/h1/hr_g_rebind_other.wf",
+    "tests/gate/probes/fixes/f12/h1/hr_i_ifafter.wf",
+    "tests/gate/probes/fixes/f12/h1/hr_j_nested.wf",
+    "tests/gate/probes/fixes/f12/h1/hr_k_param.wf",
+    "tests/gate/probes/fixes/f12/h1/rb1_b_afterchange.wf",
+    "tests/gate/probes/fixes/f12/h1/x13_rb1_grow_then_push.wf",
+]
+code = "W0301"
+note = "a closure gives a captured reference a new value and then changes its new referent: the call gives the new value at `Ret`, and the changes after the rebind (part `late_muts`) there too (hole H1 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-FP1"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/fp1/fp01_vecvec_clean.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp02_vecvec_plain.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp05_opt_vec.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp06_struct_vec.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp07_vecvec_item.wf",
+]
+note = "a `Vec<fn()>` with no linear closure in another `Vec`, an `Option` or a field is no linear value: a function item puts only the values of its arguments into a place of the caller (`transfer::can_get_linear_with`; false positive FP1 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-H2"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h2/hv_a_vecpush_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_b_vecpush_local.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_c_opt_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_d_field_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_e_tuple_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_f_vec_fnmaker.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_g_vec_fnmaker_local.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_i_vec_mk_run.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_j_vec_index_call.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_k_vec_pop.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_l_vec_param.wf",
+    "tests/gate/probes/fixes/f12/h2/hm_f_id_fnmaker.wf",
+    "tests/gate/probes/fixes/f12/h2/hm_k_fnmaker_vec_run_in_callee.wf",
+    "tests/gate/probes/fixes/f12/h2/m03_id_made_local.wf",
+    "tests/gate/probes/fixes/f12/h2/m04_closure_maker_run.wf",
+    "tests/gate/probes/fixes/f12/h2/m05_closure_maker_id.wf",
+    "tests/gate/probes/fixes/f12/h2/m12_made_chain_maker_maker.wf",
+    "tests/gate/probes/fixes/f12/h2/c6_d_vec.wf",
+    "tests/gate/probes/fixes/f12/oldholes/hv_m_vec_ret_fn.wf",
+]
+code = "W0301"
+note = "a closure that a function or a closure gives back keeps the places of its environment with its function values: through `Vec.push` and an element read (`store_fns`, `place_value`), through `id(f)` and code of a caller (`reach_refs`), and a `ByRef` or `Kept` capture of a `Made` closure is each place that the value points into (`made_sigma`) (hole H2 of the review of the ABC preview, and the old hole hv_m)"
+
+[[claim]]
+finding = "F12-H3"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h3/hl_a_retdrop.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_b_retdiscard.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_c_retoverwrite.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_d_retif.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_e_localmaker.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_f_retfield.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_g_retvec.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_j_returns_local.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_k_param_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d11_ret_from_closure_maker_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d12_ret_fn_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d18_ret_vec_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d19_ret_struct_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d20_ret_option_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d25_ret_maker_loop_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/r5_f_leak.wf",
+    "tests/gate/probes/fixes/f12/h3/x09_esc_ret_linear_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/x10_v06_parse_linear.wf",
+]
+code = "W0601"
+note = "a linear closure that a function or a closure gives back (also in a Vec, a field or an Option) is a linear value of the caller (`Ret::linear`): a caller that drops it is W0601. The old pipeline rejects most of these programs only by the R3RT5 W0204 at the maker (hole H3 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-H4"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h4/cv_byref_vec_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_byref_arr_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_mvh_vec_clear.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_mvh_vec_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/cv_mvh_arr_scope.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_a_loopvec_ref.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_b_loopvec_byref.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_d_block_vec.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_e_loop_vec_index.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_g_outer_change.wf",
+    "tests/gate/probes/fixes/f12/h4/a13_loop_made_closures_byref.wf",
+    "tests/gate/probes/fixes/f12/h4/e1_05_vec_byref_closure_ends.wf",
+    "tests/gate/probes/fixes/f12/h4/e1_06_array_byref_ends.wf",
+    "tests/gate/probes/fixes/f12/h4/r5_e_loopholdref.wf",
+    "tests/gate/probes/fixes/f12/oldholes/m09_made_ref_ends_vec.wf",
+]
+code = "W0301"
+note = "a vector or an array that gets a closure holds the places of the closure: the cell of a `ByRef` capture and the references of a `ByMove` capture (`templates::fn_stores`, `transfer::store_fns`, `place_value`); a change or the end of them makes the container invalid (hole H4 of the review of the ABC preview, and the old hole m09)"
+
+[[claim]]
+finding = "F12-H5"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h5/d05_runif.wf",
+    "tests/gate/probes/fixes/f12/h5/e6_03_callee_runs_on_one_path.wf",
+    "tests/gate/probes/fixes/f12/h5/e6_05_closure_runs_inner_on_path.wf",
+    "tests/gate/probes/fixes/f12/h5/e6_06_closure_param_runs_path.wf",
+]
+code = "W0601"
+note = "a callee or a closure that runs a linear closure on some paths only can drop it (part `runs`, `Run::maybe`, `templates::dropped_fn_args`), and a closure that runs a linear capture on some paths only has a linear `E` variable for it (`templates::linear_fn_captures`) (hole H5 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-H6"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h6/v02_loop_nopop.wf",
+    "tests/gate/probes/fixes/f12/h6/v03_loop_local_closure_vec.wf",
+    "tests/gate/probes/fixes/f12/h6/x11_a2_loop_linear_pop_one.wf",
+]
+code = "W0601"
+note = "a push of a linear closure in a loop into a local whose type has a function part starts its linear value (`overwrites`) on the first run of the node too: the local starts empty (`templates::gets_linear_but`; hole H6 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-OH1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf"]
+code = "W0302"
+note = "a callee whose result is a function value of a reference argument (`first(&fs) -> fn() { fs[0] }`) copies it out of the referent: a `once` closure moves there (`templates::once_copied_out`, the closure-copy rule), so a second copy is W0302 (old hole of the review of the ABC preview, 4.7)"

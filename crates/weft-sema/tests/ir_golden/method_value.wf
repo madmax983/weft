@@ -1,0 +1,21 @@
+// A method whose `self` is a value (`docs/ir.md` 5.19): the call reads the
+// receiver after the arguments. Plain data is copied, another value moves.
+// `T.f(a)` is a call of a function item.
+
+struct Tok { id: u64, log: Vec<u64> }
+
+impl Tok {
+    fn into_id(self: Tok, k: u64) -> u64 { self.id + k }
+    fn make(id: u64) -> Tok { Tok { id: id, log: Vec.new() } }
+}
+
+fn one() -> u64 { 1 }
+
+fn consume(t: Tok) -> u64 {
+    t.into_id(one())
+}
+
+// A receiver that is a value: it goes into a temporary first.
+fn made() -> u64 {
+    Tok.make(3).into_id(1)
+}

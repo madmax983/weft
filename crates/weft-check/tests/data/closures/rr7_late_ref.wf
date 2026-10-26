@@ -1,0 +1,17 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn late_ref(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+// The control: `r` never points into `world.entities`.
+fn kept_ref(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    world.entities.clear()
+    f()
+}
+fn main() {}

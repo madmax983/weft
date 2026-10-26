@@ -1,0 +1,13 @@
+// Stage F10a: the value of a block statement is the value of its tail. A
+// linear value that ends there is W0601 at the line of the tail, as in the
+// old lowering (tests/programs/127_place_statements.wf).
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+fn block_tail_moves() {
+    let t = Tx { id: 4 }
+    {
+        t   //~ W0601
+    }
+    commit(t)   //~ W0302
+}
+fn main() {}

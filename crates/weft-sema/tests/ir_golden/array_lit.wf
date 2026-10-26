@@ -1,0 +1,10 @@
+// `[a, b]` with an array type is an `Array` aggregate (`docs/ir.md` 5.17).
+// The type of a field gives the array type.
+
+struct B { a: [u64; 2] }
+
+fn one() -> u64 { 1 }
+
+fn arr(x: u64) -> B {
+    B { a: [x, one()] }
+}

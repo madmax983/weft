@@ -1,0 +1,39 @@
+// Linear closures that a loop makes and pushes into a `Vec` (review of the
+// ABC preview, hole H6: `h7/v02`, `h7/v03`, `lcv3/x11`). The vector starts
+// empty, so the push of the first iteration starts its linear value; the
+// push of the next iteration is an overwrite of a live linear value.
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn pushed_in_loop() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 { let t = Tx { id: i }; ks.push(|| rollback(t)); i += 1 } //~ W0601
+    print(ks.len())
+}   //~ W0601
+fn local_closure_in_loop() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 2 { let t = Tx { id: i }; let k = || rollback(t); ks.push(k); i += 1 } //~ W0601
+}   //~ W0601
+fn pop_one_after_loop() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 {
+        let t = Tx { id: i }
+        ks.push(|| rollback(t)) //~ W0601
+        i += 1
+    }
+    match ks.pop() { Some(f) => f(), None => {} }
+}   //~ W0601
+// Clean: plain closures in a loop.
+fn plain_in_loop() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 { ks.push(|| print(1)); i += 1 }
+    let g = ks[0]
+    g()
+}
+fn main() {
+    plain_in_loop()
+}

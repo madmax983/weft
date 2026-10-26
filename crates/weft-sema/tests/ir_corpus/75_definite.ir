@@ -1,0 +1,715 @@
+fn f0 use_unset() -> u64: b0
+fn f1 set_then_use() -> u64: b1
+fn f2 set_on_one_path(bool) -> u64: b2
+fn f3 set_on_both_paths(bool) -> u64: b3
+fn f4 compound_unset() -> u64: b4
+fn f5 ref_unset() -> (): b5
+fn f6 set_in_loop(u64) -> u64: b6
+fn f7 tuple_unset() -> u64: b7
+fn f8 captured_unset() -> (): b8
+fn f9 missing_variant(Shape) -> u64: extern
+fn f10 every_variant(Shape) -> u64: b10
+fn f11 wildcard_arm(Shape) -> u64: b11
+fn f12 binding_arm(Shape) -> u64: b12
+fn f13 missing_none(Option<u64>) -> u64: extern
+fn f14 nested_missing(Option<Option<u64>>) -> u64: extern
+fn f15 nested_covered(Option<Option<u64>>) -> u64: b13
+fn f16 tuple_of_options(Option<u64>, Option<u64>) -> u64: extern
+fn f17 tuple_covered(Option<u64>, Option<u64>) -> u64: b14
+fn f18 bools(bool) -> u64: extern
+fn f19 bools_covered(bool) -> u64: b15
+fn f20 integers(u64) -> u64: extern
+fn f21 integers_covered(u64) -> u64: b16
+fn f22 through_ref(&Shape) -> u64: extern
+fn f23 wide_missing(bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool) -> u64: extern
+fn f24 wide_covered(bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool) -> u64: b17
+closure c0: body b9, maker b8, cap_env e0, captures [Kept _1]
+cap_env e0
+
+body b0: fn use_unset; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (User `x`)
+  bb0:
+    Live(_1)
+    Uninit(_1)
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn set_then_use; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (User `x`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Uninit(_1)
+    Live(_2)
+    _2 = const 3u64
+    _1 = move _2
+    Dead(_2)
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn set_on_one_path; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (User `x`)
+  _3: () (Temp(Discarded))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Uninit(_2)
+    Live(_3)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Live(_4)
+    _4 = const 1u64
+    _2 = move _4
+    Dead(_4)
+    _3 = const ()
+    Goto(bb3)
+  bb2:
+    _3 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: fn set_on_both_paths; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (User `x`)
+  _3: () (Temp(Discarded))
+  _4: u64 (Temp(Operand))
+  _5: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Uninit(_2)
+    Live(_3)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Live(_4)
+    _4 = const 1u64
+    _2 = move _4
+    Dead(_4)
+    _3 = const ()
+    Goto(bb3)
+  bb2:
+    Live(_5)
+    _5 = const 2u64
+    _2 = move _5
+    Dead(_5)
+    _3 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: fn compound_unset; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (User `x`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Uninit(_1)
+    Live(_2)
+    _2 = Add<u64>(copy _1, const 1u64)
+    _1 = move _2
+    Dead(_2)
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn ref_unset; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &u64 (User `r`)
+  bb0:
+    Live(_1)
+    Uninit(_1)
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn set_in_loop; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `x`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (User `i`)
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Uninit(_2)
+    Live(_3)
+    _3 = Iter(const 0u64..copy _1)
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb2, done: bb3]
+  bb2:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = copy _5
+    _2 = move _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb3:
+    Dead(_4)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b7: fn tuple_unset; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (User `a`)
+  _2: u64 (User `b`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Uninit(_1)
+    Live(_2)
+    Uninit(_2)
+    Live(_3)
+    _3 = const 1u64
+    _1 = move _3
+    Dead(_3)
+    _0 = Add<u64>(copy _1, copy _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b8: fn captured_unset; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: u64 (User `x`)
+  _2: fn() -> () (User `f`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Uninit(_1)
+    Live(_2)
+    _2 = closure c0(copy _1)
+    Live(_3)
+    _3 = const 1u64
+    _1 = move _3
+    Dead(_3)
+    _0 = call (copy _2)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b9: closure c0; parent b8; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy _1.0)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn every_variant; cap_env e0; unwind_exit bb11
+  _0: u64 (Return)
+  _1: Shape (Param(0) `s`)
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `r`)
+  _4: usize (Temp(Scrutinee))
+  _5: u64 (User `a`)
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1 as #0).0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb8)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_4)
+    _4 = Discriminant(_1)
+    switch move _4 -> [1: bb4, otherwise: bb5]
+  bb4:
+    Dead(_4)
+    Live(_5)
+    _5 = copy (_1 as #1).0
+    _0 = copy _5
+    Dead(_5)
+    Goto(bb8)
+  bb5:
+    Dead(_4)
+    Goto(bb6)
+  bb6:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [2: bb7, otherwise: bb9]
+  bb7:
+    Dead(_6)
+    _0 = const 0u64
+    Goto(bb8)
+  bb8:
+    Dead(_1)
+    Return
+  bb9:
+    Dead(_6)
+    Goto(bb10)
+  bb10:
+    Unreachable
+  bb11 (cleanup):
+    UnwindExit
+
+body b11: fn wildcard_arm; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Shape (Param(0) `s`)
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `r`)
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1 as #0).0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb4)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    _0 = const 0u64
+    Goto(bb4)
+  bb4:
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b12: fn binding_arm; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Shape (Param(0) `s`)
+  _2: usize (Temp(Scrutinee))
+  _3: Shape (User `other`)
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [2: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    _0 = const 0u64
+    Goto(bb4)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_3)
+    _3 = copy _1
+    _0 = const 1u64
+    Dead(_3)
+    Goto(bb4)
+  bb4:
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b13: fn nested_covered; cap_env e0; unwind_exit bb15
+  _0: u64 (Return)
+  _1: Option<Option<u64>> (Param(0) `o`)
+  _2: usize (Temp(Scrutinee))
+  _3: usize (Temp(Scrutinee))
+  _4: u64 (User `x`)
+  _5: usize (Temp(Scrutinee))
+  _6: usize (Temp(Scrutinee))
+  _7: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb4]
+  bb1:
+    Live(_3)
+    _3 = Discriminant((_1 as #0).0)
+    switch move _3 -> [0: bb2, otherwise: bb3]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = copy ((_1 as #0).0 as #0).0
+    _0 = copy _4
+    Dead(_4)
+    Goto(bb12)
+  bb3:
+    Dead(_3)
+    Dead(_2)
+    Goto(bb5)
+  bb4:
+    Dead(_2)
+    Goto(bb5)
+  bb5:
+    Live(_5)
+    _5 = Discriminant(_1)
+    switch move _5 -> [0: bb6, otherwise: bb9]
+  bb6:
+    Live(_6)
+    _6 = Discriminant((_1 as #0).0)
+    switch move _6 -> [1: bb7, otherwise: bb8]
+  bb7:
+    Dead(_6)
+    Dead(_5)
+    _0 = const 1u64
+    Goto(bb12)
+  bb8:
+    Dead(_6)
+    Dead(_5)
+    Goto(bb10)
+  bb9:
+    Dead(_5)
+    Goto(bb10)
+  bb10:
+    Live(_7)
+    _7 = Discriminant(_1)
+    switch move _7 -> [1: bb11, otherwise: bb13]
+  bb11:
+    Dead(_7)
+    _0 = const 0u64
+    Goto(bb12)
+  bb12:
+    Dead(_1)
+    Return
+  bb13:
+    Dead(_7)
+    Goto(bb14)
+  bb14:
+    Unreachable
+  bb15 (cleanup):
+    UnwindExit
+
+body b14: fn tuple_covered; cap_env e0; unwind_exit bb13
+  _0: u64 (Return)
+  _1: Option<u64> (Param(0) `a`)
+  _2: Option<u64> (Param(1) `b`)
+  _3: (Option<u64>, Option<u64>) (Temp(Scrutinee))
+  _4: usize (Temp(Scrutinee))
+  _5: u64 (User `x`)
+  _6: usize (Temp(Scrutinee))
+  _7: u64 (User `y`)
+  _8: usize (Temp(Scrutinee))
+  _9: usize (Temp(Scrutinee))
+  bb0:
+    Live(_3)
+    _3 = (copy _1, copy _2)
+    Live(_4)
+    _4 = Discriminant(_3.0)
+    switch move _4 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_4)
+    Live(_5)
+    _5 = copy (_3.0 as #0).0
+    _0 = copy _5
+    Dead(_5)
+    Goto(bb9)
+  bb2:
+    Dead(_4)
+    Goto(bb3)
+  bb3:
+    Live(_6)
+    _6 = Discriminant(_3.1)
+    switch move _6 -> [0: bb4, otherwise: bb5]
+  bb4:
+    Dead(_6)
+    Live(_7)
+    _7 = copy (_3.1 as #0).0
+    _0 = copy _7
+    Dead(_7)
+    Goto(bb9)
+  bb5:
+    Dead(_6)
+    Goto(bb6)
+  bb6:
+    Live(_8)
+    _8 = Discriminant(_3.0)
+    switch move _8 -> [1: bb7, otherwise: bb11]
+  bb7:
+    Live(_9)
+    _9 = Discriminant(_3.1)
+    switch move _9 -> [1: bb8, otherwise: bb10]
+  bb8:
+    Dead(_9)
+    Dead(_8)
+    _0 = const 0u64
+    Goto(bb9)
+  bb9:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb10:
+    Dead(_9)
+    Dead(_8)
+    Goto(bb12)
+  bb11:
+    Dead(_8)
+    Goto(bb12)
+  bb12:
+    Unreachable
+  bb13 (cleanup):
+    UnwindExit
+
+body b15: fn bools_covered; cap_env e0; unwind_exit bb6
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  bb0:
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = const 1u64
+    Goto(bb4)
+  bb2:
+    switch copy _1 -> [0: bb3, otherwise: bb5]
+  bb3:
+    _0 = const 0u64
+    Goto(bb4)
+  bb4:
+    Dead(_1)
+    Return
+  bb5:
+    Unreachable
+  bb6 (cleanup):
+    UnwindExit
+
+body b16: fn integers_covered; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `k`)
+  bb0:
+    switch copy _1 -> [0: bb1, otherwise: bb2]
+  bb1:
+    _0 = const 1u64
+    Goto(bb3)
+  bb2:
+    Live(_2)
+    _2 = copy _1
+    _0 = copy _2
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b17: fn wide_covered; cap_env e0; unwind_exit bb51
+  _0: u64 (Return)
+  _1: bool (Param(0) `b0`)
+  _2: bool (Param(1) `b1`)
+  _3: bool (Param(2) `b2`)
+  _4: bool (Param(3) `b3`)
+  _5: bool (Param(4) `b4`)
+  _6: bool (Param(5) `b5`)
+  _7: bool (Param(6) `b6`)
+  _8: bool (Param(7) `b7`)
+  _9: bool (Param(8) `b8`)
+  _10: bool (Param(9) `b9`)
+  _11: bool (Param(10) `b10`)
+  _12: bool (Param(11) `b11`)
+  _13: bool (Param(12) `b12`)
+  _14: bool (Param(13) `b13`)
+  _15: bool (Param(14) `b14`)
+  _16: bool (Param(15) `b15`)
+  _17: (bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool, bool) (Temp(Scrutinee))
+  bb0:
+    Live(_17)
+    _17 = (copy _1, copy _2, copy _3, copy _4, copy _5, copy _6, copy _7, copy _8, copy _9, copy _10, copy _11, copy _12, copy _13, copy _14, copy _15, copy _16)
+    switch copy _17.0 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = const 0u64
+    Goto(bb49)
+  bb2:
+    switch copy _17.1 -> [1: bb3, otherwise: bb4]
+  bb3:
+    _0 = const 1u64
+    Goto(bb49)
+  bb4:
+    switch copy _17.2 -> [1: bb5, otherwise: bb6]
+  bb5:
+    _0 = const 2u64
+    Goto(bb49)
+  bb6:
+    switch copy _17.3 -> [1: bb7, otherwise: bb8]
+  bb7:
+    _0 = const 3u64
+    Goto(bb49)
+  bb8:
+    switch copy _17.4 -> [1: bb9, otherwise: bb10]
+  bb9:
+    _0 = const 4u64
+    Goto(bb49)
+  bb10:
+    switch copy _17.5 -> [1: bb11, otherwise: bb12]
+  bb11:
+    _0 = const 5u64
+    Goto(bb49)
+  bb12:
+    switch copy _17.6 -> [1: bb13, otherwise: bb14]
+  bb13:
+    _0 = const 6u64
+    Goto(bb49)
+  bb14:
+    switch copy _17.7 -> [1: bb15, otherwise: bb16]
+  bb15:
+    _0 = const 7u64
+    Goto(bb49)
+  bb16:
+    switch copy _17.8 -> [1: bb17, otherwise: bb18]
+  bb17:
+    _0 = const 8u64
+    Goto(bb49)
+  bb18:
+    switch copy _17.9 -> [1: bb19, otherwise: bb20]
+  bb19:
+    _0 = const 9u64
+    Goto(bb49)
+  bb20:
+    switch copy _17.10 -> [1: bb21, otherwise: bb22]
+  bb21:
+    _0 = const 10u64
+    Goto(bb49)
+  bb22:
+    switch copy _17.11 -> [1: bb23, otherwise: bb24]
+  bb23:
+    _0 = const 11u64
+    Goto(bb49)
+  bb24:
+    switch copy _17.12 -> [1: bb25, otherwise: bb26]
+  bb25:
+    _0 = const 12u64
+    Goto(bb49)
+  bb26:
+    switch copy _17.13 -> [1: bb27, otherwise: bb28]
+  bb27:
+    _0 = const 13u64
+    Goto(bb49)
+  bb28:
+    switch copy _17.14 -> [1: bb29, otherwise: bb30]
+  bb29:
+    _0 = const 14u64
+    Goto(bb49)
+  bb30:
+    switch copy _17.15 -> [1: bb31, otherwise: bb32]
+  bb31:
+    _0 = const 15u64
+    Goto(bb49)
+  bb32:
+    switch copy _17.0 -> [0: bb33, otherwise: bb50]
+  bb33:
+    switch copy _17.1 -> [0: bb34, otherwise: bb50]
+  bb34:
+    switch copy _17.2 -> [0: bb35, otherwise: bb50]
+  bb35:
+    switch copy _17.3 -> [0: bb36, otherwise: bb50]
+  bb36:
+    switch copy _17.4 -> [0: bb37, otherwise: bb50]
+  bb37:
+    switch copy _17.5 -> [0: bb38, otherwise: bb50]
+  bb38:
+    switch copy _17.6 -> [0: bb39, otherwise: bb50]
+  bb39:
+    switch copy _17.7 -> [0: bb40, otherwise: bb50]
+  bb40:
+    switch copy _17.8 -> [0: bb41, otherwise: bb50]
+  bb41:
+    switch copy _17.9 -> [0: bb42, otherwise: bb50]
+  bb42:
+    switch copy _17.10 -> [0: bb43, otherwise: bb50]
+  bb43:
+    switch copy _17.11 -> [0: bb44, otherwise: bb50]
+  bb44:
+    switch copy _17.12 -> [0: bb45, otherwise: bb50]
+  bb45:
+    switch copy _17.13 -> [0: bb46, otherwise: bb50]
+  bb46:
+    switch copy _17.14 -> [0: bb47, otherwise: bb50]
+  bb47:
+    switch copy _17.15 -> [0: bb48, otherwise: bb50]
+  bb48:
+    _0 = const 99u64
+    Goto(bb49)
+  bb49:
+    Dead(_17)
+    Dead(_16)
+    Dead(_15)
+    Dead(_14)
+    Dead(_13)
+    Dead(_12)
+    Dead(_11)
+    Dead(_10)
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb50:
+    Unreachable
+  bb51 (cleanup):
+    UnwindExit
+// missing_variant: no IR: a type error
+// missing_none: no IR: a type error
+// nested_missing: no IR: a type error
+// tuple_of_options: no IR: a type error
+// bools: no IR: a type error
+// integers: no IR: a type error
+// through_ref: no IR: a type error
+// wide_missing: no IR: a type error

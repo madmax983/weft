@@ -1,0 +1,11 @@
+// A closure that reads a value that is not plain data holds a reference to
+// the cell of the variable (rule CAPTURE, `docs/ir.md` 5.1.7, 5.22): the
+// aggregate operand is `&v`, and the closure body reads `(*env.0)`.
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(v.len())
+    f()
+    f()
+}

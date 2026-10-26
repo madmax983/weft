@@ -1,0 +1,11 @@
+// F10 review, hole H-B: a body with no IR and no error for it (th/th20_variantPayloadInCallee.wf).
+enum E { A(u64, u64), B }
+fn show(e: &E) { print(e.A) }
+fn bad(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    v.clear()
+    print(r)
+    let e = E.A(1, 2)
+    show(&e)
+}
+fn main() { let v = Vec.new(); v.push(1); bad(&v) }

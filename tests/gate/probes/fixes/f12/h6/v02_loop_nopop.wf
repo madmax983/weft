@@ -1,0 +1,10 @@
+// F12 review (ABC preview), hole H6: linear closures that a loop makes and pushes into a Vec (old W0601) (h7/v02_loop_nopop.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn main() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 { let t = Tx { id: i }; ks.push(|| rollback(t)); i += 1 }
+    print(ks.len())
+}

@@ -1,0 +1,31 @@
+fn f0 add(u64, u64) -> u64: b0
+fn f1 errors(&P) -> (): extern
+fn f2 bad_types(()) -> (): extern
+fn f3 bad_place(&Vec<u64>) -> () / (): b1
+fn f4 bad_effect() -> () / (): extern
+cap_env e0
+
+body b0: fn add; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (Param(1) `b`)
+  bb0:
+    _0 = Add<u64>(copy _1, copy _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn bad_place; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+// errors: no IR: a type error
+// bad_types: no IR: a type error
+// bad_effect: no IR: a type error

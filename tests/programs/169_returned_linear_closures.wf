@@ -1,0 +1,37 @@
+// A closure owns what it captures by move. A function that gives back a
+// closure that moves a linear value gives the caller a linear value: the
+// caller must run the closure one time on each path. A caller that drops it
+// is W0601 in the `ir` pipeline. The old pipeline reports the maker instead
+// (W0204: it treats the moved capture as a local of the maker).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+
+fn mk_release(t: Tx) -> fn() { || rollback(t) }   //~ old: W0204
+fn mk_list(t: Tx) -> Vec<fn()> { let fs = Vec.new(); fs.push(|| rollback(t)); fs }   //~ old: W0204
+
+fn dropped() {
+    let h = mk_release(begin(1))
+    print(1)
+}   //~ ir: W0601
+
+fn run_on_no_path() {
+    let h = mk_release(begin(2))
+    if false { h() }
+}   //~ ir: W0601
+
+fn dropped_list() {
+    let fs = mk_list(begin(3))
+    print(fs.len())
+}   //~ ir: W0601
+
+fn run_once() {
+    let h = mk_release(begin(4))
+    h()
+}
+
+fn main() {
+    run_once()
+}

@@ -1,0 +1,9 @@
+// Stage F9 (fact oracle, C5): a place in statement position (a `Mention`)
+// evaluates its place: it reads the index local and the handle of the
+// buffer. The facts must give `reads_at` of them at the mention.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn main() {
+    let v = mk_v()
+    if true { v[0]; }
+    print(v.len())
+}

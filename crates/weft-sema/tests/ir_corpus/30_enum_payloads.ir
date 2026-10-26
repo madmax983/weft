@@ -1,0 +1,456 @@
+fn f0 set_state(&Machine) -> () / (): b0
+fn f1 update(&Machine) -> () / (): b1
+fn f2 payload_callee(&Machine) -> () / (): b2
+fn f3 payload_whole(&Machine) -> () / (): b3
+fn f4 payload_assign(&Machine) -> () / (): b4
+fn f5 payload_local() -> (): b5
+fn f6 primitive_write(&Machine) -> () / (): b6
+fn f7 enum_ref_survives(&Machine) -> () / (): b7
+fn f8 stable_parts_survive(&Machine) -> () / (): b8
+fn f9 payload_other_field(&Machine) -> () / (): b9
+fn f10 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+fn f11 Vec.new<T0>() -> Vec<T0> / (): extern
+cap_env e0
+
+body b0: fn set_state; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: State (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = State::Idle()
+    (*_1).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn update; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn payload_callee; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: () (Temp(Discarded))
+  _5: usize (Temp(Operand))
+  _6: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1).0)
+    switch move _2 -> [1: bb1, otherwise: bb8]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = &((*_1).0 as #1).0
+    Live(_4)
+    _4 = call set_state(copy _1) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    _6 = &(*_3)
+    _5 = call Vec.len<u64>(move _6) / e0 -> [bb3]
+  bb3:
+    Print(copy _5)
+    _0 = const ()
+    Dead(_6)
+    Dead(_5)
+    Dead(_3)
+    Goto(bb10)
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+  bb8:
+    Dead(_2)
+    Goto(bb9)
+  bb9:
+    _0 = const ()
+    Goto(bb10)
+  bb10:
+    Dead(_1)
+    Return
+
+body b3: fn payload_whole; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: () (Temp(Discarded))
+  _5: usize (Temp(Operand))
+  _6: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1).0)
+    switch move _2 -> [1: bb1, otherwise: bb8]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = &((*_1).0 as #1).0
+    Live(_4)
+    _4 = call update(copy _1) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    _6 = &(*_3)
+    _5 = call Vec.len<u64>(move _6) / e0 -> [bb3]
+  bb3:
+    Print(copy _5)
+    _0 = const ()
+    Dead(_6)
+    Dead(_5)
+    Dead(_3)
+    Goto(bb10)
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+  bb8:
+    Dead(_2)
+    Goto(bb9)
+  bb9:
+    _0 = const ()
+    Goto(bb10)
+  bb10:
+    Dead(_1)
+    Return
+
+body b4: fn payload_assign; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: State (Temp(Operand))
+  _5: usize (Temp(Operand))
+  _6: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1).0)
+    switch move _2 -> [1: bb1, otherwise: bb3]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = &((*_1).0 as #1).0
+    Live(_4)
+    _4 = State::Done(const 1u64)
+    (*_1).0 = move _4
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    _6 = &(*_3)
+    _5 = call Vec.len<u64>(move _6) / e0 -> [bb2]
+  bb2:
+    Print(copy _5)
+    _0 = const ()
+    Dead(_6)
+    Dead(_5)
+    Dead(_3)
+    Goto(bb5)
+  bb3:
+    Dead(_2)
+    Goto(bb4)
+  bb4:
+    _0 = const ()
+    Goto(bb5)
+  bb5:
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindExit
+
+body b5: fn payload_local; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: State (User `s`)
+  _2: Vec<u64> (Temp(Operand))
+  _3: &State (User `rs`)
+  _4: usize (Temp(Scrutinee))
+  _5: &Vec<u64> (User `v`)
+  _6: State (Temp(Operand))
+  _7: usize (Temp(Operand))
+  _8: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    _1 = State::Running(move _2)
+    Dead(_2)
+    Live(_3)
+    _3 = &_1
+    Live(_4)
+    _4 = Discriminant((*_3))
+    switch move _4 -> [1: bb2, otherwise: bb4]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    _5 = &((*_3) as #1).0
+    Live(_6)
+    _6 = State::Idle()
+    _1 = move _6
+    Dead(_6)
+    Live(_7)
+    Live(_8)
+    _8 = &(*_5)
+    _7 = call Vec.len<u64>(move _8) / e0 -> [bb3]
+  bb3:
+    Print(copy _7)
+    _0 = const ()
+    Dead(_8)
+    Dead(_7)
+    Dead(_5)
+    Goto(bb6)
+  bb4:
+    Dead(_4)
+    Goto(bb5)
+  bb5:
+    _0 = const ()
+    Goto(bb6)
+  bb6:
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b6: fn primitive_write; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: &u64 (User `s`)
+  _3: &Vec<u64> (User `n`)
+  _4: &State (User `st`)
+  _5: u64 (Temp(Operand))
+  _6: () (Temp(Discarded))
+  _7: () (Temp(Discarded))
+  _8: usize (Temp(Operand))
+  _9: &Vec<u64> (Temp(Receiver))
+  _10: usize (Temp(Scrutinee))
+  _11: &Vec<u64> (User `v`)
+  _12: usize (Temp(Operand))
+  _13: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = &(*_1).1
+    Live(_3)
+    _3 = &(*_1).2
+    Live(_4)
+    _4 = &(*_1).0
+    Live(_5)
+    _5 = Add<u64>(copy (*_1).1, const 1u64)
+    (*_1).1 = move _5
+    Dead(_5)
+    Live(_6)
+    Print(copy _2)
+    _6 = const ()
+    Dead(_6)
+    Live(_7)
+    Live(_8)
+    Live(_9)
+    _9 = &(*_3)
+    _8 = call Vec.len<u64>(move _9) / e0 -> [bb1]
+  bb1:
+    Print(copy _8)
+    _7 = const ()
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Live(_10)
+    _10 = Discriminant((*_4))
+    switch move _10 -> [1: bb2, otherwise: bb4]
+  bb2:
+    Dead(_10)
+    Live(_11)
+    _11 = &((*_4) as #1).0
+    Live(_12)
+    Live(_13)
+    _13 = &(*_11)
+    _12 = call Vec.len<u64>(move _13) / e0 -> [bb3]
+  bb3:
+    Print(copy _12)
+    _0 = const ()
+    Dead(_13)
+    Dead(_12)
+    Dead(_11)
+    Goto(bb6)
+  bb4:
+    Dead(_10)
+    Goto(bb5)
+  bb5:
+    _0 = const ()
+    Goto(bb6)
+  bb6:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b7: fn enum_ref_survives; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: &State (User `st`)
+  _3: State (Temp(Operand))
+  _4: usize (Temp(Scrutinee))
+  _5: u64 (User `x`)
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    Live(_3)
+    _3 = State::Idle()
+    (*_1).0 = move _3
+    Dead(_3)
+    Live(_4)
+    _4 = Discriminant((*_2))
+    switch move _4 -> [2: bb1, otherwise: bb2]
+  bb1:
+    Dead(_4)
+    Live(_5)
+    _5 = copy ((*_2) as #2).0
+    Print(copy _5)
+    _0 = const ()
+    Dead(_5)
+    Goto(bb4)
+  bb2:
+    Dead(_4)
+    Goto(bb3)
+  bb3:
+    _0 = const ()
+    Goto(bb4)
+  bb4:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b8: fn stable_parts_survive; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: &u64 (User `s`)
+  _3: &State (User `st`)
+  _4: () (Temp(Discarded))
+  _5: () (Temp(Discarded))
+  _6: usize (Temp(Scrutinee))
+  _7: u64 (User `x`)
+  bb0:
+    Live(_2)
+    _2 = &(*_1).1
+    Live(_3)
+    _3 = &(*_1).0
+    Live(_4)
+    _4 = call update(copy _1) / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Dead(_4)
+    Live(_5)
+    Print(copy _2)
+    _5 = const ()
+    Dead(_5)
+    Live(_6)
+    _6 = Discriminant((*_3))
+    switch move _6 -> [2: bb2, otherwise: bb3]
+  bb2:
+    Dead(_6)
+    Live(_7)
+    _7 = copy ((*_3) as #2).0
+    Print(copy _7)
+    _0 = const ()
+    Dead(_7)
+    Goto(bb5)
+  bb3:
+    Dead(_6)
+    Goto(bb4)
+  bb4:
+    _0 = const ()
+    Goto(bb5)
+  bb5:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_3)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b9: fn payload_other_field; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: u64 (Temp(Operand))
+  _5: usize (Temp(Operand))
+  _6: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1).0)
+    switch move _2 -> [1: bb1, otherwise: bb3]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = &((*_1).0 as #1).0
+    Live(_4)
+    _4 = Add<u64>(copy (*_1).1, const 1u64)
+    (*_1).1 = move _4
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    _6 = &(*_3)
+    _5 = call Vec.len<u64>(move _6) / e0 -> [bb2]
+  bb2:
+    Print(copy _5)
+    _0 = const ()
+    Dead(_6)
+    Dead(_5)
+    Dead(_3)
+    Goto(bb5)
+  bb3:
+    Dead(_2)
+    Goto(bb4)
+  bb4:
+    _0 = const ()
+    Goto(bb5)
+  bb5:
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindExit

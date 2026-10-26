@@ -1,7 +1,8 @@
 //! The diff gate on tier 1 (plan `docs/plan/core-ir.md`, §1 rule 3 and stage G5).
 //!
 //! The test checks each program of tier 1, reads the oracle verdicts from the
-//! committed cache `tests/gate/oracle-ast.tsv`, classifies each program and
+//! committed cache of the IR engine `tests/gate/oracle-ir.tsv` (from stage I5;
+//! before it `tests/gate/oracle-ast.tsv`), classifies each program and
 //! writes the report to `target/gate/report-tier1.md`. A blocker of §2.5 makes
 //! the test fail. The test does not run the interpreter: if the cache has no
 //! verdict for the current interpreter sources, the test fails and tells you
@@ -110,12 +111,17 @@ fn tier1_has_no_blocker() {
         out.display(),
         r.blockers.join("\n")
     );
-    // Before stage F1 the `ir` side is the old pipeline, so each program is
-    // `same` or `open`.
+    // Stage F8 turns group A on, and stage F10 turns group B (loops) on
+    // (plan §2.6): the programs that use only the groups A and B are in
+    // scope (1373 of 3509 at F10b; 1275 with group A only). A program out of
+    // scope gets its old record as its `ir` record, so it is `same` or
+    // `open`.
+    let scope = r.rows.iter().filter(|row| row.in_scope).count();
+    assert!(scope > 1350, "only {scope} programs are in scope");
     let other: Vec<String> = r
         .rows
         .iter()
-        .filter(|row| !matches!(row.class, Class::Same | Class::Open))
+        .filter(|row| !row.in_scope && !matches!(row.class, Class::Same | Class::Open))
         .map(|row| format!("{} {}", row.class.name(), row.path))
         .collect();
     assert!(other.is_empty(), "{}", other.join("\n"));

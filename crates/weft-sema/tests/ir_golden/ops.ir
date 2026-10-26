@@ -1,0 +1,133 @@
+fn f0 arith(u64, u64) -> u64: b0
+fn f1 signs(i32) -> i32: b1
+fn f2 logic(u64, u64) -> bool: b2
+fn f3 choice_a() -> u64: b3
+fn f4 strings(String) -> bool: b4
+fn f5 interp(u64, String) -> String: b5
+fn f6 vecs(Vec<u64>, Vec<u64>) -> bool: b6
+cap_env e0
+
+body b0: fn arith; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (Param(1) `b`)
+  _3: u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  _5: u64 (Temp(Operand))
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    Live(_5)
+    _5 = Add<u64>(copy _1, copy _2)
+    Live(_6)
+    _6 = Sub<u64>(copy _1, copy _2)
+    _4 = Mul<u64>(move _5, move _6)
+    _3 = Div<u64>(move _4, const 2u64)
+    _0 = Rem<u64>(move _3, const 7u64)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn signs; cap_env e0; unwind_exit bb1
+  _0: i32 (Return)
+  _1: i32 (Param(0) `a`)
+  _2: i32 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Neg<i32>(copy _1)
+    _0 = Add<i32>(move _2, const -128i32)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn logic; cap_env e0; unwind_exit bb1
+  _0: bool (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (Param(1) `b`)
+  _3: bool (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = Lt(copy _1, copy _2)
+    _0 = Not(move _3)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn choice_a; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (User `x`)
+  _2: u64 (Temp(Operand))
+  _3: u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = const 1u64
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    Live(_4)
+    _4 = const 5u64
+    _1 = move _4
+    Dead(_4)
+    _3 = const 1u64
+    _0 = Add<u64>(move _2, move _3)
+    Dead(_1)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn strings; cap_env e0; unwind_exit bb1
+  _0: bool (Return)
+  _1: String (Param(0) `s`)
+  bb0:
+    _0 = Eq(copy _1, const "a")
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn interp; cap_env e0; unwind_exit bb1
+  _0: String (Return)
+  _1: u64 (Param(0) `n`)
+  _2: String (Param(1) `s`)
+  bb0:
+    _0 = Concat(const "n = ", copy _1, const ", s = ", copy _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn vecs; cap_env e0; unwind_exit bb1
+  _0: bool (Return)
+  _1: Vec<u64> (Param(0) `a`)
+  _2: Vec<u64> (Param(1) `b`)
+  _3: &Vec<u64> (Temp(Operand))
+  _4: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = &_1
+    Live(_4)
+    _4 = &_2
+    _0 = Ne(move _3, move _4)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

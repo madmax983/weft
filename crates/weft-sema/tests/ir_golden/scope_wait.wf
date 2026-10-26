@@ -1,0 +1,15 @@
+// A `scope` is a frame of its own (`docs/ir.md` 5.29): the site has the
+// `Scope` terminator, the scope body has the scope capability `_1`. The
+// value of the body goes into `_0`, then `ScopeWait` waits for the tasks
+// before the locals end. `ScopeWait` can abort: `_0` is first in its chain,
+// and the chain cancels and joins the tasks at `_1`.
+
+fn mk() -> Vec<u64> / async { Vec.new() }
+
+fn scoped(n: u64) -> Vec<u64> / async {
+    scope { s =>
+        let v = mk()
+        let k = n
+        v
+    }
+}

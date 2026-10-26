@@ -1,0 +1,102 @@
+fn f0 split((u64, Vec<u64>)) -> Vec<u64>: b0
+fn f1 nested((u64, (bool, u64))) -> u64: b1
+fn f2 through_ref(&(u64, Vec<u64>)) -> u64: b2
+fn f3 no_value(bool) -> u64: b3
+cap_env e0
+
+body b0: fn split; cap_env e0; unwind_exit bb1
+  _0: Vec<u64> (Return)
+  _1: (u64, Vec<u64>) (Param(0) `t`)
+  _2: (u64, Vec<u64>) (Temp(Scrutinee))
+  _3: u64 (User `n`)
+  _4: Vec<u64> (User `v`)
+  bb0:
+    Live(_2)
+    _2 = move _1
+    Live(_3)
+    _3 = copy _2.0
+    Live(_4)
+    _4 = move _2.1
+    Dead(_2)
+    _0 = move _4
+    Dead(_4)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn nested; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: (u64, (bool, u64)) (Param(0) `t`)
+  _2: (u64, (bool, u64)) (Temp(Scrutinee))
+  _3: u64 (User `a`)
+  _4: bool (User `b`)
+  _5: u64 (User `c`)
+  bb0:
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    _3 = copy _2.0
+    Live(_4)
+    _4 = copy _2.1.0
+    Live(_5)
+    _5 = copy _2.1.1
+    Dead(_2)
+    _0 = Add<u64>(copy _3, copy _5)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn through_ref; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &(u64, Vec<u64>) (Param(0) `t`)
+  _2: &(u64, Vec<u64>) (Temp(Scrutinee))
+  _3: &u64 (User `a`)
+  _4: &Vec<u64> (User `b`)
+  bb0:
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    _3 = &(*_2).0
+    Live(_4)
+    _4 = &(*_2).1
+    Dead(_2)
+    _0 = Add<u64>(copy (*_3), const 0u64)
+    Dead(_4)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn no_value; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (User `x`)
+  _3: u64 (User `p`)
+  _4: bool (User `q`)
+  _5: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Uninit(_2)
+    Live(_3)
+    Uninit(_3)
+    Live(_4)
+    Uninit(_4)
+    Live(_5)
+    _5 = const 1u64
+    _2 = move _5
+    Dead(_5)
+    _0 = copy _2
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

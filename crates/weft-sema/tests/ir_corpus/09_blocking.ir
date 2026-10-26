@@ -1,0 +1,34 @@
+fn f0 next_row(&Stmt) -> i32 / Blocking: b0
+fn f1 wrong(&Stmt) -> i32 / Net: b1
+fn f2 sqlite3_step(&Stmt) -> i32 / Blocking: extern
+cap_env e0
+
+body b0: fn next_row; cap_env e0; unwind_exit bb3
+  _0: i32 (Return)
+  _1: &Stmt (Param(0) `stmt`)
+  bb0:
+    _0 = call sqlite3_step(copy _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn wrong; cap_env e0; unwind_exit bb3
+  _0: i32 (Return)
+  _1: &Stmt (Param(0) `stmt`)
+  bb0:
+    _0 = call sqlite3_step(copy _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

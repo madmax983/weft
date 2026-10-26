@@ -1,0 +1,55 @@
+// F10 review 2, hole H-C: as t01, a second container holds `&inner` and the read goes through it (t6/t80_shareHeldViaCallee.wf).
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+struct H { o: Option<&Entity>, rs: Vec<&Entity>, t: (u64, &Entity) }
+struct Outer { h: H, n: u64 }
+struct HB { rs: Vec<&Entity> }
+fn ent(id: u64) -> Entity {
+    let e = Entity { hp: 1, id: id, kids: Vec.new() }
+    e.kids.push(Entity { hp: 2, id: 9, kids: Vec.new() })
+    e
+}
+impl Entity {
+    fn wipe_kids(self) / mut(self) { self.kids.clear() }
+    fn bump(self) / mut(self.hp) { self.hp += 1 }
+}
+fn fill(out: &Vec<&Entity>, v: &Vec<Entity>) / mut(out) { out.push(&v[0]) }
+fn fill2(out: &Vec<&Entity>, v: &Vec<Entity>) / mut(out) { fill(out, v) }
+fn wipe(v: &Vec<Entity>) / mut(v) { v.clear() }
+fn consume(e: Entity) { print(e.id) }
+fn at(o: &Vec<&Entity>, i: usize) -> &Entity in o.. { o[i] }
+fn last(o: &Vec<&Entity>) -> &Entity in o.. { o[o.len() - 1] }
+fn wrap(e: &Entity) -> Vec<&Entity> {
+    let o = Vec.new()
+    o.push(e)
+    o
+}
+fn opt(e: &Entity) -> Option<&Entity> { Some(e) }
+
+struct OV { o: Option<&Vec<&Entity>>, n: u64 }
+struct OE { o: Option<&Vec<Entity>>, n: u64 }
+fn put(v: &Vec<Entity>, out: &Vec<&Vec<&Entity>>) / mut(out..) { out[0].push(&v[0]) }
+fn wipe_held(out: &Vec<&Vec<Entity>>) / mut(out..) { out[0].clear() }
+fn wipe_opt(oe: &OE) / mut(oe..) {
+    match oe.o {
+        Some(x) => x.clear(),
+        None => {},
+    }
+}
+fn put_opt(v: &Vec<Entity>, ov: &OV) / mut(ov..) {
+    match ov.o {
+        Some(x) => x.push(&v[0]),
+        None => {},
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let inner = Vec.new()
+    let a = Vec.new()
+    let b = Vec.new()
+    a.push(&inner)
+    b.push(&inner)
+    put(&v, &a)
+    v.clear()
+    print(b[0][0].hp)
+}

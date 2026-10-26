@@ -1,0 +1,19 @@
+// `break` in a closure cannot go to a loop outside it: `typeck` reports
+// W0111 (`docs/ir.md` 5.36), so the body gets no IR.
+fn closure_break(n: u64) {
+    let i = 0
+    while i < n {
+        i += 1
+        let f = || { break }
+    }
+}
+
+// A body with no error in the same program gets IR.
+fn plain_break(n: u64) -> u64 {
+    let i = 0
+    while i < n {
+        i += 1
+        if i == 3 { break }
+    }
+    i
+}

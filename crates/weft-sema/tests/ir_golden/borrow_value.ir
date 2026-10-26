@@ -1,0 +1,88 @@
+fn f0 place(S) -> u64: b0
+fn f1 reborrow(&S) -> u64: b1
+fn f2 value(u64) -> u64: b2
+fn f3 block_value(u64) -> u64: b3
+fn f4 field_through(&S) -> u64: b4
+cap_env e0
+
+body b0: fn place; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: S (Param(0) `s`)
+  _2: &Vec<u64> (User `r`)
+  bb0:
+    Live(_2)
+    _2 = &_1.0
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn reborrow; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &S (Param(0) `r`)
+  _2: &S (User `q`)
+  bb0:
+    Live(_2)
+    _2 = &(*_1)
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn value; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: &u64 (User `r`)
+  _3: u64 (Temp(Promoted))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = Add<u64>(copy _1, const 1u64)
+    _2 = &_3
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn block_value; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: &u64 (User `r`)
+  _3: u64 (Temp(Promoted))
+  _4: u64 (User `b`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    Live(_4)
+    _4 = copy _1
+    _3 = copy _4
+    Dead(_4)
+    _2 = &_3
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn field_through; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &S (Param(0) `r`)
+  _2: &u64 (User `q`)
+  bb0:
+    Live(_2)
+    _2 = &(*_1).1
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

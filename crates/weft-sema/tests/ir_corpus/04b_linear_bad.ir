@@ -1,0 +1,225 @@
+fn f0 rollback(Tx) -> (): b0
+fn f1 release(Lock) -> (): b1
+fn f2 begin() -> Tx: b2
+fn f3 take() -> Lock: b3
+fn f4 risky() -> () / Fail: b4
+fn f5 forgets() -> (): b5
+fn f6 aborts() -> () / Fail: b6
+fn f7 aborts_often() -> () / Fail: b7
+fn f8 fine() -> () / Fail: b8
+fn f9 twice() -> (): b9
+cap_env e0
+
+body b0: fn rollback; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: Conn (User `c`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn release; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Lock (Param(0) `l`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn begin; cap_env e0; unwind_exit bb1
+  _0: Tx (Return)
+  _1: Conn (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = Conn { const 1u64 }
+    _0 = Tx { move _1 }
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn take; cap_env e0; unwind_exit bb1
+  _0: Lock (Return)
+  bb0:
+    _0 = Lock { const 1u64 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn risky; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = perform Row(Fail).fail(const "no") -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn forgets; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Tx (User `tx`)
+  bb0:
+    Live(_1)
+    _1 = call begin() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b6: fn aborts; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Lock (User `l`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = call take() / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_2)
+    _2 = call risky() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    _0 = call release(move _1) / e0 -> [bb3, unwind: bb5]
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Fault)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b7: fn aborts_often; cap_env e0; unwind_exit bb11
+  _0: () (Return)
+  _1: Lock (User `l`)
+  _2: () (Temp(Discarded))
+  _3: () (Temp(Discarded))
+  _4: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = call take() / e0 -> [bb1, unwind: bb9]
+  bb1:
+    Live(_2)
+    _2 = call risky() / e0 -> [bb2, unwind: bb8]
+  bb2:
+    Dead(_2)
+    Live(_3)
+    _3 = call risky() / e0 -> [bb3, unwind: bb7]
+  bb3:
+    Dead(_3)
+    Live(_4)
+    _4 = call risky() / e0 -> [bb4, unwind: bb6]
+  bb4:
+    Dead(_4)
+    _0 = call release(move _1) / e0 -> [bb5, unwind: bb9]
+  bb5:
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb7 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_1, Fault)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b8: fn fine; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Tx (User `tx`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = call begin() / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_2)
+    _2 = call risky() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    _0 = call rollback(move _1) / e0 -> [bb3, unwind: bb5]
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b9: fn twice; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Tx (User `tx`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = call begin() / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_2)
+    _2 = call rollback(move _1) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    _0 = call rollback(move _1) / e0 -> [bb3, unwind: bb5]
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit

@@ -1,0 +1,16 @@
+// Stage F10a: `&(x + 1)` borrows a promoted temporary. Each iteration gives
+// the temporary a new cell, and the references of the earlier iterations
+// stay valid (docs/ir.md 5.10). The fact oracle names the old cells.
+fn main() {
+    let v = Vec.new()
+    let i = 0
+    while i < 4 {
+        v.push(i)
+        i += 1
+    }
+    let rs = Vec.new()
+    for x in v[] {
+        rs.push(&(x + 1))
+    }
+    print(rs.len())
+}

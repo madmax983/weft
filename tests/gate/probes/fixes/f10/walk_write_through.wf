@@ -1,0 +1,28 @@
+// Stage F10a: a walk down a list, then a write through the reference that
+// the walk found (tests/programs/105_walk_writes.wf). The analysis gives the
+// reference more than one place (a wildcard place after the widening). A
+// write through it changes the place that it points to at run time, so it
+// stays valid (`writes_via`, rule 4).
+struct Node { val: u64, next: Vec<Node> }
+fn set_last(head: &Node, x: u64) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    cur.val = x
+    print(cur.val)
+}
+fn cut_tail(head: &Node) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    cur.next = Vec.new()
+    print(cur.val)
+}
+fn main() {
+    let n = Node { val: 1, next: Vec.new() }
+    n.next.push(Node { val: 2, next: Vec.new() })
+    set_last(&n, 5)
+    cut_tail(&n)
+}

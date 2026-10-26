@@ -1,0 +1,9 @@
+// Stage F8d, control of hole R1: valid (own variant a24 of F8d).
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn plusv(self: Entity, n: i32) -> i32 { self.hp + n }
+}
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.plus({ e.A.hp = 7; 0 })) }

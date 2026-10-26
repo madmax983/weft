@@ -247,6 +247,23 @@ pipeline for the whole program and say so (`weft check --facts=ir` prints one no
 gate reports the coverage: the share of programs of each set in scope. A stage that turns
 a group on adds it to the default set of `ir_groups`.
 
+As built (F1): `irbuild/scope.rs` reads the groups from the IR of each function or test
+and of each body inside it. A loop that never goes back to its head (`loop { break }`) is
+group A. A local whose type has a function part (also through fields) is group C; a task
+handle, a scope capability or `sim.run`/`with_timeout` as a value is group E; a
+capability or a continuation is group D; a type that names a type parameter is group F. A
+body with no IR (a type error, W0303) uses no group: the `ir` pipeline gives it no facts,
+and the diagnostics of `typeck` reject the program. A body that the builder does not
+lower keeps the program out of scope. A program is in scope when its groups are on and
+the fact generator (`factgen::emit`) supports them; until F8 the stub supports none.
+As built (F10-fix, hole H-B): a body with no IR keeps the program in scope only if the
+program reports an error for the reason (`irbuild::Entry::reported`): a W01xx diagnostic
+of `typeck` in the body, a declaration error, or W0303 in the body. A conflict in the THIR
+tables, a variant payload, or a type error with no W01xx diagnostic keeps the program out
+of scope: no pipeline would check that body. The
+gate computes both records in one analysis (`--facts=both`), reports the coverage, and
+also the share of programs of each set that use only the groups of each group stage.
+
 ### 2.7 Common exit criteria
 
 Each stage that changes `ir` diagnostics ends only if, on the programs in scope:
@@ -1477,6 +1494,14 @@ with the group forced on, report only).
   every interpreter test pass with the defaults; `--facts=old` and `--engine=ast` still
   work (tested once each).
 - Do: switch; move the corpus markers; update the documents.
+- Do (second review of F8, section 3): the cut-over makes `--engine=ir` the default of
+  `weft run`. The AST engine reads an operand when it uses it, not where the IR copies
+  it (choice A, `ir` 5.1.1, 5.16, 5.33). So a program that both checkers accept can stop
+  on the AST engine with "a place does not exist (the value changed shape)", for example
+  `r.hp * { v.clear(); 1 }` (`f8/variants2/semN/n_l_clear.wf`; `--engine=ir` prints
+  1). The claims sem-N1 and sem-N2 hold only with the IR engine as the reference
+  semantics. Until the switch, the ledger `engine` entry of p1, p2 and p9 records the
+  difference.
 - Gate: the common gates; tier 2.
 - Exit: the defaults are `ir`; the old pipeline stays behind its flags for one review
   round. Then the review round of the ship rule runs (outside this plan). Phase R starts
@@ -1577,7 +1602,11 @@ gate and the exit of its parent, limited to its group of differences.
 
 | Id | Parent | Group of differences (code pair, shape) | Status |
 | --- | --- | --- | --- |
-| (none yet) | | | |
+| F8.1 | F8 | W0301 / W0304: a place-field reference in a `!Move` value travels with the moved value in the analysis (`r2/oracle/probes/n?_immov_*.wf`, `changed`; `tests/programs/154_place_fields.wf` `move_set`, group F, a W0301 false positive). Fix: relocate place-field references on a move (ADR 0007). Needs group F for 154 | open (do it at or before F20) |
+| F8.2 | F8 | the gate: the key of the `ir` oracle cache is the hash of `crates/weft-interp/src` only, so a change of the IR builder does not make the cache stale. Stage F8 regenerated both `ir` caches by hand | open |
+| F8.3 | F8 | lost-clean W0301 / none: receiver order and `Bounds` (second review of F8, 4.2). In `w.entities[0].plus(shrink(&w))` the `ir` pipeline accepts the program (old: W0301), and the IR engine stops at the borrow with "index 0 is out of bounds" (benign). The safety rests on the second index check of the engine at the borrow (`crates/weft-interp/tests/compile_ir.rs`). The third review of F8 signed the `lost-clean` entry after the fix of hole R1 (a variant step in a receiver place, F8d). The 11 programs are in `tests/gate/probes/fixes/f8/receiver_bounds/` (tier 1, 11 `lost-clean`, 0 blockers); claim F8-RB is on and holds | done (F8.3) |
+| F10.1 | F10 | lost-fault W0301, W0302, W0601 / none in group A (review of stage F10, before group B). Hole H-B: a body with no IR (a type error with no W01xx diagnostic, a conflict in the THIR tables, a variant payload) got no facts, and the program stayed in scope, so no pipeline checked the body. Fix: such a program is out of scope (`irbuild::Entry::reported`). The root cause of the loop shapes (`let best = None` before `best = Some(e)` later in a loop: the lowering visits the body in more than one pass, and the THIR recorder kept the types of each pass) is fixed too: the THIR tables keep the decisions of the last pass of each loop (`Recorder::next_pass`). A variant payload of two fields (`e.A`) still has no IR (typeck accepts it): such a program is out of scope. The programs are in `tests/gate/probes/fixes/f10/hb/`; claim F10-HB. Hole H-A: a reference stored behind a reference parameter (a heap slot) and read back after its referent changes was accepted (no variable held the places of the slot). Fix: each heap slot has variables of its own (`factgen::holders`, docs/ir.md 6.6 "As built (F10.1)"); the 22 programs are in `tests/gate/probes/fixes/f10/ha/` (14 group A: `moved`, the ir pipeline reports the read in the body, the old pipeline the call in the caller); claim F10-HA | done (F10.1) |
+| F10.2 | F10 | lost-fault W0301 / none in group A (second review of stage F10, hole H-C). A callee stores a reference through a reference that its argument holds (`out[0].push(&v[0])` with `out: &Vec<&Vec<&T>>`); the caller did not give the referent of `out[0]` the stored places, so `v.clear(); print(inner[0].hp)` was accepted (5 regressions where the referent is behind a parameter, 11 programs that both pipelines missed). Fix: the part `stores` reaches the referents of the references that an argument holds (`σ(Held(j))`, or `σ(Param(j))` of a by-value argument), with the reach of the part `muts` and the R3RT6 type rule on the type of the root of the referent (`analysis::apply::stores`, docs/ir.md 6.7 "As built (F10.2)"). The programs are in `tests/gate/probes/fixes/f10/hc/` (16 group A, 2 group AB, 1 control) and `tests/programs/165_store_through_held_ref.wf`; claim F10-HC | done (F10.2) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -1597,6 +1626,10 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | Stage | Programs in scope | same | fixed | new-fp | lost-clean | moved | changed | open (ledgered) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | G6 (baseline) | | | | | | | | |
+| F8 (tier 1, group A) | 1184 of 3394 | 3235 | 12 | 0 | 5 (signed) | 8 | 61 | 73 (open-old) |
+| F8 (tier 2, group A) | 2560 of 57393 | 56867 | 10 | 0 | 6 (5 signed; `verify/s5/R3a_diff/blk.wf` needs a reviewer) | 11 | 411 | 88 (tier-2 policy; 2 in scope: open-old `unclassified`) |
+| F10 (tier 1, groups A and B) | 1373 of 3509 | 3263 | 47 | 0 (`pt09` of the review: a precision loss, test `ir_loops`, track P1) | 18 (signed) | 37 | 71 | 73 (open-old) |
+| F10 (tier 2, groups A and B) | 2852 of 57393 | 56822 | 10 | 0 | 8 (signed) | 16 | 449 | 88 (tier-2 policy) |
 
 ---
 

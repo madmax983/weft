@@ -1,0 +1,11 @@
+// Third review of stage F8, hole R1 (f8/variants3/x04_enumSwitchIdx.wf, header trimmed).
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+struct Other { a: Vec<i32>, b: i32 }
+enum Two { A(Entity), B(Other) }
+impl Other { fn dummy(self) {} }
+struct H { ts: Vec<Two> }
+fn main() { let h = H { ts: Vec.new() }; h.ts.push(Two.A(Entity { hp: 1 })); print(h.ts[0].A.plus({ h.ts[0] = Two.B(Other { a: Vec.new(), b: 9 }); 0 })) }

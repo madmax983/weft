@@ -1,0 +1,116 @@
+fn f0 body() -> (): b0
+fn f1 apply(fn(u64, u64, fn() -> ()) -> ()) -> (): b1
+fn f2 sim_value() -> (): b2
+fn f3 sim_passed() -> (): b3
+fn f4 other_value() -> (): b4
+fn f5 run(u64, u64, fn() -> ()) -> () / () [sim.run]: extern
+cap_env e0
+
+body b0: fn body; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  bb0:
+    Print(const 1i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn apply; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn(u64, u64, fn() -> ()) -> () (Param(0) `f`)
+  _2: fn(u64, u64, fn() -> ()) -> () (Temp(Callee))
+  _3: fn() -> () / () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    _3 = const body
+    _0 = call (copy _2)(const 1u64, const 4u64, move _3) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: fn sim_value; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: fn(u64, u64, fn() -> ()) -> () / () (User `r`)
+  _2: fn(u64, u64, fn() -> ()) -> () / () (Temp(Callee))
+  _3: fn() -> () / () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = const run
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    _3 = const body
+    _0 = call (copy _2)(const 1u64, const 4u64, move _3) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b3: fn sim_passed; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn(u64, u64, fn() -> ()) -> () / () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = const run
+    _0 = call apply(move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: fn other_value; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () / () (User `g`)
+  bb0:
+    Live(_1)
+    _1 = const body
+    _0 = call (copy _1)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit

@@ -1,0 +1,42 @@
+// A callee or a closure that runs a linear closure on some paths only can
+// drop it (review of the ABC preview, hole H5: `fd/d05`, `fe/e6_03`,
+// `e6_05`, `e6_06`). Part `runs` says `maybe` when a path to a `Return`
+// passes no run node.
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn runif(f: fn(), c: bool) { if c { f() } }
+fn run(f: fn()) { f() }
+fn run_after(f: fn(), c: bool) { if c { print(1) }; f() }
+fn callee_on_one_path() {
+    let t = begin(1)
+    runif(|| rollback(t), false) //~ W0601
+}
+fn closure_param_on_one_path() {
+    let t = begin(1)
+    let maybe = |f: fn(), c: bool| { if c { f() } }
+    maybe(|| rollback(t), false) //~ W0601
+}
+fn capture_on_one_path() {
+    let t = begin(1)
+    let k = || rollback(t)
+    let c = false
+    let outer = || { if c { k() } } //~ W0601
+    outer()
+}
+// Clean: each path runs it.
+fn each_path() {
+    let t = begin(1)
+    run_after(|| rollback(t), false)
+}
+fn capture_each_path() {
+    let t = begin(1)
+    let k = || rollback(t)
+    let outer = || { k() }
+    outer()
+}
+fn main() {
+    each_path()
+    capture_each_path()
+}

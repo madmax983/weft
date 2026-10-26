@@ -1,0 +1,7 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn f(c: bool) {
+    let v = mk_v()
+    if c { v }
+    print(v.len())
+}
+fn main() { f(true) }

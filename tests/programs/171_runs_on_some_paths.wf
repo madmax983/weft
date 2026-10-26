@@ -1,0 +1,33 @@
+// A closure that moves a linear value must run one time on each path. A
+// callee or a closure that runs it on some paths only can drop it: the
+// call that gives it the closure is W0601.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn runif(f: fn(), c: bool) { if c { f() } }
+
+fn callee_on_one_path() {
+    let t = begin(1)
+    runif(|| rollback(t), false)   //~ W0601
+}
+
+fn capture_on_one_path(c: bool) {
+    let t = begin(2)
+    let k = || rollback(t)
+    let outer = || { if c { k() } }   //~ W0601
+    outer()
+}
+
+// A closure that runs its capture on each path.
+fn capture_on_each_path() {
+    let t = begin(3)
+    let k = || rollback(t)
+    let outer = || { k() }
+    outer()
+}
+
+fn main() {
+    capture_on_each_path()
+}

@@ -1,0 +1,11 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn cond() -> bool { true }
+fn show(r: &u64) { print(r + 1) }
+fn main() / async {
+    let u = mk_v()
+    show(match cond() { true => first(&mk_v()), false => first(&u) })
+}

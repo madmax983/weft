@@ -333,6 +333,73 @@ fn long_lived_references_check_in_linear_work() {
     }
 }
 
+/// The loop cases of [`long_lived`] with the facts of the `ir` pipeline and
+/// the groups A and B on (the preview of stage F10a): the analysis of the
+/// loop widens at its head, the facts have one node for each statement, and
+/// the work of the checker stays linear. A chain of `n` locals that rotate
+/// their values in a loop needs `n` visits of the head, and gives one error.
+#[test]
+fn long_lived_references_in_a_loop_check_in_linear_work_with_the_ir_facts() {
+    let n = 1000;
+    let opts = || Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("AB").unwrap(),
+        ..Options::default()
+    };
+    let lets = |f: &dyn Fn(usize) -> String| (0..n).map(f).collect::<String>();
+    let mut chain =
+        String::from("struct E { hp: u64 }\nfn big(w: &Vec<E>, d: &Vec<u64>) / mut(w) {\n");
+    let m = 100;
+    for i in 0..m {
+        let _ = writeln!(chain, "    let r{i} = &d[0]");
+    }
+    chain.push_str("    let k = 0\n    while k < 3 {\n");
+    for i in 0..m - 1 {
+        let _ = writeln!(chain, "        r{i} = r{}", i + 1);
+    }
+    let _ = writeln!(
+        chain,
+        "        r{} = &w[0].hp\n        k += 1\n    }}",
+        m - 1
+    );
+    chain.push_str("    w.clear()\n    print(r0)\n}\n");
+    let cases = vec![
+        (
+            "refs, push in a loop",
+            format!(
+                "fn big(v: &Vec<u32>) / mut(v) {{\n{}    loop {{\n{}        v.push(1)\n    }}\n}}\n",
+                lets(&|i| format!("    let r{i} = &v[{i}]\n")),
+                lets(&|i| format!("    print(r{i})\n"))
+            ),
+            n,
+        ),
+        ("a chain of locals", chain, 1),
+    ];
+    for (name, src, errors) in cases {
+        let c = check_source("long.wf", &src, opts());
+        assert!(
+            c.analysis
+                .ir_scope
+                .as_ref()
+                .is_some_and(weft_sema::Scope::in_scope),
+            "{name}: {:?}",
+            c.analysis
+                .ir_scope
+                .as_ref()
+                .and_then(|s| s.fallback.clone())
+        );
+        let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
+            panic!("{name}: no body");
+        };
+        let (r, work) = check_counted(&body.facts);
+        assert_eq!(r.violations.error.len(), errors, "{name}");
+        let nodes = body.facts.nodes.len() as u64;
+        assert!(work.searches <= 4 * n as u64, "{name}: {work:?}");
+        assert!(work.part_nodes <= 3 * nodes, "{name}: {work:?}");
+        assert!(work.shared <= 1, "{name}: {work:?}");
+    }
+}
+
 /// `n` blocks, each with a local, a reference into it and a use. Each local
 /// and each reference has a search of its own.
 fn blocks(n: usize) -> String {
@@ -692,4 +759,42 @@ fn place_fields_of_a_deep_type_are_found_in_linear_work() {
          fn f() {\n    let g = G { x: 1, a: None, b: None }\n    print(g.x)\n}\n",
     );
     assert!(wg.place_types >= 1 && wg.place_types <= 8, "{wg:?}");
+}
+
+/// `n` helper closures in one body. Each helper calls the `back` helpers
+/// before it (review round 3, Q3-2: `r3/quality/repro/Q3_closure_*.wf`).
+fn helper_closures(n: usize, back: usize) -> String {
+    let mut s = String::from("struct Out { v: Vec<u64> }\nfn render(out: &Out) / mut(out.v) {\n");
+    for i in 0..n {
+        let calls: Vec<String> = (i.saturating_sub(back)..i)
+            .rev()
+            .map(|j| format!("h{j}()"))
+            .collect();
+        if calls.is_empty() {
+            let _ = writeln!(s, "    let h{i} = || out.v.push({i})");
+        } else {
+            let _ = writeln!(s, "    let h{i} = || {{ {} }}", calls.join("; "));
+        }
+    }
+    let _ = writeln!(s, "    h{}()\n}}", n - 1);
+    s
+}
+
+/// A property query looks at each closure summary one time, so closures that
+/// call each other cost polynomial work, not work that grows by a factor for
+/// each closure (Q3-2). Before the fix, 16 helpers that each call the two
+/// helpers before them took about 4 s in a release build.
+#[test]
+fn closures_that_call_closures_cost_polynomial_work() {
+    for back in [1, 2, 16] {
+        let (wa, ..) = work_of(&helper_closures(8, back));
+        let (wb, ..) = work_of(&helper_closures(16, back));
+        assert!(wa.closure_queries > 0, "{wa:?}");
+        // Two times the closures: at most eight times the work (a cubic
+        // bound: n queries of n closures, and a closure that calls n others).
+        assert!(
+            wb.closure_queries <= 8 * wa.closure_queries + 64,
+            "back {back}: {wa:?} {wb:?}"
+        );
+    }
 }

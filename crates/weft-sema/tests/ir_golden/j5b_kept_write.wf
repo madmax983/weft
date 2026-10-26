@@ -1,0 +1,10 @@
+// Control for J5: the closure only reads and writes the copy variable (no
+// borrow). ADR 0003 keeps the cell readable after the variable ends.
+fn main() {
+    let g = {
+        let n = 5
+        || { n += 1; print(n) }
+    }
+    g()
+    g()
+}

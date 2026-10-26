@@ -1,0 +1,12 @@
+struct S { items: Vec<u64>, n: u64 }
+fn consume(v: Vec<u64>, n: u64) -> u64 { n }
+fn consume_z(v: Vec<u64>, n: usize) -> usize { n }
+fn consume2(v: Vec<u64>, w: Vec<u64>) -> u64 { 1 }
+fn consume_r(v: Vec<u64>, w: &Vec<u64>) -> usize { w.len() }
+fn consume_s(s: S, n: u64) -> u64 { n }
+fn consume_rn(v: Vec<u64>, n: &u64) -> u64 { n + 1 }
+fn mk() -> S { let s = S { items: Vec.new(), n: 3 }; s.items.push(1); s }
+fn main() {
+    let s = mk()
+    print(consume_z(s.items, s.items.len()))
+}

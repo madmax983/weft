@@ -1,0 +1,12 @@
+// F10 review, hole H-B: a body with no IR and no error for it (th/th22_bestCompare.wf).
+struct Entity { hp: i32 }
+fn f(es: &Vec<Entity>) / mut(es) {
+    let best = None
+    for e in es[] {
+        let better = match best { Some(b) => e.hp > b.hp, None => true }
+        if better { best = Some(e) }
+    }
+    es.clear()
+    match best { Some(b) => print(b.hp), None => {} }
+}
+fn main() { let es = Vec.new(); es.push(Entity { hp: 1 }); es.push(Entity { hp: 3 }); f(&es) }

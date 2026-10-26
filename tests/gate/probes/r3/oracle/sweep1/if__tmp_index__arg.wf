@@ -1,0 +1,22 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+effect GiveR { fn give() -> &u64 }
+effect GiveV { fn givev() -> Vec<u64> }
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, b: Box<E> }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn mk_w() -> W { let w = W { es: Vec.new(), b: Box.new(E { hp: 1, tag: 2 }) }; w.es.push(E { hp: 3, tag: 4 }); w }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn id<T>(x: T) -> T { x }
+fn make_reader(v: &Vec<u64>) -> fn() { || print(v.len()) }
+fn show(r: &u64) { print(r + 1) }
+fn show_o(o: Option<&u64>) { match o { Some(r) => print(r + 1), None => {} } }
+fn show_f(f: fn()) { f() }
+fn show_t(t: (&u64, u64)) { let (q, _) = t; print(q + 1) }
+fn show_v(v: Vec<u64>) { print(v.len()) }
+
+fn main() {
+    let keep = mk_v()
+    let v = mk_v()
+    show(if 1 < 2 { &mk_v()[0] } else { &keep[0] })
+}

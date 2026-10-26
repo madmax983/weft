@@ -1,0 +1,129 @@
+fn f0 g(u64) -> u64: b0
+fn f1 early(bool) -> u64: b1
+fn f2 scoped() -> u64 / Async: b2
+fn f3 Vec.new<T0>() -> Vec<T0> / (): extern
+closure c0: body b4, maker b3, cap_env e0, captures []
+scope s0: body b3, site b2
+spawn sp0: scope s0
+cap_env e0
+
+body b0: fn g; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn early; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: Vec<u64> (User `v`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    switch copy _1 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _0 = const 1u64
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    _3 = const ()
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = call g(const 2u64) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b2: fn scoped; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  bb0:
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: scope s0; parent b2; cap_env e0; unwind_exit bb11
+  _0: u64 (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<u64> (User `t`)
+  _3: fn() -> u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0()
+    _2 = spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    _4 = join move _2 -> [bb2, unwind: bb8]
+  bb2:
+    _0 = Add<u64>(move _4, const 2u64)
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
+  bb8 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b4: closure c0; parent b3; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = const 40u64
+    Return
+  bb1 (cleanup):
+    UnwindExit

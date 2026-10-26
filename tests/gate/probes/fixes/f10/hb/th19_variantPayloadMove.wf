@@ -1,0 +1,10 @@
+// F10 review, hole H-B: a body with no IR and no error for it (th/th19_variantPayloadMove.wf).
+enum E { A(u64, u64), B }
+fn take(v: Vec<u64>) {}
+fn main() {
+    let e = E.A(1, 2)
+    let v = Vec.new()
+    take(v)
+    take(v)
+    print(e.A)
+}

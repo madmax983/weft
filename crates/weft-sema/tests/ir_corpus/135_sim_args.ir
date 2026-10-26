@@ -1,0 +1,119 @@
+fn f0 no_seed() -> (): extern
+fn f1 bad_name() -> (): extern
+fn f2 given_twice() -> (): extern
+fn f3 too_many() -> (): extern
+fn f4 by_position() -> (): b0
+fn f5 by_name() -> (): b2
+fn f6 run(u64, u64, fn() -> ()) -> () / () [sim.run]: extern
+test t0 "simulated workers": b4
+closure c0: body b1, maker b0, cap_env e0, captures []
+closure c1: body b3, maker b2, cap_env e0, captures []
+closure c2: body b5, maker b4, cap_env e0, captures []
+cap_env e0
+
+body b0: fn by_position; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c0()
+    _0 = call run(const 1u64, const 2u64, move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: closure c0; parent b0; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 1i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn by_name; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c1()
+    _0 = call run(const 4u64, const 3u64, move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: closure c1; parent b2; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 2i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: test "simulated workers"; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  _2: () (Temp(Discarded))
+  _3: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call by_position() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Dead(_1)
+    Live(_2)
+    _2 = call by_name() / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Dead(_2)
+    Live(_3)
+    _3 = closure c2()
+    _0 = call run(const 5u64, const 4u64, move _3) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_3)
+    Return
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb7)
+  bb6 (cleanup):
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b5: closure c2; parent b4; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 3i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+// no_seed: no IR: a type error
+// bad_name: no IR: a type error
+// given_twice: no IR: a type error
+// too_many: no IR: a type error

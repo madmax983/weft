@@ -1,0 +1,91 @@
+fn f0 Tok.into_id(Tok, u64) -> u64: b0
+fn f1 Tok.make(u64) -> Tok: b1
+fn f2 one() -> u64: b2
+fn f3 consume(Tok) -> u64: b3
+fn f4 made() -> u64: b4
+fn f5 Vec.new<T0>() -> Vec<T0> / (): extern
+cap_env e0
+
+body b0: fn Tok.into_id; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Tok (Param(0) `self`)
+  _2: u64 (Param(1) `k`)
+  bb0:
+    _0 = Add<u64>(copy _1.0, copy _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn Tok.make; cap_env e0; unwind_exit bb2
+  _0: Tok (Return)
+  _1: u64 (Param(0) `id`)
+  _2: u64 (Temp(Operand))
+  _3: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    _3 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    _0 = Tok { move _2, move _3 }
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b2: fn one; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn consume; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Tok (Param(0) `t`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call one() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    _0 = call Tok.into_id(move _1, move _2) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b4: fn made; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Tok (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Tok.make(const 3u64) / e0 -> [bb1, unwind: bb3]
+  bb1:
+    _0 = call Tok.into_id(move _1, const 1u64) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit

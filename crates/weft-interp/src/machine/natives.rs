@@ -29,6 +29,7 @@ impl super::Machine<'_, '_> {
             adt,
             variant: u32::try_from(variant).unwrap_or(0),
             fields: v.into_iter().collect(),
+            id: self.heap.new_enum_id(),
         })))
     }
 

@@ -9,10 +9,18 @@
 //!   `Vec` can, so a reference into the old buffer dangles;
 //! - a reference into a local whose scope ended is used, also after an abort
 //!   path unwound the frame of the local;
+//! - a reference into the payload of an enum value is used after the enum
+//!   got a new value (a write of the enum or of a place above it), also of
+//!   the same variant: the payload of a real enum is in place, so the old
+//!   parts are gone (`docs/ir.md` 8.5). A write inside the payload keeps
+//!   the value, as a write of a field of a struct does;
 //! - a display (`print`) of a moved value, or of a value through a dangling
 //!   reference;
 //! - a live linear value goes away with no consume and no `on abort`, or is
 //!   still live at the end of the run;
+//! - a live linear value is in a cell of a frame after the cleanup chain of
+//!   the frame ran (the frame scan of `docs/ir.md` 8.2): the chain must
+//!   finish each value of the frame;
 //! - two tasks access overlapping places, one of them writes, and no join
 //!   orders them (a vector-clock race detector). Spawn, join, the end of a
 //!   scope or a `fork` and unwinding are the points that order tasks;
@@ -21,6 +29,8 @@
 //!
 //! An accepted program must not fault with these checks. The interpreter
 //! program tests and the runs of the corpus turn them on.
+
+pub mod facts;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -75,6 +85,8 @@ pub struct Oracle {
     /// The tasks that no task joined yet. A joined task is done: it makes no
     /// more accesses.
     live: BTreeSet<usize>,
+    /// The last identity of an enum value.
+    enum_ids: u64,
 }
 
 impl Oracle {
@@ -155,6 +167,15 @@ impl Oracle {
     pub fn access(&mut self, cell: CellId, path: &[u32], write: bool, what: &str) {
         let t = self.cur;
         self.ensure(t);
+        // When the running task is the only task that no task joined, each
+        // other task is done, and its accesses are ordered before this one
+        // (a join merges the clocks, and the clocks of the joins chain to
+        // this task). A task that starts later sees this access too. So the
+        // access cannot be part of a race, and the log does not need it. A
+        // deep recursion of one task then makes no log at all.
+        if self.live.len() == 1 && self.live.contains(&t) {
+            return;
+        }
         let epoch = self.at(t, t);
         // The logs of done tasks that each task sees: they are dropped, so
         // the cost of an access does not grow with the number of done tasks.
@@ -198,11 +219,26 @@ impl Oracle {
         m.insert(path.to_vec(), epoch);
     }
 
+    /// Returns the identity of a new enum value (from 1).
+    pub const fn next_enum_id(&mut self) -> u64 {
+        self.enum_ids += 1;
+        self.enum_ids
+    }
+
     /// Notes a violation. The machine reports the first one.
     pub fn flag(&mut self, msg: impl Into<String>) {
         if self.violation.is_none() {
             self.violation = Some(msg.into());
         }
+    }
+
+    /// Notes that the scan of a frame found a live linear value after the
+    /// cleanup chain of the frame ended (`docs/ir.md` 8.2): the chain does
+    /// not finish each value of the frame.
+    pub fn left_after_chain(&mut self, frame: &str) {
+        self.flag(format!(
+            "oracle: a live linear value is left after the cleanup chain of `{frame}`"
+        ));
     }
 
     /// Takes the violation that the machine did not report yet.
@@ -328,6 +364,27 @@ mod tests {
         o.set_task(101);
         o.access(3, &[1], false, "buffer");
         assert!(o.take_violation().is_some());
+    }
+
+    #[test]
+    fn the_only_live_task_makes_no_log() {
+        // Before a spawn and after the join of each task, no access can race:
+        // the log stays empty. A race between two live tasks is found.
+        let mut o = Oracle::default();
+        o.set_task(0);
+        o.access(4, &[], true, "local");
+        assert!(o.log.is_empty());
+        o.spawn(0, 1);
+        o.set_task(1);
+        o.access(4, &[], true, "local");
+        o.set_task(0);
+        o.access(4, &[], false, "local");
+        assert!(o.take_violation().is_some());
+        o.join(1);
+        let n = o.log.len();
+        o.access(5, &[], true, "local");
+        assert_eq!(o.log.len(), n);
+        assert!(o.take_violation().is_none());
     }
 
     #[test]

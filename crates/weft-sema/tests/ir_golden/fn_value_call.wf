@@ -1,0 +1,23 @@
+// A call of a function value (`docs/ir.md` 5.21): the callee is an operand,
+// read before the arguments; the arguments run in the order of the
+// parameters. A call of a function value can abort.
+
+fn add(a: u64, b: u64) -> u64 { a + b }
+
+fn apply(f: fn(u64) -> u64, x: u64) -> u64 { f(x) }
+
+fn later(f: fn(u64, u64) -> u64, x: u64) -> u64 {
+    f(x + 1, { x })
+}
+
+fn named() -> u64 {
+    let g = add
+    g(b: 1, a: 2)
+}
+
+fn main() {
+    let k = 3
+    let h = |x| x + k
+    print(apply(h, 4))
+    print(later(add, 5))
+}

@@ -1,0 +1,202 @@
+fn f0 rollback(Tx) -> (): b0
+fn f1 release(Guard) -> (): b1
+fn f2 step() -> u64: b2
+fn f3 fields(Mixed) -> u64: b3
+fn f4 tuple((Tx, Lock)) -> u64: b4
+fn f5 guard(Guard) -> u64: b5
+fn f6 lock(Lock) -> u64: b6
+fn f7 option(Option<Tx>) -> u64: b7
+fn f8 boxed(Box<Tx>) -> u64: b8
+fn f9 array([Tx; 2]) -> u64: b9
+fn f10 vector(Vec<Lock>) -> u64: b10
+fn f11 generic<T0>(T0) -> u64: b11
+cap_env e0
+
+body b0: fn rollback; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn release; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Guard (Param(0) `g`)
+  _2: Lock (User `l`)
+  _3: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = move _1.0
+    Consume(_1)
+    Live(_3)
+    _3 = copy _2.0
+    Consume(_2)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn step; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn fields; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Mixed (Param(0) `m`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1.0, OnAbort(rollback))
+    UnwindValue(_1.2, Fault)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: fn tuple; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: (Tx, Lock) (Param(0) `t`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1.0, OnAbort(rollback))
+    UnwindValue(_1.1, Fault)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn guard; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Guard (Param(0) `g`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(release))
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b6: fn lock; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Lock (Param(0) `l`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Fault)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b7: fn option; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Option<Tx> (Param(0) `o`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue((_1 as #0).0, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b8: fn boxed; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Box<Tx> (Param(0) `b`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue((*_1), OnAbort(rollback))
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b9: fn array; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: [Tx; 2] (Param(0) `a`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1[], OnAbort(rollback))
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b10: fn vector; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Vec<Lock> (Param(0) `v`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1[], Fault)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b11: fn generic; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: T0 (Param(0) `x`)
+  bb0:
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

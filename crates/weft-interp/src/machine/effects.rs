@@ -15,6 +15,7 @@ use weft_verified::lifecycle::{ContError, Continuation, LinState};
 use super::{
     After, CodeFrame, ContRec, Flow, Frame, HandleMark, SimId, TaskResult, Timer, Unwind, Wait, R,
 };
+use crate::code::{UnwindStep, VarRef};
 use crate::error::ErrorKind;
 use crate::heap::{take_moved, SlotKind};
 use crate::trace::{SuspendReason, TraceEvent};
@@ -75,6 +76,35 @@ impl super::Machine<'_, '_> {
             }
         }
         None
+    }
+
+    /// Returns true if a perform of `op` of `effect` with the lexical
+    /// handlers `henv` goes to handler `id`, the handler of the capability of
+    /// the perform (`docs/ir.md` 8.1). It is also true if the mark of handler
+    /// `id` is not on the stack of the task (the capability left its
+    /// handler, W0313), or if the handler has no clause for `op` (the
+    /// operation goes to an outer handler): then the machine finds a handler
+    /// as for a perform through the row.
+    pub(crate) fn finds_handler_of_cap(
+        &self,
+        effect: EffectId,
+        op: usize,
+        id: u64,
+        henv: &HEnv,
+    ) -> bool {
+        let Some(frames) = self.tasks.get(self.cur).map(|t| &t.frames) else {
+            return true;
+        };
+        let takes = frames.iter().any(
+            |f| matches!(f, Frame::Handle(m) if m.id == id && m.clauses.iter().any(|c| c.0 == op)),
+        );
+        if !takes {
+            return true;
+        }
+        match self.find_handler(effect, op, henv) {
+            Some((idx, ..)) => matches!(frames.get(idx), Some(Frame::Handle(m)) if m.id == id),
+            None => false,
+        }
     }
 
     /// Performs `fail(msg)`.
@@ -391,10 +421,15 @@ impl super::Machine<'_, '_> {
         Ok(flow)
     }
 
-    /// Unwinds one frame: finds live linear values and drops the rest.
+    /// Unwinds one frame: finds live linear values and drops the rest. A
+    /// frame of the IR compiler at an op with a landing pad runs its cleanup
+    /// chain (`enter_pad`).
     fn unwind_frame(&mut self, f: Frame) -> R<Flow> {
         match f {
             Frame::Code(cf) => {
+                let Some(cf) = self.enter_pad(cf)? else {
+                    return Ok(Flow::Continue);
+                };
                 let mut found = Vec::new();
                 for v in self.frame_values(cf) {
                     let rest = self.extract_linear(v, &mut found);
@@ -493,19 +528,288 @@ impl super::Machine<'_, '_> {
     fn frame_values(&mut self, cf: CodeFrame) -> Vec<Value> {
         let mut vals: Vec<Value> = cf.stack.into_iter().rev().collect();
         let mut cells: Vec<CellId> = cf.temps.into_iter().rev().collect();
-        cells.extend(cf.slots.into_iter().rev().flatten());
+        // A slot of a temporary cell is on the temporary list too.
+        let n = cf.code.local_slots();
+        cells.extend(cf.slots.into_iter().take(n).rev().flatten());
         cells.extend(cf.owned.into_iter().rev());
-        // The scope of each local and temporary ends here, as at a normal end
-        // (`end_cells`): the oracle sees a later read through a reference
-        // into the cell.
+        self.cell_values(cells, &mut vals);
+        vals
+    }
+
+    /// Ends the scope of each cell, as at a normal end (`end_cells`), so the
+    /// oracle sees a later read through a reference into the cell. Puts the
+    /// value of each cell that is not a copy value into `vals`, and each
+    /// closure that owns cells.
+    fn cell_values(&mut self, cells: Vec<CellId>, vals: &mut Vec<Value>) {
         for c in cells {
             if let Some(v) = self.heap.end_cell_value(c) {
                 vals.push(v);
             } else if let Ok(s) = self.heap.slot(c) {
+                owning_closures(&s.val, vals);
+            }
+        }
+    }
+
+    /// Starts the cleanup chain of a frame that unwinds (`docs/ir.md` 8.2).
+    /// The op that aborted the frame is the op before `pc` (a call that has
+    /// a frame above it), or the op at `pc` (a wait that runs again when the
+    /// task wakes). If that op has a landing pad, the frame goes back on top
+    /// of the task stack in unwind mode, at the first op of its chain, and
+    /// keeps the list of its cells for the scan at `UnwindExit`. Else, and
+    /// for a frame that is in unwind mode already, the frame comes back.
+    ///
+    /// A value on the operand stack is the result of the aborting op on its
+    /// way to its destination: a handler gave it, and an interrupt that the
+    /// unwinding deferred aborts the frame before the store. It is in no
+    /// cell of the chain, so the unwinder finishes it first, as the AST
+    /// engine does with its operand stack.
+    fn enter_pad(&mut self, mut cf: CodeFrame) -> R<Option<CodeFrame>> {
+        if cf.chain.is_some() {
+            return Ok(Some(cf));
+        }
+        let pad = cf
+            .pc
+            .checked_sub(1)
+            .and_then(|at| cf.code.pad(at))
+            .or_else(|| cf.code.pad(cf.pc));
+        let Some(pad) = pad else {
+            return Ok(Some(cf));
+        };
+        if cf.uid != 0 && self.facts.is_some() && self.holds_live_linear(&cf) {
+            if let Some(Err(m)) = self.facts.as_mut().map(|f| f.check_abort(cf.uid)) {
+                return Err(self.fault(m));
+            }
+        }
+        let n = cf.code.local_slots();
+        let mut cells = cf.temps.clone();
+        cells.extend(cf.slots.iter().take(n).flatten().copied());
+        cf.chain = Some(cells);
+        cf.pc = pad;
+        let stack = std::mem::take(&mut cf.stack);
+        self.task().frames.push(Frame::Code(cf));
+        let mut found = Vec::new();
+        for v in stack.into_iter().rev() {
+            let rest = self.extract_linear(v, &mut found);
+            self.heap.drop_value(rest);
+        }
+        let live = self.abort_found(found)?;
+        self.inner_unwind(Vec::new(), live);
+        Ok(None)
+    }
+
+    /// True if a cell of code frame `cf` holds a live linear value (the
+    /// check D4 of the fact oracle).
+    fn holds_live_linear(&self, cf: &CodeFrame) -> bool {
+        let n = cf.code.local_slots();
+        let cells = cf.temps.iter().chain(cf.slots.iter().take(n).flatten());
+        let mut work: Vec<&Value> = cells
+            .filter_map(|&c| self.heap.slot(c).ok().map(|s| &s.val))
+            .collect();
+        let mut budget = 100_000usize;
+        while let Some(v) = work.pop() {
+            budget = budget.saturating_sub(1);
+            if budget == 0 {
+                return false;
+            }
+            match v {
+                Value::Struct(o) => {
+                    let live = o.lin.is_some_and(|id| {
+                        self.lins
+                            .get(id)
+                            .is_some_and(|l| l.l.state == LinState::Live)
+                    });
+                    if live {
+                        return true;
+                    }
+                    work.extend(o.fields.iter());
+                }
+                Value::Task(t) => {
+                    if self
+                        .tasks
+                        .get(*t)
+                        .is_some_and(|x| x.handle.state == LinState::Live)
+                    {
+                        return true;
+                    }
+                }
+                Value::Enum(e) => work.extend(e.fields.iter()),
+                Value::Tuple(vs) | Value::List(vs) => work.extend(vs.iter()),
+                Value::Vec(c) | Value::Boxed(c) => {
+                    if let Ok(s) = self.heap.slot(*c) {
+                        work.push(&s.val);
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Marks each live linear value in `found` as aborted. Returns the
+    /// values whose `on abort` must run; drops the others.
+    fn abort_found(&mut self, found: Vec<Value>) -> R<VecDeque<Value>> {
+        let mut live = VecDeque::new();
+        for v in found {
+            if self.unwind_lin(&v)? {
+                live.push_back(v);
+            } else {
+                self.heap.drop_value(v);
+            }
+        }
+        Ok(live)
+    }
+
+    /// Unwinds `frames` and runs the `on abort` of `aborts` in an inner
+    /// unwinding above the frame in unwind mode. When it ends, it gives `()`
+    /// to that frame, and its cleanup chain goes on. If there is nothing to
+    /// do, nothing happens.
+    fn inner_unwind(&mut self, frames: Vec<Frame>, aborts: VecDeque<Value>) {
+        if frames.is_empty() && aborts.is_empty() {
+            return;
+        }
+        // The children of the scopes in `frames` are in the prepass of the
+        // outer unwinding too. A second prepass finds them done or cancels
+        // them again: both do nothing new.
+        let prepass = frames.is_empty();
+        self.task().frames.push(Frame::Unwind(Box::new(Unwind {
+            frames,
+            aborts,
+            then: After::Deliver(Value::Unit),
+            prepass,
+            children: Vec::new(),
+        })));
+    }
+
+    /// `UnwindValue`: takes the live linear values out of the value at the
+    /// place, and runs their `on abort` in an inner unwinding above the
+    /// frame. The chain goes on when the inner unwinding ends. A place that
+    /// names no value does nothing.
+    pub(crate) fn unwind_value(&mut self, var: VarRef, path: &[UnwindStep]) -> R<Flow> {
+        let fr = self.fr()?;
+        let cell = match var {
+            VarRef::Local(s) => fr.slots.get(s as usize).copied().flatten(),
+            VarRef::Cap(i) => fr.caps.get(i as usize).copied(),
+        };
+        let Some((cell, at)) = cell.and_then(|c| self.unwind_place(c, path)) else {
+            return Ok(Flow::Continue);
+        };
+        let Some(v) = self
+            .heap
+            .slot_mut(cell)
+            .ok()
+            .and_then(|s| value_mut(&mut s.val, &at))
+        else {
+            return Ok(Flow::Continue);
+        };
+        let v = take_moved(v);
+        let mut found = Vec::new();
+        let rest = self.extract_linear(v, &mut found);
+        if let Some(x) = self
+            .heap
+            .slot_mut(cell)
+            .ok()
+            .and_then(|s| value_mut(&mut s.val, &at))
+        {
+            *x = rest;
+        }
+        let live = self.abort_found(found)?;
+        self.inner_unwind(Vec::new(), live);
+        Ok(Flow::Continue)
+    }
+
+    /// Returns the cell and the path in the cell of an unwind place, or
+    /// `None` if the place names no value: a step into another variant, or
+    /// a `Deref` of a value that is not a `Box`. `Elems` names the whole
+    /// buffer: `extract_linear` finishes each element.
+    fn unwind_place(&self, cell: CellId, path: &[UnwindStep]) -> Option<(CellId, Vec<u32>)> {
+        let mut cell = cell;
+        let mut at: Vec<u32> = Vec::new();
+        for step in path {
+            match *step {
+                UnwindStep::Part(i) => at.push(i),
+                UnwindStep::Variant(v) => {
+                    let val = value_at(&self.heap.slot(cell).ok()?.val, &at)?;
+                    if !matches!(val, Value::Enum(e) if e.variant == v) {
+                        return None;
+                    }
+                }
+                UnwindStep::Deref => {
+                    let val = value_at(&self.heap.slot(cell).ok()?.val, &at)?;
+                    let Value::Boxed(c) = val else {
+                        return None;
+                    };
+                    cell = *c;
+                    at.clear();
+                }
+                UnwindStep::Elems => break,
+            }
+        }
+        Some((cell, at))
+    }
+
+    /// `UnwindKont`: aborts the continuation in the slot if it is fresh. Its
+    /// frames unwind in an inner unwinding above the frame, before the next
+    /// op of the chain (the order of the effects model, `docs/ir.md` 5.1.6).
+    /// The `Clause` mark below the frame then finds the continuation dropped.
+    pub(crate) fn unwind_kont(&mut self, slot: u32) -> R<Flow> {
+        let fr = self.fr()?;
+        let Some(c) = fr.slots.get(slot as usize).copied().flatten() else {
+            return Ok(Flow::Continue);
+        };
+        let Some(Value::Cont(k)) = self.heap.slot(c).ok().map(|s| &s.val) else {
+            return Ok(Flow::Continue);
+        };
+        let k = *k;
+        let Some(rec) = self.conts.get_mut(k) else {
+            return Ok(Flow::Continue);
+        };
+        if !rec.k.drop_now() {
+            return Ok(Flow::Continue);
+        }
+        let frames = std::mem::take(&mut rec.frames);
+        self.inner_unwind(frames, VecDeque::new());
+        Ok(Flow::Continue)
+    }
+
+    /// `UnwindExit`: the frame leaves the unwinding. The scan of its cells
+    /// stays as a check (`docs/ir.md` 8.2): a live linear value in a cell
+    /// that the chain did not end, or in a closure in a cell that it ended,
+    /// is an error of the chain. The oracle reports it; the unwinder
+    /// finishes the value as before. The captures that the first frame of a
+    /// task owns are not in the chain: the unwinder finishes them here.
+    pub(crate) fn unwind_exit(&mut self) -> R<Flow> {
+        let cur = self.cur;
+        let Some(Frame::Code(mut cf)) = self.tasks[cur].frames.pop() else {
+            return Err(self.fault("internal: no frame in unwind mode"));
+        };
+        let chain = cf.chain.take().unwrap_or_default();
+        let owned = std::mem::take(&mut cf.owned);
+        let name = cf.code.name.clone();
+        let mut vals = self.frame_values(cf);
+        for c in chain {
+            if let Ok(s) = self.heap.slot(c) {
                 owning_closures(&s.val, &mut vals);
             }
         }
-        vals
+        let mut found = Vec::new();
+        for v in vals {
+            let rest = self.extract_linear(v, &mut found);
+            self.heap.drop_value(rest);
+        }
+        if !found.is_empty() {
+            if let Some(o) = self.heap.oracle() {
+                o.borrow_mut().left_after_chain(&name);
+            }
+        }
+        let mut vals = Vec::new();
+        self.cell_values(owned, &mut vals);
+        for v in vals {
+            let rest = self.extract_linear(v, &mut found);
+            self.heap.drop_value(rest);
+        }
+        let live = self.abort_found(found)?;
+        self.unwind_top()?.aborts.extend(live);
+        Ok(Flow::Continue)
     }
 
     /// Drops the frames of a continuation that will not run.
@@ -861,6 +1165,10 @@ impl super::Machine<'_, '_> {
                         marks: cf.marks.clone(),
                         loops: cf.loops.clone(),
                         henv: cf.henv.clone(),
+                        chain: cf.chain.as_ref().map(|cs| cs.iter().map(m).collect()),
+                        // The fact oracle does not follow a copied frame
+                        // (group D, stage F16).
+                        uid: 0,
                     })
                 }
                 Frame::Handle(h) => Frame::Handle(HandleMark {
@@ -1021,6 +1329,37 @@ fn remap_conts(v: Value, kmap: &BTreeMap<ContId, ContId>) -> Value {
         }
         other => other,
     }
+}
+
+/// Returns the value at path `at` inside the value `v`: parts of structs,
+/// tuples and payloads of variants.
+fn value_at<'v>(v: &'v Value, at: &[u32]) -> Option<&'v Value> {
+    let mut v = v;
+    for &i in at {
+        let i = i as usize;
+        v = match v {
+            Value::Tuple(vs) | Value::List(vs) => vs.get(i),
+            Value::Struct(o) => o.fields.get(i),
+            Value::Enum(e) => e.fields.get(i),
+            _ => None,
+        }?;
+    }
+    Some(v)
+}
+
+/// Returns the value at path `at` inside the value `v` for writing.
+fn value_mut<'v>(v: &'v mut Value, at: &[u32]) -> Option<&'v mut Value> {
+    let mut v = v;
+    for &i in at {
+        let i = i as usize;
+        v = match v {
+            Value::Tuple(vs) | Value::List(vs) => vs.get_mut(i),
+            Value::Struct(o) => o.fields.get_mut(i),
+            Value::Enum(e) => e.fields.get_mut(i),
+            _ => None,
+        }?;
+    }
+    Some(v)
 }
 
 /// Puts each closure in the copy value `v` that owns cells into `out`. A

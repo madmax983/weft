@@ -1,0 +1,95 @@
+fn f0 take(Vec<u64>) -> usize: b0
+fn f1 main() -> (): b1
+fn f2 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+fn f3 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f4 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+closure c0: body b2, maker b1, cap_env e0, captures [ByMove _1, Kept _4], once
+cap_env e0
+
+body b0: fn take; cap_env e0; unwind_exit bb2
+  _0: usize (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = &_1
+    _0 = call Vec.len<u64>(move _2) / e0 -> [bb1]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: usize (User `n`)
+  _5: fn() -> () (User `f`)
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = const 2usize
+    Live(_5)
+    _5 = closure c0(move _1, copy _4)
+    _0 = call (move _5)() / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_5)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: usize (Temp(Operand))
+  _3: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = call take(move _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _2 = Add<usize>(move _3, copy _1.1)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit

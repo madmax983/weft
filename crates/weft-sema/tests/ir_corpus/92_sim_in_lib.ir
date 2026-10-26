@@ -1,0 +1,87 @@
+fn f0 run_sim() -> (): b0
+fn f1 sim_value() -> (): b2
+fn f2 plain() -> (): b3
+fn f3 run(u64, u64, fn() -> ()) -> () / () [sim.run]: extern
+test t0 "a test may use sim.run": b4
+closure c0: body b1, maker b0, cap_env e0, captures []
+closure c1: body b5, maker b4, cap_env e0, captures []
+cap_env e0
+
+body b0: fn run_sim; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c0()
+    _0 = call run(const 1u64, const 4u64, move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: closure c0; parent b0; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 1i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn sim_value; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn(u64, u64, fn() -> ()) -> () / () (User `r`)
+  bb0:
+    Live(_1)
+    _1 = const run
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn plain; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  bb0:
+    Print(const 2i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: test "a test may use sim.run"; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c1()
+    _0 = call run(const 1u64, const 4u64, move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b5: closure c1; parent b4; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 1i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit

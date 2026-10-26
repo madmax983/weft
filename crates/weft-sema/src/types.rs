@@ -207,6 +207,21 @@ impl Infer {
         last
     }
 
+    /// Replaces bound variables, one level deep, as [`Infer::shallow`] does,
+    /// but it does not change the links and does not count the steps. The
+    /// recorder of the THIR uses it, so that it changes no work count.
+    pub fn peek(&self, t: &Ty) -> Ty {
+        let vars = self.vars.borrow();
+        let mut at = t.clone();
+        while let Ty::Var(v) | Ty::IntVar(v) = at {
+            match vars.get(v as usize) {
+                Some(Some(b)) => at = b.clone(),
+                _ => break,
+            }
+        }
+        at
+    }
+
     /// Replaces bound variables, one level deep.
     pub fn shallow(&self, t: &Ty) -> Ty {
         match t {
@@ -501,6 +516,242 @@ impl<N: AdtNames + ?Sized> fmt::Display for Display<'_, N> {
             Ty::Error => f.write_str("{error}"),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Final types of the IR
+// ---------------------------------------------------------------------------
+
+/// Why a type has no final type of the IR.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IrTyError {
+    /// The type holds `Ty::Error`. A body with such a type gets no IR.
+    ErrorType,
+    /// The stated row of a function type names an effect that the program
+    /// does not have.
+    UnknownEffect(String),
+}
+
+/// Returns the final type of the IR for the settled type `t` (`docs/ir.md`
+/// 2.3), interned in `table`.
+///
+/// The function zonks `t` with `inf`: a bound variable gets its type, a free
+/// integer variable gets `i64`, and a free type variable gets `()`. No value of
+/// a free type variable can exist at run time, so `()` is sound. A function type
+/// loses its closure summary and its function item: the analysis finds the
+/// function values.
+///
+/// # Errors
+///
+/// [`IrTyError::ErrorType`] if `t` holds `Ty::Error`, and
+/// [`IrTyError::UnknownEffect`] if a stated row names an unknown effect.
+pub fn to_ir_ty(
+    prog: &crate::Program,
+    inf: &Infer,
+    table: &mut weft_ir::TyTable,
+    t: &Ty,
+) -> Result<weft_ir::TyId, IrTyError> {
+    final_ty(prog, table, &inf.resolve(t))
+}
+
+/// Returns the IR integer type of `i`.
+pub const fn to_ir_int(i: IntTy) -> weft_ir::IntTy {
+    use weft_ir::IntTy as I;
+    match i {
+        IntTy::I8 => I::I8,
+        IntTy::I16 => I::I16,
+        IntTy::I32 => I::I32,
+        IntTy::I64 => I::I64,
+        IntTy::U8 => I::U8,
+        IntTy::U16 => I::U16,
+        IntTy::U32 => I::U32,
+        IntTy::U64 => I::U64,
+        IntTy::Usize => I::Usize,
+    }
+}
+
+/// Converts an index of a table of the program to a `u32` id of the IR.
+fn ir_index(i: usize) -> u32 {
+    u32::try_from(i).unwrap_or(u32::MAX)
+}
+
+/// Returns the final type of the resolved type `t`.
+pub(crate) fn final_ty(
+    prog: &crate::Program,
+    table: &mut weft_ir::TyTable,
+    t: &Ty,
+) -> Result<weft_ir::TyId, IrTyError> {
+    use weft_ir::ty::{FnTy as IrFn, Ty as T};
+    let list = |table: &mut weft_ir::TyTable, ts: &[Ty]| -> Result<Vec<_>, IrTyError> {
+        ts.iter().map(|x| final_ty(prog, table, x)).collect()
+    };
+    let ir = match t {
+        Ty::Int(i) => T::Int(to_ir_int(*i)),
+        // `Infer::resolve` gives `i64` to a free integer variable.
+        Ty::IntVar(_) => T::Int(weft_ir::IntTy::I64),
+        Ty::Bool => T::Bool,
+        Ty::Unit | Ty::Var(_) => T::Unit,
+        Ty::Never => T::Never,
+        Ty::Tuple(ts) => T::Tuple(list(table, ts)?),
+        Ty::Adt(a, args) => T::Adt(weft_ir::AdtId(ir_index(a.index())), list(table, args)?),
+        Ty::Ref(x) => T::Ref(final_ty(prog, table, x)?),
+        Ty::Slice(x) => T::Slice(final_ty(prog, table, x)?),
+        Ty::Array(x, n) => T::Array(final_ty(prog, table, x)?, *n),
+        Ty::Fn(f) => {
+            let params = list(table, &f.params)?;
+            let ret = final_ty(prog, table, &f.ret)?;
+            let row = match &f.effects {
+                None => None,
+                Some(names) => {
+                    let mut row = Vec::with_capacity(names.len());
+                    for n in names {
+                        let e = crate::effects::by_identity(prog, n)
+                            .ok_or_else(|| IrTyError::UnknownEffect(n.clone()))?;
+                        row.push(weft_ir::EffectId(ir_index(e.index())));
+                    }
+                    row.sort_unstable();
+                    row.dedup();
+                    Some(row)
+                }
+            };
+            T::Fn(IrFn { params, ret, row })
+        }
+        Ty::Param(i) => T::Param(*i),
+        Ty::Scope => T::Scope,
+        Ty::Cont(a, b) => {
+            let a = final_ty(prog, table, a)?;
+            T::Cont(a, final_ty(prog, table, b)?)
+        }
+        Ty::Error => return Err(IrTyError::ErrorType),
+    };
+    Ok(table.intern(ir))
+}
+
+/// Returns the prelude definition of the IR that definition `a` is, if any.
+fn ir_lang(prog: &crate::Program, a: AdtId) -> Option<weft_ir::ty::Lang> {
+    use weft_ir::ty::Lang;
+    if prog.ptr == Some(a) {
+        return Some(Lang::Ptr);
+    }
+    let def = &prog.adts[a];
+    if def.module != crate::program::PRELUDE {
+        return None;
+    }
+    Some(match def.name.as_str() {
+        "Vec" => Lang::Vec,
+        "Box" => Lang::Box,
+        "Rc" => Lang::Rc,
+        "Weak" => Lang::Weak,
+        "String" => Lang::String,
+        "Duration" => Lang::Duration,
+        "Task" => Lang::Task,
+        "Scope" => Lang::Scope,
+        _ => return None,
+    })
+}
+
+/// Returns the type table of the IR for `prog`: the declarations of its type
+/// definitions and effects, with the same indexes, and their types.
+///
+/// The property rows of each definition are the rows of `Program::props`.
+///
+/// # Errors
+///
+/// [`IrTyError`] if a field, a variant or an operation has no final type.
+pub fn ir_ty_table(prog: &crate::Program) -> Result<weft_ir::TyTable, IrTyError> {
+    use crate::program::{AdtKind, Deref};
+    use weft_ir::ty::{
+        AdtDecl, AdtKind as K, EffectDecl, ExternDeref, FieldDecl, OpDecl, PropRow, VariantDecl,
+    };
+    let mut table = weft_ir::TyTable::new();
+    let props = prog.props();
+    for (i, def) in prog.adts.iter().enumerate() {
+        let a = AdtId(i);
+        let kind = match &def.kind {
+            AdtKind::Struct(fs) => K::Struct(
+                fs.iter()
+                    .map(|f| {
+                        Ok(FieldDecl {
+                            name: f.name.clone(),
+                            ty: final_ty(prog, &mut table, &f.ty)?,
+                            place: f.place.is_some(),
+                        })
+                    })
+                    .collect::<Result<_, IrTyError>>()?,
+            ),
+            AdtKind::Enum(vs) => K::Enum(
+                vs.iter()
+                    .map(|v| {
+                        Ok(VariantDecl {
+                            name: v.name.clone(),
+                            fields: v
+                                .fields
+                                .iter()
+                                .map(|x| final_ty(prog, &mut table, x))
+                                .collect::<Result<_, _>>()?,
+                        })
+                    })
+                    .collect::<Result<_, IrTyError>>()?,
+            ),
+            AdtKind::Extern {
+                elem_unstable,
+                deref,
+            } => K::Extern {
+                elem_unstable: *elem_unstable,
+                deref: deref.map(|d| match d {
+                    Deref::Stable => ExternDeref::Stable,
+                    Deref::Unstable => ExternDeref::Unstable,
+                    Deref::Group => ExternDeref::Group,
+                }),
+            },
+        };
+        let mut rows: [PropRow; 8] = Default::default();
+        for p in crate::props::PROPS {
+            if let Some(h) = props.get(a, p) {
+                rows[crate::props::ir_prop(p).index()] = PropRow {
+                    always: h.always,
+                    params: h.params.iter().map(|&j| ir_index(j)).collect(),
+                };
+            }
+        }
+        table.push_adt(AdtDecl {
+            name: def.name.clone(),
+            generics: ir_index(def.generics.len()),
+            kind,
+            lang: ir_lang(prog, a),
+            linear: def.linear,
+            on_abort: def.on_abort.clone(),
+            has_on_abort: def.has_on_abort,
+            immovable: def.immovable,
+            copy: def.copy,
+            nonportable: def.nonportable,
+            props: rows,
+        });
+    }
+    for (i, def) in prog.effects.iter().enumerate() {
+        let ops = def
+            .ops
+            .iter()
+            .map(|o| {
+                Ok(OpDecl {
+                    name: o.name.clone(),
+                    params: o
+                        .params
+                        .iter()
+                        .map(|x| final_ty(prog, &mut table, x))
+                        .collect::<Result<_, _>>()?,
+                    ret: final_ty(prog, &mut table, &o.ret)?,
+                    multi: o.multi,
+                })
+            })
+            .collect::<Result<_, IrTyError>>()?;
+        table.push_effect(EffectDecl {
+            name: def.name.clone(),
+            identity: crate::effects::identity(prog, crate::EffectId(i)),
+            ops,
+        });
+    }
+    Ok(table)
 }
 
 #[cfg(test)]

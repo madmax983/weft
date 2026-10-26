@@ -1,0 +1,11 @@
+// F10 review, hole H-B: a body with no IR and no error for it (th/th16_loopNoneReturn.wf).
+struct Entity { hp: i32 }
+fn f(es: &Vec<Entity>) / mut(es) {
+    let best = None
+    for e in es[] {
+        match best { Some(b) => { es.clear(); print(b.hp) }, None => {} }
+        best = Some(e)
+        break
+    }
+}
+fn main() { let es = Vec.new(); es.push(Entity { hp: 1 }); f(&es) }

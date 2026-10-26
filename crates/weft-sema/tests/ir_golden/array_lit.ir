@@ -1,0 +1,48 @@
+fn f0 one() -> u64: b0
+fn f1 arr(u64) -> B: b1
+cap_env e0
+
+body b0: fn one; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn arr; cap_env e0; unwind_exit bb6
+  _0: B (Return)
+  _1: u64 (Param(0) `x`)
+  _2: [u64; 2] (Temp(Operand))
+  _3: u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = copy _1
+    Live(_4)
+    _4 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _2 = [move _3, move _4]
+    _0 = B { move _2 }
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_4)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit

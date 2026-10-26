@@ -1,0 +1,14 @@
+// `print` (`docs/ir.md` 5.33) reads its operands where they are written. A
+// value that is not plain data is borrowed, not moved.
+
+fn one() -> u64 { 1 }
+
+fn show(v: Vec<u64>, x: u64) {
+    print(v, x, one())
+    print(v)
+}
+
+// A value that is not a place: a temporary, then a borrow of it.
+fn show_value() {
+    print([1, 2])
+}

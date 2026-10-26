@@ -1,0 +1,125 @@
+// A callee can store a reference through a reference that its argument
+// holds: `put` pushes `&v[0]` into `*out[0]`, the referent of the held
+// reference `out[0]`. The caller gives that referent the stored places
+// (docs/ir.md 6.7, "As built (F10.2)"; hole H-C of the second review of
+// stage F10). Then a change of `v` makes a read through the referent
+// invalid. The old pipeline misses the store when the referent is a local
+// (`local_inner`, `option_slot`, `shared`): those markers are those of the
+// `ir` pipeline. When the referent is behind a parameter (`param_inner`,
+// `param_field`), the old pipeline reports `out` at its end and the call in
+// `main`; the `ir` pipeline reports the read, where the oracle faults.
+struct Entity { hp: i32, id: u64 }
+struct H { o: Option<&Entity>, n: u64 }
+struct HB { rs: Vec<&Entity>, n: u64 }
+
+fn ent(id: u64) -> Entity { Entity { hp: 1, id: id } }
+fn put(v: &Vec<Entity>, out: &Vec<&Vec<&Entity>>) / mut(out..) { out[0].push(&v[0]) }
+fn put_o(v: &Vec<Entity>, out: &Vec<&H>) / mut(out..) { out[0].o = Some(&v[0]) }
+fn top_only(out: &Vec<&Vec<&Entity>>) / mut(out) { out.clear() }
+
+fn local_inner() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    put(&v, &out)
+    v.clear()
+    print(inner[0].hp)   //~ ir: W0301
+}
+
+fn param_inner(v: &Vec<Entity>, inner: &Vec<&Entity>) / mut(v.., inner..) {
+    let out = Vec.new()
+    out.push(inner)
+    put(v, &out)
+    v.clear()   //~ old: W0301
+    print(inner[0].hp)   //~ ir: W0301
+}
+
+fn param_field(v: &Vec<Entity>, h: &HB) / mut(v.., h..) {
+    let out = Vec.new()
+    out.push(&h.rs)
+    put(v, &out)
+    v.clear()   //~ old: W0301
+    print(h.rs[0].hp)   //~ ir: W0301
+}
+
+// The callee sets an `Option` field through the held reference. `w` is
+// held too, but its type cannot hold a reference: it stays valid.
+fn option_slot() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let w = ent(2)
+    let h = H { o: None, n: 0 }
+    let h2 = H { o: Some(&w), n: 1 }
+    let out = Vec.new()
+    out.push(&h)
+    out.push(&h2)
+    put_o(&v, &out)
+    v.clear()
+    print(w.hp)
+    match h.o {
+        Some(r) => print(r.hp),   //~ ir: W0301
+        None => {},
+    }
+}
+
+// Two containers hold `&inner`: the read goes through the other one.
+fn shared() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let inner = Vec.new()
+    let a = Vec.new()
+    let b = Vec.new()
+    a.push(&inner)
+    b.push(&inner)
+    put(&v, &a)
+    v.clear()
+    print(b[0][0].hp)   //~ ir: W0301
+}
+
+// Controls: no change of `v` after the store; a callee that changes only
+// the top of the argument (`mut(out)`) does not store through it. The old
+// pipeline rejects `param_no_change`: `out` points into `*inner..`, and
+// `put` changes `*inner..` (the oracle runs it clean).
+fn no_change() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    put(&v, &out)
+    print(inner[0].hp)
+}
+
+fn param_no_change(v: &Vec<Entity>, inner: &Vec<&Entity>) / mut(inner..) {
+    let out = Vec.new()
+    out.push(inner)
+    put(v, &out)
+    print(inner[0].hp)   //~ old: W0301
+}
+
+fn top_changes() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let w = Vec.new()
+    w.push(ent(2))
+    let inner = Vec.new()
+    inner.push(&w[0])
+    let out = Vec.new()
+    out.push(&inner)
+    top_only(&out)
+    v.clear()
+    print(inner[0].hp)
+}
+
+// `main` runs the controls (a call of `local_inner` reads a freed cell on
+// both engines).
+fn main() {
+    no_change()
+    top_changes()
+    let v = Vec.new()
+    v.push(ent(1))
+    let inner = Vec.new()
+    param_no_change(&v, &inner)
+}

@@ -1,0 +1,30 @@
+// A block tail moves into its destination before the block locals end
+// (`docs/ir.md` 5.11).
+
+fn inner(a: Vec<u64>) -> Vec<u64> {
+    let s = {
+        let t = a
+        t
+    }
+    s
+}
+
+fn operand(a: u64) -> u64 {
+    1 + {
+        let k = a
+        k
+    }
+}
+
+fn stmt_block(a: u64) {
+    {
+        let k = a
+        k
+    }
+    a
+}
+
+fn ret(a: u64) -> u64 {
+    let b = a
+    return b
+}

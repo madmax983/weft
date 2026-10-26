@@ -1,0 +1,25 @@
+// ADR 0003, docs/ir.md 5.1.3: the tail of the branch of an `if` with no
+// `else` and of a loop body moves into a `Discarded` temporary, and its
+// `Dead` drops it. A tail of plain data and a place statement are a
+// `Mention`.
+fn mk() -> Vec<u64> { Vec.new() }
+fn if_tail(c: bool) {
+    let v = mk()
+    if c { v }
+    print(1)
+}
+fn loop_tail(c: bool) {
+    let v = mk()
+    while c { v }
+}
+fn plain_tail(c: bool) {
+    let n = 1
+    if c { n }
+}
+fn place_stmt(c: bool) {
+    let v = mk()
+    if c {
+        v
+        print(2)
+    }
+}

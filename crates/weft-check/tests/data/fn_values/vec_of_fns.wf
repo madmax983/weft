@@ -1,0 +1,66 @@
+// A `Vec<fn()>` that goes into another `Vec`, an `Option` or a field is no
+// linear value when no linear closure went into it (review of the ABC
+// preview, false positive FP1: `fp/fp01`..`fp07`). A push of a value that is
+// not linear does not make the vector linear.
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct S { fs: Vec<fn()> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn hi() { print(1) }
+fn vec_in_vec() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(|| w.entities.clear())
+    let ffs = Vec.new()
+    ffs.push(fs)
+    let g = ffs[0][0]
+    g()
+    print(w.entities.len())
+}
+fn plain_in_vec() {
+    let fs = Vec.new()
+    fs.push(|| print(1))
+    let ffs = Vec.new()
+    ffs.push(fs)
+    let g = ffs[0][0]
+    g()
+}
+fn vec_in_option() {
+    let fs = Vec.new()
+    fs.push(|| print(1))
+    let o = Some(fs)
+    match o { Some(v) => { let g = v[0]; g() }, None => {} }
+}
+fn vec_in_field() {
+    let fs = Vec.new()
+    fs.push(|| print(1))
+    let s = S { fs: fs }
+    let g = s.fs[0]
+    g()
+}
+fn item_in_vec() {
+    let fs = Vec.new()
+    fs.push(hi)
+    let ffs = Vec.new()
+    ffs.push(fs)
+    let g = ffs[0][0]
+    g()
+}
+// A linear closure in the inner vector makes the outer vector linear.
+fn linear_in_vec() {
+    let t = begin()
+    let fs = Vec.new()
+    fs.push(|| rollback(t))
+    let ffs = Vec.new()
+    ffs.push(fs)
+}   //~ W0601
+fn main() {
+    vec_in_vec()
+    plain_in_vec()
+    vec_in_option()
+    vec_in_field()
+    item_in_vec()
+}

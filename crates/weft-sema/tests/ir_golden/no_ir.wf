@@ -1,0 +1,36 @@
+// Bodies with no IR (`docs/ir.md` 5.36, plan stage B12). A move of a value
+// that is not plain data through a reference is W0303 of the old lowering:
+// the body gets no IR (`steal`, also in a closure: `steal_in_closure`). A
+// payload of a variant with two fields is not a place (`pair`). An assignment
+// to a value (W0112) and a constructor as a value (W0101) are type errors.
+
+struct S { v: Vec<u64> }
+enum E { A(u64, u64), B(u64) }
+
+fn steal(r: &S) -> Vec<u64> { r.v }
+
+fn steal_in_closure(r: &S) -> u64 {
+    let f = || { let x = r.v; x[0] }
+    f()
+}
+
+fn pair(e: E) -> u64 {
+    let p = e.A
+    p.0
+}
+
+fn one() -> u64 { 1 }
+
+fn not_a_place() {
+    one() = 2
+}
+
+fn ctor() -> Option<u64> {
+    let s = Some
+    s(1)
+}
+
+fn main() {
+    let e = E.B(1)
+    print(e.B)
+}

@@ -20,6 +20,7 @@ use weft_verified::lifecycle::{Continuation, Linear};
 use crate::code::Code;
 use crate::error::{ErrorKind, RuntimeError};
 use crate::heap::{Heap, SlotKind};
+use crate::oracle::facts::{FactOracle, FactReport, IrStep};
 use crate::rng::Rng;
 use crate::runtime::Runtime;
 use crate::trace::{SuspendReason, TaskEnd, TraceEvent};
@@ -54,6 +55,12 @@ pub struct CodeFrame {
     pub loops: Vec<(usize, usize)>,
     /// The lexical handlers.
     pub henv: HEnv,
+    /// In unwind mode (`docs/ir.md` 8.2): the cells that the frame had when
+    /// its cleanup chain started. `None` on a normal path.
+    pub chain: Option<Vec<CellId>>,
+    /// With `--ir-trace` or the fact oracle: the number of the frame in
+    /// the run (from 1). 0 for a frame that nothing follows.
+    pub uid: u64,
 }
 
 /// One clause of a handler mark: operation, code and captured cells.
@@ -358,6 +365,17 @@ pub struct Machine<'r, 'a> {
     quantum_used: u64,
     pub(crate) listeners: Vec<String>,
     http: Option<http::HttpState>,
+    /// The fact oracle (`crate::oracle::facts`), if it is on and the IR
+    /// engine runs the program.
+    pub(crate) facts: Option<Box<FactOracle>>,
+    /// What the fact oracle saw, when it is on but checks nothing.
+    fact_skip: Option<String>,
+    /// With `--ir-trace`: the steps of the IR trace.
+    pub(crate) ir_trace: Vec<IrStep>,
+    /// With `--ir-trace`: the last IR location of each frame.
+    pub(crate) trace_at: std::collections::HashMap<u64, (u32, u32, u32)>,
+    /// The number of the last frame that the run numbered.
+    next_uid: u64,
 }
 
 const RAND_SALT: u64 = 0x5EED_F00D_7A4D_C0DE;
@@ -370,6 +388,20 @@ impl<'r, 'a> Machine<'r, 'a> {
         if opts.oracle {
             heap.enable_oracle();
         }
+        let (facts, fact_skip) = match (&rt.facts, opts.fact_oracle) {
+            (Some(input), true) => {
+                heap.enable_facts_log();
+                (
+                    Some(Box::new(FactOracle::new(
+                        Rc::clone(input),
+                        &rt.compiled.codes,
+                    ))),
+                    None,
+                )
+            }
+            (None, true) => (None, Some("the AST compiler runs the program".to_string())),
+            _ => (None, None),
+        };
         Self {
             rt,
             opts: opts.clone(),
@@ -396,6 +428,11 @@ impl<'r, 'a> Machine<'r, 'a> {
             quantum_used: 0,
             listeners: Vec::new(),
             http: None,
+            facts,
+            fact_skip,
+            ir_trace: Vec::new(),
+            trace_at: std::collections::HashMap::new(),
+            next_uid: 0,
         }
     }
 
@@ -414,6 +451,17 @@ impl<'r, 'a> Machine<'r, 'a> {
             trace: self.trace.clone(),
             leaked_rc: self.heap.leaked_rc(),
             blocking_calls: self.blocking_calls,
+            fallback: None,
+            ir_trace: self.ir_trace.clone(),
+            fact_oracle: self.opts.fact_oracle.then(|| {
+                self.facts.as_ref().map_or_else(
+                    || FactReport {
+                        skipped: self.fact_skip.clone(),
+                        ..FactReport::default()
+                    },
+                    |f| f.report.clone(),
+                )
+            }),
         }
     }
 
@@ -485,6 +533,18 @@ impl<'r, 'a> Machine<'r, 'a> {
         for (i, a) in args.into_iter().enumerate() {
             slots[i] = Some(self.heap.alloc(SlotKind::Local, a));
         }
+        let follow = self.facts.as_ref().is_some_and(|f| f.follows(&code));
+        let uid = if follow || (self.opts.ir_trace && !code.locs.is_empty()) {
+            self.next_uid += 1;
+            self.next_uid
+        } else {
+            0
+        };
+        if follow {
+            if let Some(f) = self.facts.as_mut() {
+                f.enter(uid, &code, &slots, &caps, &self.heap);
+            }
+        }
         Ok(CodeFrame {
             code,
             pc: 0,
@@ -496,6 +556,8 @@ impl<'r, 'a> Machine<'r, 'a> {
             marks: Vec::new(),
             loops: Vec::new(),
             henv,
+            chain: None,
+            uid,
         })
     }
 

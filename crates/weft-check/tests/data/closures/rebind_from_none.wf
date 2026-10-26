@@ -1,0 +1,23 @@
+// A closure that gives a `Kept` linear capture a new value on each path,
+// called when the capture holds no linear value (`None`): the new value at
+// the call is no overwrite (preview of stage F11, tier 2 e6b_closure3.wf).
+// The W0601 of the old value in the closure body is the precision of the
+// seed (the states of the maker after the call join in); the old pipeline
+// reports it too.
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+fn consumed() {
+    let o = None
+    let set = || { o = Some(lock()) }   //~ W0601
+    set()
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn dropped() {
+    let o = None
+    let set = || { o = Some(lock()) }   //~ W0601
+    set()
+}   //~ W0601
+fn main() {
+    consumed()
+}

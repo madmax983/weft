@@ -1,0 +1,9 @@
+// A function with no body can run a function argument on another thread
+// (ADR 0006): a closure that changes a place or holds a nonportable value
+// stays with the old pipeline until the facts of tasks (stage F18).
+extern fn ext(f: fn())
+fn write_to_foreign() {
+    let n = 0
+    ext(|| n += 1)
+    print(n)
+}

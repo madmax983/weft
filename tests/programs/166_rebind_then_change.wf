@@ -1,0 +1,46 @@
+// A closure can give a captured reference a new value and then change what
+// the new value points into. A call of the closure gives the capture its new
+// value, and the changes that come after the rebind in the body come after
+// it at the call too: a read of the reference after the call is W0301.
+struct W { items: Vec<u64> }
+
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn grow(w: &W) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+
+fn rebind_then_push() {
+    let v = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; v.push(3) }
+    h()
+    print(r)   //~ W0301
+}
+
+fn rebind_then_clear_on_a_path(c: bool) {
+    let v = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; if c { v.clear() } }
+    h()
+    print(r)   //~ W0301
+}
+
+fn rebind_by_a_call_then_grow(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { r = grow(w); grow(w) }
+    h()
+    print(r)   //~ W0301
+}
+
+// The change after the rebind is of another place: the new value stays
+// valid.
+fn rebind_then_change_another() {
+    let v = mk_v()
+    let u = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; u.clear() }
+    h()
+    print(r)
+}
+
+fn main() {
+    rebind_then_change_another()
+}

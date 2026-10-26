@@ -1,0 +1,34 @@
+// The tail of a loop body is a statement of its own (`docs/ir.md` 5.1.2,
+// 5.1.3, decision N5): its temporaries end at the end of each iteration,
+// before the back edge.
+
+// A tail with a value: a discarded temporary.
+fn tail_value(n: u64) -> u64 {
+    let i = 0
+    while i < n {
+        i += 1
+        i * 2
+    }
+    i
+}
+
+// A block tail: its local ends inside it.
+fn tail_block(n: u64) -> u64 {
+    let i = 0
+    loop {
+        i += 1
+        if i > n { break }
+        { let d = i + 1; d * 2 }
+    }
+    i
+}
+
+// A place tail is a mention.
+fn tail_place(v: Vec<u64>) -> u64 {
+    let s = 0
+    for x in v[] {
+        s += x
+        s
+    }
+    s
+}

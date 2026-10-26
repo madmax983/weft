@@ -1,0 +1,89 @@
+// Lost faults of the preview of stage F12 (the groups A, B and C on tier 1),
+// one function for each class; each one faults on the IR engine.
+struct Buf { items: Vec<u64> }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn twice(f: fn()) { f(); f() }
+// A callee runs a `once` closure twice (`verify/s5/p/or3d.wf`).
+fn once_twice() {
+    let b = Buf { items: Vec.new() }
+    twice(|| eat(b))   //~ W0502
+}
+// A callee that runs two values can run them in each order
+// (`r2/oracle/probes/e1_run_both.wf`).
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn order() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = || v.clear()
+    let g = || print(r + 1)
+    run_both(f, g)   //~ W0301 W0312
+}
+// A callee changes a place and then runs the value, which reads a reference
+// into it (`tests/programs/38_callbacks.wf`, `clear_then`).
+fn clear_then(f: fn(), w: &World) / mut(w.entities) {
+    w.entities.clear()
+    f()
+}
+fn late(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    clear_then(|| print(r.hp), world)   //~ W0301 W0312
+}
+// A closure that a closure gives back holds the references of its maker
+// (`r2/oracle/probes/a7_closure_returning_closure.wf`).
+fn closure_gives_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let mk = |r: &u64| || print(r + 1)
+    let f = mk(&v[0])
+    v.clear()
+    f()   //~ W0301
+}
+// A linear closure in a field of a struct is a linear value
+// (`r3/oracle/probes/se1_field_lin_never.wf`).
+struct H { f: fn() }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print(id) }
+fn linear_field() {
+    let l = Lk { id: 1 }
+    let h = H { f: || unlock(l) }
+    print(0)
+}   //~ W0601
+// A callee runs the result of its argument (`tests/programs/44_returned_fns.wf`).
+fn ap(f: fn() -> fn()) {
+    let g = f()
+    g()
+}
+fn result_of_arg(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    ap(|| || world.entities.clear())
+    print(first.hp)   //~ W0301
+}
+// W0705: a function argument stays inside the row of its parameter type.
+fn with_log(f: fn() / log) { f() }
+fn not_allowed() / clock, log {
+    with_log(|| sleep(1.s))   //~ W0705
+}
+// Controls: one run of a `once` closure, a callee that runs a value once
+// through a closure, and a reference into a stable field.
+fn run_once(f: fn()) { f() }
+fn once_once() {
+    let b = Buf { items: Vec.new() }
+    run_once(|| eat(b))
+}
+fn with_cb(f: fn()) {
+    let g = || f()
+    g()
+}
+fn once_through_closure() {
+    let b = Buf { items: Vec.new() }
+    with_cb(|| eat(b))
+}
+struct S { n: u64, v: Vec<u64> }
+fn keeps(f: fn(&S), s: &S) {
+    let n = &s.n
+    f(s)
+    print(n)
+}

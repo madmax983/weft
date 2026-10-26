@@ -12,6 +12,8 @@ use super::{
     FnTy, ItemRef, Lower, NodeId, PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, VarId,
     VarKind,
 };
+use crate::thir::record::{RawCallee, RawRes};
+use crate::thir::{Builtin, Recv, RecvMode};
 
 /// One evaluated argument.
 struct ArgVal {
@@ -166,22 +168,36 @@ impl Lower<'_> {
     ) -> Val {
         if let ExprKind::Name(id) = &callee.kind {
             if let Some(l) = self.lookup_local(&id.name) {
+                self.rec_callee_local(callee, l, args, trailing);
                 if self.locals[l].cont.is_some() {
                     return self.resume(l, args, span);
                 }
                 return self.call_value(l, args, trailing, span);
             }
             match id.name.as_str() {
-                "print" => return self.print(args, span),
-                "fork" => return self.fork(args, trailing, span),
+                "print" => {
+                    self.rec_builtin(callee, Builtin::Print, args, None);
+                    return self.print(args, span);
+                }
+                "fork" => {
+                    self.rec_builtin(callee, Builtin::Fork, args, trailing);
+                    return self.fork(args, trailing, span);
+                }
                 _ => {}
             }
             match self.prog.lookup(self.module, &id.name) {
-                Some(ItemRef::Fn(f)) => return self.call_fn(f, None, args, trailing, span),
-                Some(ItemRef::Adt(a)) => return self.positional_struct(a, args, trailing, span),
+                Some(ItemRef::Fn(f)) => {
+                    self.rec.callee_name = Some(callee.id);
+                    return self.call_fn(f, None, args, trailing, span);
+                }
+                Some(ItemRef::Adt(a)) => {
+                    self.rec.res(callee.id, RawRes::Struct(a));
+                    return self.positional_struct(a, args, trailing, span);
+                }
                 _ => {}
             }
             if let Some(&(adt, vi)) = self.prog.variants.get(&id.name).and_then(|v| v.first()) {
+                self.rec.res(callee.id, RawRes::Variant(adt, vi));
                 return self.variant_ctor(adt, vi, args, trailing, span);
             }
             let ops = self.prog.ops_named(self.module, &id.name);
@@ -189,6 +205,8 @@ impl Lower<'_> {
                 if ops.len() > 1 {
                     self.ambiguous_op(&id.name, &ops, id.span);
                 }
+                self.rec.res(callee.id, RawRes::Op(e, op));
+                self.rec.effect(callee.id, e);
                 return self.perform_op(e, op, args, trailing, span);
             }
             self.err(
@@ -210,6 +228,47 @@ impl Lower<'_> {
         Val {
             ty: Ty::Error,
             ..Val::default()
+        }
+    }
+
+    /// Records the call of the function value or the continuation in local
+    /// `l`, named by `callee`.
+    fn rec_callee_local(&mut self, callee: &Expr, l: usize, args: &[Arg], trailing: Option<&Expr>) {
+        self.rec_local(callee, l, false);
+        let var = self.locals[l].var;
+        if self.locals[l].cont.is_some() {
+            // `resume` takes no trailing block.
+            self.rec.callee(RawCallee::Resume(var), args.len(), false);
+        } else {
+            self.rec_call(RawCallee::Value(var), args, trailing);
+        }
+    }
+
+    /// Records the call of built-in `b`, named by `callee`.
+    fn rec_builtin(&mut self, callee: &Expr, b: Builtin, args: &[Arg], trailing: Option<&Expr>) {
+        self.rec.res(callee.id, RawRes::Builtin(b));
+        self.rec_call(RawCallee::Builtin(b), args, trailing);
+    }
+
+    /// Records the callee of the call that the lowering is in, with its
+    /// arguments in their written order.
+    fn rec_call(&mut self, c: RawCallee, args: &[Arg], trailing: Option<&Expr>) {
+        self.rec.callee(c, args.len(), trailing.is_some());
+    }
+
+    /// Records how a method call gives its receiver of type `ty` to `self`.
+    /// The receiver expression ([`crate::thir::record::Recorder::recv_expr`])
+    /// gets its dereferences: the dereference of its place, and for `Deref`
+    /// the references that the call follows.
+    fn rec_recv(&mut self, mode: RecvMode, ty: &Ty) {
+        let derefs = self.ref_depth(ty);
+        self.rec.recv(Recv {
+            mode,
+            derefs: u32::try_from(derefs).unwrap_or(u32::MAX),
+        });
+        if let Some(e) = self.rec.recv_expr.take() {
+            let more = if mode == RecvMode::Deref { derefs } else { 0 };
+            self.rec_adjust(e, more);
         }
     }
 
@@ -244,6 +303,7 @@ impl Lower<'_> {
         // The receiver chain of a long method chain recurses through here, so the
         // rare paths are in functions of their own: this frame stays small.
         if let Some(pr) = self.path_ref(recv) {
+            self.rec_path(recv);
             return self.method_on_path(pr, method, args, trailing, span);
         }
         // A method on a value.
@@ -273,11 +333,23 @@ impl Lower<'_> {
             }
             None => self.expr(recv),
         };
+        self.rec.recv_expr = Some(recv.id);
         let rty = self.deref_ty(&rv.ty);
         let rty = self.inf.resolve(&rty);
         match (&rty, method.name.as_str()) {
-            (Ty::Scope, "spawn") => return self.spawn(&rv, args, trailing, span),
+            (Ty::Scope, "spawn") => {
+                self.rec_call(RawCallee::Builtin(Builtin::Spawn), args, trailing);
+                self.rec_recv(RecvMode::Value, &rv.ty);
+                return self.spawn(&rv, args, trailing, span);
+            }
             (Ty::Adt(a, _), "join" | "detach") if Some(*a) == self.b.task => {
+                let b = if method.name == "join" {
+                    Builtin::Join
+                } else {
+                    Builtin::Detach
+                };
+                self.rec_call(RawCallee::Builtin(b), args, trailing);
+                self.rec_recv(RecvMode::Value, &rv.ty);
                 self.no_task_args(&method.name, args, trailing, span);
                 return self.join(&rv, method.name == "join", span);
             }
@@ -578,7 +650,15 @@ impl Lower<'_> {
             names: call.sig.params.iter().map(|p| p.name.as_str()).collect(),
             first,
         };
+        // A call through a local is a call of the value (`rec_callee_local`).
+        if call.inst.is_none() {
+            self.rec_call(RawCallee::Item(call.f, call.targs.clone()), args, trailing);
+            if let Some(c) = self.rec.callee_name.take() {
+                self.rec.res(c, RawRes::Fn(call.f, call.targs.clone()));
+            }
+        }
         let order = self.order_args(&names, args, trailing, span);
+        self.rec.args(order.get(first..).unwrap_or_default());
         // The interpreter does not know the callee of a method of a value or of
         // an item in a local when it compiles the call: it uses this order.
         if (first == 1 || call.inst.is_some()) && args.iter().any(|a| a.name.is_some()) {
@@ -621,7 +701,7 @@ impl Lower<'_> {
                 };
                 let v = match (&e.kind, expected) {
                     (ExprKind::Closure { params, body }, Some(fty)) => {
-                        self.closure(params, body, Some(&fty), e.span)
+                        self.closure(e, params, body, Some(&fty))
                     }
                     _ => self.expr(e),
                 };
@@ -642,6 +722,7 @@ impl Lower<'_> {
             let is_ref_param = matches!(self.inf.shallow(&pt), Ty::Ref(_));
             let arg_is_ref = matches!(self.inf.shallow(&av.val.ty), Ty::Ref(_));
             if is_ref_param && !arg_is_ref && i == 0 && first == 1 {
+                self.rec_recv(RecvMode::Borrow, &av.val.ty);
                 // `x.m()` borrows `x` when `m` takes `self` by reference.
                 let places = if let Some(lv) = av.val.place.as_ref() {
                     // The callee can read a place field: it needs a value (W0304).
@@ -679,6 +760,7 @@ impl Lower<'_> {
                 continue;
             }
             if i == 0 && first == 1 && arg_is_ref && !is_ref_param {
+                self.rec_recv(RecvMode::Deref, &av.val.ty);
                 // A method that takes `self` by value through a reference.
                 let inner = self.deref_ty(&av.val.ty);
                 self.unify(&pt, &inner, av.span);
@@ -686,7 +768,18 @@ impl Lower<'_> {
                 vals.push(av);
                 continue;
             }
-            self.unify_arg(&pt, &mut av.val, av.span);
+            if i == 0 && first == 1 {
+                let mode = if is_ref_param {
+                    RecvMode::Ref
+                } else {
+                    RecvMode::Value
+                };
+                self.rec_recv(mode, &av.val.ty);
+            }
+            let through = self.unify_arg(&pt, &mut av.val, av.span);
+            if let Some(x) = slots[i] {
+                self.rec_adjust(x.id, usize::from(through));
+            }
             if is_ref_param || arg_is_ref {
                 // A reference argument stays valid until the call: hold it in a variable.
                 arg_places.push(av.val.refs.clone());
@@ -1737,7 +1830,8 @@ impl Lower<'_> {
 
     /// Unifies an argument with a parameter type. A reference to a copy value
     /// passes as the value: the call reads through the reference.
-    fn unify_arg(&mut self, pt: &Ty, v: &mut Val, span: Span) {
+    /// Returns true if the argument passes through its reference.
+    fn unify_arg(&mut self, pt: &Ty, v: &mut Val, span: Span) -> bool {
         let p = self.inf.shallow(pt);
         if let (false, Ty::Ref(inner)) = (
             matches!(p, Ty::Ref(_) | Ty::Var(_)),
@@ -1750,10 +1844,11 @@ impl Lower<'_> {
                 self.unify(pt, &inner, span);
                 v.ty = (*inner).clone();
                 v.refs = Vec::new();
-                return;
+                return true;
             }
         }
         self.unify(pt, &v.ty, span);
+        false
     }
 
     /// A function argument of a parameter with a declared effect row must stay
@@ -1949,12 +2044,13 @@ impl Lower<'_> {
             let later = i + 1 < exprs.len();
             let mut v = match (&a.kind, fty.params.get(i).map(|t| self.inf.shallow(t))) {
                 (ExprKind::Closure { params, body }, Some(Ty::Fn(f))) => {
-                    self.closure(params, body, Some(&f), a.span)
+                    self.closure(a, params, body, Some(&f))
                 }
                 _ => self.expr(a),
             };
             if let Some(pt) = fty.params.get(i) {
-                self.unify_arg(pt, &mut v, a.span);
+                let through = self.unify_arg(pt, &mut v, a.span);
+                self.rec_adjust(a.id, usize::from(through));
             }
             arg_tys.push(v.ty.clone());
             if !matches!(self.inf.shallow(&v.ty), Ty::Fn(_))
@@ -2461,6 +2557,7 @@ impl Lower<'_> {
             .iter()
             .map(|_| self.inf.fresh())
             .collect();
+        self.rec_call(RawCallee::Struct(a, targs.clone()), args, trailing);
         // A named argument gives the field with its name (ADR 0009).
         let names = super::args::ParamNames {
             what: format!("`{}`", self.prog.adts[a].name),
@@ -2469,6 +2566,7 @@ impl Lower<'_> {
             first: 0,
         };
         let order = self.order_args(&names, args, trailing, span);
+        self.rec.args(&order);
         let given: Vec<(usize, &Expr)> = super::args::slot_exprs(&order, args, trailing)
             .into_iter()
             .enumerate()
@@ -2521,6 +2619,7 @@ impl Lower<'_> {
             .iter()
             .map(|_| self.inf.fresh())
             .collect();
+        self.rec_call(RawCallee::Variant(adt, vi, targs.clone()), args, trailing);
         let fields = &vs[vi].fields;
         // A variant has no field names: its arguments bind by position.
         self.no_names(&format!("variant `{}`", vs[vi].name), args);
@@ -2571,6 +2670,7 @@ impl Lower<'_> {
         let prog = self.prog;
         let o = &prog.effects[e].ops[op];
         let ident = effects::identity(self.prog, e);
+        self.rec_call(RawCallee::Op(e, op), args, trailing);
         let slots = self.op_slots(o, args, trailing, span);
         let a = self.eval_op_args(o, &slots, &ident);
         self.pend_uses.extend(a.held.iter().copied());
@@ -2618,7 +2718,7 @@ impl Lower<'_> {
             let later = slots[i + 1..].iter().any(Option::is_some);
             let v = match (&x.kind, self.inf.shallow(pt)) {
                 (ExprKind::Closure { params, body }, Ty::Fn(f)) => {
-                    self.closure(params, body, Some(&f), x.span)
+                    self.closure(x, params, body, Some(&f))
                 }
                 _ => self.expr(x),
             };
@@ -2819,6 +2919,7 @@ impl Lower<'_> {
             first: 0,
         };
         let order = self.order_args(&names, args, trailing, span);
+        self.rec.args(&order);
         super::args::slot_exprs(&order, args, trailing)
     }
 
@@ -2836,7 +2937,7 @@ impl Lower<'_> {
                     summary: None,
                     item: None,
                 };
-                self.closure(params, body, Some(&fty), e.span)
+                self.closure(e, params, body, Some(&fty))
             }
             _ => self.expr(e),
         }
@@ -3311,7 +3412,7 @@ impl Lower<'_> {
     }
 
     /// `sim.run(seed: N) { body }`: the simulation handles every standard effect.
-    fn sim_run(&mut self, _f: FnId, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
+    fn sim_run(&mut self, f: FnId, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
         // A library cannot install the root handlers (W0802, `sim_in_lib`).
         self.note_sim_run(span);
         // `seed` and `workers`, by name or in this order. The number of
@@ -3319,8 +3420,11 @@ impl Lower<'_> {
         let names = ["seed", "workers"];
         let mut given = [false; 2];
         let mut pos = 0;
-        for a in args {
+        self.rec_call(RawCallee::Item(f, Vec::new()), args, trailing);
+        let mut order: [Option<usize>; 3] = [None, None, trailing.map(|_| args.len())];
+        for (k, a) in args.iter().enumerate() {
             let v = self.expr(&a.value);
+            self.rec_peel(a.value.id, &v.ty);
             let t = self.deref_ty(&v.ty);
             self.unify(&Ty::Int(super::IntTy::U64), &t, a.value.span);
             let idx = if let Some(n) = &a.name {
@@ -3332,7 +3436,10 @@ impl Lower<'_> {
                 (pos < names.len()).then_some(pos)
             };
             match idx {
-                Some(i) if !given[i] => given[i] = true,
+                Some(i) if !given[i] => {
+                    given[i] = true;
+                    order[i] = Some(k);
+                }
                 Some(i) => {
                     let msg = format!("argument `{}` is given twice", names[i]);
                     self.err(Code::W0103, msg, a.value.span);
@@ -3350,6 +3457,7 @@ impl Lower<'_> {
                 },
             }
         }
+        self.rec.args(&order);
         if !given[0] {
             self.err(Code::W0103, "`sim.run` needs a `seed`", span);
         }

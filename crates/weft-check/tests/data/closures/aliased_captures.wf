@@ -1,0 +1,27 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+// The closure changes `v` through one capture and reads it through another.
+fn aliased() {
+    let v = mk_v()
+    let a = &v
+    let f = || {
+        let r = &a[0]
+        v.push(2)
+        print(r)   //~ W0301
+    }
+    f()
+}
+fn apart() {
+    let v = mk_v()
+    let w = mk_v()
+    let a = &w
+    let f = || {
+        let r = &a[0]
+        v.push(2)
+        print(r)
+    }
+    f()
+}
+fn main() {
+    aliased()
+    apart()
+}

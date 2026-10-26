@@ -1,0 +1,9 @@
+// Third review of stage F8, hole R1 (f8/variants3/z01_assignVariantField.wf, header trimmed).
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+fn main() { let e = Two.A(Entity { hp: 1 }); e.A.hp = { e = Two.B(Other { b: 1000 }); 5 }; match e { Two.B(o) => print(o.b), Two.A(x) => print(x.hp) } }

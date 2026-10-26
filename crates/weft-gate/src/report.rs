@@ -6,9 +6,10 @@
 //! a [`Report`]: one [`Row`] for each program, the blockers, and the warnings.
 //! [`Report::to_markdown`] gives the text of `target/gate/report.md`.
 //!
-//! Before stage F1 the `ir` pipeline does not exist. Then no program is in
-//! scope (§2.6), and the `ir` record of each program is its `old` record: the
-//! snapshot runs once. Each program is `same` or `open`.
+//! From stage F1 on, one analysis of each program gives both records
+//! (`--facts=both`, `crate::snapshot::check_both`). A program out of scope
+//! (§2.6) gets its `old` record as its `ir` record. The report gives the
+//! coverage: the share of the programs of each set in scope.
 //!
 //! From stage G6 on, the report also compares the old records with the
 //! baseline of the tier ([`Report::compare_baseline`], `crate::baseline`), and
@@ -30,6 +31,10 @@ use crate::Error;
 /// The sets of tier 1 in which a `new-fp` program blocks, also with a ledger
 /// entry: the corpus, the interpreter programs, the examples and the packages.
 pub const STRICT_SETS: [&str; 4] = ["corpus", "interp", "examples", "packages"];
+
+/// The engine whose oracle verdicts classify the programs: the engine of the
+/// `ir` pipeline. From stage I5 on it is the IR engine (`tests/gate/oracle-ir.tsv`).
+pub const ORACLE_ENGINE: Engine = Engine::Ir;
 
 /// The construct groups of §2.6.
 pub const GROUPS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -118,7 +123,7 @@ pub struct Row {
 pub struct Report {
     /// Lines for the head of the report (the tier, the interpreter hash).
     pub notes: Vec<String>,
-    /// The groups that are on (§2.6). Empty before stage F1.
+    /// The groups that are on (§2.6). Empty while no group is on.
     pub groups_on: String,
     /// One row for each program, in the order of the manifest.
     pub rows: Vec<Row>,
@@ -137,6 +142,9 @@ pub struct Report {
     pub baseline: Option<Comparison>,
     /// The baseline file of the comparison.
     pub baseline_file: String,
+    /// The construct groups that each program uses (§2.6), in the order of
+    /// the rows. Empty if the run did not compute them.
+    pub used: Vec<weft_sema::Groups>,
 }
 
 /// The diagnostics of a record as a short text.
@@ -205,7 +213,7 @@ impl Report {
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| e.matches(&input.paths))
+                .filter(|(_, e)| e.class.program_class().is_some() && e.matches(&input.paths))
                 .map(|(k, _)| k)
                 .collect();
             for &k in &candidates {
@@ -230,6 +238,11 @@ impl Report {
         }
         report.new_fp_share();
         for (k, e) in ledger.entries.iter().enumerate() {
+            let Some(program_class) = e.class.program_class() else {
+                // An `engine` or a `sig` entry: the engine differential or
+                // the signature diff checks it.
+                continue;
+            };
             let label = format!("ledger entry {} ({})", k + 1, e.label());
             if !matched.get(k).copied().unwrap_or(false) {
                 report
@@ -238,7 +251,7 @@ impl Report {
             } else if !used.get(k).copied().unwrap_or(false) {
                 report.warnings.push(format!(
                     "{label} matches programs, but it accepts none of them (no program of class `{}` or the entry does not cover its codes)",
-                    e.class.program_class().name()
+                    program_class.name()
                 ));
             }
         }
@@ -409,6 +422,7 @@ impl Report {
             let _ = writeln!(md, "| {s} | {scope} | {total} | {share:.1} % |");
         }
 
+        self.use_markdown(&mut md);
         self.baseline_markdown(&mut md);
         self.ledger_markdown(&mut md);
 
@@ -448,6 +462,49 @@ impl Report {
 }
 
 impl Report {
+    /// The section of the groups that the programs use.
+    ///
+    /// For each stage of the groups (A, AB, ..., ABCDEF), the programs of each
+    /// set that use only groups of that stage. It is the coverage of the stage
+    /// if the fact generator supports each of its groups.
+    fn use_markdown(&self, md: &mut String) {
+        if self.used.len() != self.rows.len() {
+            return;
+        }
+        md.push_str("\n## Groups that the programs use\n\n");
+        md.push_str("The programs of each set that use only the groups of each stage (§2.6).\n\n");
+        let stages: Vec<weft_sema::Groups> = (1..=GROUPS.len())
+            .filter_map(|n| {
+                let text: String = GROUPS.iter().take(n).collect();
+                weft_sema::Groups::parse(&text).ok()
+            })
+            .collect();
+        md.push_str("| set |");
+        for g in &stages {
+            let _ = write!(md, " {g} |");
+        }
+        md.push_str(" programs |\n|---|");
+        for _ in &stages {
+            md.push_str("---:|");
+        }
+        md.push_str("---:|\n");
+        for s in self.sets() {
+            let mine: Vec<weft_sema::Groups> = self
+                .rows
+                .iter()
+                .zip(&self.used)
+                .filter(|(r, _)| r.set == s)
+                .map(|(_, u)| *u)
+                .collect();
+            let _ = write!(md, "| {s} |");
+            for g in &stages {
+                let n = mine.iter().filter(|u| g.contains(**u)).count();
+                let _ = write!(md, " {n} |");
+            }
+            let _ = writeln!(md, " {} |", mine.len());
+        }
+    }
+
     /// The section on the baseline.
     fn baseline_markdown(&self, md: &mut String) {
         md.push_str("\n## Baseline\n\n");
@@ -535,17 +592,22 @@ fn rule(
             )),
         ),
         _ => {
+            let (d_old, d_ir) = (classify::errors(&input.old), classify::errors(&input.ir));
             let codes = if matches!(class, Class::Moved | Class::Changed) {
-                classify::changed_codes(&classify::errors(&input.old), &classify::errors(&input.ir))
+                classify::changed_codes(&d_old, &d_ir)
             } else {
                 Vec::new()
             };
+            let all = |d: &[snapshot::Diag]| d.iter().map(|x| x.0.clone()).collect::<Vec<_>>();
+            let (all_old, all_ir) = (all(&d_old), all(&d_ir));
             let applicable: Vec<usize> = candidates
                 .iter()
                 .copied()
                 .filter(|&k| {
                     ledger.entries.get(k).is_some_and(|e| {
-                        e.class.program_class() == class && e.accepts_codes(&codes)
+                        e.class.program_class() == Some(class)
+                            && e.accepts_codes(&codes)
+                            && e.both_have(&all_old, &all_ir)
                     })
                 })
                 .collect();
@@ -640,6 +702,10 @@ pub struct RunSettings {
     /// True if [`run_tier1`] compares the old records with the committed
     /// baseline. False when the run writes a new baseline.
     pub baseline: bool,
+    /// The construct groups that are on in the `ir` pipeline (§2.6). The
+    /// default is the default of `weft_sema::Options`; `run --groups` forces
+    /// more groups on for a preview report.
+    pub groups: weft_sema::Groups,
 }
 
 impl Default for RunSettings {
@@ -651,16 +717,18 @@ impl Default for RunSettings {
             limit: snapshot::LIMIT,
             policy: Policy::default(),
             baseline: true,
+            groups: weft_sema::Options::default().ir_groups,
         }
     }
 }
 
 /// Runs the gate on the programs of `manifest` below `base`.
 ///
-/// Reads the verdicts of the `ast` engine for the interpreter `interp` from
-/// `cache` first, so a stale cache stops the run before the snapshot. Then
-/// checks each program with the `old` pipeline. Before stage F1 no program is
-/// in scope, so the `ir` record is the `old` record. `alias` is a directory
+/// Reads the verdicts of the engine [`ORACLE_ENGINE`] for the interpreter
+/// `interp` from `cache` first, so a stale cache stops the run before the
+/// snapshot. Then checks each program with both pipelines and the groups
+/// `settings.groups` (`snapshot::run_both`). A program out of scope gets its
+/// `old` record as its `ir` record. `alias` is a directory
 /// such as `tests/gate/probes`: a ledger entry can also name a program by its
 /// path below it (for tier 2).
 ///
@@ -677,7 +745,7 @@ pub fn run(
     settings: &RunSettings,
     alias: Option<&str>,
 ) -> Result<Report, Error> {
-    let verdicts = verdicts(&manifest.entries, cache, Engine::Ast, interp)?;
+    let verdicts = verdicts(&manifest.entries, cache, ORACLE_ENGINE, interp)?;
     let paths: Vec<Vec<String>> = manifest
         .entries
         .iter()
@@ -694,41 +762,54 @@ pub fn run(
         .collect();
     let total = manifest.entries.len();
     let snap = Settings {
-        pipeline: Pipeline::Old,
+        pipeline: Pipeline::Ir,
+        groups: settings.groups,
         workers: settings.workers.max(1),
         limit: settings.limit,
     };
     snapshot::install_panic_hook();
-    let mut records: Vec<Option<Record>> = vec![None; total];
-    snapshot::snapshot(base, manifest.entries, &snap, |i, o| {
+    let mut records: Vec<Option<snapshot::Both>> = vec![None; total];
+    snapshot::run_both(base, manifest.entries, &snap, |i, mut b| {
+        // The report reads the records only: the text of the fact digest of
+        // each program (its hash is in the record) would hold gigabytes on
+        // tier 2.
+        b.old.digest = String::new();
+        b.ir.digest = String::new();
         if let Some(slot) = records.get_mut(i) {
-            *slot = Some(o.record);
+            *slot = Some(b);
         }
     })?;
     let mut inputs = Vec::with_capacity(total);
+    let mut used = Vec::with_capacity(total);
     let mut not_ok = BTreeMap::<Kind, usize>::new();
     for ((record, verdict), paths) in records.into_iter().zip(verdicts).zip(paths) {
-        let Some(old) = record else {
+        let Some(both) = record else {
             continue;
         };
-        if old.kind != Kind::Ok {
-            *not_ok.entry(old.kind).or_default() += 1;
+        if both.old.record.kind != Kind::Ok {
+            *not_ok.entry(both.old.record.kind).or_default() += 1;
         }
+        used.push(both.used);
         inputs.push(Input {
-            ir: old.clone(),
-            old,
+            old: both.old.record,
+            ir: both.ir.record,
             verdict,
             paths,
-            in_scope: false,
+            in_scope: both.in_scope,
         });
     }
     let mut report = Report::build(&inputs, ledger, &settings.policy);
+    report.groups_on = settings.groups.to_string();
+    report.used = used;
     report.notes.push(format!(
-        "oracle: the `ast` engine, interpreter hash {interp}"
+        "oracle: the `{}` engine, interpreter hash {interp}",
+        ORACLE_ENGINE.name()
     ));
-    report.notes.push(
-        "the `ir` pipeline does not exist before stage F1: no program is in scope, and the `ir` record of each program is its `old` record".to_string(),
-    );
+    let in_scope = inputs.iter().filter(|i| i.in_scope).count();
+    report.notes.push(format!(
+        "the `ir` pipeline: {in_scope} of {} programs in scope; a program out of scope gets its `old` record as its `ir` record",
+        inputs.len()
+    ));
     report.notes.push(format!(
         "time limit of a check: {} s, {} workers",
         settings.limit.as_secs(),
@@ -753,7 +834,8 @@ pub fn run(
 }
 
 /// Runs the gate on tier 1 of the repository `repo`: the manifest of the
-/// tier-1 roots, the committed oracle cache `tests/gate/oracle-ast.tsv`, and
+/// tier-1 roots, the committed oracle cache of [`ORACLE_ENGINE`]
+/// (`tests/gate/oracle-ir.tsv`), and
 /// the ledger [`ledger::LEDGER`].
 ///
 /// If `settings.baseline` is true, the function also compares the old records
@@ -773,7 +855,7 @@ pub fn run_tier1(repo: &Path, settings: &RunSettings) -> Result<Report, Error> {
     )?;
     let file = repo
         .join("tests/gate")
-        .join(oracle::cache_name(Engine::Ast));
+        .join(oracle::cache_name(ORACLE_ENGINE));
     let text = std::fs::read_to_string(&file).map_err(|e| Error::io(&file, e))?;
     let cache = Cache::from_tsv(&text)?;
     let interp = oracle::interp_hash(repo)?;

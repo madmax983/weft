@@ -1,0 +1,449 @@
+fn f0 f() -> () / main.a.Note: b0
+fn f1 g() -> () / main.a.Note: b1
+fn f2 h() -> u64 / main.a.b.Deep: b2
+fn f3 unknown_in_module() -> () / (): extern
+fn f4 unknown_module() -> () / (): extern
+fn f5 not_an_effect() -> () / (): extern
+fn f6 bare_name_is_the_root_effect() -> () / main.Note: b3
+fn f7 handle_unknown() -> (): extern
+fn f8 handles_the_root_effect_only() -> () / main.a.Note: b4
+fn f9 type_row(fn() -> () / main.a.Note) -> () / main.Note: b7
+fn f10 states_path() -> () / main.a.Note: b8
+fn f11 states_nested() -> u64 / main.a.b.Deep: b9
+fn f12 handles_path() -> (): b10
+fn f13 handles_nested() -> u64: b13
+fn f14 calls_value(fn() -> () / main.a.Note) -> () / main.a.Note: b16
+fn f15 both() -> () / main.Note, main.a.Note: b17
+fn f16 main() -> (): b18
+handler h0 main.Note: handled b5, site b4, clauses [note: b6]
+handler h1 main.a.Note: handled b11, site b10, clauses [note: b12]
+handler h2 main.a.b.Deep: handled b14, site b13, clauses [deep: b15]
+handler h3 main.a.Note: handled b19, site b18, clauses [note: b20]
+handler h4 main.Note: handled b21, site b19, clauses [note: b22]
+cap_env e0
+cap_env e1: parent e0, main.Note _1
+cap_env e2: parent e0, main.a.Note _1
+cap_env e3: parent e0, main.a.b.Deep _1
+cap_env e4: parent e0, main.a.Note _1
+cap_env e5: parent e4, main.Note _1
+
+body b0: fn f; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = perform Row(main.a.Note).note(const 1u64) -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn g; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call f() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: fn h; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  bb0:
+    _0 = perform Row(main.a.b.Deep).deep() -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: fn bare_name_is_the_root_effect; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call f() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: fn handles_the_root_effect_only; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: handled h0; parent b4; cap_env e1; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.Note> (Cap(main.Note) `Note`)
+  bb0:
+    _0 = call f() / e1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b6: clause h0 note; parent b4; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: u64 (Param(0) `x`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  bb0:
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b7: fn type_row; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () / main.a.Note (Param(0) `f`)
+  bb0:
+    _0 = call (copy _1)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b8: fn states_path; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call f() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b9: fn states_nested; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  bb0:
+    _0 = call h() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b10: fn handles_path; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = handle h1 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b11: handled h1; parent b10; cap_env e2; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.a.Note> (Cap(main.a.Note) `Note`)
+  bb0:
+    _0 = call g() / e2 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b12: clause h1 note; parent b10; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: u64 (Param(0) `x`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    Print(copy _1)
+    _3 = const ()
+    Dead(_3)
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b13: fn handles_nested; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  bb0:
+    _0 = handle h2 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b14: handled h2; parent b13; cap_env e3; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Cap<main.a.b.Deep> (Cap(main.a.b.Deep) `Deep`)
+  bb0:
+    _0 = call h() / e3 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b15: clause h2 deep; parent b13; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  bb0:
+    _0 = resume _1(const 7u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b16: fn calls_value; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () / main.a.Note (Param(0) `f`)
+  bb0:
+    _0 = call (copy _1)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b17: fn both; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = perform Row(main.Note).note(const 2u64) -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_1)
+    _0 = call f() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Return
+  bb3 (cleanup):
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b18: fn main; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  _2: () (Temp(Discarded))
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call handles_path() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Dead(_1)
+    Live(_2)
+    Live(_3)
+    _3 = call handles_nested() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Print(copy _3)
+    _2 = const ()
+    Dead(_3)
+    Dead(_2)
+    _0 = handle h3 -> [bb3, unwind: bb7]
+  bb3:
+    Return
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb7)
+  bb6 (cleanup):
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b19: handled h3; parent b18; cap_env e4; unwind_exit bb8
+  _0: () (Return)
+  _1: Cap<main.a.Note> (Cap(main.a.Note) `Note`)
+  _2: () (Temp(Discarded))
+  _3: () (Temp(Discarded))
+  _4: fn() -> () / main.a.Note (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call states_path() / e4 -> [bb1, unwind: bb6]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = const f
+    _3 = call calls_value(move _4) / e4 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    _0 = handle h4 -> [bb3, unwind: bb7]
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb6 (cleanup):
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b20: clause h3 note; parent b18; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: u64 (Param(0) `x`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = Add<u64>(copy _1, const 10u64)
+    Print(copy _4)
+    _3 = const ()
+    Dead(_4)
+    Dead(_3)
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b21: handled h4; parent b19; cap_env e5; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.Note> (Cap(main.Note) `Note`)
+  bb0:
+    _0 = call both() / e5 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b22: clause h4 note; parent b19; cap_env e4; unwind_exit bb4
+  _0: () (Return)
+  _1: u64 (Param(0) `x`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = Add<u64>(copy _1, const 20u64)
+    Print(copy _4)
+    _3 = const ()
+    Dead(_4)
+    Dead(_3)
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+// unknown_in_module: no IR: a type error
+// unknown_module: no IR: a type error
+// not_an_effect: no IR: a type error
+// handle_unknown: no IR: a type error

@@ -1,0 +1,41 @@
+// OR3. A callee calls its function parameter more than once. The closure
+// reads a captured reference and then invalidates it. The second call reads
+// a dangling reference. Two direct calls `g(); g()` and a call in a loop get
+// W0301. The forms through a callee are accepted.
+fn twice(f: fn()) { f(); f() }
+fn each(n: u64, f: fn()) { for i in 0..n { f() } }
+fn twice2(f: fn()) { twice(f) }
+fn wrap(f: fn()) -> fn() { || { f(); f() } }
+
+fn via_twice() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice(|| { print(r + 1); v.clear() })     // stock: "a place does not exist"   //~ W0301
+}
+
+fn via_loop_callee() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    each(2, || { print(r + 1); v.clear() })   //~ W0301
+}
+
+fn via_two_levels() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice2(|| { print(r + 1); v.clear() })   //~ W0301
+}
+
+fn via_returned() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1); v.clear() })
+    g()   //~ W0301
+}
+
+fn main() {
+    via_twice()
+}

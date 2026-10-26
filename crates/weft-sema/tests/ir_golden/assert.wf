@@ -1,0 +1,8 @@
+// `assert` (`docs/ir.md` 5.33) can abort the task: its terminator has an
+// `unwind` block. Plan stage B8 adds the values of the cleanup chain.
+
+fn check(v: Vec<u64>, n: usize) {
+    let k = n + 1
+    assert k > n
+    assert v.len() == n
+}

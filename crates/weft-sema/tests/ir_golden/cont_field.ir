@@ -1,0 +1,106 @@
+fn f0 count() -> u64: b0
+closure c0: body b3, maker b2, cap_env e0, captures [Kont _1]
+handler h0 main.Choose: handled b1, site b0, clauses [choose: b2], multi
+cap_env e0
+cap_env e1: parent e0, main.Choose _1
+
+body b0: fn count; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  bb0:
+    _0 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: handled h0; parent b0; cap_env e1; unwind_exit bb7
+  _0: u64 (Return)
+  _1: Cap<main.Choose> (Cap(main.Choose) `Choose`)
+  _2: bool (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).choose() -> [bb1, unwind: bb5]
+  bb1:
+    switch move _2 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _0 = const 1u64
+    Goto(bb4)
+  bb3:
+    _0 = const 2u64
+    Goto(bb4)
+  bb4:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b2: clause h0 choose; parent b0; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: resume(bool) -> u64 (Kont(multi) `resume`)
+  _2: fn(bool) -> u64 (User `again`)
+  _3: u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c0(copy _1)
+    Live(_3)
+    _3 = call (copy _2)(const true) / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_4)
+    _4 = call (copy _2)(const false) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    _0 = Add<u64>(move _3, move _4)
+    Dead(_2)
+    Dead(_4)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb5 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn(bool) -> u64 (Env)
+  _2: bool (Param(0) `b`)
+  bb0:
+    _0 = resume _1.0(copy _2) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

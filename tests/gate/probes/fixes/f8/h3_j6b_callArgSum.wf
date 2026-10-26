@@ -1,0 +1,10 @@
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn sum3(x: &&(u64, &u64)) -> u64 { x.1 + 0 }
+fn main() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    b.clear()
+    print(sum3(r))
+}

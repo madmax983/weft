@@ -1,0 +1,11 @@
+// F12 review (ABC preview), hole H5: a linear closure that a callee or a closure runs on some paths only (old W0601) (fd/d05_runif.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn peek(t: &Tx) { print(t.id) }
+fn run(f: fn()) { f() }
+fn run0(f: fn()) { }
+fn runif(f: fn(), c: bool) { if c { f() } }
+struct K { f: fn() }
+fn main() { let t = begin(1); runif(|| rollback(t), false) }

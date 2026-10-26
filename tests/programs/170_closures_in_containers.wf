@@ -1,0 +1,44 @@
+// A vector that gets a closure holds the places of the closure: the cell of
+// a variable that the closure borrows, and the references in a value that
+// the closure moves. When those places end or change, the vector is
+// invalid, as a vector of references would be. The `ir` pipeline reports
+// the read of the element, the old pipeline the call of the copy.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn eat_h(h: Vec<&u64>) { print(h[0]) }
+
+fn borrowed_ends() {
+    let fs = Vec.new()
+    {
+        let v = mk_v()
+        fs.push(|| print(v[0]))
+    }
+    let g = fs[0]   //~ ir: W0301
+    g()             //~ old: W0301
+}
+
+fn moved_refs_change() {
+    let v = mk_v()
+    let h = Vec.new()
+    h.push(&v[0])
+    let ks = Vec.new()
+    ks.push(|| eat_h(h))
+    v.clear()
+    let g = ks[0]   //~ ir: W0301
+    g()             //~ old: W0301
+}
+
+// The closure runs while its places are valid.
+fn runs_in_scope() {
+    let v = mk_v()
+    let h = Vec.new()
+    h.push(&v[0])
+    let ks = Vec.new()
+    ks.push(|| eat_h(h))
+    let g = ks[0]
+    g()
+    v.clear()
+}
+
+fn main() {
+    runs_in_scope()
+}

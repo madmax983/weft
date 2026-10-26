@@ -1,0 +1,16 @@
+// F12 review (ABC preview), old hole kept by ABC (4.7): old and the default AB accept it and the oracle faults; ABC rejects it after F12-fix (h2/hv_m_vec_ret_fn.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn clr(w: &World) -> fn() / mut(w.entities) { || w.entities.clear() }
+fn mkfs(w: &World) -> Vec<fn()> / mut(w.entities) { let fs = Vec.new(); fs.push(|| w.entities.clear()); fs }
+fn main() {
+    let w = mkw()
+    let fs = mkfs(&w)
+    let first = &w.entities[0]
+    let g = fs[0]
+    g()
+    print(first.hp)
+}

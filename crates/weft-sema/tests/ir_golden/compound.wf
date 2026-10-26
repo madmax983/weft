@@ -1,0 +1,32 @@
+// Compound assignment (`docs/ir.md` 5.7): the value runs first, then the
+// old value is read, then the store.
+
+fn local(a: u64) -> u64 {
+    let x = a
+    x += 2
+    x -= a
+    x *= 3
+    x
+}
+
+// On a reference local the assignment writes through it: `(*r) = (*r) + 1`.
+fn through_ref(r: &u64) / mut(r) {
+    r += 1
+}
+
+struct P { x: u64, y: u64 }
+
+fn field(p: P) -> u64 {
+    p.x += p.y
+    p.x
+}
+
+fn elem(v: Vec<u64>, i: usize) {
+    v[i] += 1
+}
+
+// The value follows its reference.
+fn ref_value(x: u64, r: &u64) -> u64 {
+    x += r
+    x
+}

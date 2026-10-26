@@ -132,6 +132,7 @@ fn is_hidden(var: &weft_facts::VarInfo) -> bool {
             | VarKind::Iterator
             | VarKind::Closure
             | VarKind::Dropped
+            | VarKind::Result
     ) || var.name.starts_with('{')
 }
 
@@ -320,8 +321,22 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
         let var = f.var(inv.var);
         let path = &f.place(inv.path).display;
         let at = f.node(inv.at);
+        // The value that a body gives back, at its `return`.
+        if let (VarKind::Result, Cause::ScopeEnd(o)) = (var.kind, inv.cause) {
+            if f.node(inv.used_at).label == "return" {
+                let keys = group.iter().flat_map(|(e, rest)| {
+                    let uses: Vec<NodeId> = std::iter::once(e.used_at)
+                        .chain(rest.iter().copied())
+                        .collect();
+                    var_keys("error", e.var, &uses)
+                });
+                out.extend(returned(f, inv, o).map(|d| d.with_facts(keys)));
+                continue;
+            }
+        }
         let name = match var.kind {
             VarKind::Temp | VarKind::BlockValue => format!("the {}", var.name),
+            VarKind::Result => var.name.clone(),
             _ => shown_name(var),
         };
         let handle = path.strip_suffix(".*");
@@ -389,6 +404,86 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
         });
         out.push(d.with_facts(keys));
     }
+}
+
+/// The error of the value that a body gives back (`_0` of the IR, the
+/// variable `var` of `inv`), when the end of local `o` at the frame end
+/// makes it invalid before its `return` (`docs/ir.md` 6.9):
+///
+/// - a function or a closure: W0204 at the span of the `return` (the
+///   returned expression), as the old lowering. A by-value parameter that
+///   the signature states as a returned place has the W0204 of the
+///   signature check: no second error.
+/// - a handled body, a scope body or a clause: W0301, the value leaves
+///   after its place ends.
+fn returned(f: &FnFacts, inv: &Invalidation, o: VarId) -> Option<Diagnostic> {
+    let var = f.var(inv.var);
+    let mut owner = f.var(o).clone();
+    // A closure that captures a local by reference points into the cell of
+    // the local (`x (cell)`, `docs/ir.md` 6.3): the text names the local.
+    let cell = |t: &str| t.strip_suffix(" (cell)").unwrap_or(t).to_string();
+    owner.name = cell(&owner.name);
+    let path = &cell(&f.place(inv.path).display);
+    let span = node_span(f, inv.used_at);
+    let holder = holder_text(f, inv, false);
+    let what = w0301_cause(f, inv).0;
+    let at = f.node(inv.at).span;
+    let closure = var.name == "the closure result";
+    if var.name != "the result" && !closure {
+        let frame = var.name.strip_suffix(" value").unwrap_or("body");
+        let message = format!(
+            "the value leaves after its place ends: the value of this {frame} points into `{path}`, but `{}` goes out of scope at the end of the {frame}",
+            owner.name
+        );
+        return Some(
+            Diagnostic::error(Code::W0301, message, span)
+                .note_at(holder, var.span)
+                .note_at(what, at),
+        );
+    }
+    let root = f.place(inv.path).root;
+    let stated = f.ref_sites.iter().any(|site| {
+        matches!(site.kind, RefKind::Return { .. })
+            && f.ref_in
+                .iter()
+                .any(|&(n, d)| n == site.node && f.place(d).root == root)
+    });
+    if owner.kind == VarKind::Param && stated {
+        return None;
+    }
+    let message = if closure {
+        let whose = match owner.kind {
+            VarKind::Param => format!("its parameter `{}`", owner.name),
+            VarKind::Temp | VarKind::BlockValue => "its temporary value".to_string(),
+            _ => format!("its local `{}`", owner.name),
+        };
+        let head = if var.callable {
+            format!("the closure returns a closure that captures `{path}`")
+        } else {
+            format!("the closure returns a reference into `{path}`")
+        };
+        format!("{head}: {whose} goes out of scope at the return")
+    } else {
+        let whose = match owner.kind {
+            VarKind::Param => format!("the by-value parameter `{}`", owner.name),
+            VarKind::Temp | VarKind::BlockValue => "a temporary value".to_string(),
+            _ => format!("the local `{}`", owner.name),
+        };
+        let head = if var.callable {
+            format!("the returned closure captures `{path}`")
+        } else {
+            format!("returned reference points into `{path}`")
+        };
+        format!(
+            "{head}: {whose} of `{}` goes out of scope at the return",
+            f.name
+        )
+    };
+    Some(
+        Diagnostic::error(Code::W0204, message, span)
+            .note_at(holder, var.span)
+            .note_at(what, at),
+    )
 }
 
 /// Returns the footprint of the handler that node `n` performs through, as a
@@ -498,7 +593,12 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
             let owner = &f.var(o).name;
             // A local of a closure or a handler clause goes out of scope
             // when the body returns at a call or an operation.
+            // A node of the facts of the IR names a callee only if it is a
+            // node of a call or a perform.
+            let ir_call = at.kind.starts_with("call") || at.kind.starts_with("perform");
+            let ir_end = !at.kind.is_empty() && !ir_call;
             let when = match at.label.as_str() {
+                _ if ir_end => "goes out of scope".to_string(),
                 "end of block" | "end of statement" | "exit" | "return" | "jump"
                 | "drop" => "goes out of scope".to_string(),
                 callee => format!("goes out of scope when `{callee}` returns"),

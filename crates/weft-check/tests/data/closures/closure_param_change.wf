@@ -1,0 +1,15 @@
+// A closure that changes what its parameter points into changes a place of
+// its caller, not a parameter of the function: the row of the function
+// states only the places of its own parameters (preview of stage F11: a
+// W0703 at the closure body; tier 1 rt24_apply.wf, dopt.wf, l1_in.wf).
+struct Inner { v: Vec<u64>, n: u64 }
+struct Stats { count: u64, inner: Inner }
+pub fn clear(c: &Stats) / mut(c.inner.v) {
+    let f = |x: &Stats| x.inner.v.clear()
+    f(c)
+}
+pub fn bump(c: &Stats) / mut(c.inner.v) {
+    let f = |x: &Stats| x.count += 1
+    f(c)   //~ W0703
+}
+fn main() {}

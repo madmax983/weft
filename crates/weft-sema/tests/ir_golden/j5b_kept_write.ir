@@ -1,0 +1,49 @@
+fn f0 main() -> (): b0
+closure c0: body b1, maker b0, cap_env e0, captures [Kept _2]
+cap_env e0
+
+body b0: fn main; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: fn() -> () (User `g`)
+  _2: i64 (User `n`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = const 5i64
+    _1 = closure c0(copy _2)
+    Dead(_2)
+    Live(_3)
+    _3 = call (copy _1)() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_3)
+    _0 = call (copy _1)() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b1: closure c0; parent b0; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: i64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<i64>(copy _1.0, const 1i64)
+    _1.0 = move _2
+    Dead(_2)
+    Print(copy _1.0)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit

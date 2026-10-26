@@ -1,0 +1,36 @@
+// Temporaries in cleanup chains (`docs/ir.md` 5.1.2, 5.1.6). The chain has
+// each temporary that has a cell at the terminator, newest first: the
+// operands on their way, and the temporaries of a block tail, which belong
+// to the scope around the block. A temporary of an ended statement is not
+// in a later chain. In a loop the chain has the iterator, the element and
+// the locals of the iteration.
+
+fn g(x: u64) -> u64 { x }
+fn mk() -> Vec<u64> { Vec.new() }
+fn size(a: Vec<u64>, b: Vec<u64>) -> u64 { 0 }
+
+// The second `mk()` aborts with the first `Vec` in a temporary.
+fn nested() -> u64 { size(mk(), mk()) }
+
+// The tail of the block is not a statement: its temporaries are in the
+// chain of `g(1)`.
+fn tail() -> u64 {
+    let n = { let a = mk(); size(a, mk()) } + g(1)
+    n
+}
+
+// The temporaries of the first statement end before `g(2)`.
+fn ended() -> u64 {
+    size(mk(), mk())
+    g(2)
+}
+
+// `g(r[0])` in a loop: `w`, `r`, the element `x`, the iterator, `s`.
+fn each(m: Vec<Vec<u64>>) -> u64 {
+    let s = 0
+    for r in m[] {
+        let w = mk()
+        s += g(r[0])
+    }
+    s
+}

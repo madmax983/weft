@@ -1,0 +1,25 @@
+// `let` binds after its value; the tail moves into `_0`; the frame ends in
+// the order of `docs/ir.md` 5.1.4.
+
+fn double(a: u64) -> u64 {
+    let b = a + a
+    let c = b * 2
+    c
+}
+
+fn names(s: Vec<u64>) -> Vec<u64> {
+    let t = s
+    let _ = 7
+    t
+}
+
+fn nothing() {
+    let x = 1
+    x = 2
+    x
+}
+
+test "let and assign" {
+    let n = 3
+    n = n + 1
+}

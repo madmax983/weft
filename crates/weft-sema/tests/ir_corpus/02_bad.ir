@@ -1,0 +1,59 @@
+fn f0 Entity.new() -> Entity: b0
+fn f1 bad(&World) -> () / (): b1
+fn f2 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+cap_env e0
+
+body b0: fn Entity.new; cap_env e0; unwind_exit bb1
+  _0: Entity (Return)
+  bb0:
+    _0 = Entity { const 10i32 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn bad; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: &Entity (User `first`)
+  _3: usize (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: Entity (Temp(Operand))
+  _6: &Vec<Entity> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = const 0usize
+    Bounds((*_1).0, copy _3)
+    _2 = &(*_1).0[_3]
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = call Entity.new() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Live(_6)
+    _6 = &(*_1).0
+    _4 = call Vec.push<Entity>(move _6, move _5) / e0 -> [bb2]
+  bb2:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Print(copy (*_2).0)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_5)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit

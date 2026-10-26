@@ -1,0 +1,46 @@
+// `continue` (`docs/ir.md` 5.1.5): each scope inside the loop ends, from the
+// innermost, then `Goto` to the head. In a `for`, the element ends too, so
+// the head can give it a new cell.
+
+fn skip_odd(n: u64) -> u64 {
+    let s = 0
+    let i = 0
+    while i < n {
+        i += 1
+        let h = i % 2
+        if h == 1 { continue }
+        s += i
+    }
+    s
+}
+
+fn skip_zero(v: Vec<u64>) -> u64 {
+    let s = 0
+    for x in v[] {
+        if x == 0 { continue }
+        s += x
+    }
+    s
+}
+
+// A value on its way: the operand temporary ends at the `continue`.
+fn on_way(n: u64) -> u64 {
+    let s = 0
+    for i in 0..n {
+        s = s + i * {
+            if i == 3 { continue }
+            2
+        }
+    }
+    s
+}
+
+// `continue` in a `loop`.
+fn plain(n: u64) -> u64 {
+    let i = 0
+    loop {
+        i += 1
+        if i < n { continue }
+        return i
+    }
+}

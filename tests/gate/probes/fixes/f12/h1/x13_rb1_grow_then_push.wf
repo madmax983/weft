@@ -1,0 +1,17 @@
+// F12 review (ABC preview), hole H1: a closure rebinds a captured reference and then changes the new referent; a read after the call (old W0301) (lcv3/x13_rb1_grow_then_push.wf).
+struct W { v: Vec<u64> }
+struct Bag { items: Vec<u64> }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn take(b: Bag) -> usize { b.items.len() }
+fn run(f: fn()) { f() }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn grow(w: &W) -> &u64 in w.v[] / mut(w.v) { w.v.push(1); &w.v[0] }
+fn refresh(w: &W) / mut(w.v) {
+    let r = &w.v[0]
+    let h = || { r = grow(w); grow(w) }
+    h()
+    print(r)
+}
+fn main() { let w = W { v: mk_v() }; refresh(&w) }

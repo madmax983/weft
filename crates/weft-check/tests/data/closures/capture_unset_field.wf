@@ -1,0 +1,17 @@
+// A closure that captures a `!Move` struct by reference reads only what its
+// body reads: a place field with no value is W0304 only if the body reads
+// it (preview of stage F11: tier 1 73_immovable.wf `closure_reads_buf`).
+// The call checks the field that the closure reads (part `reads`): the
+// facts of the closure body do not see where the maker gives it a value.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn reads_buf() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let c = || print(f.buf[0])
+    c()
+}
+fn reads_cur() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let c = || print(f.cur)
+    c()   //~ W0304
+}
+fn main() {}

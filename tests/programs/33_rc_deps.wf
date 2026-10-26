@@ -26,10 +26,12 @@ fn callee_result_field() {
     print(r)   //~ W0301
 }
 
-// A later argument drops the only handle of the receiver.
+// A later argument drops the only handle of the receiver. The ir pipeline
+// reads the receiver after the arguments (docs/ir.md 5.19): it reads the
+// moved handle `a`.
 fn receiver_moved() {
     let a = mk()
-    a.items.push(eat(a))   //~ W0301
+    a.items.push(eat(a))   //~ old: W0301 ir: W0302
 }
 
 // A reference through the handle as the receiver.
@@ -39,9 +41,11 @@ fn receiver_ref() {
     r.push(eat(a))   //~ W0301
 }
 
-// A later argument gives the handle in a field a new value.
+// A later argument gives the handle in a field a new value. The ir pipeline
+// reads the receiver after the arguments (docs/ir.md 5.19): the receiver is
+// the new handle, so the call is valid there. A control of the ir pipeline.
 fn receiver_field(s: &S) / mut(s.h, Cell2) {
-    s.h.items.push(reset(s))   //~ W0301
+    s.h.items.push(reset(s))   //~ old: W0301
 }
 
 // Controls: the handle keeps its value, and a clone is dropped.

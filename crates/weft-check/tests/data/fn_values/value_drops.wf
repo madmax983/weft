@@ -1,0 +1,45 @@
+// A linear closure that goes to a function value: code of a caller can drop
+// it or run it more than once, and an item or a closure that does not run
+// it drops it (W0601, W0502; review of the tier-2 preview,
+// `verify/partb/S4/run/cv.wf`).
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn ignore(f: fn()) {}
+fn once(f: fn()) { f() }
+fn item_value() {
+    let tx = begin()
+    let k = ignore
+    k(|| rollback(tx)) //~ W0601
+}
+fn param_value(h: fn(fn())) {
+    let tx = begin()
+    h(|| rollback(tx)) //~ W0502 W0601
+}
+fn closure_value() {
+    let tx = begin()
+    let k = |f: fn()| { }
+    k(|| rollback(tx)) //~ W0601
+}
+// Clean: the value runs the closure one time.
+fn runs_it() {
+    let tx = begin()
+    let k = once
+    k(|| rollback(tx))
+}
+// A closure that a loop makes keeps the last value of a local of the loop
+// body (`verify/s5/r2a/t/fv2.wf`).
+struct World { entities: Vec<u64> }
+fn loop_local(w: &World, n: u64) / mut(w.entities) {
+    let first = &w.entities[0]
+    let f = || print(0)
+    let h = || w.entities.push(2)
+    let i = 0
+    while i < n {
+        let b = h
+        f = || { b() }
+        i += 1
+    }
+    f()
+    print(first) //~ W0301
+}

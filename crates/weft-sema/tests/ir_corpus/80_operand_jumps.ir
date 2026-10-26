@@ -1,0 +1,636 @@
+fn f0 unlock(Lock) -> (): b0
+fn f1 lock() -> Lock: b1
+fn f2 take2(Lock, u64) -> (): b2
+fn f3 call(fn() -> u64) -> u64: b3
+fn f4 return_in_arg(bool) -> u64: b4
+fn f5 break_in_arg(bool) -> (): b5
+fn f6 continue_in_arg(u64) -> (): b6
+fn f7 return_in_tuple(bool) -> u64: b7
+fn f8 return_in_field(bool) -> u64: b8
+fn f9 return_in_closure(bool) -> u64: b9
+fn f10 break_inside_operand() -> (): b11
+fn f11 return_inside_closure_operand() -> (): b12
+fn f12 jump_before_operand(bool) -> u64: b14
+fn f13 return_after_call(bool) -> u64: b15
+closure c0: body b10, maker b9, cap_env e0, captures [Kept _1]
+closure c1: body b13, maker b12, cap_env e0, captures []
+cap_env e0
+
+body b0: fn unlock; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Lock (Param(0) `l`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn lock; cap_env e0; unwind_exit bb1
+  _0: Lock (Return)
+  bb0:
+    _0 = Lock { const 1u64 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn take2; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: Lock (Param(0) `l`)
+  _2: u64 (Param(1) `n`)
+  bb0:
+    _0 = call unlock(move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    UnwindValue(_1, Fault)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: fn call; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Param(0) `f`)
+  bb0:
+    _0 = call (copy _1)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: fn return_in_arg; cap_env e0; unwind_exit bb10
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: () (Temp(Discarded))
+  _3: Lock (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    Live(_4)
+    switch copy _1 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _0 = const 1u64
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    _4 = const 2u64
+    Goto(bb4)
+  bb4:
+    _2 = call take2(move _3, move _4) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    _0 = const 0u64
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b5: fn break_in_arg; cap_env e0; unwind_exit bb12
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  _2: () (Temp(Discarded))
+  _3: Lock (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Goto(bb1)
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb2, unwind: bb9]
+  bb2:
+    Live(_4)
+    switch copy _1 -> [1: bb3, otherwise: bb5]
+  bb3:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Goto(bb4)
+  bb4:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb5:
+    _4 = const 2u64
+    Goto(bb6)
+  bb6:
+    _2 = call take2(move _3, move _4) / e0 -> [bb7, unwind: bb8]
+  bb7:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_2)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b6: fn continue_in_arg; cap_env e0; unwind_exit bb16
+  _0: () (Return)
+  _1: u64 (Param(0) `n`)
+  _2: Iter<u64> (Iterator)
+  _3: u64 (Temp(Scrutinee))
+  _4: u64 (User `i`)
+  _5: () (Temp(Discarded))
+  _6: Lock (Temp(Operand))
+  _7: u64 (Temp(Operand))
+  _8: bool (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Iter(const 0u64..copy _1)
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb17]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    Live(_6)
+    _6 = call lock() / e0 -> [bb3, unwind: bb10]
+  bb3:
+    Live(_7)
+    Live(_8)
+    _8 = Eq(copy _4, const 1u64)
+    switch move _8 -> [1: bb4, otherwise: bb5]
+  bb4:
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb5:
+    _7 = const 2u64
+    Goto(bb6)
+  bb6:
+    _5 = call take2(move _6, move _7) / e0 -> [bb7, unwind: bb8]
+  bb7:
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb8 (cleanup):
+    Dead(_8)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_7)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_6, Fault)
+    Dead(_6)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_5)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_3)
+    Goto(bb13)
+  bb13 (cleanup):
+    Dead(_4)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb15)
+  bb15 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb16)
+  bb16 (cleanup):
+    UnwindExit
+  bb17:
+    Dead(_3)
+    Goto(bb18)
+  bb18:
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+
+body b7: fn return_in_tuple; cap_env e0; unwind_exit bb12
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: (Lock, u64) (Temp(Scrutinee))
+  _3: Lock (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  _5: Lock (User `l`)
+  _6: u64 (User `n`)
+  _7: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb9]
+  bb1:
+    Live(_4)
+    switch copy _1 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _0 = const 1u64
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    _4 = const 2u64
+    Goto(bb4)
+  bb4:
+    _2 = (move _3, move _4)
+    Live(_5)
+    _5 = move _2.0
+    Live(_6)
+    _6 = copy _2.1
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Live(_7)
+    _7 = call unlock(move _5) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_7)
+    _0 = copy _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_7)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_5, Fault)
+    Dead(_5)
+    Goto(bb11)
+  bb9 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_2.0, Fault)
+    Dead(_2)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b8: fn return_in_field; cap_env e0; unwind_exit bb12
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: Pair (User `p`)
+  _3: Lock (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  _5: Lock (User `l`)
+  _6: u64 (User `n`)
+  _7: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb9]
+  bb1:
+    Live(_4)
+    switch copy _1 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _0 = const 1u64
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    _4 = const 2u64
+    Goto(bb4)
+  bb4:
+    _2 = Pair { move _3, move _4 }
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = move _2.0
+    Live(_6)
+    _6 = copy _2.1
+    Consume(_2)
+    Live(_7)
+    _7 = call unlock(move _5) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_7)
+    _0 = copy _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_7)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_5, Fault)
+    Dead(_5)
+    Goto(bb10)
+  bb9 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_2.0, Fault)
+    Dead(_2)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b9: fn return_in_closure; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: fn() -> u64 (User `f`)
+  bb0:
+    Live(_2)
+    _2 = closure c0(copy _1)
+    _0 = call (copy _2)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b10: closure c0; parent b9; cap_env e0; unwind_exit bb10
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  _2: () (Temp(Discarded))
+  _3: Lock (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    Live(_4)
+    switch copy _1.0 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _0 = const 1u64
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb3:
+    _4 = const 2u64
+    Goto(bb4)
+  bb4:
+    _2 = call take2(move _3, move _4) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    _0 = const 0u64
+    Return
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b11: fn break_inside_operand; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Lock (Temp(Operand))
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call lock() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_2)
+    Goto(bb2)
+  bb2:
+    Goto(bb3)
+  bb3:
+    _2 = const 2u64
+    _0 = call take2(move _1, move _2) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Fault)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b12: fn return_inside_closure_operand; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Lock (Temp(Operand))
+  _2: u64 (Temp(Operand))
+  _3: fn() -> u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call lock() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = closure c1()
+    _2 = call call(move _3) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    _0 = call take2(move _1, move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Fault)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b13: closure c1; parent b12; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = const 2u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b14: fn jump_before_operand; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: () (Temp(Discarded))
+  _3: () (Temp(Discarded))
+  _4: Lock (Temp(Operand))
+  bb0:
+    Live(_2)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = const 1u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2:
+    _2 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = call lock() / e0 -> [bb4, unwind: bb6]
+  bb4:
+    _3 = call take2(move _4, const 2u64) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_4)
+    Dead(_3)
+    _0 = const 0u64
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindValue(_4, Fault)
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_3)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b15: fn return_after_call; cap_env e0; unwind_exit bb10
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: () (Temp(Discarded))
+  _3: Lock (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    Live(_4)
+    switch copy _1 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _4 = const 1u64
+    Goto(bb4)
+  bb3:
+    _4 = const 2u64
+    Goto(bb4)
+  bb4:
+    _2 = call take2(move _3, move _4) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    _0 = const 0u64
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit

@@ -1,0 +1,8 @@
+struct Entity { hp: i32 }
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+struct H { t: Two }
+fn flip(h: &H) -> i32 / mut(h.t) { h.t = Two.B(Other { b: 1000 }); 0 }
+fn mkh() -> H { H { t: Two.A(Entity { hp: 1 }) } }
+impl Entity { fn me(self, n: i32) -> &Entity in self { self } }
+fn main() { let h = mkh(); let x = h.t.A.me(0); let n = flip(&h); print(x.hp + n) }

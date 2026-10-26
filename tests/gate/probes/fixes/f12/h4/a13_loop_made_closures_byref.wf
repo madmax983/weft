@@ -1,0 +1,23 @@
+// F12 review (ABC preview), hole H4: a closure with a ByRef capture, or a ByMove capture that holds references, in a Vec or an array, runs after its places end or change (old W0301) (fa/a13_loop_made_closures_byref.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+struct Buf { items: Vec<u64> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn eat(b: Buf) { print(b.items.len()) }
+fn run(f: fn()) { f() }
+fn wipe(w: &World) / mut(w.entities) { w.entities.clear() }
+fn main() {
+    let fs = Vec.new()
+    let i = 0
+    while i < 2 {
+        let w = mkw()
+        fs.push(|| print(w.entities[0].hp))
+        i += 1
+    }
+    let g = fs[1]
+    g()
+}

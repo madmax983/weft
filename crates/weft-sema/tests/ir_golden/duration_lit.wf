@@ -1,0 +1,11 @@
+// `2.s` and `500.ms` are `Const::Duration` operands (`docs/ir.md` 5.16).
+
+fn wait(d: Duration, e: Duration) -> Duration { d }
+
+fn waits() -> Duration {
+    wait(2.s, 500.ms)
+}
+
+fn sleeps() / clock {
+    sleep(1.s)
+}

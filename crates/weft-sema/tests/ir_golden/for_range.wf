@@ -1,0 +1,33 @@
+// `for` over a range (`docs/ir.md` 5.14): `it := Iter(lo..hi)`. The bounds
+// are operands of the `for` statement: their temporaries end after the
+// loop.
+
+fn upto(n: u64) -> u64 {
+    let s = 0
+    for i in 0..n { s += i }
+    s
+}
+
+// Bounds that run code: each one goes into a temporary.
+fn computed(a: u64, b: u64) -> u64 {
+    let s = 0
+    for i in a + 1..b * 2 { s += i }
+    s
+}
+
+// A wildcard binds nothing.
+fn times(n: u64) -> u64 {
+    let c = 0
+    for _ in 0..n { c += 1 }
+    c
+}
+
+// Nested loops: the inner iterator ends at the inner exit, in each
+// iteration of the outer loop.
+fn triangle(n: u64) -> u64 {
+    let s = 0
+    for i in 0..n {
+        for j in 0..i { s += j }
+    }
+    s
+}

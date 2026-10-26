@@ -1,0 +1,24 @@
+// A `scope` in a closure body names the captures of the closure through an
+// upvar local of the environment (`docs/ir.md` 5.1.7, plan stage B12): `_n.k`
+// in the scope body is `env.k` in the closure body. Rule CAPTURE reads the
+// scope body: it borrows `v` (`ByRef`, so `(*_n.0)`), it moves `w` (`ByMove`),
+// and it only writes `count` (`Kept`).
+
+fn work(x: &Vec<u64>) -> u64 / async { x[0] }
+fn take(x: Vec<u64>) / async { }
+
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    let count = 0
+    let f = || {
+        scope { s =>
+            let n = work(&v)
+            take(w)
+            count += n
+        }
+    }
+    f()
+    print(count)
+}

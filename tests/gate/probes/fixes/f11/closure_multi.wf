@@ -1,0 +1,12 @@
+// A closure that performs a `multi` operation can resume more than once at
+// each call (part `multi` of its summary; preview of stage F11: the W0503
+// of tier 1 u1_uniq.wf `u03` was lost).
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: u64 }
+fn in_loop(es: &[Entity] @ uniq) / mut(es[]), Choice {
+    for e in es[] {
+        let f = || choose()
+        let b = f()   //~ W0503
+    }
+}
+fn main() {}

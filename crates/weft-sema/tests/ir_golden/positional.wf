@@ -1,0 +1,29 @@
+// A positional struct `S(x, y)` and a variant `Some(a)` (`docs/ir.md` 5.17):
+// the parts run in the order of the fields. A variant with no payload is an
+// aggregate with no operand.
+
+struct Pair { a: u64, b: u64 }
+
+fn one() -> u64 { 1 }
+
+fn pair(x: u64) -> Pair {
+    Pair(one(), x)
+}
+
+// A named argument gives its field: the parts still run in field order.
+fn named(x: u64) -> Pair {
+    Pair(b: one(), a: x)
+}
+
+fn some(x: u64) -> Option<u64> {
+    Some(x)
+}
+
+fn none() -> Option<u64> {
+    None
+}
+
+// A tuple.
+fn tuple(x: u64) -> (u64, u64) {
+    (one(), x)
+}

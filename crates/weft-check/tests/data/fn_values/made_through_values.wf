@@ -1,0 +1,166 @@
+// A closure that a function or a closure gives back keeps its effects when
+// it goes through a call argument (`Vec.push`, `id`, `run`), or sits in an
+// `Option`, a field or a tuple (review of the ABC preview, hole H2: `h2/`,
+// `h3/hm_f`, `h3/hm_k`, `h6/m03`..`m05`, `h6/m12`, `lcv2/c6_d`; and the old
+// hole `h2/hv_m_vec_ret_fn.wf`).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn id(f: fn()) -> fn() { f }
+fn clr(w: &World) -> fn() / mut(w.entities) { || w.entities.clear() }
+fn clr2(w: &World) -> fn() / mut(w.entities) { clr(w) }
+fn runall(fs: &Vec<fn()>) { let i = 0; while i < fs.len() { let g = fs[i]; g(); i += 1 } }
+fn mkfs(w: &World) -> Vec<fn()> / mut(w.entities) { let fs = Vec.new(); fs.push(|| w.entities.clear()); fs }
+fn maker_direct() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let first = &w.entities[0]
+    let g = mk()
+    g()
+    print(first.hp) //~ W0301
+}
+fn maker_into_vec() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let fs = Vec.new()
+    fs.push(mk())
+    let g = fs[0]
+    g()
+    print(first.hp) //~ W0301
+}
+fn maker_local_into_vec() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let g0 = mk()
+    let fs = Vec.new()
+    fs.push(g0)
+    let g = fs[0]
+    g()
+    print(first.hp) //~ W0301
+}
+fn maker_into_option() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let o = Some(mk())
+    match o { Some(g) => g(), None => {} }
+    print(first.hp) //~ W0301
+}
+fn maker_into_field() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let k = K { f: mk() }
+    let g = k.f
+    g()
+    print(first.hp) //~ W0301
+}
+fn maker_into_tuple() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let t = (1, mk())
+    let g = t.1
+    g()
+    print(first.hp) //~ W0301
+}
+fn maker_run() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let first = &w.entities[0]
+    run(mk())
+    print(first.hp) //~ W0301
+}
+fn maker_id() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let first = &w.entities[0]
+    let g = id(mk())
+    g()
+    print(first.hp) //~ W0301
+}
+fn item_into_vec() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(clr(&w))
+    let first = &w.entities[0]
+    let g = fs[0]
+    g()
+    print(first.hp) //~ W0301
+}
+fn item_id() {
+    let w = mkw()
+    let g = id(clr(&w))
+    let first = &w.entities[0]
+    g()
+    print(first.hp) //~ W0301
+}
+fn item_local_id() {
+    let w = mkw()
+    let g0 = clr(&w)
+    let g = id(g0)
+    let first = &w.entities[0]
+    g()
+    print(first.hp) //~ W0301
+}
+fn item_chain_into_vec() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(clr2(&w))
+    let first = &w.entities[0]
+    let g = fs[0]
+    g()
+    print(first.hp) //~ W0301
+}
+fn vec_run_in_callee() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(clr(&w))
+    let first = &w.entities[0]
+    runall(&fs)
+    print(first.hp) //~ W0301
+}
+fn vec_pop() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let fs = Vec.new()
+    fs.push(mk())
+    let first = &w.entities[0]
+    match fs.pop() { Some(g) => g(), None => {} }
+    print(first.hp) //~ W0301
+}
+fn maker_param(w: &World) / mut(w.entities) {
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let fs = Vec.new()
+    fs.push(mk())
+    let g = fs[0]
+    g()
+    print(first.hp) //~ W0301
+}
+fn returned_vec() {
+    let w = mkw()
+    let fs = mkfs(&w)
+    let first = &w.entities[0]
+    let g = fs[0]
+    g()
+    print(first.hp) //~ W0301
+}
+// Clean: the reference comes after the run.
+fn run_then_ref() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let fs = Vec.new()
+    fs.push(mk())
+    let g = fs[0]
+    g()
+    let first = &w.entities[0]
+    print(first.hp)
+}
+fn main() {
+    run_then_ref()
+}

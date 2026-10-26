@@ -1,0 +1,60 @@
+fn f0 twice(u64, fn() -> u64) -> u64: b0
+fn f1 block(u64) -> u64: b1
+closure c0: body b2, maker b1, cap_env e0, captures [Kept _1]
+cap_env e0
+
+body b0: fn twice; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: fn() -> u64 (Param(1) `f`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = call (copy _2)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Add<u64>(move _3, copy _1)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: fn block; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: u64 (Param(0) `x`)
+  _2: fn() -> u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c0(copy _1)
+    _0 = call twice(const 1u64, move _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = copy _1.0
+    Return
+  bb1 (cleanup):
+    UnwindExit

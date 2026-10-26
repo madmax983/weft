@@ -1,0 +1,25 @@
+// F10 review, hole H-A: a reference in a heap slot read back after its referent changes (h/h14_slotPopBack.wf).
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+fn ent(id: u64) -> Entity {
+    let e = Entity { hp: 1, id: id, kids: Vec.new() }
+    e.kids.push(Entity { hp: 2, id: 9, kids: Vec.new() })
+    e
+}
+fn behind(v: &Vec<Entity>, out: &Vec<&Entity>, n: u64) / mut(v.., out) {
+    let i = 0
+    while i < n {
+        out.push(&v[0])
+        v.clear()
+        v.push(ent(i))
+        match out.pop() { Some(e) => print(e.hp), None => {} }
+        i += 1
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let w = ent(2)
+    let out = Vec.new()
+    out.push(&w)
+    behind(&v, &out, 3)
+}
