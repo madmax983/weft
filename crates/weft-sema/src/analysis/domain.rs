@@ -339,6 +339,11 @@ pub struct State {
     /// in a place of a caller), the places that the references stored
     /// there can point into (may; a store there is a weak update).
     behind: Rc<BTreeMap<PlaceId, BTreeSet<PlaceId>>>,
+    /// The function values of the heap slots (stage F13): for each fact
+    /// place that no local of the component owns, the function values that a
+    /// store put there (may; a weak update). The places that their
+    /// environments point into are in `behind`.
+    behind_fns: Rc<BTreeMap<PlaceId, BTreeSet<FnVal>>>,
 }
 
 /// The number of locals of one chunk of a [`Chunked`] map.
@@ -675,7 +680,36 @@ impl State {
                 changed |= self.store_behind(*q, refs.iter().copied());
             }
         }
+        if !Rc::ptr_eq(&self.behind_fns, &o.behind_fns) {
+            for (q, fns) in o.behind_fns.iter() {
+                changed |= self.store_fns_behind(*q, fns.iter().cloned());
+            }
+        }
         changed
+    }
+
+    /// A store of the function values `fns` at the fact place `q` that no
+    /// local of the component owns (a heap slot, stage F13). Returns true if
+    /// the slot changed. A slot with more than [`FNS_MAX`] values widens.
+    pub fn store_fns_behind(&mut self, q: PlaceId, fns: impl IntoIterator<Item = FnVal>) -> bool {
+        let new: Vec<FnVal> = fns
+            .into_iter()
+            .filter(|f| self.behind_fns.get(&q).is_none_or(|have| !have.contains(f)))
+            .collect();
+        if new.is_empty() {
+            return false;
+        }
+        let slot = Rc::make_mut(&mut self.behind_fns).entry(q).or_default();
+        let before = slot.clone();
+        slot.extend(new);
+        widen_fns(slot);
+        *slot != before
+    }
+
+    /// The function values of the heap slots: each place that got a store of
+    /// a function value, and the values (stage F13).
+    pub fn behind_fns(&self) -> &BTreeMap<PlaceId, BTreeSet<FnVal>> {
+        &self.behind_fns
     }
 
     /// A store of references that point into `refs` at the fact place `q`

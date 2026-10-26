@@ -2659,6 +2659,42 @@ print(ks.len())`). The old pipeline accepts that program, and it rejects the sam
 with `rs.push(&v[0])`. This is stricter than the old pipeline by design (FP2 of the
 second review of the ABC preview), not unsound.
 
+As built (plan stage F13, function values in heap slots): a heap slot holds function
+values too (`State::behind_fns`, joined by union, widened by `FNS_MAX` as a function set).
+A store of a value with function values into a place that no local of the component owns
+(an `Assign` through a pointer, `cb.f = || ..`; a callee that changes such a place and
+gets a function argument, `keep(f, cb)`; the parts `put_fns` of a callee) puts the values
+and the references of their environments into the slot of the place. Before F13 such a
+program stayed with the old pipeline ("a function value stored behind a reference").
+
+- A read of a place that no local owns gets the values of each slot that overlaps it
+  (`transfer::fns_at`, `place_value`), with the references that the store put there. The
+  references of the role of the place (the `Held` wildcard of a parameter) come only with
+  a closure of the role, as before, so a value of a caller in the same place does not get
+  the environment of a stored closure.
+- A callee that reads a function value behind a parameter runs a value of the parameter
+  (`FnVal::Param`, part `runs`); the caller applies each value that the argument reaches
+  (`transfer::reach_fns`), and that is the values of the slots too. So a value that the
+  body stored behind `cb` runs at `run_cb(cb)` (`reaches` of the old lowering is the part
+  `runs` of a value inside or behind a parameter). Code of a caller runs each value that
+  its arguments reach, also the values of a slot (OL-1a without a task).
+- An `rc` object (`Rc<T>`): a place of the group root of `T` holds what a body stores
+  through a handle (`h.f = ..`), and a read of such a place gets the function values of
+  the handles on the way (`Rc.new` of a value with a closure gives the handle the closure:
+  the result of a type parameter, F12), and of the slot. A callee whose argument type
+  reaches an `Rc<T>` (`transfer::rc_inners`) reaches the slot of the group root of `T`
+  (`rc_stored`). A reference in an `rc` object points into the wildcard place of the
+  group and into the places of the slot (`held_at` of a `Group` root; before F13 the
+  program stayed with the old pipeline). A reference in a local of a callee frame (a
+  value that a closure put behind a reference) points into the wildcard place of the frame
+  root (stage F14 before).
+- Each slot keeps its variables (`factgen::holders`, F10.1): a stored closure with a
+  `ByRef` capture holds the cell of the variable, so the end of the variable makes the
+  slot invalid. A slot of an `rc` object is as a `Vec<&T>` local: after a change of the
+  referent, each use of the container that reaches the slot is W0301
+  (`tests/data/stored/rc.wf`, `main`; the old pipeline accepts a use that does not read
+  the reference).
+
 **The post-passes of today**, and where each one goes:
 
 | Today | In this design |
@@ -3106,9 +3142,36 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
 - A function item as a value whose summary drops or holds a linear type argument stays
   with the old pipeline (`factgen::checks::item_value`, `check_item_value` of the old
   lowering; the facts have no node for it).
-- Not done: a run as a task (W0405 of code of a caller, stage F18), a value stored behind a
-  reference (F13), the environment of a `Made` closure capture by capture (a wildcard environment
-  can give a W0703 that the old pipeline does not give, `44_returned_fns`).
+- Not done: a run as a task (W0405 of code of a caller, stage F18), the environment of a
+  `Made` closure capture by capture (a wildcard environment can give a W0703 that the old
+  pipeline does not give, `44_returned_fns`).
+
+As built (plan stage F13, `analysis::summarize::stored_parts_of`, `transfer::put_values`;
+group C stays off until the review of the C shapes passes):
+
+- Part `stores` of a function body has two halves. The signature gives the references
+  that go behind a reference parameter (R3RT6, F10.2, as before). The body gives the
+  heap slots of the interface places at its `Return` (`Summary::puts`, `put_fns`): a slot
+  of an `rc` object (its references), and each slot with function values (the values in
+  interface terms, `RetFn`, with the places of their environments, as part `ret`). A
+  closure summary gets `put_fns` for its slots too. A function that stores a closure has
+  its effects in its row, as a function that gives one back (`summarize::made_effects`,
+  W0701, W0703 as the old inference).
+- At a run node (an item call, a value of an item, a closure) the caller maps `puts` and
+  `put_fns` with σ: the references go with the part `stores` (a weak definition of the
+  holder; the W0204 store check gets them), and the function values join the move path of
+  the place, or its heap slot (`transfer::apply_put_fns`). `RetFn::Param(i)` gives the
+  values that argument `i` reaches.
+- A foreign function that changes an `rc` object can put each argument there
+  (`sig::foreign_group_puts`, as `Lower::group_stores_of`); before F13 it stayed with the
+  old pipeline, and so did a function whose old signature had `group_stores`.
+- Part `reads` gets the reads of a place of an `rc` object (the summary oracle found that
+  `run_hook(h)` read `Hook.f` with no `reads` place for it).
+- `reaches` (a callee that can run a stored value that its arguments reach) is the part
+  `runs` of a value inside or behind a parameter: the caller applies the values that the
+  argument reaches, the heap slots included. Plan deviation: there is no
+  `analysis/heap.rs`; the slots are in `domain::State` (F10a), cut by the widening of the
+  places that α gives.
 
 ### 6.8 Effect inference and signatures
 
@@ -3168,6 +3231,21 @@ the IR and the analysis, not a surface walk:
 | W0303 | the old lowering; the body gets no IR (5.36) |
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
+
+As built (plan stage F13, the W0204 store forms): the check (`factgen::stored_behind`)
+reads the stores of each body of the component, also of the instantiated closure bodies,
+and the stores that a run node applies (parts `stores`, `puts`, `put_fns` of a callee or a
+closure). A reference into the cell of a local that a closure captures `ByRef` counts as a
+reference into the local ("puts a closure that captures `v`"). A handle place `h.*` of the
+`rc` type of the object that gets the store is no local: the reference goes away with the
+object (`fill_self` of `tests/programs/116_rc_stores.wf`, as `check_stored_behind`). A new
+check, `factgen::kept_escapes`, gives the late values of `Kept` captures: a closure that
+the function gives back or puts into a heap slot of an interface place sees the value of
+each variable that it keeps at the `Return`, and a reference there into a local is W0204
+(at the returned expression, or at the closure literal for a store). The value of the
+closure keeps the references of the variable where the closure is made only (class K3 of
+stage F12), so the facts alone did not see `r = &w.entities[0]` after `let f = || print(r.hp)`
+(`fixes/f13/kept_rebind_ret.wf`, a hole of ABC before F13).
 
 As built (plan stage F8a): `_0` has the variable kind `Result` (`weft-facts`), and its
 name tells the frame: `the result` (a function or a test), `the closure result`,
@@ -3764,6 +3842,24 @@ table, the roots, the variables, the versions of the parts, the entry node).
   references of the earlier iterations stay in the old cells (5.10): the oracle keeps the
   old cell of each temporary that gets a new one (`FactOracle::retire`) and names it as
   the local, so C1 checks those references too (before, they were places with no name).
+
+**As built (F13): the summary oracle (A3).** It runs with the fact oracle
+(`RunOptions::fact_oracle`, `oracle::facts::FactOracle::check_summary`). An access of an
+op of a frame is an access of each frame below it on the stack (at most
+`SUMMARY_DEPTH` = 16 frames) that waits at a run node: the frame names the concrete place
+with its own map (its slots, the cells that its values own, the targets of its parameters
+and captures: that is σ of the run node), and the facts of its current nodes (the phases of
+the run node, where the applied summary is) must cover it: a change (a write of a place
+that had a value, a take) a `mutates_at` or a `lends_mut` at or above it, a read a
+`reads_at` that overlaps it. A place that the frame cannot name (a local of the callee) is
+not checked; a cell that the op frees and the buffer handle of an array follow the rules of
+the fact oracle. A failure is a fault "summary oracle (A3)" (`weft-gate fact-oracle`
+class `summary-oracle`). The frees and the pointers of the result are not compared here:
+C4 and C1 of the frame check them at its own nodes. Tests:
+`crates/weft-interp/tests/summary_oracle.rs` (a `muts` place and a `reads` place of an
+applied summary, and a `muts` place of a closure summary, removed by hand at the run node:
+the run fails; stored function values pass). It found one defect: part `reads` had no
+place of an `rc` object (fixed, 6.7).
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

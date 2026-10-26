@@ -192,6 +192,9 @@ fn stated(
     out.ret_fns.clone_from(&body.ret_fns);
     out.ret_places.clone_from(&body.ret_places);
     out.ret_linear = body.ret_linear;
+    out.puts.clone_from(&body.puts);
+    out.reads.clone_from(&body.reads);
+    out.put_fns.clone_from(&body.put_fns);
     out
 }
 
@@ -232,6 +235,7 @@ fn summary_of(
                     sum.ret.places.push(p.clone());
                 }
             }
+            sig::put_parts(&mut sum, inf);
             sum.only_self &= inf.runs.is_empty();
             sum
         });

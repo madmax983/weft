@@ -53,6 +53,17 @@
 //! - **D4 (suspension cover).** An abort that unwinds a frame with a live
 //!   linear value has `may_abort` at the aborting node.
 //!
+//! - **A3 (summary cover, the summary oracle, stage F13).** An access of a
+//!   callee (a function, a closure, or a callee of these) is also an access
+//!   of each frame below it on the stack that waits at a run node. Each
+//!   change of a place that such a frame can name has a `mutates_at` or a
+//!   `lends_mut` at its run node for a place at or above it, and each read a
+//!   `reads_at` that overlaps it: the facts of the summary that the run node
+//!   applies (σ maps the interface of the callee to the places of the
+//!   frame). A place that the frame cannot name (a local of the callee) is
+//!   not checked. At most [`SUMMARY_DEPTH`] frames below the callee are
+//!   checked.
+//!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
 //! buffer handle of an array and an access of a cell that the op frees need
@@ -111,6 +122,9 @@ pub struct FactReport {
     pub checks: u64,
     /// The concrete places that the cell-to-root map cannot name.
     pub unnamed: u64,
+    /// The checks of the summary oracle (A3): an access of a callee that a
+    /// frame that waits at a run node can name.
+    pub summary: u64,
 }
 
 /// What the IR of a run gives the fact oracle: the IR and the components.
@@ -251,6 +265,9 @@ pub struct FactOracle {
 /// The cache of [`FactOracle::name`].
 type NameCache =
     HashMap<(usize, weft_ir::Place, Option<u32>), (Vec<PlaceId>, Option<weft_ir::TyId>)>;
+
+/// The most frames below a callee that the summary oracle checks.
+pub const SUMMARY_DEPTH: usize = 16;
 
 /// A dummy index local for an element step: α does not read it.
 const ELEM: LocalId = LocalId(u32::MAX);
@@ -1125,6 +1142,92 @@ impl FactOracle {
                 };
                 return Err(format!(
                     "fact oracle ({code_id}): in `{}` at {}, the run makes a {kind} of `{}`, and the node has no {rel} that covers it",
+                    comp.facts.name,
+                    nodes.join(", "),
+                    shown.join("` or `"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A3 (summary cover): the accesses `events` of an op of a callee of
+    /// frame `uid`, which waits at a run node, whose slots are `slots` and
+    /// whose code is `code`. Each change and each read of a place that the
+    /// frame can name is in the facts of its run node.
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure.
+    pub fn check_summary(
+        &mut self,
+        uid: u64,
+        code: &Code,
+        slots: &[Option<CellId>],
+        heap: &Heap,
+        events: &[HeapEvent],
+    ) -> Result<(), String> {
+        let Some(fr) = self.cursor(uid) else {
+            return Ok(());
+        };
+        let group = match self.comps.get(fr.comp) {
+            Some(c) => c.group(&fr.cur),
+            None => return Ok(()),
+        };
+        for e in events {
+            let (place, kind) = match e {
+                HeapEvent::Read(p) => (p, "read"),
+                HeapEvent::Write(_, true) | HeapEvent::Deref(_) => continue,
+                HeapEvent::Write(p, false) | HeapEvent::Take(p) => (p, "write"),
+            };
+            // A cell that the op freed: the write of its owner is the
+            // change.
+            if heap
+                .slot(place.cell)
+                .is_ok_and(|x| x.kind == crate::heap::SlotKind::Free)
+            {
+                continue;
+            }
+            let Some((names, ty)) =
+                self.name(uid, code, slots, heap, &Target::Place(place.clone()))
+            else {
+                continue;
+            };
+            if kind == "read" && self.is_array(fr.comp, ty) {
+                continue;
+            }
+            self.report.summary += 1;
+            let Some(comp) = self.comps.get(fr.comp) else {
+                return Ok(());
+            };
+            let at = |rel: &Vec<Vec<PlaceId>>| -> Vec<PlaceId> {
+                group
+                    .iter()
+                    .flat_map(|n| rel.get(n.index()).cloned().unwrap_or_default())
+                    .collect()
+            };
+            let ok = if kind == "read" {
+                let rs = at(&comp.reads);
+                names
+                    .iter()
+                    .any(|&q| rs.iter().any(|&m| comp.below(q, m) || comp.below(m, q)))
+            } else {
+                let cs = at(&comp.changes);
+                names.iter().any(|&q| cs.iter().any(|&m| comp.below(q, m)))
+            };
+            if !ok {
+                let shown: Vec<String> = names
+                    .iter()
+                    .map(|&q| comp.facts.place(q).display.clone())
+                    .collect();
+                let nodes: Vec<String> = group.iter().map(|&n| comp.node_text(n)).collect();
+                let rel = if kind == "read" {
+                    "`reads_at`"
+                } else {
+                    "`mutates_at` or `lends_mut`"
+                };
+                return Err(format!(
+                    "summary oracle (A3): in `{}` at {}, a callee makes a {kind} of `{}`, and the run node has no {rel} that covers it",
                     comp.facts.name,
                     nodes.join(", "),
                     shown.join("` or `"),

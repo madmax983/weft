@@ -928,3 +928,822 @@ files = [
 finding = "F12R2-OH2"
 reason = "old holes b14-run (second review of the ABC preview, 4.5): a callee (`fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }`) or a closure runs a `once` closure that it copies out of a vector, and the caller runs it again; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the run moves the owners of the referent (F12-fix2, `templates::emit_apps`, `once_copied_out` at a call of a closure): W0302 at the second run. Drop this entry when group C is on (F13)"
 stage = "F12"
+
+# ----------------------------------------------------------------------
+# Stage F13: the rows of the gate with the groups A, B and C (`--groups ABC`;
+# group C goes on at F13 after its review). The `lost-clean` entries are the
+# TOML that independent review agents signed (scratchpad f12/review.md 2.4,
+# 3.1, 3.2; f12/review2.md 3.4; f12/review3.md 5), copied as they are. The
+# other entries have the class and the reason of each row of the ABC preview
+# (stage F12 `preview_classes.md`, F12-fix, F12-fix2, F13).
+
+# The lost-clean programs of the ABC preview (stage F13). A review agent that is
+# not the author of the stages signed each entry. The reviewer refused rb1.wf
+# (hole H1), the six R3RT5 programs (H3, H4, H6) and c6_maker_mut.wf (H2):
+# scratchpad/f12/review.md section 2.2.
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r2/oracle/fp/W0301_p1044.wf",
+    "tests/gate/probes/r2/oracle/fp/W0301_p1101.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0301_p41692.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0301_p42184.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0301_p42317.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0301_p43348.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0301_p43525.wf",
+]
+reason = "L2: the block value is a closure (or a reference) into a local of the block, but no node calls it or reads it: W0301 is an error at a use (ir 5.9, 5.10), as for a reference. Each variant with a call, a read, an element, an Option, an argument or a return is W0301 or W0204"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r2/oracle/fp/W0312_p1121.wf",
+    "tests/gate/probes/r2/oracle/fp/W0312_p1618.wf",
+    "tests/gate/probes/r2/oracle/fp/W0312_p1817.wf",
+]
+reason = "a closure value is no reference: two copies of a closure that is not `once` do not alias, and the two runs come one after the other. Each variant with a reference that the callee holds across a run, a captured reference that a run changes, a `once` closure or a linear capture is W0301, W0312 or W0502"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r2/oracle/fp2/W0312_p42242.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0312_p43738.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0312_p44598.wf",
+]
+reason = "the callee does not run its function argument (its summary has no `runs` part), so the closure does not change the place while the callee holds a reference into it. Each variant where the callee runs it (directly, through a callee, in a loop, on one path, through a field, after a return) is W0312 or W0301"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/oracle/probes/w1_closure_move_refill.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-11_fp_move_then_refill.wf",
+]
+finding = "O3-11"
+reason = "a ByRef capture points into the cell root of the variable (ir 5.1.7): a move and a new value keep the closure valid. Each variant with no new value, a new value on one path, a reference into the old value or a move in another closure is W0301 or W0302"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/partb/s4f/clmove.wf",
+    "tests/gate/probes/verify/s5/S5c/p/r15_loop_cbs.wf",
+    "tests/gate/probes/verify/s5/p/fp3.wf",
+]
+finding = "F12-C1"
+reason = "the closure-copy rule (ir 5.22): a read moves only a value that can be a `once` closure; these closures are not `once`, so a read copies them. Each `once` variant (an alias, a block value, an element in a loop, two reads of an element, an Option) is W0502 or W0302"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "lost-clean"
+files = ["r3/quality/fuzz/o24/slow_24_6772_check.wf"]
+reason = "`c15` gives back the closure `c1`; its ByRef capture `w` is a cell of the frame that nothing ends before the return. Each variant with a reference into `w.v` across the run of the chain or of the returned closure (a local, `run(..)`, a Vec element) is W0301"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+# The control of hole H-C with a parameter referent (F10 review 2,
+# t4/t90_ctlParamInnerNoChange.wf), when it goes into tier 1.
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/f10/hc/t90_ctlParamInnerNoChange.wf"]
+finding = "F10-HC"
+reason = "the old W0301 is the conservatism of the old store rule (`out in *inner..`, and `put` changes `*inner..`); no referent changes, the IR oracle is clean and the fact oracle passes (C1, C5). Each H-C variant with a change of the stored referent (t31, t50, t51, t57, t58, t91, t92 of the review) is W0301 in AB and ABC"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "new-fp"
+files = ["verify/s5/r2a/t/ln1.wf"]
+reason_class = "stricter"
+reason = "map N2 (ADR 0012, ir 6.7): `e = h(world)` is the result of code of a caller and can point into `Caller..`; `g(e)` is code of a caller that can change `Caller..`. A caller with `h = |x| &v[0]` and `g = |e| v.clear()` faults and has no error at its call in the ir pipeline (review F13, n2/ln1_caller_a.wf), so the callee must be rejected. The old pipeline reports W0312 at such a call instead"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt6_refs.wf",
+    "verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/N1_normal_form_ret.wf",
+]
+codes = ["W0204"]
+reason = "map N2: the result of code of a caller points into the wildcard places of its arguments and into `Caller..`, so a stated `in` place does not hold (a caller with `|x| &o[0]` faults: review F13, n2/n1_caller_a.wf, which old accepts). rt6_refs: an extra W0204 in a function that old rejects too"
+stage = "F13"
+
+# The lost-clean rows that the first review of the ABC preview refused
+# (scratchpad f12/review.md 2.2), signed after F12-fix by an independent review
+# agent (scratchpad f12/review2.md 3). c6_maker_mut.wf stays refused (hole N1).
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/r3/fidelity/p/rb1.wf"]
+finding = "F3-11"
+reason = "the closure gives the captured reference `r` a new value (`r = grow(w)`) after the change of `w.items` in `grow`, so `print(r)` reads the new buffer. A change after the rebind is a part `late_muts` of the closure (F12-fix H1): each variant with a change after the rebind (a nested closure, `run`, a callee, an inner closure that rebinds, a second closure, a loop, a path, a match arm, an early return, a call in a loop) is W0301 (review F13 2, variants2/rs/rb1_n01..n12)"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/redteam/p/a1_mk.wf",
+    "tests/gate/probes/r3/redteam/p/a2_byval_scope.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT5_byvalue_capture_scope.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/esc_moved_capture.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/fp_moved_capture.wf",
+    "tests/gate/probes/verify/s1diff/p/v06_ret_moved_vec.wf",
+]
+finding = "R3RT5"
+reason = "a closure owns its `ByMove` capture (R3RT5): the end of the maker, of the block or of the loop iteration does not end the closure. The caller carries the obligations: a returned linear closure is linear for the caller (`Ret::linear`, F12-fix H3), a `once` closure moves, a container holds the places of its closures (H4), a loop push of a linear closure is W0601 (H6). Each of 39 variants (a call twice, a copy, a field, a tuple, an Option, a Vec, a nested maker, a maker in a loop, a ByRef capture of a local, a holder of references of a local, a block value) is W0204, W0301, W0302, W0502 or W0601 (review F13 2, variants2/rs5/)"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+# The lost-clean row that review 2 of the ABC preview refused (hole N1), signed after
+# F12-fix2 by an independent review agent (scratchpad f12/review3.md 5).
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/verify/partb/p/c6_maker_mut.wf"]
+finding = "F12-c6"
+reason = "the made closure `g = mk()` clears `w.entities`, but nothing runs it, so `first` stays valid (the old W0301 is a false positive). A made closure keeps the effects on the captured places of its maker (F12-fix H2, F12-fix2 N1): each variant that runs it (directly, a copy, on one path, in a loop, through `run`, `callmk`, `retmk`, `go`, `give`, an `mk2`/`mk3` chain, a closure layer, a tuple, a struct, an `Option`, a `Vec`, a field maker, a maker that a function gives back) or whose maker clears or rebinds the place is W0301 (review F13 3: variants2/rs6, variants3/rs6, c6x, c6r, n1, n1b, n1c, n1d)"
+signed_by = "review agent, stage F13 (independent)"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/f13/ol4a_read_back.wf"]
+finding = "OL-4a"
+codes = ["W0301"]
+reason = "the heap slot of `*out` holds the places of the stored reference (F10a, F10.1): the ir pipeline reports the read back after the change in the body (line 5); the old pipeline reports the call in the caller (line 12). Same fault (group A: the default pipeline checks it)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f13/stored_behind_ref.wf",
+    "tests/gate/probes/fixes/f13/stored_containers.wf",
+    "tests/gate/probes/fixes/f13/stored_rc.wf",
+]
+codes = ["W0301"]
+reason = "F13 probes (claims F13-S1, F13-S2, F13-S3): the ir pipeline applies the summary of a closure that a callee stores (a closure of its own, parts `puts` and `put_fns`) where a later call runs it, so it rejects old holes that the run faults on when `main` calls them (behind_ref 60 and 69, containers 32, 60, 76, rc 143); the other lines are the same. In stored_rc `main`, the `rc` object keeps the reference that `fill_self` put into `c.refs`, so the use of `c.refs` after `fill_value` changes `c.data` is W0301 (167, 173): stricter than old, as for a `Vec<&u64>` local (docs/ir.md 6.6). `main` runs the clean cases only"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/verify/partb/S4/p/v1_infer.wf"]
+codes = ["W0601"]
+reason = "rule CAPTURE: the closure moves `x = None` by value, so it holds no linear value; the old W0601 at the closure end (29) and the second W0601 at 30 are false positives of the old pipeline. The other lines are the same"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/verify/partb/S4diff/p/imm1.wf"]
+codes = ["W0604"]
+reason = "a group-A shape of the IR, in scope because of the closure: the move of a `!Move` value into the closure and into the operand temporary of `f = g` give W0604 on the lines of the true W0604 of the old pipeline (one more or one less on the same lines). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc10.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc10_item_to_closure.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc10_item_to_item.wf",
+]
+codes = ["W0301"]
+reason = "a closure keeps the function variable `g` (`Kept`): `g = clr` before the call of the closure, so the call runs `clr(&w)`, which clears `w.v`: W0301 at 12 and 32 are true positives that the old pipeline misses; line 22 is in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/R3a/p/f35.wf",
+    "tests/gate/probes/verify/s5/p/or2a.wf",
+]
+codes = ["W0301", "W0302"]
+reason = "a part of a captured variable (or the variable) moves before the call of a closure that uses it: the ir pipeline reports the use of the moved value (W0302) on the line where the old pipeline reports W0301 for the closure. Same line, same fault"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/verify/s5/S5a/x/p/j4b_variants.wf"]
+codes = ["W0301"]
+reason = "the part versions of F8a are precise for `k_break`: the old W0301 at 55 is a false positive of the old pipeline; the other lines are the same"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/verify/s5/S5c_diff/probes/stored2.wf"]
+codes = ["W0312"]
+reason = "`Sigma::others` (claim F12-R6): the stored closure that the callee runs changes a place that another argument of the call points into: W0312 on the line of the W0301 of both pipelines"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/113_returned_closures.wf",
+]
+codes = ["W0301"]
+reason = "F13 (stored values): the vector that a callee fills with closures holds the places of their environments from the first weak definition of its variable on (as a `Vec<&T>` local in both pipelines: `points_into` is not by node), so the call that fills it after a change of the referent is W0301 one line earlier than old, and a control that fills it after the change is W0301 too; the block values are W0301 at the use (block-value-line class). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r2/fidelity/repro/FD5_input_or1_returned_closure.wf",
+    "tests/gate/probes/r2/oracle/min/or_ret_closure_a.wf",
+    "tests/gate/probes/r2/oracle/probes/a6_ret_closure_scope.wf",
+    "tests/gate/probes/specreview/progs/p15_ret_local.wf",
+    "tests/gate/probes/verify/partb/S4/p/r6_ret.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/fp_block_closure_copy.wf",
+    "tests/gate/probes/verify/s1diff/p/v18_block_named.wf",
+    "tests/programs/29_owner_drops.wf",
+    "tests/programs/35_wild_places.wf",
+]
+codes = ["W0204", "W0301"]
+reason = "block-value-line class (F8, F11): a block value or a returned closure that points into a local of the block is W0301 at its use (the ir pipeline), where the old pipeline reports the end of the block; a W0204 of a closure is at the returned expression. Same fault, same function"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/oracle/probes/b2_ret_closure_moves.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/clo1.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/ret1.wf",
+    "tests/programs/36_captures.wf",
+]
+finding = "R3RT5"
+codes = ["W0204", "W0301", "W0502", "W0601"]
+reason = "R3RT5: a closure owns its `ByMove` capture, so the old W0204 / W0301 at the maker or at the end of a block are false positives of the old pipeline; the ir pipeline reports the caller that drops a linear closure (W0601, `Ret::linear`, F12-fix H3) or runs a `once` closure twice (W0502). Each program is rejected in both pipelines (the reviewer signed the lost-clean R3RT5 rows, review2 3.2)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/p/v06_ret_paths.wf",
+    "tests/programs/44_returned_fns.wf",
+]
+codes = ["W0301", "W0703"]
+reason = "M1: a closure that an unknown maker gives back has the environment `world..` (the wildcard place of the argument): extra W0301 / W0703 on a line of the maker call. Precision (the environment of a `Made` closure capture by capture is not done, docs/ir.md 6.7); rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/48_lend_alias.wf",
+]
+codes = ["W0405"]
+reason = "task runs (stage F18): the ir pipeline has no facts of tasks for the runs of a callee (W0405 of the old pipeline only); the program stays rejected"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f11/capture_cur.wf",
+    "tests/gate/probes/verify/partb/S4/run/unset_closure.wf",
+    "tests/programs/73_immovable.wf",
+]
+finding = "F11-U1"
+codes = ["W0304"]
+reason = "F11-U1: the W0304 of a place field that a closure reads is at the call of the closure (the `uses` of the run node), not at the closure literal. Same fault"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12/copy_once.wf",
+    "tests/gate/probes/fixes/f12/value_drops.wf",
+    "tests/gate/probes/r2/redteam/p/zz_once_vec.wf",
+    "tests/gate/probes/r3/oracle/probes/b3_field_closure_moves.wf",
+    "tests/gate/probes/r3/oracle/probes/se3_field_move_twice.wf",
+    "tests/gate/probes/verify/partb/S4/p/c9_vec_fn.wf",
+    "tests/gate/probes/verify/partb/S4/run/vec_fn_run.wf",
+    "tests/gate/probes/verify/s5/p/or2g.wf",
+]
+finding = "F12-C1"
+codes = ["W0301", "W0302", "W0502", "W0601"]
+reason = "the closure-copy rule (claim F12-C1, docs/ir.md 5.22): a read of a value that can be a `once` closure moves it (an element, a field, a capture): a second read or run is W0302 / W0502, and a moved element leaves no linear value (W0601 at the end of the container). True positives at the fault; rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12/h1/rb1_b_afterchange.wf",
+    "tests/gate/probes/fixes/f12/h2/c6_d_vec.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_j_vec_index_call.wf",
+]
+codes = ["W0204", "W0302"]
+reason = "F12-fix H1/H2 probes: the old W0204 / W0302 at the maker are false positives of the old pipeline (R3RT5, the closure-copy rule); the W0301 at the fault is in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12/h3/d11_ret_from_closure_maker_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d12_ret_fn_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d18_ret_vec_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d19_ret_struct_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d20_ret_option_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d25_ret_maker_loop_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_a_retdrop.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_b_retdiscard.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_c_retoverwrite.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_d_retif.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_e_localmaker.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_f_retfield.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_g_retvec.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_j_returns_local.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_k_param_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/r5_f_leak.wf",
+    "tests/gate/probes/fixes/f12/h3/x09_esc_ret_linear_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/x10_v06_parse_linear.wf",
+]
+finding = "F12-H3"
+codes = ["W0204", "W0601"]
+reason = "F12-fix H3 (`Ret::linear`): a closure maker that gives back a linear closure is valid (R3RT5: the old W0204 at the maker is a false positive), and the caller that drops the linear result is W0601 (the fault). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f12/h4/a13_loop_made_closures_byref.wf",
+    "tests/gate/probes/fixes/f12/h4/e1_05_vec_byref_closure_ends.wf",
+]
+finding = "F12-H4"
+codes = ["W0301"]
+reason = "F12-fix H4: a vector of closures holds the places of their environments, so the end of a `ByRef` capture or a change below a captured reference makes the vector invalid: W0301 at the next push or read (in a loop one iteration earlier than old), and no old W0204 at the maker (R3RT5). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12/h4/lp_a_loopvec_ref.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_b_loopvec_byref.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_d_block_vec.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_e_loop_vec_index.wf",
+    "tests/gate/probes/fixes/f12/h4/lp_g_outer_change.wf",
+    "tests/gate/probes/fixes/f12/h4/r5_e_loopholdref.wf",
+]
+finding = "F12-H4"
+codes = ["W0204"]
+reason = "F12-fix H4: a vector of closures holds the places of their environments, so the end of a `ByRef` capture or a change below a captured reference makes the vector invalid: W0301 at the next push or read (in a loop one iteration earlier than old), and no old W0204 at the maker (R3RT5). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12/h6/x11_a2_loop_linear_pop_one.wf",
+]
+finding = "F12-H6"
+codes = ["W0301"]
+reason = "F12-fix H6: the linear closures that a loop pushes are W0601 on the lines of the old pipeline; the old W0301 of the same program (a `ByMove` capture in the loop) is a false positive of the old pipeline (R3RT5)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12/preview_fixes.wf",
+    "tests/gate/probes/r2/oracle/probes/e1_run_both.wf",
+    "tests/gate/probes/redteam/a10_callee_closure.wf",
+    "tests/gate/probes/verify/p/v02_struct_capture.wf",
+    "tests/gate/probes/verify/p/v19_pos.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/f3_controls.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b2_value_first.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b4_method_first.wf",
+]
+codes = ["W0301", "W0312"]
+reason = "R1 (run order): a callee changes a place and then runs a function value that reads a reference into it, or runs two values in each order (`Applied::late`, `again`): W0301 at the call (the read of the run), on the line of the W0312 of the old pipeline. Same fault"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12/preview_fixes2.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/rr7_ret2.wf",
+    "tests/gate/probes/verify/s5/p/rr7b.wf",
+    "tests/gate/probes/verify/s5/p/rr7d.wf",
+]
+codes = ["W0204", "W0601"]
+reason = "K2: a closure that a body gives back goes out as `Made(c)` with the places of its `Kept` captures, so the old W0204 at the return is not given (a false positive of the old store check); the other lines are the same. Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f12b/h5b/m09_struct_field_through_outer.wf",
+]
+finding = "F12R2-H5b"
+codes = ["W0502"]
+reason = "F12-fix2 H5b probe m09: the linear closure in a struct field that a callee runs through an outer callee on some paths only is W0601 on the old line; the old W0502 on the same line is not given (the closure runs at most once). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/ir/work/map/fnres.wf",
+    "tests/gate/probes/s5r/p/cb_ref.wf",
+]
+finding = "map-N2"
+codes = ["W0204", "W0301", "W0312"]
+reason = "map N2 (ADR 0012, docs/ir.md 6.7): a callee keeps the result of code of a caller across another call of code of a caller, which can change it: W0301 in the callee, where the old pipeline reports W0312 at the call. Same fault, rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r2/oracle/probes/e3_stored_then_twice.wf",
+    "tests/gate/probes/r3/oracle/probes/sf4_loop_field.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_ret.wf",
+]
+finding = "OR3"
+codes = ["W0204", "W0301"]
+reason = "OR3 (a run again): a callee runs a value more than once (`many`), and the second run reads what the first run changed: one more W0301 on the line of the call (true). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r2/oracle/probes/l4_loop_closure_elem.wf",
+    "tests/gate/probes/r2/oracle/probes/l8_tuple_closure.wf",
+    "tests/gate/probes/verify/p/v03_tuple_capture.wf",
+    "tests/gate/probes/verify/p/v27_stored_capture.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt5_use.wf",
+]
+codes = ["W0301"]
+reason = "K1: a closure in an element, a tuple or a field holds the captured reference; the read of the container and the call are W0301 (true positives on one more line). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r2/redteam/p/zz_shared.wf",
+    "tests/gate/probes/verify/s5/S5b/p/a02_w0406_variants.wf",
+]
+codes = ["W0312", "W0402", "W0406", "W0703"]
+reason = "U2: the instantiated closure body sees the values that its captures can have (the instantiation joins the states of the maker), so W0406 / W0402 / W0703 is reported in the closure body, not (only) at the call. Same fault, rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r2/redteam/p/zz_uniq_late.wf",
+    "tests/gate/probes/verify/s5/b/p/a1.wf",
+]
+codes = ["W0406"]
+reason = "U2: the instantiated closure body sees the values that its captures can have (the instantiation joins the states of the maker), so W0406 / W0402 / W0703 is reported in the closure body, not (only) at the call. Same fault, rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/fidelity/p/gk1.wf",
+]
+finding = "F3-11"
+codes = ["W0301"]
+reason = "F3-11 (part `rebinds`): the closure gives the captured reference a new value on each path, so the old W0301 after the call is a false positive (claim F3-11); the other lines are the same"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r3/oracle/probes/se1_field_lin_never.wf",
+]
+finding = "F12-R4"
+codes = ["W0601"]
+reason = "W0601 of the linear closure in a field at the end of the scope of the struct, not at the closure literal. Same fault"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/oracle/probes/se2_field_lin_twice.wf",
+]
+finding = "F12-R4"
+codes = ["W0302", "W0601"]
+reason = "the linear closure in the field is `once`: the second `run_h(&h)` runs a moved closure, W0302 at the second run (the fault), and W0601 at the end of the scope of `h`, where the old pipeline reports W0601 at the literal. Rejected in both (claim F12-R4)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/redteam/e07_multi_uniq.wf",
+    "tests/gate/probes/verify/partb/S4/p/u2_closure_uniq.wf",
+]
+codes = ["W0503"]
+reason = "U1: a `@ uniq` value that a closure keeps (`Kept`) and uses at its call is live across the `multi` operation before the call: extra W0503 on the same lines. Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/verify/partb/S4/run/vec_fn_drop.wf",
+]
+finding = "F12-C1"
+codes = ["W0601"]
+reason = "the closure-copy rule (claim F12-C1, docs/ir.md 5.22): a read of a value that can be a `once` closure moves it (an element, a field, a capture): a second read or run is W0302 / W0502, and a moved element leaves no linear value (W0601 at the end of the container). True positives at the fault; rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/verify/partb/S4diff/p/cret.wf",
+]
+finding = "F11-L1"
+codes = ["W0601"]
+reason = "F11-L1: W0601 of the linear capture at the `Return` of the closure (the `return` line) instead of the closure end. Same fault"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/p/or1b.wf",
+]
+finding = "F12-H4"
+codes = ["W0301"]
+reason = "F12-fix H4: the vector holds the places of the closures, so the read of the element after the change (`let g = v[0]`) is W0301 too, one line before the call (true). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/p/or3a.wf",
+]
+codes = ["W0301"]
+reason = "the old W0301 at `reg(&h, ..)` assumes that `reg` runs its function argument; it only stores it, and the ir pipeline reports the run of the stored closure in `run_h` (W0301 at the call, line 87, in both). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/R2b: closures, function values and stored references/fd3_localrc.wf"]
+codes = ["W0301"]
+reason = "block-value-line class: the block value points into an `rc` object through the handle `d` of the block; the ir pipeline reports the use of `r` (20), the old pipeline the end of the block (18). In scope from stage F13 (a reference in an `rc` object); group A"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/R2b: closures, function values and stored references/fd3_fp.wf"]
+codes = ["W0301"]
+reason = "the `rc` object keeps the references that the callees put into `c.refs` (stage F13, the heap slot of the group root): after `other_rc_direct` changes `Cache` (`d.data.push`), a use of `c.refs` is W0301 (39, 40; the run faults at 41: `c.refs[2]` points into the dead object of `local_rc`, which both pipelines accept as a handle of the same `rc` type). The W0312 lines are in both. In scope from stage F13; group A"
+stage = "F13"
+
+# Stage F13: the rows of tier 2 with the groups A, B and C (the classes above).
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m00457_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m00470_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m00545_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m00960_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m02100_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m02203_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m02956_113_returned_closures.wf",
+]
+codes = ["W0301"]
+reason = "F13 (stored values): the vector that a callee fills with closures holds the places of their environments from the first weak definition of its variable on (as a `Vec<&T>` local in both pipelines: `points_into` is not by node), so the call that fills it after a change of the referent is W0301 one line earlier than old, and a control that fills it after the change is W0301 too; the block values are W0301 at the use (block-value-line class). Rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/R2b: closures, function values and stored references/once_variants.wf",
+]
+finding = "F12-C1"
+codes = ["W0302", "W0502"]
+reason = "the closure-copy rule (claim F12-C1, docs/ir.md 5.22): a read of a value that can be a `once` closure moves it (an element, a field, a capture): a second read or run is W0302 / W0502, and a moved element leaves no linear value (W0601 at the end of the container). True positives at the fault; rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/R2b: closures, function values and stored references/or2_refs.wf",
+    "verify/s5/S5c/mut/progs/m00408_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m00499_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m00606_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m00624_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m00706_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m00713_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m00731_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m00788_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m00940_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m01037_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m01262_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m01275_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m01358_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m01647_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m01774_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m02193_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m02545_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m02568_35_wild_places.wf",
+]
+codes = ["W0301"]
+reason = "block-value-line class (F8, F11): a block value or a returned closure that points into a local of the block is W0301 at its use (the ir pipeline), where the old pipeline reports the end of the block; a W0204 of a closure is at the returned expression. Same fault, same function"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5a/e6b_closure.wf",
+]
+codes = ["W0601"]
+reason = "U2: the instantiated closure body sees the values that its captures can have (the instantiation joins the states of the maker), so W0406 / W0402 / W0703 is reported in the closure body, not (only) at the call. Same fault, rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/S5c/mut/progs/m00009_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m00098_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m00100_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m00358_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m00929_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m01801_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m01841_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m01974_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m02050_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m02075_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m02919_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m02996_73_immovable.wf",
+]
+finding = "F11-U1"
+codes = ["W0304"]
+reason = "F11-U1: the W0304 of a place field that a closure reads is at the call of the closure (the `uses` of the run node), not at the closure literal. Same fault"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/S5c/mut/progs/m00143_39_multi_params.wf",
+    "verify/s5/S5c/mut/progs/m01630_39_multi_params.wf",
+    "verify/s5/S5c/mut/progs/m02155_39_multi_params.wf",
+]
+codes = ["W0503"]
+reason = "W0503 of `multi` code of a caller (as tests/programs/39_multi_params.wf): the ir pipeline applies the row of the function type of the value at the run, and the W0503 moves to that line. Same fault, rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00215_36_captures.wf",
+    "verify/s5/S5c/mut/progs/m00459_36_captures.wf",
+    "verify/s5/S5c/mut/progs/m00628_36_captures.wf",
+    "verify/s5/S5c/mut/progs/m00668_36_captures.wf",
+    "verify/s5/S5c/mut/progs/m01942_36_captures.wf",
+    "verify/s5/S5c/mut/progs/m02238_36_captures.wf",
+    "verify/s5/S5c/mut/progs/m02363_36_captures.wf",
+]
+finding = "R3RT5"
+codes = ["W0204", "W0301"]
+reason = "R3RT5: a closure owns its `ByMove` capture, so the old W0204 / W0301 at the maker or at the end of a block are false positives of the old pipeline; the ir pipeline reports the caller that drops a linear closure (W0601, `Ret::linear`, F12-fix H3) or runs a `once` closure twice (W0502). Each program is rejected in both pipelines (the reviewer signed the lost-clean R3RT5 rows, review2 3.2)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00779_103_wild_lend.wf",
+]
+finding = "map-N2"
+codes = ["W0301"]
+reason = "map N2 (ADR 0012, docs/ir.md 6.7): a callee keeps the result of code of a caller across another call of code of a caller, which can change it: W0301 in the callee, where the old pipeline reports W0312 at the call. Same fault, rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00895_44_returned_fns.wf",
+    "verify/s5/S5c/mut/progs/m01086_44_returned_fns.wf",
+    "verify/s5/S5c/mut/progs/m01157_44_returned_fns.wf",
+    "verify/s5/S5c/mut/progs/m01439_44_returned_fns.wf",
+    "verify/s5/S5c/mut/progs/m02984_44_returned_fns.wf",
+]
+codes = ["W0301", "W0703"]
+reason = "M1: a closure that an unknown maker gives back has the environment `world..` (the wildcard place of the argument): extra W0301 / W0703 on a line of the maker call. Precision (the environment of a `Made` closure capture by capture is not done, docs/ir.md 6.7); rejected in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00897_48_lend_alias.wf",
+]
+codes = ["W0405"]
+reason = "task runs (stage F18): the ir pipeline has no facts of tasks for the runs of a callee (W0405 of the old pipeline only); the program stays rejected"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m02213_37_fn_values.wf",
+]
+codes = ["W0301"]
+reason = "a mutant of tests/programs/37_fn_values.wf: the store `cb.f = ..` is in a closure that nothing calls, so no closure is stored, and the old W0301 of the loop at 128 is a false positive of the old pipeline; the other lines are the same"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/partb/S4/run/nest_once.wf"]
+codes = ["W0301"]
+reason = "The same fault in both (W0502 at the second call of each `once` closure, 8 to 35); the old W0301@34 is a second report of the stored closure of `n5`"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/quality/gen/p/g00878.wf"]
+codes = ["W0601", "W0702"]
+reason = "Dead code: the values after a `break` (`let t7 = mint()`, the `choose()` calls after `break`) never run; the IR has no blocks for them, so the old W0601 and W0702 there are gone (old false positives). In scope because of the closure in `g0`"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/quality/gen/p/g00972.wf"]
+codes = ["W0601", "W0702"]
+reason = "Dead code (as g00878): the statements after a `continue` never run (old W0601 of `mx5`, W0702 of `choose`)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/review_core/Core_S1/rt4/order.wf"]
+codes = ["W0301"]
+reason = "Group A shape (the file is in scope for its closures): `world.entities[0].with(..)` takes a copy of the `Entity` receiver (a copy type) before the argument `grow(world)` runs, so the old W0301@41 is a false positive; the W0301 of 45 and 74 are at the use of the receiver (column 13), not at the call (column 5)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/R2b: closures, function values and stored references/rr7_wrapped_fn.wf"]
+codes = ["W0301", "W0302", "W0502"]
+reason = "RR7 (part `uses`): the closure reads the rebound `o`, `t`, `s` at its call, so the change of the new value (`clear`) invalidates `first`: W0301 at 17, 26, 35, 44, 55 (true positives that the old pipeline does not see; `main` does not run them). The old W0301@54, W0302@42, 52 and W0502@63 are reports of the copy class at other lines (W0302@63 in the ir pipeline)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/R2b: closures, function values and stored references/rr7_wrapped_fn_x.wf"]
+codes = ["W0301", "W0302", "W0502"]
+reason = "As rr7_wrapped_fn.wf"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/R2b: closures, function values and stored references/stress_join.wf"]
+codes = ["W0301", "W0302", "W0312"]
+reason = "`selfref`: a closure that captures `v` goes into `v`; the reference points to the vector, not into its elements, so the old W0312@312, W0301@312, W0302@314 and W0301@315 are false positives (oracle clean). W0301@307 in both"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/R2b: closures, function values and stored references/w0312_cmp.wf"]
+codes = ["W0312"]
+reason = "Old false positive: `clear_then(&v2, f3)` runs `f3` (reads `v2.len()`) after the clear; the closure changes no place that the other argument points into (`Sigma::others`). The other functions are the same"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/S5a/e6b_closure2.wf"]
+codes = ["W0601"]
+reason = "ByMove: `match o` in the closure moves `o`, so the closure owns `o` (the capture is `ByMove`): W0601 of the closure value at the end (12) and of the capture in the body (7) instead of the old lines 9 and 10"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/S5c/mut/progs/m00346_53_overwritten.wf"]
+codes = ["W0302"]
+reason = "The closure rebinds `tx` (a `ByRef` capture) in each round. Both reject with the same W0601; the W0302 is at the borrow of the moved `tx` for the capture (48), where the old pipeline reports `rollback(tx)` (47)"
+stage = "F13"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/S5c/mut/progs/m00511_23_fip_more.wf"]
+codes = ["W0302"]
+reason = "Not a closure row (in scope because of a closure in the file): W0302 at the first use after the move (42, the marker line), not at 43"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/S5c/mut/progs/m01183_18_polymorphism.wf"]
+codes = ["W0702"]
+reason = "W0702 of a closure that `map` runs: the ir pipeline reports the perform in the closure body (`fetch`, column 17), not also the call of `map` (column 5): one W0702 on the line where the old pipeline gives two (the base marker says `W0702 W0702`)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/S5c/mut/progs/m01281_74_uniq_flow.wf"]
+codes = ["W0406"]
+reason = "The closure `mut_c47` is never called, so `l` stays `@ uniq`: the old W0406 at 49 is a false positive (the old pipeline applies the closure body where it is made)"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/S5c/mut/progs/m01738_43_loops.wf"]
+codes = ["W0502"]
+reason = "`h` gets the `once` closure after the loop; the call in the loop runs `|| print(1)`: the old W0502 is a false positive"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/r2a/t/fv2.wf"]
+codes = ["W0301"]
+reason = "In scope since F12 (F11: out of scope). `self_wrap` and `nest` (8, 21, 35, 36, 42): the old W0301 at the copies of the closures in the loop are false positives; `nest` (42) and `self_wrap_bad` (26) are true positives in both (claim F12-R9: a closure that a loop makes keeps the last value of a local of the loop body)"
+stage = "F13"

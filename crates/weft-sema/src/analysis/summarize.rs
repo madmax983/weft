@@ -192,64 +192,23 @@ pub fn summarize(
         .map(|d| d.ty);
     if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t)) {
         let (fns, places, caps) = ret_fns_of(ir, fv.returns, fv.made, entry, &place);
-        // The effects of a closure that the function gives back are in its
-        // row, as the old inference says (W0701, W0702 at a caller): its
-        // effects, and its changes through the references of its captures.
-        // The effects of the closures that those closures give back too.
-        let mut work: Vec<weft_ir::ClosureId> = fns
-            .iter()
-            .filter_map(|f| match f {
-                super::summary::RetFn::Made(c) => Some(*c),
-                _ => None,
-            })
-            .collect();
-        let mut seen = std::collections::BTreeSet::new();
-        while let Some(c) = work.pop() {
-            if !seen.insert(c) {
-                continue;
-            }
-            if let Ok(cs) = sums.closure(c) {
-                changed
-                    .named
-                    .extend(cs.performs.iter().map(|pf| pf.effect.clone()));
-                work.extend(cs.ret.fns.iter().filter_map(|f| match f {
-                    super::summary::RetFn::Made(x) => Some(*x),
-                    _ => None,
-                }));
-            }
-        }
-        for f in &fns {
-            if let super::summary::RetFn::Made(c) = f {
-                if let Ok(cs) = sums.closure(*c) {
-                    for (m, _) in &cs.muts {
-                        let (k, wild) = match m.root {
-                            IRoot::CaptureHeld(k) => (k, false),
-                            IRoot::CaptureDeep(k) => (k, true),
-                            _ => continue,
-                        };
-                        for base in caps.get(&(*c, k)).into_iter().flatten() {
-                            let mut steps = base.steps.clone();
-                            if wild {
-                                steps.push(IStep::Wild);
-                            } else {
-                                steps.extend(m.steps.iter().cloned());
-                            }
-                            let ip = IPlace::cut(base.root.clone(), steps);
-                            let idx = match base.root {
-                                IRoot::Param(i) | IRoot::Held(i) => {
-                                    super::sig::sig_root(sig, i as usize)
-                                }
-                                _ => continue,
-                            };
-                            changed.muts.push((ip, idx));
-                        }
-                    }
-                }
-            }
-        }
+        made_effects(sums, sig, (&fns, &caps), &mut changed);
         changed.ret_fns = fns;
         changed.ret_places = places;
         changed.ret_linear = ret_linear(ir, tys, fv.returns, entry);
+    }
+    // The values that the body puts into the heap slots of interface places
+    // (stage F13): the closures there have their effects in the row too.
+    for (into, (fns, places, caps)) in
+        stored_parts_of(ir, facts, roots, fv.returns, fv.made, &place, false)
+    {
+        made_effects(sums, sig, (&fns, &caps), &mut changed);
+        if !places.is_empty() {
+            changed.puts.entry(into.clone()).or_default().extend(places);
+        }
+        if !fns.is_empty() {
+            changed.put_fns.entry(into).or_default().extend(fns);
+        }
     }
     for &(n, m) in &facts.mutates_at {
         if n.index() >= nodes {
@@ -262,6 +221,19 @@ pub fn summarize(
     }
     changed.muts.sort();
     changed.muts.dedup();
+    // The reads of a place of an `rc` object: the signature gives the reads
+    // of the parameters (stage F13, the summary oracle).
+    for &(n, r) in &facts.reads_at {
+        if n.index() >= nodes {
+            continue;
+        }
+        let base = facts.wild_base(r).unwrap_or(r);
+        if let Some((ip, _)) = interface_place(facts, roots, entry, sig, &owned, base) {
+            if matches!(ip.root, IRoot::Group(_)) {
+                changed.reads.insert(ip);
+            }
+        }
+    }
     let made_named = changed.named.clone();
     out.join(&changed);
     out.named = facts
@@ -419,14 +391,31 @@ fn ret_fns_of(
     body: BodyId,
     place: &dyn Fn(PlaceId) -> Option<IPlace>,
 ) -> RetParts {
+    let Some(b) = ir.body(body) else {
+        return RetParts::default();
+    };
+    let values: Vec<(&super::State, super::AbsVal)> = returns
+        .iter()
+        .map(|st| (st, st.value((body, b.ret), &[]).flat()))
+        .collect();
+    fn_parts_of(ir, &values, made, place)
+}
+
+/// The function values `v` of each pair (`st`, `v`) of `values` in the
+/// terms of the interface (`place`), with the places that the values and
+/// the environments of their closures point into, and the places of each
+/// capture ([`ret_fns_of`]; stage F13 for the values that a body stores).
+fn fn_parts_of(
+    ir: &weft_ir::Program,
+    values: &[(&super::State, super::AbsVal)],
+    made: Option<&super::State>,
+    place: &dyn Fn(PlaceId) -> Option<IPlace>,
+) -> RetParts {
     use super::summary::RetFn;
     use super::FnVal;
     let mut fns = std::collections::BTreeSet::new();
     let mut places = std::collections::BTreeSet::new();
     let mut caps: CapPlaces = BTreeMap::new();
-    let Some(b) = ir.body(body) else {
-        return (fns, places, caps);
-    };
     let one = |f: &FnVal| match f {
         FnVal::Item(g, t) => RetFn::Item(*g, t.clone()),
         FnVal::Closure(c) | FnVal::Made(c) => RetFn::Made(*c),
@@ -434,10 +423,9 @@ fn ret_fns_of(
         FnVal::Capture(k) => RetFn::Capture(*k),
         FnVal::Unknown => RetFn::Unknown,
     };
-    for st in returns {
-        let v = st.value((body, b.ret), &[]).flat();
+    for (st, v) in values {
         places.extend(v.refs.iter().filter_map(|&q| place(q)));
-        // The closures of the result, and the closures that their `Kept`
+        // The closures of the value, and the closures that their `Kept`
         // captures hold (a closure that runs a captured closure), each one
         // time.
         let mut work: Vec<FnVal> = v.fns.iter().cloned().collect();
@@ -481,6 +469,133 @@ fn ret_fns_of(
         }
     }
     (fns, places, caps)
+}
+
+/// The values that body `body` puts into the heap slots of interface places
+/// at its `Return` states `returns` (parts `puts` and `put_fns`, stage F13):
+/// for each slot place that `place` names, the places that the stored
+/// references point into, and the function values with the places of their
+/// environments ([`fn_parts_of`]). With `all`, each slot with references
+/// counts; else only a slot of an `rc` object and a slot with function
+/// values (a function has the part `stores` from its signature for the
+/// other references).
+fn stored_parts_of(
+    ir: &weft_ir::Program,
+    facts: &FnFacts,
+    roots: &Roots,
+    returns: &[super::State],
+    made: Option<&super::State>,
+    place: &dyn Fn(PlaceId) -> Option<IPlace>,
+    all: bool,
+) -> Vec<(IPlace, RetParts)> {
+    let mut keys: std::collections::BTreeSet<PlaceId> = std::collections::BTreeSet::new();
+    for st in returns {
+        keys.extend(st.behind_fns().keys().copied());
+        for (q, refs) in st.behind() {
+            let group = facts
+                .places
+                .get(q.index())
+                .is_some_and(|i| matches!(roots.role(i.root), Some(Role::Group)));
+            if !refs.is_empty() && (all || group) {
+                keys.insert(*q);
+            }
+        }
+    }
+    let mut out: Vec<(IPlace, RetParts)> = Vec::new();
+    for q in keys {
+        let Some(into) = place(q) else {
+            continue;
+        };
+        let values: Vec<(&super::State, super::AbsVal)> = returns
+            .iter()
+            .map(|st| {
+                let mut v = super::AbsVal::none();
+                v.fns = st.behind_fns().get(&q).cloned().unwrap_or_default();
+                v.refs = st.behind().get(&q).cloned().unwrap_or_default();
+                (st, v)
+            })
+            .collect();
+        let parts = fn_parts_of(ir, &values, made, place);
+        match out.iter_mut().find(|(k, _)| *k == into) {
+            Some((_, have)) => {
+                have.0.extend(parts.0);
+                have.1.extend(parts.1);
+                for (k, v) in parts.2 {
+                    have.2.entry(k).or_default().extend(v);
+                }
+            }
+            None => out.push((into, parts)),
+        }
+    }
+    out
+}
+
+/// The changes and the effects of the closures `fns` that a body gives to
+/// its callers (a result, or a value that it stores, stage F12 and F13): the
+/// effects of each closure, of the closures that they give back, and the
+/// changes through the references of their captures (`caps`), in the terms
+/// of the interface of the function with signature `sig`. The old inference
+/// puts them in the row (W0701, W0702 at a caller).
+fn made_effects(
+    sums: &Summaries,
+    sig: &FnSig,
+    (fns, caps): (
+        &std::collections::BTreeSet<super::summary::RetFn>,
+        &CapPlaces,
+    ),
+    changed: &mut Inferred,
+) {
+    let mut work: Vec<weft_ir::ClosureId> = fns
+        .iter()
+        .filter_map(|f| match f {
+            super::summary::RetFn::Made(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(c) = work.pop() {
+        if !seen.insert(c) {
+            continue;
+        }
+        if let Ok(cs) = sums.closure(c) {
+            changed
+                .named
+                .extend(cs.performs.iter().map(|pf| pf.effect.clone()));
+            work.extend(cs.ret.fns.iter().filter_map(|f| match f {
+                super::summary::RetFn::Made(x) => Some(*x),
+                _ => None,
+            }));
+        }
+    }
+    for f in fns {
+        if let super::summary::RetFn::Made(c) = f {
+            if let Ok(cs) = sums.closure(*c) {
+                for (m, _) in &cs.muts {
+                    let (k, wild) = match m.root {
+                        IRoot::CaptureHeld(k) => (k, false),
+                        IRoot::CaptureDeep(k) => (k, true),
+                        _ => continue,
+                    };
+                    for base in caps.get(&(*c, k)).into_iter().flatten() {
+                        let mut steps = base.steps.clone();
+                        if wild {
+                            steps.push(IStep::Wild);
+                        } else {
+                            steps.extend(m.steps.iter().cloned());
+                        }
+                        let ip = IPlace::cut(base.root.clone(), steps);
+                        let idx = match base.root {
+                            IRoot::Param(i) | IRoot::Held(i) => {
+                                super::sig::sig_root(sig, i as usize)
+                            }
+                            _ => continue,
+                        };
+                        changed.muts.push((ip, idx));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// True if `_0` of body `body` can hold a linear closure (`Ret::linear`).
@@ -992,10 +1107,19 @@ pub fn closure(
             }
         }
     }
-    let (fns, places, _) = ret_fns_of(ir, returns, fv.made, body, &|q| {
-        closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
-    });
+    let iface = |q: PlaceId| closure_place(ir, facts, roots, body, q, false).map(|x| x.0);
+    let (fns, places, _) = ret_fns_of(ir, returns, fv.made, body, &iface);
     out.ret.fns = fns.into_iter().collect();
+    // The function values that the body puts into the heap slots of
+    // interface places, with the places of their environments (stage F13).
+    for (into, (fs, ps, _)) in stored_parts_of(ir, facts, roots, returns, fv.made, &iface, true) {
+        if !ps.is_empty() {
+            puts.entry(into.clone()).or_default().extend(ps);
+        }
+        if !fs.is_empty() {
+            out.put_fns.push((into, fs.into_iter().collect()));
+        }
+    }
     ret.extend(places);
     out.puts = puts
         .into_iter()

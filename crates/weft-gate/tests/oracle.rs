@@ -454,4 +454,12 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
         detail: "seed 1, workers 1: runtime error: fact oracle (C4): in `main`".to_string(),
     };
     assert!(oracle::fact_class(&failed).is_failure());
+    // A failure of the summary oracle (stage F13) is a failure class of its
+    // own.
+    let summary = Outcome {
+        verdict: Verdict::Fault,
+        detail: "seed 1, workers 1: runtime error: summary oracle (A3): in `main`".to_string(),
+    };
+    assert_eq!(oracle::fact_class(&summary), oracle::FactClass::Summary);
+    assert!(oracle::fact_class(&summary).is_failure());
 }

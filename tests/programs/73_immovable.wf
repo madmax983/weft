@@ -119,8 +119,8 @@ fn param_frame_set(f: Frame) {
 // A closure that reads a place field reads it where the closure is made.
 fn closure_reads_unset() {
     let f = Frame { buf: [1, 2, 3, 4] }
-    let c = || print(f.cur)   //~ W0304
-    c()
+    let c = || print(f.cur)   //~ old: W0304
+    c()   //~ ir: W0304
 }
 fn closure_reads_set() {
     let f = Frame { buf: [1, 2, 3, 4] }

@@ -34,7 +34,7 @@
 //! signature and the parts that its body gives, and [`to_effect_sig`]
 //! projects a summary onto the `EffectSig` of today (`docs/ir.md` 6.8).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use weft_ir::{FnDecl, Ty, TyId, TyTable};
 
@@ -153,13 +153,32 @@ fn unsupported(sig: &FnSig, body: bool) -> Option<&'static str> {
     {
         return Some("a call of a function that runs or keeps function values (stage F12)");
     }
-    if !e.group_stores.is_empty() {
-        return Some("a call of a function that stores into an `rc` object (stage F13)");
-    }
     if e.pins || !e.tasks.is_empty() || !e.task_runs.is_empty() || !e.task_effects.is_empty() {
         return Some("a call of a function that starts tasks (stage F18)");
     }
     None
+}
+
+/// The parts `puts` and `put_fns` of a foreign function that changes the
+/// `rc` objects of type definition `a` (stage F13): each argument can go
+/// into such an object, with what its references point into and its
+/// function values.
+fn foreign_group_puts(decl: &FnDecl, tys: &TyTable, a: weft_ir::AdtId, inf: &mut Inferred) {
+    let into = IPlace::wild(IRoot::Group(a));
+    for (i, &t) in decl.params.iter().enumerate() {
+        let i = u32_of(i);
+        if is_ref(tys, t) || byval_refs(tys, t) {
+            let refs = inf.puts.entry(into.clone()).or_default();
+            refs.insert(IPlace::wild(IRoot::Param(i)));
+            refs.insert(IPlace::wild(IRoot::Held(i)));
+        }
+        if crate::props::ir_has_fns(tys, t) {
+            inf.put_fns
+                .entry(into.clone())
+                .or_default()
+                .insert(RetFn::Param(i));
+        }
+    }
 }
 
 /// The parts of a function with no body that has a function value in its signature: code
@@ -258,6 +277,17 @@ pub struct Inferred {
     pub ret_places: BTreeSet<IPlace>,
     /// The result can hold a linear closure (part `ret`, `Ret::linear`).
     pub ret_linear: bool,
+    /// The references that the body puts into an interface place, at its
+    /// `Return` (part `puts`, stage F13): into an `rc` object, and the
+    /// environments of the function values that it puts there.
+    pub puts: BTreeMap<IPlace, BTreeSet<IPlace>>,
+    /// The function values that the body puts into an interface place
+    /// (part `put_fns`, stage F13).
+    pub put_fns: BTreeMap<IPlace, BTreeSet<RetFn>>,
+    /// The places of the interface that the body reads, other than the
+    /// places of its parameters (part `reads`): a place of an `rc` object
+    /// (found by the summary oracle, stage F13).
+    pub reads: BTreeSet<IPlace>,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -332,6 +362,21 @@ impl Inferred {
         if o.ret_linear && !self.ret_linear {
             self.ret_linear = true;
             grew = true;
+        }
+        for (k, v) in &o.puts {
+            let mine = self.puts.entry(k.clone()).or_default();
+            for x in v {
+                grew |= mine.insert(x.clone());
+            }
+        }
+        for r in &o.reads {
+            grew |= self.reads.insert(r.clone());
+        }
+        for (k, v) in &o.put_fns {
+            let mine = self.put_fns.entry(k.clone()).or_default();
+            for x in v {
+                grew |= mine.insert(x.clone());
+            }
         }
         if grew {
             self.muts.sort();
@@ -443,18 +488,18 @@ pub fn from_signature(
     }
     let def = prog.fns.get(f.index());
     let foreign = def.is_some_and(|d| d.decl.body.is_none() && !d.is_std);
-    if foreign
-        && sig
-            .effects
-            .muts
-            .iter()
-            .any(|m| matches!(m.root, SigRoot::Group(_)))
-    {
-        return Err("a call of a foreign function that changes an `rc` object (stage F13)");
-    }
     let mut inf = Inferred::of_signature(sig, decl, tys);
     if !body {
         foreign_fn_parts(decl, tys, &mut inf);
+    }
+    // A foreign function that changes an `rc` object can put each argument
+    // there (stage F13, as `Lower::group_stores_of`).
+    if foreign {
+        for m in &sig.effects.muts {
+            if let SigRoot::Group(a) = m.root {
+                foreign_group_puts(decl, tys, weft_ir::AdtId(u32_of(a.index())), &mut inf);
+            }
+        }
     }
     let mut s = build(prog, sig, decl, tys, &inf);
     let e = &sig.effects;
@@ -565,6 +610,7 @@ pub fn build(
             s.ret.places.push(p.clone());
         }
     }
+    put_parts(&mut s, inf);
     s.only_self = inf.named.is_empty()
         && inf.runs.is_empty()
         && !inf.multi
@@ -573,6 +619,32 @@ pub fn build(
             .iter()
             .all(|(m, _)| matches!(m.root, IRoot::Param(0) | IRoot::Held(0)));
     s
+}
+
+/// Gives summary `s` the parts `puts`, `put_fns` and the inferred `reads`
+/// of `inf` (stage F13).
+pub fn put_parts(s: &mut Summary, inf: &Inferred) {
+    for r in &inf.reads {
+        if !s.reads.contains(r) {
+            s.reads.push(r.clone());
+        }
+    }
+    for (into, refs) in &inf.puts {
+        match s.puts.iter_mut().find(|(k, _)| k == into) {
+            Some((_, have)) => {
+                for r in refs {
+                    if !have.contains(r) {
+                        have.push(r.clone());
+                    }
+                }
+            }
+            None => s.puts.push((into.clone(), refs.iter().cloned().collect())),
+        }
+    }
+    for (into, fns) in &inf.put_fns {
+        s.put_fns
+            .push((into.clone(), fns.iter().cloned().collect()));
+    }
 }
 
 /// The `EffectSig` of a summary (`docs/ir.md` 6.8).

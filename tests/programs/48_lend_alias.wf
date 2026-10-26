@@ -16,7 +16,7 @@ fn give_two(f: fn(&World, &Entity), w: &World) {
 // run the closure as a task and change `world` while the task runs (W0405).
 fn give_closure(g: fn(fn(), &World), world: &World) {
     let r = &world.entities[0]
-    g(|| print(r.hp), world)   //~ W0312 W0301 W0405
+    g(|| print(r.hp), world)   //~ W0301 W0312 old: W0405
 }
 
 // A closure argument lends its parameter and reads a capture inside it.

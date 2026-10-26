@@ -326,7 +326,30 @@ impl super::Machine<'_, '_> {
         // a value that is not a copy value). A take in another op (a drop,
         // the code of a native function) changes the place.
         let moves = matches!(op, Op::Take | Op::Read);
-        fo.check_events(uid, code, &cf.slots, &self.heap, &events, moves)
+        fo.check_events(uid, code, &cf.slots, &self.heap, &events, moves)?;
+        // The summary oracle (A3): the frames below wait at their run nodes,
+        // and the accesses of the op are accesses of their callees.
+        let Some(task) = self.tasks.get(self.cur) else {
+            return Ok(());
+        };
+        let below = task
+            .frames
+            .iter()
+            .rev()
+            .filter_map(|f| match f {
+                Frame::Code(c) => Some(c),
+                _ => None,
+            })
+            .skip_while(|c| c.uid != uid)
+            .skip(1)
+            .take(crate::oracle::facts::SUMMARY_DEPTH);
+        for c in below {
+            if c.uid == 0 || c.chain.is_some() {
+                continue;
+            }
+            fo.check_summary(c.uid, &c.code, &c.slots, &self.heap, &events)?;
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines)]

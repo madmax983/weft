@@ -1,0 +1,102 @@
+// F13 (stored values): a copy of crates/weft-check/tests/data/stored/containers.wf.
+// Function values in a `Vec`, a `Box` and an `Option` behind a reference
+// (plan stage F13, `docs/ir.md` 6.6): the heap slot of the place holds them.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+struct Slot { o: Option<fn()> }
+fn run_all(fs: &Vec<fn()>) {
+    let i = 0
+    while i < fs.len() {
+        let f = fs[i]
+        f()
+        i += 1
+    }
+}
+fn add(fs: &Vec<fn()>, f: fn()) / mut(fs) { fs.push(f) }
+fn add_own(fs: &Vec<fn()>, w: &World) / mut(fs, w.entities) { fs.push(|| w.entities.clear()) }
+// A callee pushes the closure of the caller.
+fn vec_arg(world: &World) / mut(world.entities) {
+    let fs: Vec<fn()> = Vec.new()
+    add(&fs, || world.entities.clear())
+    let first = &world.entities[0]
+    run_all(&fs)
+    print(first.hp)   //~ W0301
+}
+// A callee pushes a closure of its own.
+fn vec_own(world: &World) / mut(world.entities) {
+    let fs: Vec<fn()> = Vec.new()
+    add_own(&fs, world)
+    let first = &world.entities[0]
+    run_all(&fs)
+    print(first.hp)   //~ W0301
+}
+// A push behind a reference parameter, read back.
+fn vec_behind(world: &World, fs: &Vec<fn()>) / mut(world.entities, fs) {
+    fs.push(|| world.entities.clear())
+    let first = &world.entities[0]
+    let f = fs[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+// A box that holds a struct with a function field.
+fn run_box(b: &Box<Cb>) {
+    let g = b.f
+    g()
+}
+fn boxed(world: &World) / mut(world.entities) {
+    let b = Box.new(Cb { f: || print(0) })
+    b.f = || world.entities.clear()
+    let first = &world.entities[0]
+    run_box(&b)
+    print(first.hp)   //~ W0301
+}
+fn set_boxed(b: &Box<Cb>, w: &World) / mut(b, w.entities) { b.f = || w.entities.clear() }
+fn boxed_callee(world: &World) / mut(world.entities) {
+    let b = Box.new(Cb { f: || print(0) })
+    set_boxed(&b, world)
+    let first = &world.entities[0]
+    run_box(&b)
+    print(first.hp)   //~ W0301
+}
+// An `Option` slot behind a reference.
+fn fill(s: &Slot, w: &World) / mut(s.o, w.entities) { s.o = Some(|| w.entities.clear()) }
+fn run_slot(s: &Slot) {
+    let o = s.o
+    match o {
+        Some(f) => f(),
+        None => {}
+    }
+}
+fn option_slot(world: &World) / mut(world.entities) {
+    let s = Slot { o: None }
+    fill(&s, world)
+    let first = &world.entities[0]
+    run_slot(&s)
+    print(first.hp)   //~ W0301
+}
+// Controls.
+fn vec_harmless(world: &World) {
+    let fs: Vec<fn()> = Vec.new()
+    add(&fs, || print(1))
+    let first = &world.entities[0]
+    run_all(&fs)
+    print(first.hp)
+}
+fn boxed_harmless(world: &World) {
+    let b = Box.new(Cb { f: || print(0) })
+    b.f = || print(3)
+    let first = &world.entities[0]
+    run_box(&b)
+    print(first.hp)
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn main() {
+    let w = mkw()
+    vec_harmless(&w)
+    boxed_harmless(&w)
+}

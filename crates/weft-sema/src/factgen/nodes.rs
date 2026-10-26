@@ -136,6 +136,25 @@ fn callee_names(p: &Program, tys: &TyTable, id: BodyId, b: &Body) -> BTreeMap<Bl
             }
         }
     }
+    // The function item of each local whose each value is that one item
+    // (`let g = grow`): a call of the local names the item, as the old
+    // lowering does (stage F13).
+    let mut items: BTreeMap<LocalId, Option<weft_ir::FnId>> = BTreeMap::new();
+    for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+        if let StmtKind::Assign(dest, rv) = &s.kind {
+            if !dest.proj.is_empty() {
+                continue;
+            }
+            let item = match rv {
+                Rvalue::Use(Operand::Const(weft_ir::Const::Fn(f, _))) => Some(*f),
+                _ => None,
+            };
+            let e = items.entry(dest.local).or_insert(item);
+            if *e != item {
+                *e = None;
+            }
+        }
+    }
     let value_name = |v: &Operand| -> Option<String> {
         let (Operand::Copy(q) | Operand::Move(q)) = v else {
             return None;
@@ -144,6 +163,14 @@ fn callee_names(p: &Program, tys: &TyTable, id: BodyId, b: &Body) -> BTreeMap<Bl
         // A capture of a closure: the name of its variable.
         if let Some((c, k, _)) = super::alpha::env_capture(p, id, q) {
             return Some(super::alpha::capture_name(p, c, k));
+        }
+        if let Some(Some(f)) = items.get(&l).filter(|_| q.proj.is_empty()) {
+            if let Some(d) = p.fns.get(f.index()) {
+                let name = d.name.rsplit('.').next().unwrap_or(&d.name);
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
         }
         b.local(l).and_then(|d| d.name.clone())
     };

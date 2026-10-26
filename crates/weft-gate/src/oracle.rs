@@ -802,6 +802,8 @@ pub enum FactClass {
     Trace,
     /// A failure of the fact oracle (C1, C4, C5, D1, D4).
     Fact,
+    /// A failure of the summary oracle (A3, stage F13).
+    Summary,
     /// Another fault: the memory oracle, a panic, a fault marker.
     Fault,
     /// The run does not end in the limits.
@@ -819,9 +821,10 @@ pub enum FactClass {
 
 impl FactClass {
     /// The classes, in the order of the report.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Trace,
         Self::Fact,
+        Self::Summary,
         Self::Fault,
         Self::Timeout,
         Self::Pass,
@@ -835,6 +838,7 @@ impl FactClass {
         match self {
             Self::Trace => "trace",
             Self::Fact => "fact-oracle",
+            Self::Summary => "summary-oracle",
             Self::Fault => "fault",
             Self::Timeout => "timeout",
             Self::Pass => "pass",
@@ -844,9 +848,10 @@ impl FactClass {
         }
     }
 
-    /// True for a failure of the fact oracle or of trace conformance.
+    /// True for a failure of the fact oracle, of the summary oracle or of
+    /// trace conformance.
     pub const fn is_failure(self) -> bool {
-        matches!(self, Self::Trace | Self::Fact)
+        matches!(self, Self::Trace | Self::Fact | Self::Summary)
     }
 }
 
@@ -856,6 +861,7 @@ pub fn fact_class(o: &Outcome) -> FactClass {
     match o.verdict {
         Verdict::Fault if d.contains("trace conformance:") => FactClass::Trace,
         Verdict::Fault if d.contains("fact oracle (") => FactClass::Fact,
+        Verdict::Fault if d.contains("summary oracle (") => FactClass::Summary,
         Verdict::Fault => FactClass::Fault,
         Verdict::Timeout => FactClass::Timeout,
         Verdict::NotRunnable if d.contains(&format!("{FACT_SKIP}out of scope")) => {
@@ -871,10 +877,13 @@ pub fn fact_class(o: &Outcome) -> FactClass {
 /// path and the detail of each program of the classes before `pass`.
 pub fn fact_report(tier: u8, rows: &[(String, FactClass, String)], took: Duration) -> String {
     let mut s = String::new();
-    let _ = writeln!(s, "# Fact oracle and trace conformance, tier {tier}\n");
     let _ = writeln!(
         s,
-        "The runs of `weft-gate fact-oracle` (`docs/ir.md` 8.5): each program with `main` or test blocks that the `ir` pipeline checks and accepts runs on the IR engine with the fact oracle and the memory oracle, in the six configurations. {} programs, {:.1} s.\n",
+        "# Fact oracle, summary oracle and trace conformance, tier {tier}\n"
+    );
+    let _ = writeln!(
+        s,
+        "The runs of `weft-gate fact-oracle` (`docs/ir.md` 8.5): each program with `main` or test blocks that the `ir` pipeline checks and accepts runs on the IR engine with the fact oracle (and its summary oracle) and the memory oracle, in the six configurations. {} programs, {:.1} s.\n",
         rows.len(),
         took.as_secs_f64()
     );
@@ -886,6 +895,7 @@ pub fn fact_report(tier: u8, rows: &[(String, FactClass, String)], took: Duratio
     for c in [
         FactClass::Trace,
         FactClass::Fact,
+        FactClass::Summary,
         FactClass::Fault,
         FactClass::Timeout,
     ] {
@@ -912,9 +922,9 @@ pub const FACT_SKIP: &str = "fact oracle: no run: ";
 /// of [`CONFIGS`] from index `from`, on this thread. A program that is not
 /// in scope of the `ir` pipeline (the default groups), or that the `ir`
 /// pipeline rejects, gives [`Step::NotRunnable`] with a detail that starts
-/// with [`FACT_SKIP`]. A failure of the fact oracle or of trace conformance
-/// is a [`Verdict::Fault`] whose detail holds `fact oracle (` or `trace
-/// conformance:`.
+/// with [`FACT_SKIP`]. A failure of the fact oracle, of the summary oracle
+/// or of trace conformance is a [`Verdict::Fault`] whose detail holds
+/// `fact oracle (`, `summary oracle (` or `trace conformance:`.
 ///
 /// A panic of the interpreter continues in the caller.
 pub fn run_fact_configs(

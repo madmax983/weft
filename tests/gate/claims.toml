@@ -1577,7 +1577,7 @@ note = "A closure argument is not held while later arguments run"
 
 [[claim]]
 finding = "V017"
-kind = "unsound"
+kind = "sound"
 verdict = "construction"
 group = "AC"
 stage = "F13"
@@ -1585,7 +1585,7 @@ repro = [
     "tests/gate/probes/verify/review_core/Core_S1/rt1/esc_moved_capture.wf",
     "tests/gate/probes/verify/review_core/Core_S1/rt1/fp_moved_capture.wf",
 ]
-note = "Checker and interpreter disagree on moved captures (closure outlives the local)"
+note = "Checker and interpreter disagree on moved captures (closure outlives the local). The IR engine moves a `ByMove` capture into the closure, and a closure owns it (R3RT5): both repros run clean on the IR engine, and the ir pipeline accepts them (stage F13: the kind was `unsound`; the second review of the ABC preview signed the `lost-clean` rows, ledger)"
 
 [[claim]]
 finding = "V018"
@@ -3392,7 +3392,6 @@ note = "a new value of a part with an `H` variable replaces the places of the pa
 # V005: not a soundness finding
 # V064: not a soundness finding
 # V070: not a soundness finding
-# OL-1a: no repro among the hand probes
 # OL-1b: no repro among the hand probes
 # OL-1c: no repro among the hand probes
 # OL-1d: no repro among the hand probes
@@ -3401,7 +3400,6 @@ note = "a new value of a part with an `H` variable replaces the places of the pa
 # OL-3a: no repro among the hand probes
 # OL-3b: verdict stays (TYPE, outside the lowering)
 # OL-3c: no repro among the hand probes
-# OL-4a: no repro among the hand probes
 # OL-4b: no repro among the hand probes
 # OL-6a: no repro among the hand probes
 # OL-6b: no repro among the hand probes
@@ -3799,12 +3797,20 @@ kind = "unsound"
 verdict = "construction"
 group = "AC"
 stage = "F12"
-repro = [
-    "tests/gate/probes/r3/oracle/probes/se1_field_lin_never.wf",
-    "tests/gate/probes/r3/oracle/probes/se2_field_lin_twice.wf",
-]
+repro = ["tests/gate/probes/r3/oracle/probes/se1_field_lin_never.wf"]
 code = "W0601"
 note = "a linear closure in a field of a struct makes the struct a linear value (the function part of a type goes through its fields; preview of stage F12)"
+
+[[claim]]
+finding = "F12-R4"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/r3/oracle/probes/se2_field_lin_twice.wf"]
+code = "W0302"
+line = 11
+note = "the linear closure in the field is `once`: the second run (`run_h(&h)` again) uses the moved closure, W0302 at the second run (stage F13 split this repro from the W0601 claim: F12-fix2 gives W0302, the fault of the run)"
 
 [[claim]]
 finding = "F12-R5"
@@ -4155,3 +4161,75 @@ repro = [
 ]
 code = "W0302"
 note = "a callee or a closure that runs a `once` closure that it copies out of a referent moves the owners of the referent at the run (`emit_apps`, `once_vars`), and a closure that gives back such a copy moves them too (`once_copied_out` at a call of a closure): a second run is W0302 (old holes b14-run of the second review of the ABC preview)"
+
+# ----------------------------------------------------------------------
+# Stage F13: stored values (heap slots with function values, the parts
+# `puts` and `put_fns`, `rc` objects) and the repros that G7 did not have.
+
+[[claim]]
+finding = "OL-1a"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/ol1a_code_runs_stored.wf"]
+code = "W0301"
+line = 9
+note = "code of a caller runs each function value that its arguments reach, also a value in a heap slot (the form with no task; the task form, W0314 and W0405, is stage F19 with O3-5)"
+
+[[claim]]
+finding = "OL-4a"
+kind = "unsound"
+verdict = "one-rule"
+group = "A"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/ol4a_read_back.wf"]
+code = "W0301"
+line = 5
+note = "references stored behind a reference parameter: a read back gets the places of the heap slot (F10a), so a change of the referent first is W0301 at the read"
+
+[[claim]]
+finding = "F13-S1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/stored_behind_ref.wf"]
+code = "W0301"
+line = 69
+note = "a callee of a callee stores a closure of its own behind a reference of the caller; a later run applies its summary (heap slot function values, parts `puts` and `put_fns`; the old pipeline misses this line and line 60)"
+
+[[claim]]
+finding = "F13-S2"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/stored_containers.wf"]
+code = "W0301"
+line = 32
+note = "a callee pushes a closure of its own into a `Vec` behind a reference of the caller; a later run of the elements applies its summary (the old pipeline misses this line, and lines 60 and 76: a `Box`, an `Option` slot)"
+
+[[claim]]
+finding = "F13-S3"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13/stored_rc.wf",
+    "tests/gate/probes/fixes/f13/rc_closure_run.wf",
+]
+code = "W0301"
+note = "a closure in an `rc` object that a callee runs: the handle carries the values of `Rc.new`, a callee that reads the object runs the values of its handle parameter, and the heap slot of the group root holds what a body stores (stored_rc line 143: the old pipeline misses it; rc_closure_run: ABC accepted it before F13)"
+
+[[claim]]
+finding = "F13-K3"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/kept_rebind_ret.wf"]
+code = "W0204"
+line = 14
+note = "a closure that leaves the body (a result, a heap slot) sees the value of a `Kept` variable at the return: a reference there into a local is W0204 (`factgen::kept_escapes`; class K3 of stage F12, the late stores of the old lowering)"

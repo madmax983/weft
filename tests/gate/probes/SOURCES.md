@@ -267,3 +267,18 @@ names the variant.
   closure runs a `once` closure that it copies out of a referent, two times; the
   default pipeline gives them to the old pipeline (ledger `open-old`, claim
   F12R2-OH2).
+
+## Programs that stage F13 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header.
+
+- `fixes/f13/stored_*.wf`: copies of `crates/weft-check/tests/data/stored/*.wf`:
+  function values behind a reference, in a `Vec`, a `Box`, an `Option` and an
+  `rc` object, and the W0204 store forms (claims F13-S1, F13-S2, F13-S3).
+- `fixes/f13/ol1a_code_runs_stored.wf`, `ol4a_read_back.wf`: the repros of OL-1a
+  (with no task) and OL-4a that stage G7 did not have (claims OL-1a, OL-4a).
+- `fixes/f13/rc_closure_run.wf`: a closure in an `rc` object that a callee runs
+  (ABC accepted it before F13; claim F13-S3).
+- `fixes/f13/kept_rebind_ret.wf`: a returned closure keeps a variable that gets a
+  reference into a local later (class K3 of stage F12; claim F13-K3).

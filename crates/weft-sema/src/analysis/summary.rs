@@ -307,12 +307,21 @@ pub struct Summary {
     /// path). A call gives the new values at `Ret`, and these changes there
     /// too, so the new value of a capture sees them.
     pub late_muts: Vec<(IPlace, u32)>,
-    /// The references that the body of a closure puts into an interface
-    /// place: a capture, a part of it, or a place behind a reference (the
-    /// heap slots of the body at its `Return`). Each entry is the place and
-    /// the places that the references there can point into. A place of a
-    /// local of the body is the `Frame` root.
+    /// The references that the body puts into an interface place: for a
+    /// closure, a capture, a part of it, or a place behind a reference (the
+    /// heap slots of the body at its `Return`); for a function, a place of
+    /// an `rc` object, and the environments of the function values that it
+    /// puts behind a reference (stage F13; the part `stores` has the other
+    /// references of a function). Each entry is the place and the places
+    /// that the references there can point into. A place of a local of the
+    /// body of a closure is the `Frame` root.
     pub puts: Vec<(IPlace, Vec<IPlace>)>,
+    /// The function values that the body puts into an interface place (a
+    /// place behind a reference parameter, in an `rc` object, a capture):
+    /// the function values of the heap slots of the body at its `Return`
+    /// (stage F13). The places that their environments point into are in
+    /// `puts`. A run node gives the place of the caller these values.
+    pub put_fns: Vec<(IPlace, Vec<RetFn>)>,
     /// The reference parameters that are `@ uniq`.
     pub uniq_needs: BTreeSet<u32>,
     /// Each change of the body is below its first parameter (`writes_via`
@@ -380,7 +389,9 @@ impl Summary {
                     || !self.ret.flows.is_empty()
                     || !self.ret.fns.is_empty()
             }
-            Part::Stores => !self.stores.is_empty() || !self.puts.is_empty(),
+            Part::Stores => {
+                !self.stores.is_empty() || !self.puts.is_empty() || !self.put_fns.is_empty()
+            }
             Part::Drops => !self.drops.is_empty(),
             Part::Holds => !self.holds.is_empty(),
             Part::UsesMoves => !self.uses.is_empty() || !self.moves.is_empty(),

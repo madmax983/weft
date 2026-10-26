@@ -643,7 +643,8 @@ pub fn emit_parts(
         unions.insert(cb, st);
     }
     let parts = holders.finish(facts);
-    let diags = stored_behind(p, &tys, facts, &roots, body, &stored);
+    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored);
+    diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     // Each local with a root owns it, and the cell of a local that a closure
     // captures `ByRef` is owned by `C` of the local.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
@@ -1154,8 +1155,23 @@ fn stored_behind(
             let Some(root) = facts.places.get(r.index()).map(|i| i.root) else {
                 continue;
             };
-            let Some(alpha::Role::Local(key)) = roots.role(root) else {
+            // A handle of the `rc` type of the store can be a handle of the
+            // object itself: the reference goes away with the object (as
+            // the old lowering, `check_stored_behind`).
+            let into_group = facts.places.get(st.into.index()).map(|i| i.root);
+            let handle_group = roots
+                .handle_group(r)
+                .and_then(|g| facts.places.get(g.index()).map(|i| i.root));
+            if handle_group.is_some() && handle_group == into_group {
                 continue;
+            }
+            // A reference into a local, or into the cell of a local that a
+            // closure captures `ByRef` (a closure that captures the local,
+            // stage F13).
+            let (key, cell) = match roots.role(root) {
+                Some(alpha::Role::Local(key)) => (key, false),
+                Some(alpha::Role::Cell(key)) => (key, true),
+                _ => continue,
             };
             if seen.contains(&(into.clone(), root)) {
                 continue;
@@ -1174,10 +1190,17 @@ fn stored_behind(
                 _ => format!("the local `{name}`"),
             };
             let shown = facts.place(r).display.clone();
-            let msg = format!(
-                "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return",
-                facts.name
-            );
+            let msg = if cell {
+                format!(
+                    "`{}` puts a closure that captures `{name}` {into}: {what} goes out of scope at the return",
+                    facts.name
+                )
+            } else {
+                format!(
+                    "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return",
+                    facts.name
+                )
+            };
             let span = weft_syntax::ast::Span {
                 lo: st.span.lo,
                 hi: st.span.hi,
@@ -1185,6 +1208,165 @@ fn stored_behind(
             let mut diag = Diagnostic::error(Code::W0204, msg, span);
             diag.unit = body.origin.span.unit as usize;
             out.push(diag);
+        }
+    }
+    out
+}
+
+/// The W0204 check of the `Kept` captures of a closure that leaves the
+/// body (stage F13, the `late_stores` of the old lowering): a closure that
+/// the function gives back, or puts into a heap slot of an interface place,
+/// shares the cell of each variable that it keeps, so it sees the value of
+/// the variable at the return. A reference there into a local of the
+/// component goes out of scope at the return. The value of the closure
+/// holds the references of the variable where the closure is made only
+/// (the analysis does not change them when the variable gets a new value):
+/// this check gives the references of the later values. A reference that
+/// the value holds is the spec error of `_0`, or the store check.
+fn kept_escapes(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    facts: &FnFacts,
+    roots: &alpha::Roots,
+    entry: weft_ir::BodyId,
+    returns: &[crate::analysis::State],
+) -> Vec<Diagnostic> {
+    use crate::analysis::FnVal;
+    use weft_syntax::diag::Code;
+    let mut out = Vec::new();
+    let Some(body) = p.body(entry) else {
+        return out;
+    };
+    let ret_span = body
+        .blocks
+        .iter()
+        .find(|b| !b.cleanup && matches!(b.term.kind, weft_ir::TermKind::Return))
+        .map_or(body.origin.span, |b| b.term.origin.span);
+    let mut seen: Vec<(bool, weft_facts::RootId)> = Vec::new();
+    let interface = |q: PlaceId| {
+        facts.places.get(q.index()).is_some_and(|i| {
+            matches!(
+                roots.role(i.root),
+                Some(
+                    alpha::Role::Param(..)
+                        | alpha::Role::Held(..)
+                        | alpha::Role::Group
+                        | alpha::Role::Caller
+                )
+            )
+        })
+    };
+    for st in returns {
+        // The closures that leave: the result, and the heap slots of the
+        // places of the callers, each with the references that it holds.
+        let mut leaving: Vec<(Option<PlaceId>, crate::analysis::AbsVal)> = Vec::new();
+        leaving.push((None, st.value((entry, body.ret), &[]).flat()));
+        for (q, fns) in st.behind_fns() {
+            if interface(*q) {
+                let mut v = crate::analysis::AbsVal::none();
+                v.fns.clone_from(fns);
+                v.refs = st.behind().get(q).cloned().unwrap_or_default();
+                leaving.push((Some(*q), v));
+            }
+        }
+        for (into, v) in leaving {
+            // The roots that the value holds already: the spec (or the store
+            // check) reports them.
+            let held: std::collections::BTreeSet<weft_facts::RootId> = v
+                .refs
+                .iter()
+                .filter_map(|r| facts.places.get(r.index()).map(|i| i.root))
+                .collect();
+            let mut work: Vec<FnVal> = v.fns.iter().cloned().collect();
+            let mut done = std::collections::BTreeSet::new();
+            while let Some(f) = work.pop() {
+                if !done.insert(f.clone()) {
+                    continue;
+                }
+                let FnVal::Closure(c) = f else {
+                    continue;
+                };
+                let Some(decl) = p.closures.get(c.index()) else {
+                    continue;
+                };
+                for cap in &decl.captures {
+                    if cap.mode != weft_ir::CaptureMode::Kept || !cap.source.proj.is_empty() {
+                        continue;
+                    }
+                    let Ok(k) = alpha::owner_local(p, decl.maker, cap.source.local) else {
+                        continue;
+                    };
+                    let src = st.value(k, &[]).flat();
+                    work.extend(src.fns.iter().cloned());
+                    for &r in &src.refs {
+                        let Some(root) = facts.places.get(r.index()).map(|i| i.root) else {
+                            continue;
+                        };
+                        if held.contains(&root) {
+                            continue;
+                        }
+                        let Some(alpha::Role::Local(key)) = roots.role(root) else {
+                            continue;
+                        };
+                        if seen.contains(&(into.is_some(), root)) {
+                            continue;
+                        }
+                        seen.push((into.is_some(), root));
+                        let d = p
+                            .bodies
+                            .get(key.0.index())
+                            .and_then(|b| b.locals.get(key.1.index()));
+                        let name = d.map_or_else(String::new, |d| alpha::local_text(tys, d));
+                        let what = match d.map(|d| d.kind) {
+                            Some(weft_ir::LocalKind::Temp(_)) => "a temporary value".to_string(),
+                            Some(weft_ir::LocalKind::Param(_)) => {
+                                format!("the by-value parameter `{name}`")
+                            }
+                            _ => format!("the local `{name}`"),
+                        };
+                        let shown = facts.place(r).display.clone();
+                        let (msg, sp) = match into {
+                            None => (
+                                format!(
+                                    "the returned closure captures `{shown}`: {what} of `{}` goes out of scope at the return",
+                                    facts.name
+                                ),
+                                ret_span,
+                            ),
+                            Some(q) => {
+                                let place = match facts
+                                    .places
+                                    .get(q.index())
+                                    .and_then(|i| roots.role(i.root))
+                                {
+                                    Some(alpha::Role::Param(b, i) | alpha::Role::Held(b, i)) => {
+                                        format!(
+                                            "behind the parameter `{}`",
+                                            crate::analysis::transfer::param_name(p, b, i)
+                                        )
+                                    }
+                                    _ => "into a place of a caller".to_string(),
+                                };
+                                let lit = p.body(decl.body).map_or(ret_span, |b| b.origin.span);
+                                (
+                                    format!(
+                                        "`{}` puts a closure that captures `{shown}` {place}: {what} goes out of scope at the return",
+                                        facts.name
+                                    ),
+                                    lit,
+                                )
+                            }
+                        };
+                        let span = weft_syntax::ast::Span {
+                            lo: sp.lo,
+                            hi: sp.hi,
+                        };
+                        let mut diag = Diagnostic::error(Code::W0204, msg, span);
+                        diag.unit = body.origin.span.unit as usize;
+                        out.push(diag);
+                    }
+                }
+            }
         }
     }
     out

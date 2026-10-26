@@ -21,7 +21,7 @@ fn call_maker(m: fn(&World) -> fn(), w: &World) -> fn() { m(w) }
 fn maker_param(world: &World) / mut(world.entities) {
     let f = call_maker(mk_grow, world)
     let first = &world.entities[0]
-    f()
+    f()   //~ ir: W0301 W0703
     print(first.hp)   //~ W0301
 }
 

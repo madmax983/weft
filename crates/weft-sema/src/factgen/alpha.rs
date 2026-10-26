@@ -111,6 +111,9 @@ pub struct Roots {
     roles: HashMap<RootId, Role>,
     /// The handle places `h.*` that α made.
     handles: HashSet<PlaceId>,
+    /// The group root of the `rc` type of each handle place `h.*` that α
+    /// made (the W0204 store check, stage F13).
+    handle_groups: HashMap<PlaceId, PlaceId>,
     /// The callee frame root of each run node.
     frames: HashMap<u32, PlaceId>,
     /// The root of the places of a caller, if α made it.
@@ -354,6 +357,11 @@ impl Roots {
     /// True if `p` is a handle place `h.*` that α made.
     pub fn is_handle(&self, p: PlaceId) -> bool {
         self.handles.contains(&p)
+    }
+
+    /// The group root of the `rc` type of handle place `p`, if α made it.
+    pub fn handle_group(&self, p: PlaceId) -> Option<PlaceId> {
+        self.handle_groups.get(&p).copied()
     }
 
     /// The handle place `h.*` of the `Rc` handle at place `h`: a reference
@@ -1019,13 +1027,15 @@ pub fn alpha_with(
                     kind: StepKind::Deref,
                     unstable: true,
                 };
+                let group = roots.group(tys, facts, inner);
                 for &h in &out.places {
                     out.ptrs.push(h);
                     let hp = facts.child(h, handle, ".*");
                     roots.handles.insert(hp);
+                    roots.handle_groups.insert(hp, group);
                     out.handles.push(hp);
                 }
-                out.places = vec![roots.group(tys, facts, inner)];
+                out.places = vec![group];
                 at = At::Ty(inner);
                 last = None;
             }

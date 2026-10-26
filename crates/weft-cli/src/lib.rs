@@ -966,8 +966,8 @@ fn trace_notes(o: &weft_interp::RunOutcome) -> String {
             None => {
                 let _ = writeln!(
                     s,
-                    "note: --fact-oracle: {} frame(s), {} step(s), {} check(s), {} place(s) with no name",
-                    r.frames, r.steps, r.checks, r.unnamed
+                    "note: --fact-oracle: {} frame(s), {} step(s), {} check(s), {} place(s) with no name, {} summary check(s)",
+                    r.frames, r.steps, r.checks, r.unnamed, r.summary
                 );
             }
         }

@@ -137,9 +137,8 @@ pub fn kept_whole(
 ///
 /// # Errors
 ///
-/// Returns [`AlphaError::Later`] for a reference in an `rc` object (stored
-/// values, stage F13), and [`AlphaError::BadPlace`] for a place that no root
-/// of the component has.
+/// Returns [`AlphaError::BadPlace`] for a place that no root of the
+/// component has.
 pub fn held_at(
     p: &Program,
     st: &State,
@@ -174,12 +173,30 @@ pub fn held_at(
             out.extend(stored_at(facts, st, at));
             Ok(out)
         }
-        Some(Role::Group) => Err(AlphaError::Later(
-            "a reference in an `rc` object (stored values, stage F13)",
-        )),
-        Some(Role::Frame(_)) => Err(AlphaError::Later(
-            "a reference in a local of a callee (stage F14)",
-        )),
+        // A reference in an `rc` object points into a place that each
+        // handle of the group can reach: the wildcard place of the group,
+        // and the places that the body stored there (stage F13).
+        Some(Role::Group) => {
+            let mut top = at;
+            while let Some(up) = facts.places.get(top.index()).and_then(|i| i.parent) {
+                top = up;
+            }
+            let mut out = vec![facts.wildcard(top)];
+            out.extend(stored_at(facts, st, at));
+            Ok(out)
+        }
+        // A reference in a local of the frame of a callee (a value that a
+        // closure put there): the frame root ends at the end of the call, so
+        // the wildcard place of the root is enough (stage F13).
+        Some(Role::Frame(_)) => {
+            let mut top = at;
+            while let Some(up) = facts.places.get(top.index()).and_then(|i| i.parent) {
+                top = up;
+            }
+            let mut out = vec![facts.wildcard(top)];
+            out.extend(stored_at(facts, st, at));
+            Ok(out)
+        }
         // A reference in the value of a capture points into what the
         // references of the capture point into (the summary of a closure,
         // `docs/ir.md` 6.7), or into a value that the body stored there.
@@ -220,6 +237,31 @@ fn stored_at(facts: &FnFacts, st: &State, at: PlaceId) -> Vec<PlaceId> {
     if st.behind().is_empty() {
         return Vec::new();
     }
+    let mut out = Vec::new();
+    for (q, refs) in st.behind() {
+        if slot_overlaps(facts, *q, at) {
+            out.extend(refs.iter().copied());
+        }
+    }
+    out
+}
+
+/// The function values stored in a heap slot that overlaps the fact place
+/// `at` (stage F13, [`stored_at`]).
+fn stored_fns_at(facts: &FnFacts, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
+    let mut out = BTreeSet::new();
+    for (q, fns) in st.behind_fns() {
+        if slot_overlaps(facts, *q, at) {
+            out.extend(fns.iter().cloned());
+        }
+    }
+    out
+}
+
+/// True if the heap slot of place `q` overlaps the fact place `at`: one is
+/// at or below the other, and a place below a wildcard place counts as its
+/// base.
+pub fn slot_overlaps(facts: &FnFacts, q: PlaceId, at: PlaceId) -> bool {
     let norm = |p: PlaceId| facts.wild_base(p).unwrap_or(p);
     let below = |x: PlaceId, y: PlaceId| {
         let mut cur = Some(x);
@@ -231,51 +273,28 @@ fn stored_at(facts: &FnFacts, st: &State, at: PlaceId) -> Vec<PlaceId> {
         }
         false
     };
-    let a = norm(at);
-    let mut out = Vec::new();
-    for (q, refs) in st.behind() {
-        let b = norm(*q);
-        if below(a, b) || below(b, a) {
-            out.extend(refs.iter().copied());
-        }
-    }
-    out
-}
-
-/// A value with function values that goes into a place that no local of the
-/// component owns (behind a reference parameter) is a stored value.
-///
-/// # Errors
-///
-/// Returns [`AlphaError::Later`] for it (stage F13).
-fn fns_behind(cx: &Cx<'_>, v: &AbsVal, places: &[PlaceId]) -> Result<(), AlphaError> {
-    if !v.fns.is_empty()
-        && places
-            .iter()
-            .any(|&q| cx.roots.path_of(cx.facts, q).is_none())
-    {
-        return Err(AlphaError::Later(
-            "a function value stored behind a reference (stored values, stage F13)",
-        ));
-    }
-    Ok(())
+    let (a, b) = (norm(at), norm(q));
+    below(a, b) || below(b, a)
 }
 
 /// Each place of `places` that no local of the component owns gets the
-/// references `refs` in its heap slot (a weak update, `docs/ir.md` 6.6).
+/// references `refs` and the function values `fns` in its heap slot (a weak
+/// update, `docs/ir.md` 6.6; function values from stage F13).
 fn store_heap(
     facts: &FnFacts,
     roots: &Roots,
     st: &mut State,
     places: &[PlaceId],
     refs: &[PlaceId],
+    fns: &BTreeSet<FnVal>,
 ) {
-    if refs.is_empty() {
+    if refs.is_empty() && fns.is_empty() {
         return;
     }
     for &q in places {
         if roots.path_of(facts, q).is_none() {
             st.store_behind(q, refs.iter().copied());
+            st.store_fns_behind(q, fns.iter().cloned());
         }
     }
 }
@@ -391,8 +410,41 @@ pub fn place_value(
     // the places can hold (stage F12, `docs/ir.md` 6.6).
     if crate::props::ir_has_fns(cx.tys, t) {
         let a = alpha(cx, body, st, place)?;
+        // A place in an `rc` object: the function values of the handles on
+        // the way (an `Rc.new` of a value with a closure gives the handle
+        // the closure), not a value that the analysis does not know (stage
+        // F13).
+        let mut by_handle = BTreeSet::new();
+        let mut handle_refs = Vec::new();
+        for &h in &a.handles {
+            let Some(holder) = cx.facts.places.get(h.index()).and_then(|i| i.parent) else {
+                continue;
+            };
+            let fs = fns_at(cx, st, holder);
+            if has_closure(&fs) {
+                handle_refs.extend(held_at(cx.p, st, cx.facts, cx.roots, holder, None)?);
+            }
+            by_handle.extend(fs);
+        }
         for &at in &a.places {
-            let fs = fns_at(cx, st, at);
+            let group = cx
+                .facts
+                .places
+                .get(at.index())
+                .is_some_and(|i| matches!(cx.roots.role(i.root), Some(Role::Group)));
+            if group && !a.handles.is_empty() {
+                if !props.holds_refs {
+                    v.refs.extend(handle_refs.iter().copied());
+                }
+                v.fns.extend(by_handle.iter().cloned());
+                let slot = stored_fns_at(cx.facts, st, at);
+                if !props.holds_refs && has_closure(&slot) {
+                    v.refs.extend(stored_at(cx.facts, st, at));
+                }
+                v.fns.extend(slot);
+                continue;
+            }
+            let fs = fns_of_role(cx, st, at);
             // The places that the environments of the closures there point
             // into (hole H2 of the review of the ABC preview: `fs[0]`). The
             // environment of a value of a caller is the place of the caller.
@@ -401,6 +453,15 @@ pub fn place_value(
                     .extend(held_at(cx.p, st, cx.facts, cx.roots, at, None)?);
             }
             v.fns.extend(fs);
+            // A place that no local owns: the values of its heap slot, with
+            // the references that the store put there (stage F13).
+            if cx.roots.path_of(cx.facts, at).is_none() {
+                let slot = stored_fns_at(cx.facts, st, at);
+                if !props.holds_refs && has_closure(&slot) {
+                    v.refs.extend(stored_at(cx.facts, st, at));
+                }
+                v.fns.extend(slot);
+            }
         }
     }
     if props.holds_refs {
@@ -842,9 +903,8 @@ pub fn assign(
         st.add(k, &path, &flat);
     }
     if let Some(a) = &a {
-        fns_behind(cx, &flat.top, &a.places)?;
         let refs: Vec<PlaceId> = flat.top.refs.iter().copied().collect();
-        store_heap(cx.facts, cx.roots, st, &a.places, &refs);
+        store_heap(cx.facts, cx.roots, st, &a.places, &refs, &flat.top.fns);
     }
     Ok(())
 }
@@ -1060,6 +1120,9 @@ pub struct CallOut {
     /// The summaries of the function values that the callee runs (part
     /// `runs`, stage F12).
     pub apps: Vec<Applied>,
+    /// The function values that the callee puts into places of the caller
+    /// (part `put_fns`, stage F13). Their references are in `stores`.
+    pub put_fns: Vec<(PlaceId, BTreeSet<FnVal>)>,
 }
 
 /// The run node of a `Call` of function item `f` of block `block`, in state
@@ -1096,7 +1159,7 @@ pub fn call_out(
     let ret_ty = place_ty(cx, body, dest)?;
     let ret = super::apply::ret_value(cx, &summary, &sigma, ret_ty)?;
     let muts = super::apply::muts(cx, &summary, &sigma)?;
-    let stores = super::apply::stores(cx, &summary, &sigma, &muts)?;
+    let mut stores = super::apply::stores(cx, &summary, &sigma, &muts)?;
     // The function values that the callee runs, and the function values of
     // the result (stage F12).
     let r = Run0 {
@@ -1105,6 +1168,12 @@ pub fn call_out(
         inst,
         st,
     };
+    // The values that the callee puts into places of the caller (stage F13).
+    let (put_refs, put_fns) =
+        put_values(cx, r, &summary, &sigma, Given::Args(args), &mut |_, _| {
+            Ok((BTreeSet::from([FnVal::Unknown]), BTreeSet::new()))
+        })?;
+    stores.extend(put_refs);
     let mut apps = Apps::default();
     let given = Given::Args(args);
     apply_runs(
@@ -1135,6 +1204,7 @@ pub fn call_out(
         muts,
         stores,
         apps: apps.out,
+        put_fns,
     })
 }
 
@@ -1158,6 +1228,7 @@ fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
                 st.store_behind(*q, refs.iter().copied());
             }
         }
+        apply_put_fns(cx, st, &app.put_fns);
         let changed: Vec<PlaceId> = app.muts.iter().map(|(q, _)| *q).collect();
         for (k, path) in can_get_linear_with(cx, &changed, fns) {
             st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
@@ -1173,10 +1244,11 @@ fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
 /// path of such a place whose local can hold a function value gets the
 /// function values of the arguments (a weak update).
 ///
+/// A place that no local owns gets the values in its heap slot (stage F13).
+///
 /// # Errors
 ///
-/// Returns [`AlphaError::Later`] for a function value that can go behind a
-/// reference (a heap slot: stored values, stage F13), and the errors of α.
+/// The errors of α.
 fn store_fns(
     cx: &mut Cx<'_>,
     body: BodyId,
@@ -1216,12 +1288,11 @@ fn store_fns(
     for &q in changed {
         match cx.roots.path_of(cx.facts, q) {
             Some((k, path)) => {
-                let holds = cx
-                    .p
-                    .bodies
-                    .get(k.0.index())
-                    .and_then(|b| b.locals.get(k.1.index()))
-                    .is_some_and(|d| crate::props::ir_has_fns(cx.tys, d.ty));
+                let holds =
+                    cx.p.bodies
+                        .get(k.0.index())
+                        .and_then(|b| b.locals.get(k.1.index()))
+                        .is_some_and(|d| crate::props::ir_has_fns(cx.tys, d.ty));
                 if holds {
                     let mut v = AbsVal::none();
                     v.fns.clone_from(&fns);
@@ -1229,10 +1300,11 @@ fn store_fns(
                     st.add(k, &path, &Tree::leaf(v));
                 }
             }
+            // A place that no local owns (behind a reference, in an `rc`
+            // object): its heap slot gets the values (stage F13).
             None if behind => {
-                return Err(AlphaError::Later(
-                    "a function value that a call can store behind a reference (stored values, stage F13)",
-                ))
+                st.store_fns_behind(q, fns.iter().cloned());
+                st.store_behind(q, refs.iter().copied());
             }
             None => {}
         }
@@ -1273,6 +1345,7 @@ fn call(
             st.store_behind(*q, refs.iter().copied());
         }
     }
+    apply_put_fns(cx, st, &out.put_fns);
     let mut changed: Vec<PlaceId> = out.muts.iter().map(|(q, _)| *q).collect();
     for (k, path) in can_get_linear_with(cx, &changed, fns) {
         st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
@@ -1376,6 +1449,9 @@ pub struct Applied {
     /// of the function value (the wildcard places of the references of the
     /// value): `lends_mut` and `reads_at` at the node.
     pub lends: Vec<PlaceId>,
+    /// The function values that the run puts into places of the caller
+    /// (part `put_fns`, stage F13). Their references are in `stores`.
+    pub put_fns: Vec<(PlaceId, BTreeSet<FnVal>)>,
 }
 
 /// What a `Call` of a function value gives: the summaries that it applies
@@ -1403,8 +1479,21 @@ pub fn in_interface(cx: &Cx<'_>, body: BodyId) -> bool {
 /// They are the values of the move path of a local that holds the place, a value of a parameter
 /// (`FnVal::Param`) or of a capture (`FnVal::Capture`) for a place of the interface, the
 /// values of the variable of the cell of a `ByRef` capture, and [`FnVal::Unknown`] for
-/// another place (a place of a caller, of an `rc` object, of a callee frame).
+/// another place (a place of a caller, of an `rc` object, of a callee frame). A place
+/// that no local owns also gives the values of its heap slot (stage F13).
 pub fn fns_at(cx: &Cx<'_>, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
+    let mut out = fns_of_role(cx, st, at);
+    // A place that no local owns: the values that the body stored in its
+    // heap slot too (stage F13).
+    if !st.behind_fns().is_empty() && cx.roots.path_of(cx.facts, at).is_none() {
+        out.extend(stored_fns_at(cx.facts, st, at));
+    }
+    out
+}
+
+/// The function values at fact place `at` by the role of its root
+/// ([`fns_at`], with no heap slot).
+fn fns_of_role(cx: &Cx<'_>, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
     let mut out = BTreeSet::new();
     let Some(root) = cx.facts.places.get(at.index()).map(|i| i.root) else {
         out.insert(FnVal::Unknown);
@@ -1445,6 +1534,71 @@ pub fn fns_at(cx: &Cx<'_>, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
     out
 }
 
+/// The inner types `T` of the `Rc<T>` handles that a value of type `t` can
+/// hold or reach: through its parts, its references and the type arguments
+/// of its containers (stage F13). A function value in an `rc` object that a
+/// callee reads is a value that a handle of an argument reaches.
+fn rc_inners(tys: &mut TyTable, t: TyId) -> Vec<TyId> {
+    use weft_ir::ty::AdtKind;
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut work = vec![t];
+    while let Some(x) = work.pop() {
+        if !seen.insert(x) || seen.len() > 256 {
+            continue;
+        }
+        if let Some((weft_ir::ty::Lang::Rc, args)) = tys.lang(x) {
+            out.extend(args.first().copied());
+        }
+        match tys.try_get(x).cloned() {
+            Some(Ty::Tuple(ts)) => work.extend(ts),
+            Some(Ty::Array(y, _) | Ty::Slice(y) | Ty::Ref(y)) => work.push(y),
+            Some(Ty::Adt(a, args)) => {
+                let kind = tys.adts().get(a.index()).map(|d| d.kind.clone());
+                match kind {
+                    Some(AdtKind::Struct(fs)) => {
+                        for f in fs {
+                            work.push(crate::irbuild::subst(tys, f.ty, &args));
+                        }
+                    }
+                    Some(AdtKind::Enum(vs)) => {
+                        for v in vs {
+                            for f in v.fields {
+                                work.push(crate::irbuild::subst(tys, f, &args));
+                            }
+                        }
+                    }
+                    Some(AdtKind::Extern { .. }) | None => work.extend(args),
+                }
+            }
+            _ => {}
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The function values, and the places of their environments, that the
+/// body stored in the `rc` objects that a value of type `t` can reach
+/// ([`rc_inners`], the heap slots of the group roots, stage F13).
+fn rc_stored(cx: &mut Cx<'_>, st: &State, t: TyId) -> (BTreeSet<FnVal>, BTreeSet<PlaceId>) {
+    let mut fns = BTreeSet::new();
+    let mut refs = BTreeSet::new();
+    if st.behind_fns().is_empty() {
+        return (fns, refs);
+    }
+    for inner in rc_inners(cx.tys, t) {
+        let g = cx.roots.group(cx.tys, cx.facts, inner);
+        let slot = stored_fns_at(cx.facts, st, g);
+        if !slot.is_empty() {
+            refs.extend(stored_at(cx.facts, st, g));
+        }
+        fns.extend(slot);
+    }
+    (fns, refs)
+}
+
 /// The function values that a callee can run through the value of operand
 /// `op` of body `body` in state `st`: the values that it is, and the values
 /// behind its references (two levels).
@@ -1464,9 +1618,12 @@ pub fn reach_fns(
     };
     let v = operand(cx, body, st, op)?.flat();
     let mut out = v.fns;
-    if !ty.is_some_and(|t| crate::props::ir_has_fns(cx.tys, t)) {
+    let Some(t) = ty.filter(|&t| crate::props::ir_has_fns(cx.tys, t)) else {
         return Ok(out);
-    }
+    };
+    // The values that the body stored in an `rc` object that a handle of the
+    // value reaches (stage F13).
+    out.extend(rc_stored(cx, st, t).0);
     let mut level: Vec<PlaceId> = v.refs.into_iter().collect();
     for _ in 0..2 {
         let mut next = Vec::new();
@@ -1677,10 +1834,28 @@ fn ret_fns(
     given: Given<'_>,
     capture: &mut CaptureValues<'_>,
 ) -> Result<(BTreeSet<FnVal>, BTreeSet<PlaceId>), AlphaError> {
+    rets_fns(cx, r, &sum.ret.fns, given, capture)
+}
+
+/// The function values `rets` of a summary in the terms of run node `r`
+/// ([`ret_fns`]): the values of the result, or the values that the body
+/// puts into a place of the caller (part `put_fns`, stage F13), with the
+/// places that their environments point into.
+///
+/// # Errors
+///
+/// The errors of α.
+fn rets_fns(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    rets: &[super::summary::RetFn],
+    given: Given<'_>,
+    capture: &mut CaptureValues<'_>,
+) -> Result<(BTreeSet<FnVal>, BTreeSet<PlaceId>), AlphaError> {
     use super::summary::RetFn;
     let mut out = BTreeSet::new();
     let mut refs = BTreeSet::new();
-    for f in &sum.ret.fns {
+    for f in rets {
         match f {
             RetFn::Item(g, t) => {
                 out.insert(FnVal::Item(*g, t.clone()));
@@ -1717,6 +1892,79 @@ fn ret_fns(
         }
     }
     Ok((out, refs))
+}
+
+/// The values that a run node with σ `sigma` puts into places of the caller
+/// for the parts `puts` and `put_fns` of summary `sum` (stage F13): the
+/// references for each place (they join the part `stores`), and the
+/// function values for each place.
+///
+/// # Errors
+///
+/// The errors of σ and of α.
+fn put_values(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    sum: &super::summary::Summary,
+    sigma: &super::apply::Sigma,
+    given: Given<'_>,
+    capture: &mut CaptureValues<'_>,
+) -> Result<PutValues, AlphaError> {
+    let mut stores = Vec::new();
+    let mut fns_out = Vec::new();
+    for (into, refs) in &sum.puts {
+        let mut rs = Vec::new();
+        for x in refs {
+            rs.extend(super::apply::iplaces(cx, sigma, x)?);
+        }
+        rs.sort();
+        rs.dedup();
+        if rs.is_empty() {
+            continue;
+        }
+        for q in super::apply::iplaces(cx, sigma, into)? {
+            stores.push((q, rs.clone()));
+        }
+    }
+    for (into, rets) in &sum.put_fns {
+        let (fns, refs) = rets_fns(cx, r, rets, given, capture)?;
+        if fns.is_empty() {
+            continue;
+        }
+        let rs: Vec<PlaceId> = refs.into_iter().collect();
+        for q in super::apply::iplaces(cx, sigma, into)? {
+            if !rs.is_empty() {
+                stores.push((q, rs.clone()));
+            }
+            fns_out.push((q, fns.clone()));
+        }
+    }
+    Ok((stores, fns_out))
+}
+
+/// The values of [`put_values`]: the references, and the function values,
+/// that go into each place of the caller.
+type PutValues = (
+    Vec<(PlaceId, Vec<PlaceId>)>,
+    Vec<(PlaceId, BTreeSet<FnVal>)>,
+);
+
+/// Each place `q` of `put_fns` gets its function values: a weak update of
+/// the move path of a local, or of the heap slot of a place that no local
+/// owns (stage F13).
+fn apply_put_fns(cx: &Cx<'_>, st: &mut State, put_fns: &[(PlaceId, BTreeSet<FnVal>)]) {
+    for (q, fns) in put_fns {
+        match cx.roots.path_of(cx.facts, *q) {
+            Some((k, path)) => {
+                let mut v = AbsVal::none();
+                v.fns.clone_from(fns);
+                st.add(k, &path, &Tree::leaf(v));
+            }
+            None => {
+                st.store_fns_behind(*q, fns.iter().cloned());
+            }
+        }
+    }
 }
 
 /// Adds the function values `fns` and the places `refs` of their
@@ -1772,13 +2020,22 @@ pub fn reach_refs(
     if !is_ref_ty(cx.tys, ty) {
         out.extend(v.refs.iter().copied());
     }
+    // The environments of the values in an `rc` object that the value
+    // reaches (stage F13).
+    out.extend(rc_stored(cx, st, ty).1);
     let mut level: Vec<PlaceId> = v.refs.into_iter().collect();
     for _ in 0..2 {
         let mut next = Vec::new();
         for &r in &level {
             let held = held_at(cx.p, st, cx.facts, cx.roots, r, None).unwrap_or_default();
-            if has_closure(&fns_at(cx, st, r)) {
+            if has_closure(&fns_of_role(cx, st, r)) {
                 out.extend(held.iter().copied());
+            } else if cx.roots.path_of(cx.facts, r).is_none()
+                && has_closure(&stored_fns_at(cx.facts, st, r))
+            {
+                // A closure in a heap slot: the references that its store
+                // put there (stage F13).
+                out.extend(stored_at(cx.facts, st, r));
             }
             next.extend(held);
         }
@@ -2135,6 +2392,7 @@ fn apply_value(
                 run,
                 code: true,
                 lends: env,
+                put_fns: Vec::new(),
             });
             let places = match given {
                 Given::Args(args) => {
@@ -2223,7 +2481,11 @@ fn apply_value(
                 None => None,
             };
             let muts = super::apply::muts(cx, &summary, &sigma)?;
-            let stores = super::apply::stores(cx, &summary, &sigma, &muts)?;
+            let mut stores = super::apply::stores(cx, &summary, &sigma, &muts)?;
+            let (put_refs, put_fns) = put_values(cx, r, &summary, &sigma, given, &mut |_, _| {
+                Ok((BTreeSet::from([FnVal::Unknown]), BTreeSet::new()))
+            })?;
+            stores.extend(put_refs);
             let name = decl
                 .name
                 .rsplit('.')
@@ -2248,6 +2510,7 @@ fn apply_value(
                 run: None,
                 code: false,
                 lends: Vec::new(),
+                put_fns,
             });
             apply_runs(
                 cx,
@@ -2371,6 +2634,27 @@ fn apply_value(
                     .map(|(k, cap)| (k, decl.maker, cap.source.clone()))
                     .collect()
             };
+            // The function values that the body puts into places of the
+            // caller (stage F13): a capture gives the values of its source.
+            let mut put_fns = Vec::new();
+            if !summary.put_fns.is_empty() {
+                let callee_v = operand(cx, cb, st, callee)?.flat();
+                let mut callee_refs = callee_v.refs.clone();
+                callee_refs.extend(reach_refs(cx, cb, st, callee)?);
+                for (into, rets) in &summary.put_fns {
+                    let (fns, _) = rets_fns(cx, r, rets, given, &mut |cx, k| {
+                        let fns = capture_fns(cx, r, *c, k, made, &callee_v.fns)?;
+                        let refs = capture_refs(cx, r, *c, k, made, &callee_refs)?;
+                        Ok((fns, refs))
+                    })?;
+                    if fns.is_empty() {
+                        continue;
+                    }
+                    for q in super::apply::iplaces(cx, &sigma, into)? {
+                        put_fns.push((q, fns.clone()));
+                    }
+                }
+            }
             let runs = summary.runs.clone();
             let first = apps.out.len();
             apps.out.push(Applied {
@@ -2390,6 +2674,7 @@ fn apply_value(
                 run: None,
                 code: false,
                 lends: Vec::new(),
+                put_fns,
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: they apply as values of the callee. A capture
@@ -2795,9 +3080,8 @@ fn bind_result(
         st.add(k, &path, &flat);
     }
     if let Some(a) = &a {
-        fns_behind(cx, &flat.top, &a.places)?;
         let refs: Vec<PlaceId> = flat.top.refs.iter().copied().collect();
-        store_heap(cx.facts, cx.roots, st, &a.places, &refs);
+        store_heap(cx.facts, cx.roots, st, &a.places, &refs, &flat.top.fns);
     }
     Ok(())
 }

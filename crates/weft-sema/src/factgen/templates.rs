@@ -2995,12 +2995,23 @@ fn fn_stores(
 ) -> R {
     let body = em.body;
     let mut refs: Vec<PlaceId> = Vec::new();
+    // An argument that points to a place that can hold a function value:
+    // the callee can store one behind it (a heap slot, stage F13).
+    let mut behind = false;
     for op in args {
         let (Operand::Copy(q) | Operand::Move(q)) = op else {
             continue;
         };
         let Some(t) = em.place_ty(q) else { continue };
-        if !crate::props::ir_has_fns(em.tys, t) || matches!(em.tys.try_get(t), Some(Ty::Ref(_))) {
+        if !crate::props::ir_has_fns(em.tys, t) {
+            continue;
+        }
+        if matches!(em.tys.try_get(t), Some(Ty::Ref(_)))
+            || crate::props::ir_props(em.tys, t).holds_refs
+        {
+            behind = true;
+        }
+        if matches!(em.tys.try_get(t), Some(Ty::Ref(_))) {
             continue;
         }
         let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
@@ -3025,6 +3036,11 @@ fn fn_stores(
         }
         done.push(q);
         let Some((k, _)) = em.roots.path_of(em.facts, q) else {
+            // A place that no local owns: its heap slot holds them, and the
+            // W0204 store check gets them (stage F13).
+            if behind {
+                store(em, r, q, &refs, at, true);
+            }
             continue;
         };
         let holds =

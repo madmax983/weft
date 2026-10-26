@@ -1,0 +1,17 @@
+// F13 repro of OL-1a (no task form): code of a caller runs a function value that the body stored behind a reference; the value reads a reference that a change made invalid. The task form (W0314, W0405) is stage F19 (O3-5).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+fn code_runs_slot(cb: &Cb, w: &World, k: fn(&Cb)) {
+    let first = &w.entities[0]
+    cb.f = || print(first.hp)
+    w.entities.clear()
+    k(cb)
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let cb = Cb { f: || print(0) }
+    code_runs_slot(&cb, &w, |c: &Cb| { let g = c.f
+ g() })
+}
