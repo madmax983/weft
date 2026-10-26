@@ -241,3 +241,13 @@ fn a_once_closure_that_a_callee_copies_out_of_a_referent_moves() {
     // again. The call moves the referent (the closure-copy rule).
     check("once_copied_out.wf");
 }
+
+#[test]
+fn the_result_of_a_closure_maker_in_a_closure_or_a_callee_keeps_its_effects() {
+    // Second review of the ABC preview, hole N1: a closure that gives back
+    // or runs the result of a captured maker (`|| mk()`, `|| run(mk())`), and
+    // a callee that runs the result of a maker of the caller
+    // (`fn go(m) { let g = m(); g() }`), lost the changes of the made closure
+    // to a variable that it captures `ByRef`.
+    check("maker_results.wf");
+}

@@ -249,3 +249,13 @@ variant.
   on some paths only (claim F12-H5).
 - `fixes/f12/h6/*.wf`: hole H6, linear closures that a loop makes and pushes
   into a `Vec` (claim F12-H6).
+
+## Programs that the second F12 fixes added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a variant of the second review of the ABC
+preview (scratchpad `f12/review2.md`, section 4), with one line of header that
+names the variant.
+
+- `fixes/f12b/n1/*.wf`: hole N1, the result of a closure maker, called or given
+  back in a second closure or in a callee (claim F12R2-N1).

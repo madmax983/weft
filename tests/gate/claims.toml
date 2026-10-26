@@ -4076,3 +4076,35 @@ stage = "F13"
 repro = ["tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf"]
 code = "W0302"
 note = "a callee whose result is a function value of a reference argument (`first(&fs) -> fn() { fs[0] }`) copies it out of the referent: a `once` closure moves there (`templates::once_copied_out`, the closure-copy rule), so a second copy is W0302 (old hole of the review of the ABC preview, 4.7)"
+
+[[claim]]
+finding = "F12R2-N1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/n1/c6_n04_mk2_chain.wf",
+    "tests/gate/probes/fixes/f12b/n1/v01_main_local_maker_to_go.wf",
+    "tests/gate/probes/fixes/f12b/n1/v04_main_local_maker_first_after.wf",
+    "tests/gate/probes/fixes/f12b/n1/v05_main_local_ref_maker_mk2_in_fn.wf",
+    "tests/gate/probes/fixes/f12b/n1/w01_param_maker_local_run.wf",
+    "tests/gate/probes/fixes/f12b/n1/w02_param_maker_vec_runall.wf",
+    "tests/gate/probes/fixes/f12b/n1/w05_param_maker_call_direct.wf",
+    "tests/gate/probes/fixes/f12b/n1/x01_main_mk2.wf",
+    "tests/gate/probes/fixes/f12b/n1/x02_main_mk2_block.wf",
+    "tests/gate/probes/fixes/f12b/n1/x05_mk2_run.wf",
+    "tests/gate/probes/fixes/f12b/n1/x06_closure_calls_returned.wf",
+    "tests/gate/probes/fixes/f12b/n1/x08_mk3_chain.wf",
+    "tests/gate/probes/fixes/f12b/n1/y03_closure_runs_mk_result_run.wf",
+    "tests/gate/probes/fixes/f12b/n1/y04_fn_body_param_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/y07_mk_then_ref_after_k.wf",
+    "tests/gate/probes/fixes/f12b/n1/y11_byref_dead_through_mk2.wf",
+    "tests/gate/probes/fixes/f12b/n1/z01_fn_body_run_param_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/z02_closure_calls_captured_fnitem_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/z04_closure_param_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/z05_closure_runs_run_of_captured_maker_called_in_fn.wf",
+    "tests/gate/probes/fixes/f12b/n1/z06_closure_maker_result_reaches_param.wf",
+]
+code = "W0301"
+note = "the result of a closure maker keeps the effects of the closure that it makes in a second closure (`|| mk()`, `|| run(mk())`) and in a callee (`fn go(m) { let g = m(); g() }`): a run of a capture applies the results of its values (`with_results`), a capture that a closure gives back carries the places of their environments (`capture_refs`), and a cell root in the environment of a `Made` closure or of code of a caller is the value of its variable too (`cell_values`) (hole N1 of the second review of the ABC preview)"

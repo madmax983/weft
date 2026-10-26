@@ -469,7 +469,16 @@ pub fn made_sigma(
     };
     let (places, refs): (Vec<PlaceId>, Vec<PlaceId>) = match callee {
         Operand::Copy(q) | Operand::Move(q) => {
-            let a = transfer::alpha(cx, callee_body, st, q)?;
+            // A value that a run of the callee gives back (`with_results`:
+            // the run of a maker `mk` makes the closure) is not in the
+            // place of the callee: only its references are the environment.
+            let holds =
+                transfer::reach_fns(cx, callee_body, st, callee)?.contains(&super::FnVal::Made(c));
+            let a = if holds {
+                transfer::alpha(cx, callee_body, st, q)?
+            } else {
+                crate::factgen::alpha::Alpha::default()
+            };
             let v = transfer::operand(cx, callee_body, st, callee)?.flat();
             // A value behind a reference argument (a run of `fs[i]` in a
             // callee that gets `&fs`): the places of its environment.
@@ -481,8 +490,16 @@ pub fn made_sigma(
         }
         Operand::Const(_) => (Vec::new(), Vec::new()),
     };
+    // The cell of a variable that the closure captures `ByRef` stands for
+    // the current value of the variable (hole N1 of the second review of the
+    // ABC preview: a closure that a maker in a closure or a callee made).
+    let (cells, cell_refs) = transfer::cell_values(cx, st, &refs)?;
+    let mut helds = refs.clone();
+    helds.extend(cell_refs);
+    helds.sort();
+    helds.dedup();
     let mut deep = Vec::new();
-    for &q in &refs {
+    for &q in &helds {
         deep.extend(transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None)?);
     }
     deep.sort();
@@ -507,11 +524,12 @@ pub fn made_sigma(
             weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
         ) {
             at.extend(refs.iter().copied());
+            at.extend(cells.iter().copied());
             at.sort();
             at.dedup();
         }
         s.captures.push(at);
-        s.cap_helds.push(refs.clone());
+        s.cap_helds.push(helds.clone());
         s.cap_deeps.push(deep.clone());
     }
     Ok(s)

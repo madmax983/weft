@@ -1,0 +1,191 @@
+// The result of a call of a closure maker inside a second closure or a
+// callee keeps the effects of the closure that it makes (hole N1 of the
+// second review of the ABC preview). A run of a capture gives back the
+// values of the capture and their places; a closure that a maker made
+// changes the value of a variable that it captures `ByRef`.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn runall(fs: &Vec<fn()>) { let i = 0; while i < fs.len() { let g = fs[i]; g(); i += 1 } }
+fn mkmk(w: &World) -> fn() -> fn() / mut(w.entities) { || || w.entities.clear() }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn go_run(m: fn() -> fn()) { run(m()) }
+fn go_vec(m: fn() -> fn()) { let fs = Vec.new(); fs.push(m()); runall(&fs) }
+fn go_inner(m: fn() -> fn()) { let k = || { let h = m(); h() }; k() }
+// A closure that gives back the result of a captured maker.
+fn mk2_chain() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    print(first.hp) //~ W0301
+}
+fn mk2_block() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || { let h = mk(); h }
+    let g = mk2()
+    g()
+    print(first.hp) //~ W0301
+}
+fn mk2_run() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    run(mk2())
+    print(first.hp) //~ W0301
+}
+fn mk3_chain() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    let mk3 = || mk2()
+    let g = mk3()
+    g()
+    print(first.hp) //~ W0301
+}
+// A closure that runs the result of a captured maker.
+fn mk2_calls() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || { let h = mk(); h() }
+    mk2()
+    print(first.hp) //~ W0301
+}
+fn k_runs() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let k = || run(mk())
+    k()
+    print(first.hp) //~ W0301
+}
+fn k_path() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let k = |x: u64| { let g = mk(); if x > 0 { g() } }
+    k(1)
+    print(first.hp) //~ W0301
+}
+fn k_item_maker() {
+    let w = mkw()
+    let m = mkmk(&w)
+    let first = &w.entities[0]
+    let k = || { let g = m(); g() }
+    k()
+    print(first.hp) //~ W0301
+}
+// A callee that runs the result of a maker of the caller.
+fn to_go() {
+    let w = mkw()
+    let first = &w.entities[0]
+    go(|| || w.entities.clear())
+    print(first.hp) //~ W0301
+}
+fn to_go_local() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    go(mk)
+    print(first.hp) //~ W0301
+}
+fn to_go_run() {
+    let w = mkw()
+    let first = &w.entities[0]
+    go_run(|| || w.entities.clear())
+    print(first.hp) //~ W0301
+}
+fn to_go_vec() {
+    let w = mkw()
+    let first = &w.entities[0]
+    go_vec(|| || w.entities.clear())
+    print(first.hp) //~ W0301
+}
+fn to_go_inner() {
+    let w = mkw()
+    let first = &w.entities[0]
+    go_inner(|| || w.entities.clear())
+    print(first.hp) //~ W0301
+}
+fn to_closure_go() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let cgo = |m: fn() -> fn()| { let g = m(); g() }
+    cgo(|| || w.entities.clear())
+    print(first.hp) //~ W0301
+}
+// A parameter of the maker.
+fn param_chain(w: &World) / mut(w.entities) {
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    print(first.hp) //~ W0301
+}
+// The made closure outlives a variable that it captures `ByRef`.
+fn outlives() {
+    let g = || print(0)
+    {
+        let v = Vec.new()
+        v.push(1)
+        let mk = || || print(v[0])
+        let mk2 = || mk()
+        g = mk2()
+    }
+    g() //~ W0301
+}
+// Clean: the made closure only reads, or the reference comes after the run.
+fn reads_only() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || print(w.entities.len())
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    print(first.hp)
+}
+fn ref_after() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    w.entities.push(Entity { hp: 2 })
+    let first = &w.entities[0]
+    print(first.hp)
+}
+fn go_reads() {
+    let w = mkw()
+    let first = &w.entities[0]
+    go(|| || print(w.entities.len()))
+    let k = || run(|| print(w.entities.len()))
+    k()
+    print(first.hp)
+}
+fn inside() {
+    let g = || print(0)
+    let v = Vec.new()
+    v.push(1)
+    {
+        let mk = || || print(v[0])
+        let mk2 = || mk()
+        g = mk2()
+    }
+    g()
+    print(1)
+}
+fn main() {
+    reads_only()
+    ref_after()
+    go_reads()
+    inside()
+}

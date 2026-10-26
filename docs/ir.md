@@ -3017,6 +3017,20 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   or `Kept` capture to each place that the value points into as well as to the value
   itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
   its `ByRef` capture.
+- The result of a closure maker keeps its effects in a second closure and in a callee
+  (F12-fix2, hole N1 of the second review of the ABC preview: `let mk2 = || mk()`,
+  `|| run(mk())`, `fn go(m) { let g = m(); g() }`):
+  - The result of a run of a function value of the interface (a parameter or a
+    capture) is that value of the interface again (`FnVal::Param`, `FnVal::Capture`),
+    with no `Unknown`. The caller knows the values that it gives, and it applies their
+    results (`transfer::with_results`), also at a run of a capture.
+  - A capture that a closure gives back (`RetFn::Capture`) carries the places that the
+    environments of its values point into (`transfer::capture_refs`).
+  - A cell root in the environment of a `Made` closure or of code of a caller also
+    stands for the current value of its variable (`transfer::cell_values`): the
+    closure changes the variable through the cell (6.3).
+  - A `Made` closure that a run gives back is not in the place of the value that runs:
+    σ maps its captures only to the places that the value points into.
 - A callee whose result is a function value of a reference argument (`RetFn::Param` of
   `first(fs: &Vec<fn()>) -> fn() { fs[0] }`) copies the value out of the referent: when
   it can be a `once` closure, the `Ret` node moves the owners of the referent
