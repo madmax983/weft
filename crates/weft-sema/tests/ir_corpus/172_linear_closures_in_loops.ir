@@ -1,0 +1,193 @@
+fn f0 rollback(Tx) -> (): b0
+fn f1 pushed_in_loop() -> (): b1
+fn f2 plain_in_loop() -> (): b3
+fn f3 main() -> (): b5
+fn f4 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f5 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f6 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+closure c0: body b2, maker b1, cap_env e0, captures [ByMove _4], once
+closure c1: body b4, maker b3, cap_env e0, captures []
+cap_env e0
+
+body b0: fn rollback; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn pushed_in_loop; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Vec<fn() -> ()> (User `ks`)
+  _2: u64 (User `i`)
+  _3: bool (Temp(Operand))
+  _4: Tx (User `t`)
+  _5: () (Temp(Discarded))
+  _6: fn() -> () (Temp(Operand))
+  _7: &Vec<fn() -> ()> (Temp(Receiver))
+  _8: u64 (Temp(Operand))
+  _9: usize (Temp(Operand))
+  _10: &Vec<fn() -> ()> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<fn() -> ()>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    _2 = const 0u64
+    Goto(bb2)
+  bb2:
+    Live(_3)
+    _3 = Lt(copy _2, const 3u64)
+    switch move _3 -> [1: bb3, otherwise: bb5]
+  bb3:
+    Dead(_3)
+    Live(_4)
+    _4 = Tx { copy _2 }
+    Live(_5)
+    Live(_6)
+    _6 = closure c0(move _4)
+    Live(_7)
+    _7 = &_1
+    _5 = call Vec.push<fn() -> ()>(move _7, move _6) / e0 -> [bb4]
+  bb4:
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Live(_8)
+    _8 = Add<u64>(copy _2, const 1u64)
+    _2 = move _8
+    Dead(_8)
+    Dead(_4)
+    Goto(bb2)
+  bb5:
+    Dead(_3)
+    Goto(bb6)
+  bb6:
+    Live(_9)
+    Live(_10)
+    _10 = &_1
+    _9 = call Vec.len<fn() -> ()>(move _10) / e0 -> [bb7]
+  bb7:
+    Print(copy _9)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Dead(_10)
+    Dead(_9)
+    Return
+  bb8 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call rollback(move _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: fn plain_in_loop; cap_env e0; unwind_exit bb12
+  _0: () (Return)
+  _1: Vec<fn() -> ()> (User `ks`)
+  _2: i64 (User `i`)
+  _3: bool (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: fn() -> () (Temp(Operand))
+  _6: &Vec<fn() -> ()> (Temp(Receiver))
+  _7: i64 (Temp(Operand))
+  _8: fn() -> () (User `g`)
+  _9: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<fn() -> ()>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    _2 = const 0i64
+    Goto(bb2)
+  bb2:
+    Live(_3)
+    _3 = Lt(copy _2, const 3i64)
+    switch move _3 -> [1: bb3, otherwise: bb5]
+  bb3:
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = closure c1()
+    Live(_6)
+    _6 = &_1
+    _4 = call Vec.push<fn() -> ()>(move _6, move _5) / e0 -> [bb4]
+  bb4:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Live(_7)
+    _7 = Add<i64>(copy _2, const 1i64)
+    _2 = move _7
+    Dead(_7)
+    Goto(bb2)
+  bb5:
+    Dead(_3)
+    Goto(bb6)
+  bb6:
+    Live(_8)
+    Live(_9)
+    _9 = const 0usize
+    Bounds(_1, copy _9)
+    _8 = copy _1[_9]
+    Dead(_9)
+    _0 = call (copy _8)() / e0 -> [bb7, unwind: bb8]
+  bb7:
+    Dead(_8)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    Dead(_8)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b3; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 1i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn main; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call plain_in_loop() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

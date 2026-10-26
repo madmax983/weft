@@ -4052,3 +4052,17 @@ repro = [
 ]
 code = "W0601"
 note = "a callee or a closure that runs a linear closure on some paths only can drop it (part `runs`, `Run::maybe`, `templates::dropped_fn_args`), and a closure that runs a linear capture on some paths only has a linear `E` variable for it (`templates::linear_fn_captures`) (hole H5 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-H6"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h6/v02_loop_nopop.wf",
+    "tests/gate/probes/fixes/f12/h6/v03_loop_local_closure_vec.wf",
+    "tests/gate/probes/fixes/f12/h6/x11_a2_loop_linear_pop_one.wf",
+]
+code = "W0601"
+note = "a push of a linear closure in a loop into a local whose type has a function part starts its linear value (`overwrites`) on the first run of the node too: the local starts empty (`templates::gets_linear_but`; hole H6 of the review of the ABC preview)"

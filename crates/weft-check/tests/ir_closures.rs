@@ -265,3 +265,11 @@ fn a_container_of_closures_holds_the_places_of_the_closures() {
     // vector invalid.
     check("closures_in_containers.wf");
 }
+
+#[test]
+fn linear_closures_that_a_loop_pushes_into_a_vector_are_w0601() {
+    // Review of the ABC preview, hole H6: the state at the push joins the
+    // linear value of the back edge, so the push of the first iteration
+    // gave no `overwrites` and the vector never got a live linear value.
+    check("linear_closures_in_loops.wf");
+}

@@ -3025,6 +3025,12 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   part the flags of a linear value when the captured value is a linear closure
   (`templates::linear_fn_captures`): a closure that runs it on some paths only is W0601
   at its `Return`.
+- A run node in a cycle that changes a local whose type has a function part (and cannot
+  be linear by its type) gives it `overwrites` (`templates::gets_linear_but`) also when
+  the state joins a linear value of the back edge: the local starts empty
+  (`Vec.new()`), so on the first run of the node it holds none (F12-fix H6: linear
+  closures pushed in a loop; the push of the next iteration is W0601, as in the old
+  pipeline).
 - A container that gets a closure holds its places (F12-fix H4): at the `Ret` node of a
   call that changes a place whose local can hold a function value, the holder of the
   place (its `S` variable or heap slot, `templates::store`) gets the places that the

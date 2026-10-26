@@ -1400,6 +1400,7 @@ fn emit_block(
     {
         em.holders.before(m, &st, em.facts);
     }
+    em.at = (block, TERM);
     match &blk.term.kind {
         weft_ir::TermKind::Call { .. } => {
             let nodes = templates::CallNodes {

@@ -246,3 +246,5 @@ variant.
   capture that holds references in a `Vec` or an array (claim F12-H4).
 - `fixes/f12/h5/*.wf`: hole H5, a linear closure that a callee or a closure runs
   on some paths only (claim F12-H5).
+- `fixes/f12/h6/*.wf`: hole H6, linear closures that a loop makes and pushes
+  into a `Vec` (claim F12-H6).

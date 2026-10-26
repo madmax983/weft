@@ -1,0 +1,34 @@
+// A loop that makes a linear closure in each iteration and pushes it into a
+// vector: the vector holds linear values that no path runs. The push of the
+// next iteration and the end of the vector are W0601.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(tx: Tx) { let Tx(i) = tx }
+
+fn pushed_in_loop() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 {
+        let t = Tx { id: i }
+        ks.push(|| rollback(t))   //~ W0601
+        i += 1
+    }
+    print(ks.len())
+}   //~ W0601
+
+// Plain closures in a loop are no linear values.
+fn plain_in_loop() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 {
+        ks.push(|| print(1))
+        i += 1
+    }
+    let g = ks[0]
+    g()
+}
+
+fn main() {
+    plain_in_loop()
+}

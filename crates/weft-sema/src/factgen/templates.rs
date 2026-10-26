@@ -3264,7 +3264,21 @@ fn gets_linear_but(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId], 
             continue;
         }
         done.push(k);
-        if !st.value(k, &[]).flat().empty {
+        // In a cycle, a local whose type has a function part (and cannot
+        // be linear by its type) can hold none on the first run of the node
+        // although the state joins a linear value of the back edge: it
+        // starts empty (`Vec.new()`), so the node starts its linear value
+        // (hole H6 of the review of the ABC preview: pushes in a loop).
+        let fn_part =
+            em.p.bodies
+                .get(k.0.index())
+                .and_then(|b| b.locals.get(k.1.index()))
+                .is_some_and(|d| {
+                    crate::props::ir_has_fns(em.tys, d.ty)
+                        && !crate::props::ir_maybe_linear(em.tys, d.ty)
+                });
+        let first_run = fn_part && em.cycles.has(em.body, em.at.0);
+        if !st.value(k, &[]).flat().empty && !first_run {
             continue;
         }
         if let Some(v) = em.s_var(k) {
