@@ -180,7 +180,7 @@ pub fn summarize(
             }
         })
     };
-    let runs = runs_of(fv.runs, false, &run_place);
+    let runs = runs_of(fv.runs, false, &run_place, ir.body(entry));
     changed.multi |= fv.code_multi;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
@@ -340,9 +340,15 @@ fn runs_of(
     runs: &[(crate::analysis::transfer::RunOf, bool)],
     closure: bool,
     place: &dyn Fn(PlaceId) -> Option<IPlace>,
+    body: Option<&weft_ir::Body>,
 ) -> Vec<super::summary::Run> {
     let mut out: Vec<super::summary::Run> = Vec::new();
     for (r, many) in runs {
+        let blocks: std::collections::BTreeSet<weft_ir::BlockId> = runs
+            .iter()
+            .filter(|(x, _)| x.param == r.param && x.capture == r.capture)
+            .map(|(x, _)| x.block)
+            .collect();
         // A function body has no capture.
         if r.capture && !closure {
             continue;
@@ -357,6 +363,7 @@ fn runs_of(
             task: r.task,
             args,
             multi: r.multi,
+            maybe: body.is_none_or(|b| returns_without(b, &blocks)),
         };
         // A second run node of the value runs it again.
         if let Some(x) = out
@@ -368,6 +375,33 @@ fn runs_of(
         super::sig::join_run(&mut out, &run);
     }
     out
+}
+
+/// True if a normal path of body `b` from its entry reaches a `Return`
+/// with no block of `blocks` on it (a block of `blocks` runs a value at its
+/// terminator).
+fn returns_without(
+    b: &weft_ir::Body,
+    blocks: &std::collections::BTreeSet<weft_ir::BlockId>,
+) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut work = vec![b.entry];
+    while let Some(id) = work.pop() {
+        if !seen.insert(id) || blocks.contains(&id) {
+            continue;
+        }
+        let Some(blk) = b.blocks.get(id.index()) else {
+            continue;
+        };
+        if blk.cleanup {
+            continue;
+        }
+        if matches!(blk.term.kind, TermKind::Return) {
+            return true;
+        }
+        work.extend(blk.term.kind.normal_successors());
+    }
+    false
 }
 
 /// The function values of `_0` of body `body` at its `Return` states
@@ -891,9 +925,12 @@ pub fn closure(
     }
     // The function values of the interface that the body runs: its captures
     // and its parameters (stage F12).
-    out.runs = runs_of(runs, true, &|q| {
-        closure_place(ir, facts, roots, body, q, true).map(|x| x.0)
-    });
+    out.runs = runs_of(
+        runs,
+        true,
+        &|q| closure_place(ir, facts, roots, body, q, true).map(|x| x.0),
+        Some(b),
+    );
     out.uses = decl
         .captures
         .iter()

@@ -181,6 +181,10 @@ pub struct Run {
     /// function type of the value): a value of a caller that the run node
     /// does not know runs with it.
     pub multi: bool,
+    /// The body can return with no run of it: a normal path to a `Return`
+    /// passes no run node (hole H5 of the review of the ABC preview). A
+    /// linear closure that goes there can go away with no run.
+    pub maybe: bool,
 }
 
 /// A function value that the result can be (part `ret`, stage F12).

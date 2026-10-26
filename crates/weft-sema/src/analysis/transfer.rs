@@ -1316,6 +1316,9 @@ pub struct RunOf {
     pub multi: bool,
     /// The run can be on another thread (code of a caller, ADR 0006).
     pub task: bool,
+    /// The block of the run node: a path to a `Return` that does not pass a
+    /// run node can return with no run (`Run::maybe`).
+    pub block: weft_ir::BlockId,
 }
 
 /// One summary that a run node of a function value applies (`docs/ir.md`
@@ -1996,6 +1999,7 @@ fn apply_value(
                     places: given_places(cx, body, st, args)?,
                     multi: summary.multi,
                     task: false,
+                    block: r.block,
                 }),
                 (FnVal::Param(i) | FnVal::Capture(i), Given::Opaque(ps, _)) => Some(RunOf {
                     param: *i,
@@ -2003,6 +2007,7 @@ fn apply_value(
                     places: ps.to_vec(),
                     multi: summary.multi,
                     task: false,
+                    block: r.block,
                 }),
                 _ => None,
             };

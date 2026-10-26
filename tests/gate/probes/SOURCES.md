@@ -244,3 +244,5 @@ variant.
   gives back, dropped by the caller (claim F12-H3).
 - `fixes/f12/h4/*.wf`: hole H4, a closure with a `ByRef` capture or a `ByMove`
   capture that holds references in a `Vec` or an array (claim F12-H4).
+- `fixes/f12/h5/*.wf`: hole H5, a linear closure that a callee or a closure runs
+  on some paths only (claim F12-H5).

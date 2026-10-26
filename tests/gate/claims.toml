@@ -4037,3 +4037,18 @@ repro = [
 ]
 code = "W0301"
 note = "a vector or an array that gets a closure holds the places of the closure: the cell of a `ByRef` capture and the references of a `ByMove` capture (`templates::fn_stores`, `transfer::store_fns`, `place_value`); a change or the end of them makes the container invalid (hole H4 of the review of the ABC preview, and the old hole m09)"
+
+[[claim]]
+finding = "F12-H5"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h5/d05_runif.wf",
+    "tests/gate/probes/fixes/f12/h5/e6_03_callee_runs_on_one_path.wf",
+    "tests/gate/probes/fixes/f12/h5/e6_05_closure_runs_inner_on_path.wf",
+    "tests/gate/probes/fixes/f12/h5/e6_06_closure_param_runs_path.wf",
+]
+code = "W0601"
+note = "a callee or a closure that runs a linear closure on some paths only can drop it (part `runs`, `Run::maybe`, `templates::dropped_fn_args`), and a closure that runs a linear capture on some paths only has a linear `E` variable for it (`templates::linear_fn_captures`) (hole H5 of the review of the ABC preview)"

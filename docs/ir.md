@@ -3017,6 +3017,14 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   or `Kept` capture to each place that the value points into as well as to the value
   itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
   its `ByRef` capture.
+- A run in part `runs` has `maybe` (`Run::maybe`, F12-fix H5): a normal path of the body
+  from its entry to a `Return` passes no block whose terminator runs the value
+  (`summarize::returns_without`). A linear closure that goes to such a parameter can go
+  away with no run (`templates::dropped_fn_args`: a `Dropped` variable, W0601). A
+  closure literal gives the `E` variable of a `ByMove` capture of a type with a function
+  part the flags of a linear value when the captured value is a linear closure
+  (`templates::linear_fn_captures`): a closure that runs it on some paths only is W0601
+  at its `Return`.
 - A container that gets a closure holds its places (F12-fix H4): at the `Ret` node of a
   call that changes a place whose local can hold a function value, the holder of the
   place (its `S` variable or heap slot, `templates::store`) gets the places that the

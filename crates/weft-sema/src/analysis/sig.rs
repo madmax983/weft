@@ -191,6 +191,7 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     task: true,
                     args: args.clone(),
                     multi: fn_multi(tys, t),
+                    maybe: false,
                 },
             );
             inf.ret_fns.insert(RetFn::Param(u(i)));
@@ -382,17 +383,18 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         runs.sort();
         return true;
     };
-    let before = (x.many, x.task, x.multi, x.args.len());
+    let before = (x.many, x.task, x.multi, x.maybe, x.args.len());
     x.many |= r.many;
     x.task |= r.task;
     x.multi |= r.multi;
+    x.maybe |= r.maybe;
     for a in &r.args {
         if !x.args.contains(a) {
             x.args.push(a.clone());
         }
     }
     x.args.sort();
-    before != (x.many, x.task, x.multi, x.args.len())
+    before != (x.many, x.task, x.multi, x.maybe, x.args.len())
 }
 
 /// True if code of a caller of the function values of type `t` can resume

@@ -224,3 +224,12 @@ fn a_linear_closure_that_a_maker_gives_back_is_a_linear_value_of_the_caller() {
     // linear (part `ret`, `Ret::linear`); a caller that drops it is W0601.
     check("returned_linear.wf");
 }
+
+#[test]
+fn a_linear_closure_that_runs_on_some_paths_only_can_go_away() {
+    // Review of the ABC preview, hole H5: a callee or a closure that runs a
+    // linear closure on some paths only (part `runs`, `Run::maybe`), and a
+    // closure that runs a linear capture on some paths only (its `E`
+    // variable is linear), is W0601.
+    check("runs_on_some_paths.wf");
+}

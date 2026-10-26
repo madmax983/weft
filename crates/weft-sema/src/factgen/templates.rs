@@ -983,6 +983,9 @@ pub fn assign(
             }
         }
     }
+    if let Rvalue::Aggregate(weft_ir::AggKind::Closure(c), ops) = rv {
+        linear_fn_captures(em, st, *c, ops)?;
+    }
     match rv {
         // An iterator over the elements borrows them (`docs/ir.md` 5.14).
         Rvalue::Iter(weft_ir::IterSource::Elems(q)) => {
@@ -2299,7 +2302,10 @@ pub fn call(
         {
             continue;
         }
-        let runs = sum.runs.iter().any(|r| !r.capture && r.param as usize == i);
+        let runs = sum
+            .runs
+            .iter()
+            .any(|r| !r.capture && r.param as usize == i && !r.maybe);
         if runs {
             continue;
         }
@@ -2489,11 +2495,13 @@ fn dropped_fn_args(
         }
         let drops = apps.iter().any(|a| match a.kind {
             RunKind::Unknown => true,
+            // A value that the callee runs on some paths only can go away
+            // with no run (hole H5 of the review of the ABC preview).
             RunKind::Item | RunKind::Closure => !a
                 .summary
                 .runs
                 .iter()
-                .any(|r| !r.capture && r.param as usize == i),
+                .any(|r| !r.capture && r.param as usize == i && !r.maybe),
             _ => false,
         });
         if !drops {
@@ -3115,6 +3123,51 @@ fn closure_on_abort(em: &mut Em<'_>, v: &crate::analysis::AbsVal) -> bool {
         }
     }
     any
+}
+
+/// The `E` variable of a `ByMove` capture of closure `c` whose type has a
+/// function part (and is not linear by its type) gets the flags of a linear
+/// value if the operand of the capture in `ops` holds a linear closure: the
+/// closure body must run or move it on each path (hole H5 of the review of
+/// the ABC preview: `|| { if c { k() } }`).
+///
+/// # Errors
+///
+/// The errors of α.
+fn linear_fn_captures(em: &mut Em<'_>, st: &State, c: weft_ir::ClosureId, ops: &[Operand]) -> R {
+    let Some(decl) = em.p.closures.get(c.index()).cloned() else {
+        return Ok(());
+    };
+    let body = em.body;
+    for (k, (cap, op)) in decl.captures.iter().zip(ops).enumerate() {
+        if cap.mode != weft_ir::CaptureMode::ByMove {
+            continue;
+        }
+        let k = u32::try_from(k).unwrap_or(u32::MAX);
+        let fnty = super::alpha::capture_ty(em.p, em.tys, c, k).is_some_and(|t| {
+            crate::props::ir_has_fns(em.tys, t) && !crate::props::ir_maybe_linear(em.tys, t)
+        });
+        if !fnty {
+            continue;
+        }
+        let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+        if !v.linear {
+            continue;
+        }
+        let on_abort = closure_on_abort(em, &v);
+        let Some(e) = em.vars.get(&VarKey::E(decl.body, k)) else {
+            continue;
+        };
+        if let Some(info) = em.facts.vars.get_mut(e.index()) {
+            if info.linear {
+                info.has_on_abort &= on_abort;
+            } else {
+                info.linear = true;
+                info.has_on_abort = on_abort;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The local with key `k` gets a linear closure value `v` (stage F11): a
