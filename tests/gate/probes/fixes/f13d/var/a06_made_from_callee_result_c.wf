@@ -1,0 +1,14 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a callee gives back the made closure of its own callee; the clean twin (scratchpad f13d/w/a06_made_from_callee_result_c.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { print(x.entities.len()) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn call0(f: fn()) { f() }
+fn give(w: &World) -> fn() { mk_call(push1, w) }
+fn rp(world: &World) { let f = give(world); f() }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    rp(&w)
+    print(first.hp)
+}

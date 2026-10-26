@@ -337,3 +337,18 @@ fn a_value_that_runs_a_value_of_the_caller_two_times_runs_it_two_times() {
     // The controls run each value of the caller one time.
     check("run_order.wf");
 }
+
+#[test]
+fn a_value_that_a_body_runs_and_that_no_caller_gives_changes_the_places_of_the_caller() {
+    // Follow-up F13.2: a capture of a closure that a callee made (`let f =
+    // mk_call(push1, w); f()`) and a local that a closure gives a new value
+    // (`let set = || { g = grow }; set(); g(w)`) were code of a caller. Their
+    // changes did not reach the summary of the body, so a caller that holds a
+    // reference across the call missed W0301. The made closure now runs the
+    // values that it holds with the places of the run, the rebound local gets
+    // the values that the closure puts there, and the summary has the lends
+    // of code that no caller gives (`lends`). The clean twins only read, and
+    // a closure of the body that a callee runs changes its own environment
+    // (no W0312).
+    check("unknown_runs.wf");
+}

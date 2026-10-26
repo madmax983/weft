@@ -102,8 +102,14 @@ pub struct Em<'a> {
     pub code_multi: bool,
     /// The run nodes where code of a caller runs a function value of the
     /// interface (an entry of `runs`): a caller applies the value that it
-    /// gives there (`Summary::code_lends`).
+    /// gives there (no part `lends` of a closure summary).
     pub run_nodes: Vec<NodeId>,
+    /// The `lends_mut` of each summary that the body applies at a run node
+    /// and that no entry of `runs` gives again to a caller: code of a caller
+    /// of a value that the body does not know, the captures of a closure
+    /// that a callee made, a callee or a closure that lends. The summary of
+    /// the body gets their interface places (part `lends`, follow-up F13.2).
+    pub own_lends: Vec<(NodeId, PlaceId)>,
     /// The join of the states before each `Dead` of the body, if it has
     /// closures: the last value of a variable that a closure keeps (`Kept`)
     /// when the body gives the closure back (stage F12).
@@ -2940,6 +2946,13 @@ fn emit_apps(
                         *at = main;
                     }
                 }
+            }
+            // The caller of the body does not apply this value again (no
+            // entry of `runs`): its lends go into the summary of the body
+            // (follow-up F13.2: `let f = mk_call(push1, w); f()`).
+            if app.run.is_none() {
+                let lends = em.facts.lends_mut.get(lent..).unwrap_or_default().to_vec();
+                em.own_lends.extend(lends);
             }
             // A `once` closure that a callee runs more than once (part
             // `runs`): the run moves the value that holds it, and the run

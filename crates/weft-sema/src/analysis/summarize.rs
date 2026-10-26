@@ -221,6 +221,19 @@ pub fn summarize(
     }
     changed.muts.sort();
     changed.muts.dedup();
+    // The code that the body runs and that a caller does not run again (code
+    // of a caller of a value that the body does not know, the captures of a
+    // closure that a callee made): a change through the places of the
+    // interface that it gets is a lend of the body (follow-up F13.2).
+    for &(n, l) in fv.lends {
+        if n.index() >= nodes {
+            continue;
+        }
+        let base = facts.wild_base(l).unwrap_or(l);
+        if let Some(ip) = place(base) {
+            changed.lends.insert(ip);
+        }
+    }
     // The reads of a place of an `rc` object: the signature gives the reads
     // of the parameters (stage F13, the summary oracle).
     for &(n, r) in &facts.reads_at {
@@ -293,7 +306,7 @@ pub struct FnParts<'a> {
     /// the value that its variable has there, also after the variable ends.
     pub made: Option<&'a super::State>,
     /// The run nodes of code of a caller for a value of the interface
-    /// (`Em::run_nodes`): the `lends` of these nodes are `code_lends` in a
+    /// (`Em::run_nodes`): the `lends` of these nodes are no `lends` of a
     /// closure summary, because a caller applies the value that it gives
     /// there.
     pub run_nodes: &'a [weft_facts::NodeId],
@@ -301,6 +314,12 @@ pub struct FnParts<'a> {
     /// new value (`whole_capture`), with the index of the capture. The
     /// changes at the nodes after them are the part `late_muts`.
     pub rebind_nodes: &'a [(u32, weft_facts::NodeId)],
+    /// The `lends_mut` of the summaries that the body applies and that no
+    /// entry of `runs` gives again to a caller (`templates::Em::own_lends`).
+    /// In a function body their interface places are the part `lends`; in a
+    /// closure body they stay `lends` at a run node of `run_nodes`
+    /// (follow-up F13.2).
+    pub lends: &'a [(weft_facts::NodeId, PlaceId)],
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -1037,21 +1056,20 @@ pub fn closure(
     reads.sort();
     reads.dedup();
     out.reads = reads;
-    let (code, other): (Vec<_>, Vec<_>) = facts
+    // The lends of code of a caller at the runs of the values of the
+    // interface are not lends of the closure: a caller applies the values
+    // that it gives there (part `runs`; follow-up F13.2 for a closure that a
+    // callee made, which runs the values that it holds). The lends of
+    // another summary at such a node stay (`Em::own_lends`).
+    let mut lends: Vec<IPlace> = facts
         .lends_mut
         .iter()
-        .partition(|(n, _)| fv.run_nodes.contains(n));
-    let lends_of = |v: Vec<&(weft_facts::NodeId, PlaceId)>| {
-        let mut l: Vec<IPlace> = v
-            .iter()
-            .filter_map(|&&(_, r)| place(r).map(|x| x.0))
-            .collect();
-        l.sort();
-        l.dedup();
-        l
-    };
-    out.lends = lends_of(other);
-    out.code_lends = lends_of(code);
+        .filter(|x| !fv.run_nodes.contains(&x.0) || fv.lends.contains(x))
+        .filter_map(|&(_, r)| place(r).map(|x| x.0))
+        .collect();
+    lends.sort();
+    lends.dedup();
+    out.lends = lends;
     for (_, e) in &facts.escapes_at {
         let pf = Perform {
             effect: e.clone(),

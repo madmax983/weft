@@ -368,3 +368,20 @@ that names the class and the file of the check.
 - `fixes/f13c/w4/w09_closure_param_store_b.wf`: class H-W9, a closure stores its
   reference parameter into the object of a captured handle (both pipelines miss it;
   ledger `open-old`, issue #41).
+
+## Programs that follow-up F13.2 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class and
+its file in the scratchpad.
+
+- `fixes/f13d/ur/*.wf`: class UR, a value that a body runs and that no caller
+  gives (claim F13D-UR). The five repros of the signature diff of stage F13 part 2
+  (`f13p2/hole/`) and `f13p2/t/rb.wf` (`_b`), each with a clean twin (`_c`): a
+  closure that a callee made runs a value of the body, and a closure gives a
+  function-value local a new value.
+- `fixes/f13d/var/*.wf`: more shapes of class UR (`_b`) with clean twins (`_c`): a
+  made closure in a loop, in a field, in a vector, in an `Option`, in an `rc`
+  object, through a callee and another maker, in a join, a rebound local in a loop
+  and into a maker. `a01_*_noref_c` and `a14_*_noref_c`: a closure of the body that
+  a callee runs changes its own environment (no W0312).

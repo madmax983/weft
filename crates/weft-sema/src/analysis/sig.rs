@@ -289,6 +289,11 @@ pub struct Inferred {
     /// places of its parameters (part `reads`): a place of an `rc` object
     /// (found by the summary oracle, stage F13).
     pub reads: BTreeSet<IPlace>,
+    /// The places of the interface that code which the body runs can change
+    /// and that no entry of `runs` gives to a caller (part `lends`,
+    /// follow-up F13.2): code of a caller of a value that the body does not
+    /// know, the captures of a closure that a callee made.
+    pub lends: BTreeSet<IPlace>,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -372,6 +377,9 @@ impl Inferred {
         }
         for r in &o.reads {
             grew |= self.reads.insert(r.clone());
+        }
+        for l in &o.lends {
+            grew |= self.lends.insert(l.clone());
         }
         for (k, v) in &o.put_fns {
             let mine = self.put_fns.entry(k.clone()).or_default();
@@ -618,12 +626,16 @@ pub fn build(
         && inf
             .muts
             .iter()
-            .all(|(m, _)| matches!(m.root, IRoot::Param(0) | IRoot::Held(0)));
+            .all(|(m, _)| matches!(m.root, IRoot::Param(0) | IRoot::Held(0)))
+        && inf
+            .lends
+            .iter()
+            .all(|l| matches!(l.root, IRoot::Param(0) | IRoot::Held(0)));
     s
 }
 
 /// Gives summary `s` the parts `puts`, `put_fns` and the inferred `reads`
-/// of `inf` (stage F13).
+/// of `inf` (stage F13), and the inferred `lends` (follow-up F13.2).
 pub fn put_parts(s: &mut Summary, inf: &Inferred) {
     for r in &inf.reads {
         if !s.reads.contains(r) {
@@ -645,6 +657,11 @@ pub fn put_parts(s: &mut Summary, inf: &Inferred) {
     for (into, fns) in &inf.put_fns {
         s.put_fns
             .push((into.clone(), fns.iter().cloned().collect()));
+    }
+    for l in &inf.lends {
+        if !s.lends.contains(l) {
+            s.lends.push(l.clone());
+        }
     }
 }
 

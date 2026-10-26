@@ -1390,6 +1390,16 @@ pub enum Given<'o> {
     Opaque(&'o [PlaceId], bool),
 }
 
+impl Given<'_> {
+    /// The places of a run, `None` for the arguments of a call.
+    fn places(&self) -> Option<Vec<PlaceId>> {
+        match self {
+            Given::Args(_) => None,
+            Given::Opaque(ps, _) => Some(ps.to_vec()),
+        }
+    }
+}
+
 /// A run of a function value of the interface (a parameter or a capture):
 /// the summary of the body gets it (part `runs`).
 #[derive(Clone, Debug)]
@@ -1694,13 +1704,20 @@ fn given_places(
 }
 
 /// The applications of one run node: the summaries in order, and the value
-/// that each one is for (each value applies one time).
+/// that each one is for. A value applies one time as a value of the callee
+/// (with the arguments of the call) and one time for each set of places
+/// that a run gives it: a value can be both, and two runs can give it other
+/// places (follow-up F13.2: a closure that a callee made holds the values
+/// that it runs in its own value).
 #[derive(Default)]
 struct Apps {
     /// The summaries.
     out: Vec<Applied>,
-    /// The first summary of each value that the node applies.
+    /// The last summary of each value that the node applies.
     seen: std::collections::HashMap<FnVal, usize>,
+    /// Each value that the node applies, with `None` for a value of the
+    /// callee (`Given::Args`) and the places of a run (`Given::Opaque`).
+    modes: BTreeSet<(FnVal, Option<Vec<PlaceId>>)>,
     /// Each value that the node asks to apply, in order, also a value that
     /// it applied before (a value applies one time, so `seen` does not show
     /// a second run of it). [`apply_runs`] finds a value that two runs reach
@@ -2240,12 +2257,20 @@ fn apply_runs(
         }
         others.sort();
         others.dedup();
+        let env: Vec<PlaceId> = sigma
+            .cap_helds
+            .iter()
+            .chain(&sigma.cap_deeps)
+            .flatten()
+            .chain(&sigma.env)
+            .copied()
+            .collect();
         for g in &fns {
             if run.task && task_unsafe(cx, g) {
                 return Err(AlphaError::Later(TASK_RUN));
             }
             let start = apps.out.len();
-            let fresh = !apps.seen.contains_key(g);
+            let fresh = !apps.modes.contains(&(g.clone(), Some(places.clone())));
             apply_value(
                 cx,
                 r,
@@ -2260,6 +2285,11 @@ fn apply_runs(
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
                 a.sigma.others.clone_from(&others);
+                // A value that the closure runs through a capture changes
+                // the places of the environment through the environment.
+                if run.capture {
+                    a.sigma.env.extend(env.iter().copied());
+                }
                 // A run that the callee does on some paths only: each run
                 // that it gives is on some paths only too (hole H5b of the
                 // second review of the ABC preview: `outer(f) { maybe(f) }`).
@@ -2388,7 +2418,7 @@ fn apply_value(
         ));
     }
     apps.reached.push(fv.clone());
-    if apps.seen.contains_key(fv) {
+    if !apps.modes.insert((fv.clone(), given.places())) {
         return Ok(());
     }
     apps.seen.insert(fv.clone(), apps.out.len());
@@ -2679,15 +2709,7 @@ fn apply_value(
         }
         FnVal::Closure(c) | FnVal::Made(c) => {
             let made = matches!(fv, FnVal::Made(_));
-            let mut summary = cx.sums.closure(*c).map_err(AlphaError::Later)?.clone();
-            // A closure that a callee made runs its captures as code of a
-            // caller (`Summary::code_lends`).
-            if made {
-                let code = summary.code_lends.clone();
-                summary.lends.extend(code);
-                summary.lends.sort();
-                summary.lends.dedup();
-            }
+            let summary = cx.sums.closure(*c).map_err(AlphaError::Later)?.clone();
             let decl = p
                 .closures
                 .get(c.index())
@@ -2737,10 +2759,37 @@ fn apply_value(
                     .and_then(|b| b.locals.get(key.1.index()))
                     .map(|d| d.ty);
                 let mut v = AbsVal::of_type(ty.is_some_and(|t| ir_props(cx.tys, t).linear));
-                if ty.is_some_and(|t| crate::props::ir_has_fns(cx.tys, t)) {
-                    v.fns.insert(FnVal::Unknown);
-                }
                 let root = IPlace::root(IRoot::Capture(k));
+                if ty.is_some_and(|t| crate::props::ir_has_fns(cx.tys, t)) {
+                    // The values that the body puts into the capture (part
+                    // `put_fns`), else a value that the analysis does not know
+                    // (follow-up F13.2: `let set = || { g = grow }; set();
+                    // g(w)` runs `grow`, not code of a caller).
+                    let put = summary
+                        .put_fns
+                        .iter()
+                        .find(|(into, _)| *into == root)
+                        .map(|(_, rets)| rets.clone());
+                    match put {
+                        Some(rets) => {
+                            let callee_v = operand(cx, cb, st, callee)?.flat();
+                            let mut callee_refs = callee_v.refs.clone();
+                            callee_refs.extend(reach_refs(cx, cb, st, callee)?);
+                            let (fns, _) = rets_fns(cx, r, &rets, given, &mut |cx, j| {
+                                let fns = capture_fns(cx, r, *c, j, made, &callee_v.fns)?;
+                                let refs = capture_refs(cx, r, *c, j, made, &callee_refs)?;
+                                Ok((fns, refs))
+                            })?;
+                            v.fns.extend(fns);
+                            if v.fns.is_empty() {
+                                v.fns.insert(FnVal::Unknown);
+                            }
+                        }
+                        None => {
+                            v.fns.insert(FnVal::Unknown);
+                        }
+                    }
+                }
                 for (into, refs) in &summary.puts {
                     if *into == root {
                         for r in refs {
@@ -2834,22 +2883,33 @@ fn apply_value(
                 reads: Vec::new(),
             });
             // A closure that a callee made holds the values that it runs in
-            // its own value: they apply as values of the callee. A capture
-            // that runs more than once makes each run happen again.
+            // its own value: a run of a capture runs each value of the callee
+            // with the places of the run (follow-up F13.2: they are known
+            // values of the body, not code of a caller). A capture that runs
+            // more than once makes each run happen again.
             if made {
                 if runs.iter().any(|x| x.capture && x.many) {
                     for a in &mut apps.out {
                         a.again = true;
                     }
                 }
-                let param_runs: Vec<super::summary::Run> =
-                    runs.iter().filter(|x| !x.capture).cloned().collect();
+                let held = operand(cx, cb, st, callee)?.flat().fns;
                 return apply_runs(
                     cx,
                     r,
-                    &param_runs,
+                    &runs,
                     &sigma,
-                    &mut |cx, run| param_fns(cx, r, run, given),
+                    &mut |cx, run| {
+                        if run.capture {
+                            Ok(Some((
+                                made_held(cx.p, *c, run.param, &held),
+                                callee.clone(),
+                                cb,
+                            )))
+                        } else {
+                            param_fns(cx, r, run, given)
+                        }
+                    },
                     depth,
                     apps,
                 );
@@ -2904,6 +2964,40 @@ fn apply_value(
             Ok(())
         }
     }
+}
+
+/// The function values that capture `k` of closure `c` holds, for a closure
+/// that a callee made and gave back as the value `held` (follow-up F13.2).
+///
+/// The value of a made closure holds the values of its `Kept` captures
+/// (`summarize::fn_parts_of` puts them into the part `ret` of the maker): each
+/// value of `held` but the closure itself. The values of another capture are
+/// not in the value: code of a caller ([`FnVal::Unknown`]) stands for them.
+/// A closure that is not in `held` is the result of a run of a value of
+/// `held` (`with_results`): the values that it holds are not known there.
+fn made_held(
+    p: &Program,
+    c: weft_ir::ClosureId,
+    k: u32,
+    held: &BTreeSet<FnVal>,
+) -> BTreeSet<FnVal> {
+    if !held.contains(&FnVal::Made(c)) {
+        return BTreeSet::from([FnVal::Unknown]);
+    }
+    let mut out: BTreeSet<FnVal> = held
+        .iter()
+        .filter(|f| **f != FnVal::Made(c))
+        .cloned()
+        .collect();
+    let kept = p
+        .closures
+        .get(c.index())
+        .and_then(|d| d.captures.get(k as usize))
+        .is_some_and(|cap| cap.mode == weft_ir::CaptureMode::Kept);
+    if !kept || out.is_empty() {
+        out.insert(FnVal::Unknown);
+    }
+    out
 }
 
 /// The function values of parameter `run.param` of a run with `given`, and

@@ -1,0 +1,14 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a closure that a callee made runs a function parameter of the body; the clean twin (scratchpad f13p2/hole/h4_param_through_maker.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { print(x.entities.len()) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn mk_item(w: &World) -> fn() { || push1(w) }
+fn call0(f: fn()) { f() }
+fn rp(g: fn(&World), world: &World) { let f = mk_call(g, world); f() }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    rp(push1, &w)
+    print(first.hp)
+}

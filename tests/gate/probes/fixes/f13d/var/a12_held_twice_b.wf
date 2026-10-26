@@ -1,0 +1,14 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a made closure runs its capture two times (scratchpad f13d/w/a12_held_twice.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { x.entities.push(Entity { hp: 1 }) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn call0(f: fn()) { f() }
+fn mk_twice(g: fn(&World), w: &World) -> fn() { || { g(w); g(w) } }
+fn rp(world: &World) { let f = mk_twice(push1, world); f() }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    rp(&w)
+    print(first.hp)
+}

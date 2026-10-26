@@ -1,0 +1,14 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a made closure in a struct field; the clean twin (scratchpad f13d/w/a04_made_in_struct_c.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { print(x.entities.len()) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn call0(f: fn()) { f() }
+struct Hook { f: fn() }
+fn rp(world: &World) { let h = Hook { f: mk_call(push1, world) }; let f = h.f; f() }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    rp(&w)
+    print(first.hp)
+}

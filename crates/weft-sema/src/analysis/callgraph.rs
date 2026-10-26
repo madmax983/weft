@@ -40,7 +40,7 @@ use weft_ir::{BodyId, Callee, StmtKind, TermKind, UnwindAction};
 use weft_syntax::diag::Diagnostic;
 
 use super::sig::{self, Inferred};
-use super::summary::{Summaries, Summary};
+use super::summary::{IRoot, Summaries, Summary};
 use crate::factgen::{self, Unsupported};
 use crate::irbuild::scope::Group;
 use crate::irbuild::{Built, Outcome};
@@ -195,6 +195,7 @@ fn stated(
     out.puts.clone_from(&body.puts);
     out.reads.clone_from(&body.reads);
     out.put_fns.clone_from(&body.put_fns);
+    out.lends.clone_from(&body.lends);
     out
 }
 
@@ -236,7 +237,11 @@ fn summary_of(
                 }
             }
             sig::put_parts(&mut sum, inf);
-            sum.only_self &= inf.runs.is_empty();
+            sum.only_self &= inf.runs.is_empty()
+                && inf
+                    .lends
+                    .iter()
+                    .all(|l| matches!(l.root, IRoot::Param(0) | IRoot::Held(0)));
             sum
         });
     }
@@ -508,6 +513,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 made: e.made.as_ref(),
                                 run_nodes: &[],
                                 rebind_nodes: &[],
+                                lends: &e.own_lends,
                             },
                         );
                         add_steps(&mut steps, &facts);

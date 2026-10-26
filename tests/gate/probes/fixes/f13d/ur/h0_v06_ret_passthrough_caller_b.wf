@@ -1,0 +1,14 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a closure that a callee made runs a closure literal of the body (the sigdiff row v06_ret_paths ret_passthrough) (scratchpad f13p2/hole/h0_v06_ret_passthrough_caller.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn ret_passthrough(world: &World) {
+    let f = mk_call(|x| x.entities.push(Entity { hp: 1 }), world)
+    f()
+}
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    ret_passthrough(&w)
+    print(first.hp)
+}

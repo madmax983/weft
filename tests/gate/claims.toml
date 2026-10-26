@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2"]
 
 
 # ----------------------------------------------------------------------
@@ -4809,3 +4809,89 @@ stage = "F13.1"
 repro = ["tests/gate/probes/fixes/f13c/w4/j04_loop_ref_var_b.wf"]
 code = "W0204"
 note = "AB-RC1-join with a reference variable that a loop gives a new value"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h0_v06_ret_passthrough_caller_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h1_made_capture_closure_arg_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h2_made_capture_item_arg_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h3_made_to_callee_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h4_param_through_maker_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a01_local_closure_to_callee_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a03_made_nested_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a04_made_in_struct_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a05_made_in_vec_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a06_made_from_callee_result_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a07_made_two_levels_callee_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a11_made_rebind_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a12_held_twice_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a13_maker_closure_local_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a14_made_capture_closure_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a15_made_join_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a17_rc_made_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a18_made_option_b.wf",
+]
+code = "W0301"
+note = "a value that a body runs and that no caller gives (follow-up F13.2): a capture of a closure that a callee made (`let f = mk_call(push1, w); f()`, also through a callee, a field, a vector, an `Option`, an `rc` object, another maker, a join, a loop) or a local that a closure gives a new value (`let set = || { g = grow }; set(); g(w)`). The run changes the places that the body gives it; a caller that holds a reference across the call is W0301 (`transfer::made_held`, the rebind values from `put_fns`, `Inferred::lends`)"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h5_rebind_local_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a02_made_in_loop_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a09_rebind_in_closure_loop_b.wf",
+]
+code = "W0301"
+note = "a value that a body runs and that no caller gives (follow-up F13.2): a capture of a closure that a callee made (`let f = mk_call(push1, w); f()`, also through a callee, a field, a vector, an `Option`, an `rc` object, another maker, a join, a loop) or a local that a closure gives a new value (`let set = || { g = grow }; set(); g(w)`). The run changes the places that the body gives it; a caller that holds a reference across the call is W0301 (`transfer::made_held`, the rebind values from `put_fns`, `Inferred::lends`)"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h0_v06_ret_passthrough_caller_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h1_made_capture_closure_arg_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h2_made_capture_item_arg_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h3_made_to_callee_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h4_param_through_maker_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a01_local_closure_to_callee_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a01_local_closure_to_callee_noref_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a03_made_nested_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a04_made_in_struct_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a05_made_in_vec_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a06_made_from_callee_result_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a07_made_two_levels_callee_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a11_made_rebind_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a12_held_twice_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a13_maker_closure_local_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a14_made_capture_closure_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a14_made_capture_closure_noref_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a15_made_join_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a17_rc_made_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a18_made_option_c.wf",
+]
+note = "the clean twins of F13D-UR: the value that the body runs only reads (the made closure runs the values that it holds, not code of a caller), and a closure of the body that a callee runs changes its own environment (no W0312: `Sigma::env`)"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h5_rebind_local_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a02_made_in_loop_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a09_rebind_in_closure_loop_c.wf",
+]
+note = "the clean twins of F13D-UR: the value that the body runs only reads (the made closure runs the values that it holds, not code of a caller), and a closure of the body that a callee runs changes its own environment (no W0312: `Sigma::env`)"

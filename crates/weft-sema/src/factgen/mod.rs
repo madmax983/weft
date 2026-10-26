@@ -460,6 +460,9 @@ pub struct Emitted {
     /// A run node of the entry body runs code of a caller that can resume
     /// more than once.
     pub code_multi: bool,
+    /// The `lends_mut` of the summaries that the entry body applies and that
+    /// a caller does not apply again (`templates::Em::own_lends`).
+    pub own_lends: Vec<(weft_facts::NodeId, PlaceId)>,
     /// The join of the states of the entry body before each terminator and
     /// each closure literal (with closures in the component).
     pub made: Option<crate::analysis::State>,
@@ -583,6 +586,7 @@ pub fn emit_parts(
             runs: Vec::new(),
             code_multi: false,
             run_nodes: Vec::new(),
+            own_lends: Vec::new(),
             last: (!closures.is_empty()).then(crate::analysis::State::new),
             aborts: std::collections::BTreeSet::new(),
             union: (!closures.is_empty()).then(crate::analysis::State::new),
@@ -596,10 +600,10 @@ pub fn emit_parts(
             em.runs,
             em.returns,
             em.last,
-            em.code_multi,
+            (em.code_multi, em.own_lends),
         )
     };
-    let (mut stored, aborts, union, runs, returns, last, code_multi) = stored;
+    let (mut stored, aborts, union, runs, returns, last, (code_multi, own_lends)) = stored;
     let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
         .iter()
         .filter_map(|&cb| p.closure_of(cb).map(|(c, _)| c))
@@ -683,6 +687,7 @@ pub fn emit_parts(
         runs,
         returns,
         code_multi,
+        own_lends,
         made: unions.remove(&entry).map(|mut u| {
             if let Some(l) = &last {
                 u.join(l);
@@ -865,7 +870,7 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
-    let (returns, aborts, runs, made, run_nodes) = {
+    let (returns, aborts, runs, made, (run_nodes, own_lends)) = {
         let mut em = templates::Em {
             p,
             sema: &a.program,
@@ -887,6 +892,7 @@ fn closure_summary(
             runs: Vec::new(),
             code_multi: false,
             run_nodes: Vec::new(),
+            own_lends: Vec::new(),
             last: Some(crate::analysis::State::new()),
             aborts: std::collections::BTreeSet::new(),
             union: Some(crate::analysis::State::new()),
@@ -903,7 +909,10 @@ fn closure_summary(
                 }
                 u
             }),
-            std::mem::take(&mut em.run_nodes),
+            (
+                std::mem::take(&mut em.run_nodes),
+                std::mem::take(&mut em.own_lends),
+            ),
         )
     };
     let rebind_nodes = rebind_nodes(p, &table, cb);
@@ -920,6 +929,7 @@ fn closure_summary(
             returns: &returns,
             code_multi: false,
             run_nodes: &run_nodes,
+            lends: &own_lends,
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
         },
@@ -1050,6 +1060,7 @@ fn emit_closure(
         runs: Vec::new(),
         code_multi: false,
         run_nodes: Vec::new(),
+        own_lends: Vec::new(),
         last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),

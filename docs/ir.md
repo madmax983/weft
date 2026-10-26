@@ -3122,10 +3122,9 @@ in the default set):
   places that the callee gives to it and against the other arguments of the call
   (`Sigma::others`, W0312): the callee can keep references into them across the run. A
   change through a parameter of the value is a change of what the callee gives.
-- A closure summary keeps the `lends` of code of a caller at the runs of its captures and
-  parameters apart (`Summary::code_lends`): a caller applies the values that it gives
-  there. A closure that a callee made (`Made`) runs its captures as code of a caller, so
-  they are `lends` where it runs.
+- A closure summary has no `lends` of code of a caller at the runs of its captures and
+  parameters: a caller applies the values that it gives there. A closure that a callee
+  made (`Made`) runs the values that it holds (follow-up F13.2, below).
 - A function value carries the places that its environment points into wherever its
   values go (F12-fix, hole H2 of the review of the ABC preview): `store_fns` gives a
   place that a call changes the references of each function argument with its values
@@ -3365,15 +3364,53 @@ The signature diff with the groups A to C has these classes (one `sig` entry eac
 - The text of a place (a segment step, a cut place with `..`), and a wider place at the
   cut of the summary (generated probes of tier 2, groups A and B).
 
-The diff also found two holes of group C (follow-up F13.2 of the plan; no ledger entry
-accepts their rows): an unknown function value that runs in a body (a capture of a made closure that
-holds a function parameter of the maker, `mk_call(push1, world)()`; a function-value
-local that a closure gives a new value, `let set = || { g = grow }; set(); g(world)`)
-is code of a caller, and its `lends_mut` of the reference parameter and of `a place of a
-caller` do not reach the summary of the body. A caller of the body then misses the
-change (`verify/p/v06_ret_paths.wf` `ret_passthrough` and the mutant
-`m01258_43_loops.wf` `item_later_pub` show it in the diff; the summary oracle fails on
-a caller).
+The diff also found two holes of group C (follow-up F13.2 of the plan): an unknown
+function value that runs in a body (a capture of a made closure that holds a function
+parameter of the maker, `mk_call(push1, world)()`; a function-value local that a
+closure gives a new value, `let set = || { g = grow }; set(); g(world)`) was code of a
+caller, and its `lends_mut` of the reference parameter and of `a place of a caller` did
+not reach the summary of the body. A caller of the body then missed the change
+(`verify/p/v06_ret_paths.wf` `ret_passthrough` and the mutant `m01258_43_loops.wf`
+`item_later_pub` showed it in the diff; the summary oracle failed on a caller).
+
+As built (follow-up F13.2): the root cause is that the summary of a function body had no
+part for code that the body runs and that no caller gives. Code of a caller of a value
+of a parameter is in the part `runs`, and the caller applies the value that it gives
+there. Code of a caller of any other value (`FnVal::Unknown`) changed the places of the
+body only. Two values were code of a caller with no reason:
+
+- A capture of a closure that a callee made (`Made`). The closure holds the values that
+  it runs in its own value (`summarize::fn_parts_of` puts the values of each `Kept`
+  capture into the part `ret` of the maker). A run of a capture now runs each of these
+  values with the places of the run (`transfer::made_held`, through `apply_runs`); a
+  capture that is not `Kept`, or a value with no known values, adds code of a caller.
+  A node applies each value one time for the arguments of the call and one time for
+  each set of places that a run gives it (`Apps::modes`): `f = mk_call(push1, w)`
+  holds `push1` and is not `push1`.
+- A local that a closure of the body gives a whole new value (part `rebinds`): the new
+  value is the value that the closure puts into the capture (part `put_fns`), not
+  `Unknown`.
+
+The summary of a function body has the part `lends` (`Inferred::lends`): the interface
+places of each `lends_mut` of a summary that the body applies with no entry of `runs`
+(`Em::own_lends`): code of a caller of a value that the body does not know, a callee
+or a closure that lends. The caller applies it at each call (`apply::main`). A closure
+summary keeps these lends at a run node of `run_nodes` too.
+
+A value that a closure runs through a capture changes the places of the environment of
+the closure through that environment (`Sigma::env`): the change has the root of the
+environment (`STORED`), as the places of `cap_helds`. Before, a closure of the body that
+a callee runs (`let f = || g(world); call0(f)`) got W0312 against its own environment
+(a false positive of the `ir` pipeline).
+
+Each of the 5 repros and `f13p2/t/rb.wf` is W0301 at the line of the old pipeline, and
+the clean twins are clean (probes `tests/gate/probes/fixes/f13d/`, claim F13D-UR;
+test `crates/weft-check/tests/data/fn_values/unknown_runs.wf`). The signature of
+`ret_passthrough` and of `item_later_pub` now has the change of the old inference.
+A value that a callee gives to a run of a maker parameter (`fn rp2(m, w) { let f =
+m(push1, w); f() }`) stays code of a callee for a caller of `rp2`: the part `runs` has
+places, not function values, so a caller of `rp2` with a maker `mk_call` changes `w`
+through code that it does not know (stricter than the old pipeline, sound).
 
 ### 6.9 Checks in Rust, and diagnostics
 

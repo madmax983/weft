@@ -1877,10 +1877,14 @@ parts = ["muts", "ret", "ret_refs"]
 files = [
     "tests/programs/44_returned_fns.wf",
     "tests/gate/probes/fixes/f12b/n1/z0*.wf",
+    "tests/gate/probes/verify/p/v06_ret_paths.wf",
+    "tests/gate/probes/fixes/f13d/var/a06_made_from_callee_result_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a07_made_two_levels_callee_b.wf",
     "fixes/f12b/n1/z0*.wf",
+    "verify/p/v06_ret_paths.wf",
     "verify/s5/S5c/mut/progs/m*_44_returned_fns.wf",
 ]
-reason = "a maker of a maker (`mkmk(w) -> fn() -> fn() { || || w.entities.clear() }`): the old inference puts the change of the closure that the result makes into the `muts` of the maker. The maker does not change `w` itself. The `ir` summary keeps the change in the made closure (`RetFn::Made`), and the caller applies it where it runs the closure (F12-fix2 N1; claims F12R2-N1 hold). The `ir` signature is more precise, and W0701 of a public maker does not ask for the place"
+reason = "a maker of a maker (`mkmk(w) -> fn() -> fn() { || || w.entities.clear() }`, also `mk2` of v06_ret_paths.wf), and a function that gives back the closure of its own maker (`give(w) -> fn() { mk_call(push1, w) }`, probes of follow-up F13.2): the old inference puts the change of the closure that the result makes into the `muts` of the maker. The maker does not change `w` itself. The `ir` summary keeps the change in the made closure (`RetFn::Made`), and the caller applies it where it runs the closure (F12-fix2 N1; claims F12R2-N1 hold). The `ir` signature is more precise, and W0701 of a public maker does not ask for the place"
 stage = "F13"
 
 [[entry]]

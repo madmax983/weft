@@ -278,3 +278,31 @@ fn a_closure_that_captures_a_local_by_reference_and_that_a_callee_stores_passes(
     assert!(m.starts_with("summary oracle (A3)"), "{m}");
     assert!(m.contains("puts a reference"), "{m}");
 }
+
+#[test]
+fn a_value_that_a_body_runs_and_that_no_caller_gives_passes_the_summary_oracle() {
+    // Follow-up F13.2: `rp` runs a closure that `mk_call` made and that holds
+    // `push1`, and `rb` runs a local that a closure gives a new value. The
+    // changes of `w.xs` reach the summaries of `rp` and `rb` (before the fix
+    // the run nodes in `main` had no `mutates_at` or `lends_mut` for them).
+    let src = "struct W { xs: Vec<u64> }\n\
+        fn push1(w: &W) { w.xs.push(1) }\n\
+        fn noop(w: &W) {}\n\
+        fn mk_call(g: fn(&W), w: &W) -> fn() { || g(w) }\n\
+        fn call0(f: fn()) { f() }\n\
+        fn rp(w: &W) { let f = mk_call(push1, w)\n f() }\n\
+        fn rp_callee(w: &W) { let f = mk_call(push1, w)\n call0(f) }\n\
+        fn rb(w: &W) { let g = noop\n let set = || { g = push1 }\n set()\n g(w) }\n\
+        fn main() {\n\
+        let w = W { xs: Vec.new() }\n\
+        rp(&w)\n\
+        rp_callee(&w)\n\
+        rb(&w)\n\
+        print(w.xs.len())\n\
+        }\n";
+    let c = check_abc(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let o = run_main_with_facts(&c, &opts(), |_| {}).unwrap_or_else(|e| panic!("{}", e.message));
+    let r = o.fact_oracle.expect("a fact oracle report");
+    assert!(r.summary > 0, "{r:?}");
+}

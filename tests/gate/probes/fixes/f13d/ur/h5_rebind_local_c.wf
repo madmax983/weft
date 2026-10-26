@@ -1,0 +1,30 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a closure gives a function-value local of the body a new value; the clean twin (scratchpad f13p2/t/rb.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) { print(w.entities.len()) }
+fn noop(w: &World) {}
+fn later(world: &World, n: u64) {
+    let g = noop
+    let i = 0
+    while i < n {
+        g(world)
+        let set = || { g = grow }
+        set()
+        i += 1
+    }
+}
+fn once(world: &World) {
+    let g = noop
+    let set = || { g = grow }
+    set()
+    g(world)
+}
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    later(&w, 2)
+    print(first.hp)
+    let second = &w.entities[0]
+    once(&w)
+    print(second.hp)
+}

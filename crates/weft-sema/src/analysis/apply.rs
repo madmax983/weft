@@ -113,6 +113,26 @@ pub struct Sigma {
     /// σ(`CaptureDeep(k)`) of a closure: what the references behind those
     /// point into at the run node.
     pub cap_deeps: Vec<Vec<PlaceId>>,
+    /// For a value that a closure runs through a capture
+    /// ([`RunKind::Run`]): what the environments of the closures on the way
+    /// point into. A change there is a change through the environment of
+    /// the value that the callee runs, not through a place that the callee
+    /// gives (W0312, follow-up F13.2).
+    pub env: Vec<PlaceId>,
+}
+
+/// True if fact place `p` is place `e` or a place below it. A wildcard
+/// place `e` stands for its base place.
+fn at_or_below(facts: &weft_facts::FnFacts, p: PlaceId, e: PlaceId) -> bool {
+    let e = facts.wild_base(e).unwrap_or(e);
+    let mut at = Some(p);
+    while let Some(q) = at {
+        if q == e {
+            return true;
+        }
+        at = facts.places.get(q.index()).and_then(|i| i.parent);
+    }
+    false
 }
 
 /// The type behind a reference type `t`.
@@ -1122,6 +1142,11 @@ pub fn main(
             _ => idx,
         }
     };
+    // A place of the environment of a closure on the way to the value: the
+    // root of the environment, as `cap_helds` (follow-up F13.2).
+    let in_env = |facts: &weft_facts::FnFacts, p: PlaceId| {
+        run && s.env.iter().any(|&e| at_or_below(facts, p, e))
+    };
     if run {
         for ps in &s.cap_helds {
             cx.facts
@@ -1133,15 +1158,25 @@ pub fn main(
         places.extend(s.others.iter().copied());
         places.sort();
         places.dedup();
-        cx.facts
-            .call_arg
-            .extend(places.into_iter().map(|p| (n, p, g)));
+        for p in places {
+            let root = if in_env(cx.facts, p) {
+                crate::body::roots::STORED
+            } else {
+                g
+            };
+            cx.facts.call_arg.push((n, p, root));
+        }
     }
     let changed = muts(cx, sum, s)?;
     for &(p, idx) in &changed {
         cx.facts.mutates_at.push((n, p));
         if item || run {
-            cx.facts.call_mut.push((n, p, as_given(idx)));
+            let root = if in_env(cx.facts, p) {
+                crate::body::roots::STORED
+            } else {
+                as_given(idx)
+            };
+            cx.facts.call_mut.push((n, p, root));
         }
     }
     for l in &sum.lends {
@@ -1163,7 +1198,12 @@ pub fn main(
             // A place of a caller is no argument of the call: no alias
             // check (W0312) compares it.
             if let (Some(root), true) = (root, item || run) {
-                cx.facts.call_mut.push((n, p, as_given(root)));
+                let root = if in_env(cx.facts, p) {
+                    crate::body::roots::STORED
+                } else {
+                    as_given(root)
+                };
+                cx.facts.call_mut.push((n, p, root));
             }
         }
     }

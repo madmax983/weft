@@ -1,0 +1,13 @@
+// Follow-up F13.2, class UR: a closure of the body that runs a captured item goes to a callee; the closure changes its own environment, no W0312 (scratchpad f13d/w/a01_local_closure_to_callee_noref.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { x.entities.push(Entity { hp: 1 }) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn call0(f: fn()) { f() }
+fn rp(world: &World) { let g = push1; let f = || g(world); call0(f) }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+
+    rp(&w)
+
+}
