@@ -429,7 +429,9 @@ fn check_supported(
                     cap: weft_ir::CapOperand::Local(cap),
                     ..
                 } => {
-                    if crate::analysis::clause::cap_handler(p, bid, cap).is_none() {
+                    if crate::analysis::clause::cap_handler(p, bid, cap).is_none()
+                        && crate::analysis::clause::captured_cap(p, tys, bid, cap).is_none()
+                    {
                         return no(
                             Group::D,
                             "a perform through a captured capability (stage F16)",
@@ -745,6 +747,7 @@ pub fn emit_parts(
         unions.insert(entry, u);
     }
     let mut closure_entries = Vec::new();
+    let mut closure_runs: Vec<crate::analysis::clause::ClauseRun> = Vec::new();
     for &cb in &closures {
         let (n, st) = emit_closure(
             &ClosureCx {
@@ -767,6 +770,7 @@ pub fn emit_parts(
                 uniq: &mut uniq,
                 table: &mut table,
                 stored: &mut stored,
+                runs: &mut closure_runs,
             },
             cb,
         )
@@ -774,6 +778,7 @@ pub fn emit_parts(
         closure_entries.push((cb, n));
         unions.insert(cb, st);
     }
+    hx.runs.append(&mut closure_runs);
     // The facts of each clause body (plan stage F14): a component of the
     // function, from the join of the states at the performs that run it. A
     // clause has a lower id than the clauses inside it, so the performs
@@ -807,6 +812,7 @@ pub fn emit_parts(
                 uniq: &mut uniq,
                 table: &mut table,
                 stored: &mut stored,
+                runs: &mut closure_runs,
             },
             (&mut hx, &frames, &comp),
             cb,
@@ -1002,6 +1008,9 @@ struct ClosureOut<'a, 'b> {
     table: &'b mut nodes::NodeTable,
     /// The references that the bodies put behind a reference parameter.
     stored: &'b mut Vec<templates::Stored>,
+    /// The runs of clauses at the performs of closure bodies through a
+    /// captured capability (plan stage F16).
+    runs: &'b mut Vec<crate::analysis::clause::ClauseRun>,
 }
 
 /// The value of the environment local of closure body `cb` at its entry
@@ -1226,6 +1235,7 @@ fn closure_summary(
             lends: &own_lends,
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
+            cap_performs: &hx.cap_performs,
         },
     );
     sum.ret.linear = ret_linear;
@@ -1383,6 +1393,10 @@ fn emit_closure(
     emit_blocks(&mut em, out.table, &frames, &states, body)?;
     out.stored.append(&mut em.stored);
     let union = em.union.take().unwrap_or_default();
+    // The runs of clauses at the performs of the body through a captured
+    // capability (plan stage F16): `handlers::project` of the component
+    // gives them the code of the clause.
+    out.runs.append(&mut hx.runs);
     Ok((en, union))
 }
 
@@ -2149,10 +2163,18 @@ fn emit_block(
                 may_abort: !dests.is_empty(),
                 values,
             };
-            if matches!(cap, weft_ir::CapOperand::Local(_)) {
-                handlers::perform_local(em, &nodes, &st, block, &blk.term.kind)?;
-            } else {
-                templates::perform(em, &nodes, &st, &blk.term.kind)?;
+            match cap {
+                weft_ir::CapOperand::Local(c)
+                    if crate::analysis::clause::captured_cap(em.p, em.tys, bid, c).is_some() =>
+                {
+                    templates::perform(em, &nodes, &st, &blk.term.kind)?;
+                }
+                weft_ir::CapOperand::Local(_) => {
+                    handlers::perform_local(em, &nodes, &st, block, &blk.term.kind)?;
+                }
+                weft_ir::CapOperand::Row(_) => {
+                    templates::perform(em, &nodes, &st, &blk.term.kind)?;
+                }
             }
         }
         weft_ir::TermKind::Resume { .. } => {

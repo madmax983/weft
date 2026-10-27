@@ -370,3 +370,27 @@ fn the_abort_paths_of_local_handlers_bind_before_they_free() {
     }
     assert!(lints.is_empty(), "{lints:#?}");
 }
+
+/// A closure that performs through a captured capability (plan stage
+/// F16): the node that runs it (a call of the value, or a call of a callee
+/// that runs it) runs the clause of the handler, as a call that performs.
+#[test]
+fn a_run_of_a_closure_with_a_captured_capability_runs_the_clause() {
+    check("cap_local_run.wf");
+    check("cap_local_run_ok.wf");
+    check("cap_apply.wf");
+    check("cap_apply_ok.wf");
+    check("cap_stored.wf");
+    check("cap_stored_ok.wf");
+}
+
+/// The clause gets a reference into a local of the closure (the frame root
+/// of the run node), and a `multi` clause makes the run node a `multi`
+/// point.
+#[test]
+fn a_closure_with_a_captured_capability_gives_its_frame_and_resumes_twice() {
+    check("cap_keeps_closure_local.wf");
+    check("cap_keeps_closure_local_ok.wf");
+    check("cap_multi_linear.wf");
+    check("cap_multi_linear_ok.wf");
+}

@@ -5374,3 +5374,53 @@ group = "ACD"
 stage = "F16"
 repro = ["tests/gate/probes/fixes/f16/multi/olr2a_move_c.wf"]
 note = "the clean twin of OL-R2a (a closure that moves nothing)"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/cap/c01_local_run.wf",
+    "tests/gate/probes/fixes/f16/cap/c02_apply.wf",
+    "tests/gate/probes/fixes/f16/cap/c03_stored.wf",
+    "tests/gate/probes/fixes/f16/cap/c05_keeps_closure_local.wf",
+]
+code = "W0301"
+note = "a closure performs through a captured capability of a local handler: the node that runs the closure (a call of the value, or a call of a callee that runs it) runs the clause, with the frame root of the run node and the places that the closure reaches given to the parameters of the clause"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c04_abort_linear.wf"]
+code = "W0602"
+note = "a run of a closure whose clause aborts to its handler unwinds the linear values of the handled body"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c06_multi_linear.wf"]
+code = "W0503"
+note = "a run of a closure whose clause resumes twice is a `multi` point"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/cap/c01_local_run_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c02_apply_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c03_stored_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c05_keeps_closure_local_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c06_multi_linear_c.wf",
+]
+note = "the clean twins of F16-CAP"

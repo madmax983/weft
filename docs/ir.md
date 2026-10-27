@@ -2759,6 +2759,32 @@ preview with `--groups ABCD` until stage F17):
   the first run), for the versions of the part holders.
 - One-place instances are off on the cycles of the re-entry edges
   (`Cycles::add_handlers`, `Cycles::add_rows`; V097).
+- Captured capabilities. A closure that captures the capability of a local handler
+  (`CaptureMode::Cap`) and performs through it: in the closure body the perform is an
+  operation of a handler outside the closure (the template of a perform through the
+  row, with no `escapes_at`), and the node also runs the code of the clause before
+  its resume points (a `ClauseRun` at the node, so a reference of the closure across
+  the perform sees the changes of the clause). The summary of the closure performs
+  through `Cap(k)` (`FnParts::cap_performs`): no `escapes_at` and no `multi` at a run
+  node; σ of the capture is the capability root. A node of the handled body (or of a
+  handled body that splices into it) that can run a function value
+  (`frames::runs_values`) runs the clauses of each handler whose capability a closure
+  captures (`clause::captured_handlers`): its destinations and `clause_handlers` have
+  the handler, and `clause::call_clauses` runs the clauses there, with the places that
+  the arguments and the value reach and the frame root of the run node
+  (`clause::given_value`; the closure gives its frame, `Summary::gives_frame`). A run
+  of such a closure at a node that does not run the clauses of its handler (the
+  capability left its handler, W0313) is not in scope until stage F17, and so is a
+  closure that captures the capability and leaves the `handle` (in its value, in a
+  local of the site or in a heap slot).
+- The heap slot of a callee frame that a call gives to its clauses holds only while
+  the clauses run: the records that outlive the runs of a clause (the seed of the
+  facts of the clause, the states at its resume points for the code after them, its
+  ends with no `resume`) do not have the slots of the frames of the calls in the
+  handled body, also in a nested run of a clause of another handler
+  (`Handlers::frames`).
+- `body_multi` counts a node that runs a clause of a `clause_multi` capability as a
+  `multi` point.
 - `Post` of a `multi` handler spares the variables outside the handled bodies that
   an abort of a re-run of the handled body unwinds (`Frames::rerun_spares`): a
   `resume` in the clause code after the first one runs the handled body again

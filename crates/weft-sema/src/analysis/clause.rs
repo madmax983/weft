@@ -108,6 +108,15 @@ pub struct Handlers {
     /// analysis finds them: an applied summary is `multi`, plan stage F16).
     /// They are nodes of `crate::factgen::frames::row_multi` too.
     pub dyn_rows: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The `Main` node of each perform of a closure body through a captured
+    /// capability, with the index of the capture and the identity of the
+    /// effect (plan stage F16): the summary of the closure performs through
+    /// `Cap(k)`.
+    pub cap_performs: Vec<(weft_facts::NodeId, u32, String)>,
+    /// The callee frames whose heap slots hold while the clauses that their
+    /// calls run are running, with the body of the call, the innermost last
+    /// (`run_clause`).
+    pub frames: Vec<(weft_facts::PlaceId, BodyId)>,
 }
 
 /// The state of the abort edge of a terminator that runs a clause.
@@ -296,6 +305,103 @@ pub fn cap_handler(p: &Program, body: BodyId, place: &Place) -> Option<HandlerId
         (BodyKind::Handled(h), LocalKind::Cap(_)) => Some(h),
         _ => None,
     }
+}
+
+/// The capture index and the effect of a captured capability.
+///
+/// Closure body `body` holds the capability in its environment field
+/// `place` (a `Cap` capture, plan stage F16): a perform through it is a
+/// perform of an operation of a handler outside the closure.
+pub fn captured_cap(
+    p: &Program,
+    tys: &weft_ir::TyTable,
+    body: BodyId,
+    place: &Place,
+) -> Option<(u32, weft_ir::EffectId)> {
+    if place.proj.len() != 1 {
+        return None;
+    }
+    let (c, k, mode) = crate::factgen::alpha::env_capture(p, body, place)?;
+    if mode != weft_ir::CaptureMode::Cap {
+        return None;
+    }
+    let decl = p.closures.get(c.index())?;
+    let src = &decl.captures.get(k as usize)?.source;
+    let e = cap_effect_of(p, tys, decl.maker, src, 0)?;
+    Some((k, e))
+}
+
+/// The effect of the capability in place `src` of body `body`: a
+/// capability local, an upvar local of one, or a `Cap` capture of a closure
+/// environment (through the makers).
+fn cap_effect_of(
+    p: &Program,
+    tys: &weft_ir::TyTable,
+    body: BodyId,
+    src: &Place,
+    depth: usize,
+) -> Option<weft_ir::EffectId> {
+    if depth > p.bodies.len() {
+        return None;
+    }
+    if src.proj.is_empty() {
+        let ty = p.body(body)?.local(src.local)?.ty;
+        return match tys.try_get(ty) {
+            Some(weft_ir::Ty::Cap(e)) => Some(*e),
+            _ => None,
+        };
+    }
+    let (c, k, mode) = crate::factgen::alpha::env_capture(p, body, src)?;
+    if mode != weft_ir::CaptureMode::Cap || src.proj.len() != 1 {
+        return None;
+    }
+    let decl = p.closures.get(c.index())?;
+    let inner = &decl.captures.get(k as usize)?.source;
+    cap_effect_of(p, tys, decl.maker, inner, depth + 1)
+}
+
+/// The local handler whose capability capture `k` of closure `c` holds.
+///
+/// The source of the capture is a capability local of a handled body (or
+/// an upvar local of one), or a `Cap` capture of the maker (plan stage
+/// F16).
+pub fn capture_handler(p: &Program, c: weft_ir::ClosureId, k: u32) -> Option<HandlerId> {
+    let mut decl = p.closures.get(c.index())?;
+    let mut k = k;
+    for _ in 0..=p.closures.len() {
+        let cap = decl.captures.get(k as usize)?;
+        if cap.mode != weft_ir::CaptureMode::Cap {
+            return None;
+        }
+        if let Some(h) = cap_handler(p, decl.maker, &cap.source) {
+            return Some(h);
+        }
+        let (c2, k2, _) = crate::factgen::alpha::env_capture(p, decl.maker, &cap.source)?;
+        decl = p.closures.get(c2.index())?;
+        k = k2;
+    }
+    None
+}
+
+/// The local handlers whose capability a closure of the program captures.
+///
+/// A run of such a closure can perform through the capability (plan stage
+/// F16), so a node of the handled body that can run a function value runs
+/// the clauses of the handler.
+pub fn captured_handlers(p: &Program) -> Vec<HandlerId> {
+    let mut out: Vec<HandlerId> = p
+        .closures
+        .iter()
+        .enumerate()
+        .flat_map(|(i, d)| {
+            let c = weft_ir::ClosureId(u32::try_from(i).unwrap_or(u32::MAX));
+            (0..d.captures.len())
+                .filter_map(move |k| capture_handler(p, c, u32::try_from(k).unwrap_or(u32::MAX)))
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The handler, the clause body and the mode (`multi`) of a continuation.
@@ -557,7 +663,7 @@ pub fn handle_run(
         seeds.extend(cx.hx.extra.get(&hb).into_iter().flatten().cloned());
         let r = run_handled(cx, (h, hb, &clauses), st, seeds)?;
         if !multi || r.again.is_empty() {
-            return Ok(finish_handle(cx, h, hb, r, Vec::new()));
+            return finish_handle(cx, h, hb, r, Vec::new());
         }
         if r.nested {
             return Err(AlphaError::Later(
@@ -602,7 +708,7 @@ pub fn handle_run(
             }
         }
         if !changed {
-            return Ok(finish_handle(cx, h, hb, r, out));
+            return finish_handle(cx, h, hb, r, out);
         }
         round += 1;
         if round > MULTI_ROUNDS {
@@ -763,13 +869,18 @@ fn run_handled(
 /// keeps ([`Info`]). `reentries` are the re-entries of a `multi` handler:
 /// the body and the block of each node, the state before its `Copy` node
 /// and the values of the later `resume`s.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a closure that takes the capability
+/// of the handler out of the `handle` (W0313, stage F17).
 fn finish_handle(
     cx: &mut Cx<'_>,
     h: HandlerId,
     hb: BodyId,
     r: HandledRun,
     reentries: Vec<(BodyId, BlockId, State, Tree)>,
-) -> HandleOut {
+) -> Result<HandleOut, AlphaError> {
     let p = cx.p;
     let clauses: Vec<BodyId> = p
         .handlers
@@ -791,6 +902,30 @@ fn finish_handle(
     let mut value = r.body_value;
     value.join(&r.clause_values);
     value.join(&r.open.landing_value);
+    // A closure that captures the capability of the handler and leaves the
+    // `handle` (in its value, in a local of the site or in a heap slot)
+    // takes the capability out of its handler: W0313 of stage F17.
+    let own = |f: &super::FnVal| match f {
+        super::FnVal::Closure(c) | super::FnVal::Made(c) => {
+            p.closures.get(c.index()).is_some_and(|d| {
+                (0..d.captures.len()).any(|k| {
+                    capture_handler(p, *c, u32::try_from(k).unwrap_or(u32::MAX)) == Some(h)
+                })
+            })
+        }
+        _ => false,
+    };
+    let leaves = value.flat().fns.iter().any(own)
+        || after
+            .trees()
+            .filter(|(k, _)| !inside(p, k.0, hb))
+            .any(|(_, t)| t.flat().fns.iter().any(own))
+        || after.behind_fns().values().any(|fs| fs.iter().any(own));
+    if leaves {
+        return Err(AlphaError::Later(
+            "a capability that leaves its handler (stage F17)",
+        ));
+    }
     let info = cx.hx.info.entry(h).or_default();
     if let Some(ex) = &r.exit {
         match &mut info.exit {
@@ -801,14 +936,14 @@ fn finish_handle(
         }
     }
     info.resumed.join(&r.resumed);
-    HandleOut {
+    Ok(HandleOut {
         states: r.states,
         exit: r.exit,
         after,
         value,
         landing,
         reentries,
-    }
+    })
 }
 
 impl Open {
@@ -1102,18 +1237,23 @@ fn run_clause(
     cx: &mut Cx<'_>,
     h: HandlerId,
     cb: BodyId,
-    (s0, frame): (&State, Option<weft_facts::PlaceId>),
+    (s0, frame): (&State, Option<(weft_facts::PlaceId, BodyId)>),
     vals: &[Tree],
 ) -> Result<ClauseOut, AlphaError> {
     let p = cx.p;
     let cbody = body_of(p, cb)?;
+    let hb = p.handlers.get(h.index()).map(|d| d.handled);
     // The heap slot of the callee frame (`Given::state`) holds only while
-    // the clause runs: the states that leave the run do not have it.
-    let clean = |st: &State| -> State {
+    // the clause runs: the states that leave the run do not have it. The
+    // records that outlive the runs of the enclosing clauses (the seeds of
+    // the facts of the clause, the states at its resume points for the code
+    // after them, and its ends with no `resume`) do not have the slots of
+    // their callee frames either (plan stage F16).
+    let strip = |st: &State, frames: &[weft_facts::PlaceId]| -> State {
         let mut st = st.clone();
-        if let Some(f) = frame {
+        if !frames.is_empty() {
             st.map_behind(&mut |q, refs| {
-                let hit = q == f && !refs.is_empty();
+                let hit = frames.contains(&q) && !refs.is_empty();
                 if hit {
                     refs.clear();
                 }
@@ -1122,8 +1262,21 @@ fn run_clause(
         }
         st
     };
+    let own: Vec<weft_facts::PlaceId> = frame.iter().map(|f| f.0).collect();
+    // The frames of the calls in the handled body of `h`: the records of
+    // the clause outlive them.
+    let all: Vec<weft_facts::PlaceId> = cx
+        .hx
+        .frames
+        .iter()
+        .chain(frame.iter())
+        .filter(|(_, b)| hb.is_some_and(|hb| spliced_into(p, *b, hb)))
+        .map(|(f, _)| *f)
+        .collect();
+    let clean = |st: &State| strip(st, &own);
+    let clean_all = |st: &State| strip(st, &all);
     {
-        let s0 = clean(s0);
+        let s0 = clean_all(s0);
         let info = cx.hx.info.entry(h).or_default();
         match info.seeds.get_mut(&cb) {
             Some(s) => {
@@ -1155,7 +1308,11 @@ fn run_clause(
         all: false,
         stop_at_resume: true,
     };
-    let (_, ends) = run_from(cx, cb, vec![(cbody.entry, init)], mode)?;
+    cx.hx.frames.extend(frame.iter().copied());
+    let run = run_from(cx, cb, vec![(cbody.entry, init)], mode);
+    let n = cx.hx.frames.len().saturating_sub(own.len());
+    cx.hx.frames.truncate(n);
+    let (_, ends) = run?;
     let mine = |b: BodyId| inside(p, b, cb);
     let mut after: Option<State> = None;
     let mut value = Tree::none();
@@ -1174,8 +1331,9 @@ fn run_clause(
             }
             None => after = Some(s),
         }
+        let rec = clean_all(&sr);
         if let Some(o) = cx.hx.open_mut(h) {
-            o.resumes.push((cb, *rb, sr));
+            o.resumes.push((cb, *rb, rec));
         }
     }
     // A clause that ends with no `resume` aborts to its handler.
@@ -1193,13 +1351,15 @@ fn run_clause(
         let mut s = clean(sret);
         s.remove_bodies(&mine);
         add(&s);
+        let mut rec = clean_all(sret);
+        rec.remove_bodies(&mine);
         if let Some(o) = cx.hx.open_mut(h) {
             o.landing_value.join(&v);
             match &mut o.landing {
                 Some(l) => {
-                    l.join(&s);
+                    l.join(&rec);
                 }
-                None => o.landing = Some(s),
+                None => o.landing = Some(rec),
             }
         }
     }
@@ -1311,6 +1471,14 @@ pub fn given(
     st: &State,
     t: &TermKind,
 ) -> Result<Given, AlphaError> {
+    if let TermKind::Call {
+        callee: weft_ir::Callee::Value(f),
+        args,
+        ..
+    } = t
+    {
+        return given_value(cx, (body, block), st, f, args);
+    }
     let TermKind::Call {
         callee: weft_ir::Callee::Fn(f, targs),
         args,
@@ -1384,6 +1552,49 @@ pub fn given(
         deps,
         roots,
         frame,
+    })
+}
+
+/// [`given`] for a call of a function value `f` with the arguments `args`
+/// (plan stage F16): a closure that performs through a captured capability
+/// gives the clause a local of its frame (the frame root of the run node),
+/// or a place that its arguments or its environment reach (each as a
+/// wildcard place).
+///
+/// # Errors
+///
+/// The errors of α.
+fn given_value(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    st: &State,
+    f: &Operand,
+    args: &[Operand],
+) -> Result<Given, AlphaError> {
+    let inst = transfer::run_inst(body, block);
+    let mut roots: Vec<(weft_facts::PlaceId, u32)> = Vec::new();
+    for (i, a) in args.iter().enumerate() {
+        let root = crate::body::roots::param(i);
+        for q in transfer::reach_refs(cx, body, st, a)? {
+            roots.push((cx.facts.wildcard(q), root));
+        }
+    }
+    for q in transfer::reach_refs(cx, body, st, f)? {
+        roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
+    }
+    roots.sort();
+    roots.dedup();
+    let frame = cx.roots.frame(cx.facts, inst, "the closure");
+    let frame = cx.facts.wildcard(frame);
+    let mut places: Vec<weft_facts::PlaceId> = roots.iter().map(|&(q, _)| q).collect();
+    places.push(frame);
+    places.sort();
+    places.dedup();
+    Ok(Given {
+        places,
+        deps: Vec::new(),
+        roots,
+        frame: Some(frame),
     })
 }
 
@@ -1501,7 +1712,7 @@ pub fn call_landings(
         let s0 = gv.state(st);
         for cb in clauses {
             let vals = gv.values(cx, cb)?;
-            v.join(&run_clause(cx, h, cb, (&s0, gv.frame), &vals)?.landing);
+            v.join(&run_clause(cx, h, cb, (&s0, gv.frame.map(|f| (f, body))), &vals)?.landing);
         }
         out.push((h, v));
     }
@@ -1550,7 +1761,7 @@ pub fn call_clauses(
         let s0 = gv.state(&start);
         for cb in clauses {
             let vals = gv.values(cx, cb)?;
-            let run = run_clause(cx, h, cb, (&s0, gv.frame), &vals)?;
+            let run = run_clause(cx, h, cb, (&s0, gv.frame.map(|f| (f, body))), &vals)?;
             if let Some(a) = run.after {
                 st.join(&a);
             }

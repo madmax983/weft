@@ -441,9 +441,18 @@ pub fn closure_sigma(
                 s.captures.push(places);
                 s.cap_helds.push(refs);
             }
-            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => {
+            // A captured capability (plan stage F16): its value is the root
+            // of the capability, which names the handler; the node that runs
+            // the closure runs the clause of the handler.
+            weft_ir::CaptureMode::Cap => {
+                let v = transfer::place_value(cx, decl.maker, st, &cap.source)?.flat();
+                s.captures.push(v.caps.into_iter().collect());
+                s.cap_helds.push(Vec::new());
+                s.cap_deeps.push(Vec::new());
+            }
+            weft_ir::CaptureMode::Kont => {
                 return Err(AlphaError::Later(
-                    "a closure that captures a capability or a continuation (stage F14)",
+                    "a closure that captures a continuation (stage F16)",
                 ))
             }
         }
@@ -1237,11 +1246,10 @@ pub fn main(
     for pf in &sum.performs {
         match pf.cap {
             CapIface::Row => cx.facts.escapes_at.push((n, pf.effect.clone())),
-            CapIface::Cap(_) => {
-                return Err(AlphaError::Later(
-                    "a perform through a capability of the interface (stage F14)",
-                ))
-            }
+            // A perform through a captured capability of a local handler:
+            // the node runs the clause of the handler (plan stage F16,
+            // `clause::call_clauses`); the effect does not leave the body.
+            CapIface::Cap(_) => {}
         }
     }
     if sum.multi {

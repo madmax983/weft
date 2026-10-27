@@ -389,6 +389,11 @@ pub struct FnParts<'a> {
     /// closure body they stay `lends` at a run node of `run_nodes`
     /// (follow-up F13.2).
     pub lends: &'a [(weft_facts::NodeId, PlaceId)],
+    /// In a closure body: the `Main` node of each perform through a
+    /// captured capability, with the index of the capture and the identity
+    /// of the effect (plan stage F16). The summary performs through `Cap(k)`: the node that runs the
+    /// closure runs the clause of the handler of the capability.
+    pub cap_performs: &'a [(weft_facts::NodeId, u32, String)],
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -1148,12 +1153,30 @@ pub fn closure(
         out.performs.insert(pf);
     }
     out.aborts.extend(aborts.iter().cloned());
-    // A closure that performs through the capability of a caller can give
-    // a place of its frame to an operation (plan stage F15).
-    out.gives_frame = !facts.escapes_at.is_empty();
+    // A perform through a captured capability (plan stage F16): an
+    // operation of the handler of the capability, whose clause runs at the
+    // node that runs the closure.
+    for (_, k, effect) in fv.cap_performs {
+        let pf = Perform {
+            effect: effect.clone(),
+            cap: CapIface::Cap(*k),
+        };
+        out.aborts.insert(Abort::Perform(pf.clone()));
+        out.performs.insert(pf);
+    }
+    // A closure that performs through the capability of a caller (or a
+    // captured capability) can give a place of its frame to an operation
+    // (plan stages F15, F16).
+    out.gives_frame = !facts.escapes_at.is_empty() || !fv.cap_performs.is_empty();
     // A node of the body that can resume more than once (a `multi`
-    // operation, a callee that can): a run of the closure can.
-    out.multi = !facts.multi_at.is_empty();
+    // operation, a callee that can): a run of the closure can. A perform
+    // through a captured capability is a `multi` point of the node that
+    // runs the closure (the clause of the handler, `clause_multi`), not of
+    // a caller.
+    out.multi = facts
+        .multi_at
+        .iter()
+        .any(|n| !fv.cap_performs.iter().any(|(x, _, _)| x == n));
     for blk in &b.blocks {
         match &blk.term.kind {
             TermKind::Assert { .. } => {

@@ -1,0 +1,12 @@
+// A callee runs a closure that performs through a captured capability: the call runs the clause.
+effect Log { fn log(m: u64) }
+fn apply(f: fn()) { f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let r = &v[0]
+        apply(|| log(1))
+        print(r + 1) //~ W0301
+    }
+}

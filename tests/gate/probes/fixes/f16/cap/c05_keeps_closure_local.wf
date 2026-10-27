@@ -1,0 +1,11 @@
+// F16-CAP: a closure performs through a captured capability; the node that runs it runs the clause
+effect Keep { fn keep(r: &u64) }
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in {
+        let f = || { let x = 5; keep(&x) }
+        f()
+    }
+    print(last)
+}

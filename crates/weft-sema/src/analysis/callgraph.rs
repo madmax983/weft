@@ -516,6 +516,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 run_nodes: &[],
                                 rebind_nodes: &[],
                                 lends: &e.own_lends,
+                                cap_performs: &[],
                             },
                         );
                         add_steps(&mut steps, &facts);

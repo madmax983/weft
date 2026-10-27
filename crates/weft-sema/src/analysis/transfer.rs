@@ -1086,7 +1086,13 @@ pub fn term(
             args,
             dest,
             ..
-        } => super::clause::perform_local(cx, body, st, (cap, *op, args), dest),
+        } => match super::clause::captured_cap(cx.p, cx.tys, body, cap) {
+            // A perform through a capability that the closure captures: an
+            // operation of a handler outside the closure; the node that runs
+            // the closure runs the clause (plan stage F16).
+            Some((_, e)) => perform_row(cx, body, st, e, *op, args, dest),
+            None => super::clause::perform_local(cx, body, st, (cap, *op, args), dest),
+        },
         TermKind::Resume {
             kont, arg, dest, ..
         } => super::clause::resume(cx, body, st, (kont, arg, dest)),
@@ -1399,7 +1405,7 @@ fn call(
         st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
     }
     apply_apps(cx, st, &out.apps, fns);
-    note_multi_apps(cx, (body, block), &out.apps);
+    note_multi_apps(cx, (body, block), &out.apps)?;
     changed.extend(out.apps.iter().flat_map(|a| a.muts.iter().map(|(q, _)| *q)));
     store_fns(cx, body, st, args, &changed)?;
     bind_result(cx, body, st, args, dest, out.ret)
@@ -1410,13 +1416,76 @@ fn call(
 /// applied summary is `multi`. The node gets re-entry edges
 /// (`super::clause::Handlers::dyn_rows`). Only in a program that declares a
 /// `multi` operation and a handler.
-fn note_multi_apps(cx: &mut Cx<'_>, (body, block): (BodyId, weft_ir::BlockId), apps: &[Applied]) {
+fn note_multi_apps(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, weft_ir::BlockId),
+    apps: &[Applied],
+) -> Result<(), AlphaError> {
+    check_cap_apps(cx, (body, block), apps)?;
     if cx.p.handlers.is_empty() || !crate::factgen::frames::has_multi_ops(cx.tys) {
-        return;
+        return Ok(());
     }
     if apps.iter().any(|a| a.summary.multi) {
         cx.hx.dyn_rows.insert((body, block));
     }
+    Ok(())
+}
+
+/// Checks the performs through a captured capability of the summaries that
+/// a run node applies (plan stage F16): the capability names a local
+/// handler whose clauses the node runs (`clause::call_handlers`). A
+/// capability that left its handler (a closure that runs after its
+/// `handle`, W0313) is not in scope.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for such a perform that the node does not
+/// run the clause of.
+fn check_cap_apps(
+    cx: &Cx<'_>,
+    (body, block): (BodyId, weft_ir::BlockId),
+    apps: &[Applied],
+) -> Result<(), AlphaError> {
+    let later = AlphaError::Later("a capability that leaves its handler (stage F17)");
+    for a in apps {
+        for pf in &a.summary.performs {
+            let super::summary::CapIface::Cap(k) = pf.cap else {
+                continue;
+            };
+            let caps = a
+                .sigma
+                .captures
+                .get(k as usize)
+                .cloned()
+                .unwrap_or_default();
+            if caps.is_empty() {
+                return Err(later);
+            }
+            let Some(t) =
+                cx.p.body(body)
+                    .and_then(|b| b.blocks.get(block.index()))
+                    .map(|b| b.term.kind.clone())
+            else {
+                return Err(later);
+            };
+            let hs = super::clause::call_handlers(cx, body, &t);
+            for q in caps {
+                let h = match cx.roots.role(cx.facts.place(q).root) {
+                    Some(crate::factgen::alpha::Role::Local(key)) => {
+                        match cx.p.body(key.0).map(|x| x.kind) {
+                            Some(weft_ir::BodyKind::Handled(h)) => Some(h),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if !h.is_some_and(|h| hs.contains(&h)) {
+                    return Err(later);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The most levels of values that a run node applies through the runs of
@@ -2767,7 +2836,15 @@ fn apply_value(
                 super::apply::closure_sigma(cx, body, st, *c, (callee, cb), given, r.inst)?
             };
             sigma.cyclic = cx.cycles.has(body, r.block);
-            if summary.ret_in_frame() {
+            // A clause that the node runs can get a reference into a local
+            // of the closure (a perform through a captured capability, plan
+            // stage F16, `clause::given`).
+            let gives = summary.gives_frame
+                && summary
+                    .performs
+                    .iter()
+                    .any(|pf| matches!(pf.cap, super::summary::CapIface::Cap(_)));
+            if summary.ret_in_frame() || gives {
                 sigma.frame = Some(cx.roots.frame(cx.facts, r.inst, "the closure"));
             }
             let ret = match ret_ty {
@@ -3365,7 +3442,7 @@ fn call_value(
     let fns = args_linear(cx, body, st, args)?;
     let out = value_out(cx, body, block, st, callee, args, dest)?;
     apply_apps(cx, st, &out.apps, fns);
-    note_multi_apps(cx, (body, block), &out.apps);
+    note_multi_apps(cx, (body, block), &out.apps)?;
     let changed: Vec<PlaceId> = out
         .apps
         .iter()

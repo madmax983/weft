@@ -1,0 +1,12 @@
+// F16-CAP: a closure performs through a captured capability; the node that runs it runs the clause
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let f = || pick()
+        let b = f()
+        let t = Tx { id: 1 }
+        commit(t)
+    }
+}

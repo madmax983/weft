@@ -415,9 +415,63 @@ fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKin
         }
         _ => out.push(Dest::Past),
     }
+    // A run of a function value can run a closure that performs through a
+    // captured capability of a local handler: the node runs the clauses of
+    // the handler (plan stage F16).
+    if runs_values(p, tys, sums, body, t) {
+        for h in clause::captured_handlers(p) {
+            let active = p
+                .handlers
+                .get(h.index())
+                .is_some_and(|d| clause::spliced_into(p, body, d.handled));
+            if active {
+                out.push(Dest::Handler {
+                    handler: h,
+                    value: true,
+                });
+            }
+        }
+    }
     out.sort();
     out.dedup();
     out
+}
+
+/// True if terminator `t` of body `body` can run a function value: a call
+/// of a function value, or a call of a function whose summary runs one or
+/// whose arguments can hold one (plan stage F16).
+pub fn runs_values(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    t: &TermKind,
+) -> bool {
+    match t {
+        TermKind::Call {
+            callee: Callee::Value(_),
+            ..
+        } => true,
+        TermKind::Call {
+            callee: Callee::Fn(f, _),
+            args,
+            ..
+        } => {
+            if sums.get(*f).map_or(true, |s| !s.runs.is_empty()) {
+                return true;
+            }
+            let Some(b) = p.body(body) else {
+                return true;
+            };
+            args.iter().any(|a| match a {
+                weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) => b
+                    .local(q.local)
+                    .is_none_or(|d| crate::props::ir_has_fns(tys, d.ty)),
+                weft_ir::Operand::Const(_) => false,
+            })
+        }
+        _ => false,
+    }
 }
 
 /// The identity of the effect of the capability in the whole local `place`

@@ -447,3 +447,5 @@ stage F17: the old pipeline checks them by default.
 - `fixes/f16/multi/olr2a*.wf`: class OL-R2a, a function waits at a `multi` operation
   of a handler of a caller (the re-entry edge from its `Return`). Ledger `open-old`
   for the old hole `olr2a.wf`.
+- `fixes/f16/cap/*.wf`: class F16-CAP, a closure performs through a capability that it
+  captures: the node that runs the closure runs the clause of the handler.

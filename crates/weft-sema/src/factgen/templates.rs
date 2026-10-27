@@ -2251,7 +2251,7 @@ pub struct CallNodes {
 }
 
 /// True if type `t` names type parameter `j`.
-fn mentions_index(tys: &TyTable, t: TyId, j: u32, depth: usize) -> bool {
+pub(crate) fn mentions_index(tys: &TyTable, t: TyId, j: u32, depth: usize) -> bool {
     if depth > 32 {
         return true;
     }
@@ -3562,7 +3562,7 @@ pub fn closure_entry(em: &mut Em<'_>, n: NodeId, params: &[(LocalId, Tree)], env
 /// the errors of α.
 pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
     let TermKind::Perform {
-        cap: weft_ir::CapOperand::Row(e),
+        cap,
         op,
         args,
         dest,
@@ -3574,6 +3574,27 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
         ));
     };
     let body = em.body;
+    // A capability that the closure captures (plan stage F16): an operation
+    // of a handler outside the closure. The effect does not leave the
+    // function: the node that runs the closure runs the clause.
+    let (e, captured): (weft_ir::EffectId, Option<u32>) = match cap {
+        weft_ir::CapOperand::Row(e) => (*e, None),
+        weft_ir::CapOperand::Local(c) => {
+            let Some((k, e)) = crate::analysis::clause::captured_cap(em.p, em.tys, body, c) else {
+                return Err(AlphaError::Later(
+                    "a perform through a capability of a handler (stage F14)",
+                ));
+            };
+            let id = em
+                .tys
+                .effects()
+                .get(e.index())
+                .map(|d| d.identity.clone())
+                .unwrap_or_default();
+            em.hx.cap_performs.push((nodes.main, k, id));
+            (e, Some(k))
+        }
+    };
     // A handler can run a function value of an argument, drop it or run it
     // more than once: the facts of a clause are stage F14.
     for a in args {
@@ -3583,7 +3604,7 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
             ));
         }
     }
-    let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, *e, *op, args)?;
+    let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, e, *op, args)?;
     let n = nodes.main;
     for op in args {
         operand_moves(em, n, st, op, false, true)?;
@@ -3609,12 +3630,21 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     gets_linear(em, n, st, &lent);
     em.facts.reads_at.push((n, out.caller));
     em.facts.lends_mut.push((n, out.caller));
-    em.facts.escapes_at.push((n, out.effect.clone()));
+    if captured.is_none() {
+        em.facts.escapes_at.push((n, out.effect.clone()));
+    }
     if nodes.may_abort {
         em.facts.may_abort.push(n);
     }
     if out.multi {
         em.facts.multi_at.push(n);
+    }
+    // A perform through a captured capability runs the clause of the
+    // handler while the closure waits: the node gets the code of the clause
+    // before its resume points too (plan stage F16), with the parameters of
+    // the clause on the places of the arguments.
+    if let Some(k) = captured {
+        clause_run_in_closure(em, n, st, k, (*op, args))?;
     }
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
@@ -3960,4 +3990,56 @@ fn overlap(facts: &FnFacts, a: PlaceId, b: PlaceId) -> bool {
         false
     };
     below(a, b) || below(b, a)
+}
+
+/// The run of the clause of operation `op` of the handler of captured
+/// capability `k` at the perform node `n` of a closure body (plan stage
+/// F16): the clause runs while the closure waits, with its parameters on the
+/// places of the arguments `args` (`crate::analysis::clause::ClauseRun`).
+///
+/// # Errors
+///
+/// The errors of σ.
+fn clause_run_in_closure(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    k: u32,
+    (op, args): (weft_ir::OpIdx, &[Operand]),
+) -> R {
+    let body = em.body;
+    let Some((c, _)) = em.p.closure_of(body) else {
+        return Ok(());
+    };
+    let Some(h) = crate::analysis::clause::capture_handler(em.p, c, k) else {
+        return Ok(());
+    };
+    let Some(cb) = crate::analysis::clause::clause_of(em.p, h, op) else {
+        return Ok(());
+    };
+    let params: Vec<(weft_ir::TyId, weft_ir::TyId)> =
+        em.p.body(cb)
+            .map(|b| {
+                b.params
+                    .iter()
+                    .filter_map(|&l| b.local(l).map(|d| (d.ty, d.ty)))
+                    .collect()
+            })
+            .unwrap_or_default();
+    let inst = transfer::run_inst(body, em.at.0);
+    let s = crate::analysis::apply::sigma_with(&mut em.cx(), body, st, &params, args, inst)?;
+    em.hx.runs.push(crate::analysis::clause::ClauseRun {
+        node: n,
+        handler: h,
+        clause: cb,
+        post: false,
+        args: s.args,
+        helds: s.helds,
+        deps: s.deps,
+        at: body,
+        spares: None,
+        ins: Vec::new(),
+        given: None,
+    });
+    Ok(())
 }

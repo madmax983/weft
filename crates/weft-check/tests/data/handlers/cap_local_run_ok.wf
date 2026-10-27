@@ -1,0 +1,12 @@
+// The twin of `cap_local_run.wf`: the clause does not change `v`.
+effect Log { fn log(m: u64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { print(m); resume(()) } } in {
+        let r = &v[0]
+        let f = || log(1)
+        f()
+        print(r + 1)
+    }
+}

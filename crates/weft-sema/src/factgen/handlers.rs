@@ -870,8 +870,16 @@ pub fn copy_node(
             held_linear.insert(*k);
         }
     }
+    // The locals that the node moves at `Main` (its callee value, and its
+    // arguments but the ones that a callee holds to `Ret`): the frames are
+    // copied while the node waits, after these moves, so the copies do not
+    // hold them.
+    let moved = moved_at_main(em, t);
     let fresh = |k: &(BodyId, weft_ir::LocalId)| {
-        inside(p, k.0, hb) && !in_clause_or_closure(p, k.0, hb) && !outside.contains(k)
+        inside(p, k.0, hb)
+            && !in_clause_or_closure(p, k.0, hb)
+            && !outside.contains(k)
+            && !moved.contains(k)
     };
     let mut vars: Vec<VarId> = Vec::new();
     let mut linear: HashSet<VarId> = HashSet::new();
@@ -947,6 +955,55 @@ pub fn copy_node(
             em.facts.empty_at.push((v, c));
         }
     }
+}
+
+/// The whole locals that terminator `t` of the body of `em` moves at its
+/// `Main` node: a moved callee value, and each moved argument but those of a
+/// type parameter that the callee holds (they move at `Ret`).
+fn moved_at_main(em: &Em<'_>, t: &TermKind) -> HashSet<(BodyId, weft_ir::LocalId)> {
+    let p = em.p;
+    let body = em.body;
+    let mut ops: Vec<&weft_ir::Operand> = Vec::new();
+    match t {
+        TermKind::Call { callee, args, .. } => {
+            let held: Vec<bool> = match callee {
+                weft_ir::Callee::Fn(f, _) => {
+                    let sum = em.sums.get(*f).ok();
+                    let decl = p.fns.get(f.index());
+                    (0..args.len())
+                        .map(|i| match (sum, decl) {
+                            (Some(s), Some(d)) => d.params.get(i).is_some_and(|&ty| {
+                                s.holds
+                                    .iter()
+                                    .any(|&j| super::templates::mentions_index(em.tys, ty, j, 0))
+                            }),
+                            _ => false,
+                        })
+                        .collect()
+                }
+                weft_ir::Callee::Value(f) => {
+                    ops.push(f);
+                    vec![false; args.len()]
+                }
+            };
+            ops.extend(
+                args.iter()
+                    .enumerate()
+                    .filter(|(i, _)| !held.get(*i).copied().unwrap_or(false))
+                    .map(|(_, a)| a),
+            );
+        }
+        TermKind::Perform { args, .. } => ops.extend(args.iter()),
+        _ => {}
+    }
+    ops.into_iter()
+        .filter_map(|o| match o {
+            weft_ir::Operand::Move(q) if q.proj.is_empty() => {
+                super::alpha::owner_local(p, body, q.local).ok()
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// The `S` variable of the destination of the `handle` of handler `h`, if
@@ -1858,7 +1915,22 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         rs.dedup();
         facts.releases_at.extend(rs.into_iter().map(|r| (post, r)));
     }
-    let multi: HashSet<NodeId> = facts.multi_at.iter().copied().collect();
+    // The `multi` points: `multi_at`, and each node that runs a clause that
+    // can resume more than once (`performs_at` of a `clause_multi`
+    // capability, plan stage F16).
+    let multi_caps: HashSet<CapId> = facts.clause_multi.iter().copied().collect();
+    let multi: HashSet<NodeId> = facts
+        .multi_at
+        .iter()
+        .copied()
+        .chain(
+            facts
+                .performs_at
+                .iter()
+                .filter(|(_, c)| multi_caps.contains(c))
+                .map(|(n, _)| *n),
+        )
+        .collect();
     // `body_multi`: a node of the handled body can resume more than once,
     // so a `resume` of a clause is a `multi` point (`multi_at` by the rule of
     // the spec, W0503).
