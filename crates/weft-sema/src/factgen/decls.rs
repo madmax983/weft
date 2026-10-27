@@ -150,12 +150,45 @@ pub fn closure_params(
     roots: &mut Roots,
     body: BodyId,
 ) -> Result<Params, AlphaError> {
+    arg_params(p, tys, facts, roots, body, 1)
+}
+
+/// The parameters of clause body `body` (plan stage F14).
+///
+/// They are as the parameters of a closure body ([`closure_params`]):
+/// `Param` roots of the `Arg` kind, with the index of the argument of the
+/// operation. A perform maps them onto the places of its arguments
+/// (`super::handlers::project`).
+///
+/// # Errors
+///
+/// The errors of α for the root of a by-value parameter.
+pub fn clause_params(
+    p: &Program,
+    tys: &mut TyTable,
+    facts: &mut FnFacts,
+    roots: &mut Roots,
+    body: BodyId,
+) -> Result<Params, AlphaError> {
+    arg_params(p, tys, facts, roots, body, 0)
+}
+
+/// The parameters of body `body` from index `skip` on, with `Param` roots of
+/// the `Arg` kind ([`closure_params`], [`clause_params`]).
+fn arg_params(
+    p: &Program,
+    tys: &TyTable,
+    facts: &mut FnFacts,
+    roots: &mut Roots,
+    body: BodyId,
+    skip: usize,
+) -> Result<Params, AlphaError> {
     let Some(b) = p.bodies.get(body.index()) else {
         return Err(AlphaError::BadPlace(format!("no body b{}", body.0)));
     };
     roots.closure_params(body);
     let mut out = Params::default();
-    for (i, &l) in b.params.iter().enumerate().skip(1) {
+    for (i, &l) in b.params.iter().enumerate().skip(skip) {
         let i32 = u32::try_from(i).unwrap_or(u32::MAX);
         let d = b
             .locals
@@ -180,7 +213,9 @@ pub fn closure_params(
         v.refs = refs.into_iter().collect();
         v.uniq = d.props.uniq;
         if !is_ref(tys, d.ty) && crate::props::ir_has_fns(tys, d.ty) {
-            v.fns.insert(crate::analysis::FnVal::Param(i32 - 1));
+            v.fns.insert(crate::analysis::FnVal::Param(
+                i32.saturating_sub(u32::try_from(skip).unwrap_or(0)),
+            ));
         }
         out.entry.push((l, Tree::leaf(v)));
     }

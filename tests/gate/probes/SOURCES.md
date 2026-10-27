@@ -385,3 +385,22 @@ its file in the scratchpad.
   object, through a callee and another maker, in a join, a rebound local in a loop
   and into a maker. `a01_*_noref_c` and `a14_*_noref_c`: a closure of the body that
   a callee runs changes its own environment (no W0312).
+
+## Programs that stage F14 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the self-attack of stage F14 (scratchpad
+`f14/att/v/`), with one line of header that names the class. Each faulting program
+has a clean twin (`_c`). They use group D, which is off until stage F17: the old
+pipeline checks them by default.
+
+- `fixes/f14/oh/*.wf`: class F14-OH, old holes: a clause stores a parameter into a
+  place of the site through another parameter, keeps the result of `resume` in a
+  slot of the site, or gives a value with no `resume` that points into the argument
+  (M3). Ledger `open-old` while group D is off.
+- `fixes/f14/abort/*.wf`: class F14-ABORT, a clause that fails past its handler
+  (past the function, or to an outer handler): the abort starts at the node of the
+  handled body that runs the clause.
+- `fixes/f14/post/*.wf`: class F14-POST, the code of a clause after `resume` and the
+  rest of the handled body in the `resume`. The clean twins are the shapes that the
+  fact oracle and its summary oracle check at `Post`.

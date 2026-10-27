@@ -1929,3 +1929,18 @@ parts = ["muts"]
 files = ["verify/infer2.wf"]
 reason = "a place deeper than the cut of the summary (groups A and B, tier 2): the `ir` summary changes `x.a[].b[].a[].a[]..` (a wildcard step at the cut) where the old inference keeps `x.a[].b[].a[].a[].b[]`. The `ir` place covers each old place (sound); only W0701 shows the wider place"
 stage = "F13"
+
+# ----------------------------------------------------------------------
+# Stage F14: handlers (group D, part 1; group D is off until stage F17).
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f14/oh/a3_slot_resume_result.wf",
+    "tests/gate/probes/fixes/f14/oh/a5_param_vec_push.wf",
+    "tests/gate/probes/fixes/f14/oh/d3_clause_writes_through_param.wf",
+    "tests/gate/probes/fixes/f14/oh/g1_abort_value_param_local.wf",
+]
+finding = "F14-OH"
+reason = "old holes of the self-attack of stage F14 (claim F14-OH): a clause stores a parameter into a place of the site through another parameter, keeps the result of `resume` in a slot of the site, or gives a value with no `resume` that points into the argument (M3). The old pipeline checks the programs while group D is off and accepts them; the run reads a freed cell. The `ir` pipeline with group D rejects them (W0301). Drop this entry when group D is on (stage F17)"
+stage = "F14"

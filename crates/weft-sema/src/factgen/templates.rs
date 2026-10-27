@@ -114,6 +114,10 @@ pub struct Em<'a> {
     /// closures: the last value of a variable that a closure keeps (`Kept`)
     /// when the body gives the closure back (stage F12).
     pub last: Option<State>,
+    /// The handlers of the component (plan stage F14): the analysis keeps
+    /// what their runs found, and the templates keep the run nodes of the
+    /// clauses (`super::handlers`).
+    pub hx: &'a mut crate::analysis::clause::Handlers,
 }
 
 /// References that a node puts into a place that a caller keeps: behind a
@@ -145,7 +149,7 @@ const fn span(s: weft_ir::Span) -> Span {
 }
 
 /// The steps of a move path, if each projection is a field or a variant.
-fn steps(proj: &[Proj]) -> Option<Vec<PathStep>> {
+pub(super) fn steps(proj: &[Proj]) -> Option<Vec<PathStep>> {
     proj.iter()
         .map(|p| match p {
             Proj::Field(f) => Some(PathStep::Field(f.0)),
@@ -205,7 +209,7 @@ fn is_prefix<T: PartialEq>(a: &[T], b: &[T]) -> bool {
 
 impl Em<'_> {
     /// The context of the transfer functions.
-    const fn cx(&mut self) -> Cx<'_> {
+    pub(super) const fn cx(&mut self) -> Cx<'_> {
         Cx {
             p: self.p,
             tys: self.tys,
@@ -213,16 +217,17 @@ impl Em<'_> {
             roots: self.roots,
             sums: self.sums,
             cycles: self.cycles,
+            hx: self.hx,
         }
     }
 
     /// The key of local `l` of the body.
-    fn key(&self, l: LocalId) -> Result<Key, AlphaError> {
+    pub(super) fn key(&self, l: LocalId) -> Result<Key, AlphaError> {
         transfer::key(self.p, self.body, l)
     }
 
     /// `S` of the local with key `k`.
-    fn s_var(&self, k: Key) -> Option<VarId> {
+    pub(super) fn s_var(&self, k: Key) -> Option<VarId> {
         self.vars.get(&VarKey::S(k.0, k.1))
     }
 
@@ -717,7 +722,7 @@ fn operand_in(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand, relocate: bo
 /// An operand at node `n`, as [`operand_in`]. With `moves` false, a `move`
 /// does not move the base local at `n`: a callee that holds the argument
 /// moves it at the `Ret` node of the call.
-fn operand_moves(
+pub(super) fn operand_moves(
     em: &mut Em<'_>,
     n: NodeId,
     st: &State,
@@ -1631,7 +1636,7 @@ fn sema_field_place(
 }
 
 /// The places of `refs` that a stated place can hold: not a handle place.
-fn named_refs(em: &Em<'_>, refs: impl IntoIterator<Item = PlaceId>) -> Vec<PlaceId> {
+pub(super) fn named_refs(em: &Em<'_>, refs: impl IntoIterator<Item = PlaceId>) -> Vec<PlaceId> {
     refs.into_iter()
         .filter(|&r| !em.roots.is_handle(r))
         .collect()
@@ -1842,7 +1847,13 @@ const DEEP_LIMIT: usize = 4096;
 ///
 /// The errors of α, and [`AlphaError::Later`] for a chain of more than
 /// [`DEEP_LIMIT`] places.
-fn deep_uses(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand, refs: &[PlaceId]) -> R {
+pub(super) fn deep_uses(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    op: &Operand,
+    refs: &[PlaceId],
+) -> R {
     let (Operand::Copy(q) | Operand::Move(q)) = op else {
         return Ok(());
     };
@@ -2227,6 +2238,10 @@ pub struct CallNodes {
     /// The node keeps an abort edge: it has an abort destination
     /// (`super::frames`).
     pub may_abort: bool,
+    /// The `AbortValue` node of each destination (by its id) whose clause
+    /// gives a value: the value of the `handle` binds there (plan stage
+    /// F14, `super::handlers`).
+    pub values: Vec<(u32, NodeId)>,
 }
 
 /// True if type `t` names type parameter `j`.
@@ -2247,7 +2262,7 @@ fn mentions_index(tys: &TyTable, t: TyId, j: u32, depth: usize) -> bool {
 
 /// The span of operand `op` of a call with span `at`: the origin of its
 /// temporary, or the span of the call.
-fn operand_span(em: &Em<'_>, op: &Operand, at: Span) -> Span {
+pub(super) fn operand_span(em: &Em<'_>, op: &Operand, at: Span) -> Span {
     let local = match op {
         Operand::Copy(q) | Operand::Move(q) if q.proj.is_empty() => Some(q.local),
         _ => None,
@@ -2353,7 +2368,7 @@ fn via_receiver(
 
 /// The value `v` binds to the destination `dest` of a node `n`, as the
 /// destination of an `Assign` ([`assign`]).
-fn bind_dest(em: &mut Em<'_>, n: NodeId, st: &State, dest: &Place, v: &Tree) -> R {
+pub(super) fn bind_dest(em: &mut Em<'_>, n: NodeId, st: &State, dest: &Place, v: &Tree) -> R {
     let body = em.body;
     let typed = transfer::typed_result(&mut em.cx(), body, dest, v.clone())?;
     let v = &typed;
@@ -3809,7 +3824,7 @@ fn fn_linear_args(em: &mut Em<'_>, st: &State, args: &[Operand], changed: &[Plac
 /// state `st` before the node gets `overwrites(S(l), n)`, so its linear value
 /// is live after the node (W0601 at its end). A local that can hold one
 /// already is live: the node is no overwrite of it.
-fn gets_linear(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId]) {
+pub(super) fn gets_linear(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId]) {
     gets_linear_but(em, n, st, changed, &[]);
 }
 

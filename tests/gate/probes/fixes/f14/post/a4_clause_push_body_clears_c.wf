@@ -1,0 +1,11 @@
+// F14 self-attack (clean twin: a reference of the clause after resume in the terms of the clause): scratchpad f14/att/v/a4_clause_push_body_clears_c.wf
+effect Peek { fn peek(x: &u64) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    handle Peek { fn peek(x) { out.push(x); resume(()); print(out[0]) } } in {
+        peek(&v[0])
+        print(v.len())
+    }
+}

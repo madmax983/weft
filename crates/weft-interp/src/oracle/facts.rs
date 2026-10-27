@@ -137,6 +137,10 @@ pub struct FactReport {
     /// copied frame of a continuation), at each op of a callee; and each op
     /// of a frame that the oracle does not follow.
     pub summary_skipped: u64,
+    /// The checks of D4 that the oracle did not make: a frame that waits at
+    /// a `handle` or at a `resume` unwinds, and no frame of its component
+    /// unwound above it (plan stage F14).
+    pub abort_skipped: u64,
 }
 
 /// What the IR of a run gives the fact oracle: the IR and the components.
@@ -174,6 +178,16 @@ enum VarRole {
 /// A component with the indexes of the checks.
 #[derive(Clone, Debug)]
 struct Comp {
+    /// The index of the component of the facts (`FactInput::comps`): a
+    /// function body, its closure bodies, its handled bodies and its
+    /// clauses share it.
+    unit: usize,
+    /// The body is a clause: its nodes are in the terms of the clause (its
+    /// parameters), not of the site.
+    clause: bool,
+    /// For a clause: the `Post` nodes of its `handle`. The code of the
+    /// clause after its `resume` runs there, in the terms of the site.
+    post: Vec<NodeId>,
     body: BodyId,
     facts: FnFacts,
     roots: Roots,
@@ -251,6 +265,10 @@ struct FrameFacts {
     /// again, a promoted temporary in a loop): a reference of an earlier
     /// iteration points into such a cell, and its name is the local.
     retired: HashMap<CellId, LocalId>,
+    /// For the frame of a clause: the component and the nodes of the node
+    /// that runs the clause (a `perform` of the handled body, in the terms
+    /// of the site), if the frame that ran the op is of the same component.
+    site: Option<(usize, Vec<NodeId>)>,
 }
 
 /// The base of a cell in the heap index: a local or an anchor.
@@ -273,6 +291,19 @@ pub struct FactOracle {
     comps: Vec<Comp>,
     by_body: HashMap<u32, usize>,
     frames: HashMap<u64, FrameFacts>,
+    /// For the summary oracle (A3) of one op: the component and the nodes of
+    /// the frame above the frame that it checks now. A frame that waits at a
+    /// `handle` checks with the nodes of the frame above it, if that frame
+    /// is of the same component: the handled body and the clauses splice
+    /// into the facts of the site there (plan stage F14).
+    above: Option<(usize, Vec<NodeId>)>,
+    /// For D4: the component and the nodes of the last frame that an abort
+    /// unwound. A frame that waits at a `handle` or at a `resume` checks
+    /// with them (the frame above it is its handled body or a clause).
+    unwound: Option<(usize, Vec<NodeId>)>,
+    /// The frame of the last op that the oracle followed: the frame that
+    /// runs a clause, when a clause frame starts.
+    last: Option<u64>,
     /// The fact places and the type of each IR place that the map named:
     /// the component, the place and the parameter of its anchor.
     names: NameCache,
@@ -295,11 +326,23 @@ fn u32_of(n: usize) -> u32 {
 }
 
 impl Comp {
+    /// True if the nodes `group` of a frame are a `handle` or a `resume`:
+    /// the frame waits for its handled body or for the rest of the handled
+    /// body (plan stage F14).
+    fn waits(&self, group: &[NodeId]) -> bool {
+        group.iter().any(|n| {
+            self.facts
+                .nodes
+                .get(n.index())
+                .is_some_and(|x| x.kind == "handle" || x.kind == "resume")
+        })
+    }
+
     /// The component of body `body` (the entry body of `c`, or a closure
     /// body of it) with the entry node `entry` and the code `code`.
     fn new(
         built: &Built,
-        c: &Component,
+        (unit, c): (usize, &Component),
         code: Option<&Code>,
         body_id: BodyId,
         entry: NodeId,
@@ -312,6 +355,7 @@ impl Comp {
                 s.push(b);
             }
         }
+        let post = clause_post(built, c, body_id);
         let mut loc = vec![None; n];
         let mut at_loc: HashMap<(u32, u32), Vec<NodeId>> = HashMap::new();
         for (k, &id) in c.emitted.table.iter() {
@@ -470,6 +514,13 @@ impl Comp {
             .map(|(k, p)| (k.1, p))
             .collect();
         Self {
+            unit,
+            clause: built
+                .program
+                .bodies
+                .get(body_id.index())
+                .is_some_and(|b| matches!(b.kind, weft_ir::BodyKind::Clause(..))),
+            post,
             body: body_id,
             facts: c.facts.clone(),
             roots: c.emitted.roots.clone(),
@@ -612,21 +663,29 @@ impl FactOracle {
         let mut report = FactReport::default();
         match &input.comps {
             Ok(cs) => {
-                for c in cs {
+                for (unit, c) in cs.iter().enumerate() {
                     by_body.insert(c.entry.0, comps.len());
                     let code = codes.get(c.entry.index()).map(Rc::as_ref);
                     comps.push(Comp::new(
                         &input.built,
-                        c,
+                        (unit, c),
                         code,
                         c.entry,
                         c.emitted.entry_node,
                     ));
-                    // Each closure body of the component, from its entry node.
-                    for &(cb, n) in &c.emitted.closure_entries {
+                    // Each closure body and each clause body of the
+                    // component, from its entry node, and each handled body,
+                    // from the `Main` node of its `handle` (plan stage F14).
+                    for &(cb, n) in c
+                        .emitted
+                        .closure_entries
+                        .iter()
+                        .chain(&c.emitted.clause_entries)
+                        .chain(&c.emitted.handled_entries)
+                    {
                         by_body.insert(cb.0, comps.len());
                         let code = codes.get(cb.index()).map(Rc::as_ref);
-                        comps.push(Comp::new(&input.built, c, code, cb, n));
+                        comps.push(Comp::new(&input.built, (unit, c), code, cb, n));
                     }
                 }
             }
@@ -637,6 +696,9 @@ impl FactOracle {
             comps,
             by_body,
             frames: HashMap::new(),
+            above: None,
+            unwound: None,
+            last: None,
             names: HashMap::new(),
             report,
         }
@@ -727,6 +789,16 @@ impl FactOracle {
                 }
             }
         }
+        // A clause frame: the frame of the last op runs the clause (plan
+        // stage F14).
+        let site = if comp.clause {
+            let unit = comp.unit;
+            self.last
+                .and_then(|l| self.site_of(l))
+                .filter(|(u, _)| *u == unit)
+        } else {
+            None
+        };
         self.frames.insert(
             uid,
             FrameFacts {
@@ -735,6 +807,7 @@ impl FactOracle {
                 at: None,
                 anchors,
                 retired: HashMap::new(),
+                site,
             },
         );
     }
@@ -748,7 +821,35 @@ impl FactOracle {
             at: f.at,
             anchors: Vec::new(),
             retired: HashMap::new(),
+            site: f.site.clone(),
         })
+    }
+
+    /// The component and the nodes of frame `uid` in the terms of the site
+    /// of its handlers: the nodes of the frame, or for a clause frame the
+    /// nodes that run the clause (`None` if the oracle does not know them).
+    fn site_of(&self, uid: u64) -> Option<(usize, Vec<NodeId>)> {
+        let f = self.frames.get(&uid)?;
+        let c = self.comps.get(f.comp)?;
+        if c.clause {
+            f.site.clone()
+        } else {
+            Some((c.unit, c.group(&f.cur)))
+        }
+    }
+
+    /// What a frame below frame `uid` that waits at a `handle` or at a
+    /// `resume` checks with: the nodes `group` of frame `uid` (which may
+    /// wait itself, and then has the nodes of the frame above it), or the
+    /// nodes that run the clause of a clause frame.
+    fn passed_down(&self, uid: u64, waits: bool, group: &[NodeId]) -> Option<(usize, Vec<NodeId>)> {
+        let f = self.frames.get(&uid)?;
+        let c = self.comps.get(f.comp)?;
+        if waits || !c.clause {
+            Some((c.unit, group.to_vec()))
+        } else {
+            f.site.clone()
+        }
     }
 
     /// The temporary `l` of frame `uid` gets a new cell, and its old cell
@@ -759,6 +860,18 @@ impl FactOracle {
         if let Some(fr) = self.frames.get_mut(&uid) {
             fr.retired.insert(c, l);
         }
+    }
+
+    /// The summary oracle (A3) checks the frames below the frame `uid` of
+    /// an op: the frame of the op is the first frame above them.
+    pub fn begin_summary(&mut self, uid: u64) {
+        self.above = self.site_of(uid);
+    }
+
+    /// The summary oracle (A3) skips a frame below an op: the frame below it
+    /// has no frame of its component above it.
+    pub fn break_summary(&mut self) {
+        self.above = None;
     }
 
     /// The frame `uid` ended.
@@ -778,6 +891,15 @@ impl FactOracle {
         let Some(fr) = self.frames.get_mut(&uid) else {
             return Ok(false);
         };
+        self.last = Some(uid);
+        // A clause frame that leaves a `resume`: the handled body ended, and
+        // the code after the `resume` runs at `Post` of the `handle` (plan
+        // stage F14).
+        if let Some(comp) = self.comps.get(fr.comp) {
+            if comp.clause && comp.waits(&fr.cur) {
+                fr.site = Some((comp.unit, comp.post.clone()));
+            }
+        }
         let Some(comp) = self.comps.get(fr.comp) else {
             return Ok(false);
         };
@@ -970,20 +1092,55 @@ impl FactOracle {
         ))
     }
 
-    /// D4: an abort unwinds frame `uid`, which holds a live linear value.
+    /// D4: an abort unwinds frame `uid`. If `live`, the frame holds a live
+    /// linear value, and a node of the frame has `may_abort`.
+    ///
+    /// A frame that waits at a `handle` or at a `resume` checks with the
+    /// nodes of the frame that unwound before it, if that frame is of the
+    /// same component: the abort comes from a node of the handled body or
+    /// of a clause, whose nodes are in the facts of this frame (plan stage
+    /// F14). Else the check is not made (`abort_skipped`).
     ///
     /// # Errors
     ///
     /// The message of a failure.
-    pub fn check_abort(&mut self, uid: u64) -> Result<(), String> {
-        let Some(fr) = self.frames.get(&uid) else {
+    pub fn check_abort(&mut self, uid: u64, live: bool) -> Result<(), String> {
+        let Some((ci, own)) = self
+            .frames
+            .get(&uid)
+            .and_then(|fr| Some((fr.comp, self.comps.get(fr.comp)?.group(&fr.cur))))
+        else {
+            self.unwound = None;
             return Ok(());
         };
-        let Some(comp) = self.comps.get(fr.comp) else {
+        let Some(comp) = self.comps.get(ci) else {
+            self.unwound = None;
+            return Ok(());
+        };
+        let waits = comp.waits(&own);
+        let group = if waits {
+            match &self.unwound {
+                Some((u, g)) if *u == comp.unit => g.clone(),
+                _ => {
+                    if live {
+                        self.report.abort_skipped += 1;
+                    }
+                    self.unwound = None;
+                    return Ok(());
+                }
+            }
+        } else {
+            own
+        };
+        let down = self.passed_down(uid, waits, &group);
+        self.unwound = down;
+        if !live {
+            return Ok(());
+        }
+        let Some(comp) = self.comps.get(ci) else {
             return Ok(());
         };
         self.report.checks += 1;
-        let group = comp.group(&fr.cur);
         if group
             .iter()
             .any(|n| comp.may_abort.get(n.index()).copied().unwrap_or(false))
@@ -1197,12 +1354,30 @@ impl FactOracle {
         events: &[HeapEvent],
     ) -> Result<(), String> {
         let Some(fr) = self.cursor(uid) else {
+            self.above = None;
             return Ok(());
         };
-        let group = match self.comps.get(fr.comp) {
-            Some(c) => c.group(&fr.cur),
+        let (unit, mut group) = match self.comps.get(fr.comp) {
+            Some(c) => (c.unit, c.group(&fr.cur)),
             None => return Ok(()),
         };
+        // A frame that waits at a `handle`: the frame above it is its handled
+        // body or a clause of the handler. A clause frame that waits at a
+        // `resume`: the frame above it is the rest of the handled body. The
+        // nodes of that frame are in the facts of this frame (plan stage
+        // F14). It checks with their nodes.
+        let waits = self.comps.get(fr.comp).is_some_and(|c| c.waits(&group));
+        if waits {
+            match &self.above {
+                Some((u, g)) if *u == unit => group.clone_from(g),
+                _ => {
+                    self.report.summary_skipped += 1;
+                    self.above = None;
+                    return Ok(());
+                }
+            }
+        }
+        self.above = self.passed_down(uid, waits, &group);
         for e in events {
             let (place, kind) = match e {
                 HeapEvent::Read(p) => (p, "read"),
@@ -1243,7 +1418,18 @@ impl FactOracle {
                     .any(|&q| rs.iter().any(|&m| comp.below(q, m) || comp.below(m, q)))
             } else {
                 let cs = at(&comp.changes);
-                names.iter().any(|&q| cs.iter().any(|&m| comp.below(q, m)))
+                // The run node moved the value of the local into the callee
+                // (a frame that waits at a `handle` keeps the cell of a
+                // local that its handled body moved, plan stage F14): the
+                // callee owns the value.
+                let moved = cell_local(code, slots, place.cell)
+                    .and_then(|l| comp.s_of.get(&l))
+                    .is_some_and(|v| {
+                        group
+                            .iter()
+                            .any(|n| comp.moved.get(n.index()).is_some_and(|vs| vs.contains(v)))
+                    });
+                moved || names.iter().any(|&q| cs.iter().any(|&m| comp.below(q, m)))
             };
             if !ok {
                 let shown: Vec<String> = names
@@ -1699,6 +1885,42 @@ fn var_name(f: &FnFacts, v: VarId) -> String {
 }
 
 /// The local of the slot that holds cell `c`, if one does.
+/// The `Post` nodes of the `handle` of clause body `body` of component
+/// `c` (empty for another body).
+fn clause_post(built: &Built, c: &Component, body: BodyId) -> Vec<NodeId> {
+    let p = &built.program;
+    let Some(weft_ir::BodyKind::Clause(h, _)) = p.bodies.get(body.index()).map(|b| b.kind) else {
+        return Vec::new();
+    };
+    let Some(site) = p.handlers.get(h.index()).map(|d| d.site) else {
+        return Vec::new();
+    };
+    let Some(sb) = p.bodies.get(site.index()) else {
+        return Vec::new();
+    };
+    let blocks: Vec<u32> = sb
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| matches!(b.term.kind, weft_ir::TermKind::Handle { handler, .. } if handler == h))
+        .map(|(i, _)| u32_of(i))
+        .collect();
+    let mut out: Vec<NodeId> = c
+        .emitted
+        .table
+        .iter()
+        .filter(|(k, _)| {
+            k.body == site
+                && blocks.contains(&k.block.0)
+                && k.phase == weft_sema::factgen::nodes::Phase::Post
+        })
+        .map(|(_, &id)| id)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn cell_local(code: &Code, slots: &[Option<CellId>], c: CellId) -> Option<LocalId> {
     let s = slots.iter().position(|x| *x == Some(c))?;
     code.slot_locals.get(s).map(|&l| LocalId(l))

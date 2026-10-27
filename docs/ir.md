@@ -2514,6 +2514,123 @@ the default set):
   function makes. A function that returns a closure inside a struct has a summary with
   no row for the closure: its W0701 waits for F12.
 
+As built (plan stage F14, `crates/weft-sema/src/analysis/clause.rs`,
+`factgen/handlers.rs`; group D is a preview with `--groups ABCD` until stage F17
+puts it in the default set):
+
+- The splice. The handled body of a `handle` is part of the component of its site
+  (`handlers::spliced`, `NodeTable::splice`): an edge from `Main` of the `handle` to
+  the entry of the handled body, from each `Return` of the handled body to `Exit`,
+  then `Post` and the next block. The end of the cleanup chain of the handled body
+  for a destination past the handler goes to the copy of the cleanup block of the
+  `handle` for that destination; a `handle` takes the destinations of its handled
+  body that are not its own handler (`Frames::of_bodies`). The end of the cleanup
+  chain for its own handler goes to the `Landing` node, then to the next block.
+- The analysis runs the handled body in the transfer of the `handle`
+  (`clause::handle_run`), from the state before the `handle` and the capability. A
+  perform through the capability of a local handler runs the clause of its
+  operation up to its resume points (`clause::perform_run`), with the parameters
+  bound to the values of the arguments: the state after the perform is the join of
+  the states at the resume points, and the result is the join of the values that
+  the clause gives to `resume`. When the handled body returns, the code of each
+  clause after its resume points runs from the state at the end of the handled
+  body (the locals of the clause from the state at the resume point), with the
+  value of the handled body (and of a clause that resumed) as the result of
+  `resume`. The state after the `handle` is the join of the end of the handled
+  body, the ends of the clauses after a resume, and the ends of the clauses with
+  no `resume` (the abort to the handler). The value of the `handle` is the join of
+  `_0` of the handled body and of the values of the clauses.
+- The clauses in the facts. Each clause body is a component of the facts of its
+  function (node `clause entry`), as a closure body is: its parameters have `Param`
+  roots of the `Arg` kind (`decls::clause_params`), and its upvar locals are the
+  places of the site (the tables are shared). Its analysis starts from the join of
+  the states at the performs that run it (`clause::Info::seeds`); a `Resume` there
+  gives back the value of the handled body, and the other locals get the state at
+  the end of the handled body (`clause::resume`).
+- The `pre` and `post` parts are projections of the facts of the nodes of the
+  clause, in the terms of the site (`handlers::project`), not summaries in the
+  terms of an interface (deviation from 6.7: a clause runs only at nodes of its
+  component, and its upvars are places of the site). The nodes of a clause from
+  its entry up to and with its resume points are the `pre` part; the nodes after
+  them are the `post` part. Each perform gets the facts of the `pre` part with σ of
+  the perform (a place below a parameter of the clause is a place below the
+  argument; a place of a local of the clause stays in the clause): `uses`,
+  `moved_at`, `moved_part`, `rest_linear`, `overwrites` (also for a new value of a
+  local of the site: the clause need not give it on each path), `unset_at`,
+  `mutates_at`, `lends_mut`, `reads_at`, `releases_at`, `performs_at`,
+  `escapes_at`, `may_abort`, `multi_at`. A change gets `call_mut` with the root of
+  the parameter, or the root of the clauses of the capability for a place of the
+  site, against the `call_arg` of each argument (W0312, as a call, F3 and V035). A
+  run node in a clause is projected before the runs of that clause. `Post` gets the
+  facts of the `post` part with the join of σ of the performs. A variable outside
+  the clause that points into a parameter of the clause points into the places of
+  the arguments too (`keep = x`). The W0204 store check maps the places of the
+  parameters of a clause the same way (`handlers::map_stored`).
+- `resume`. A `Resume` of a clause uses its continuation (and moves a `once`
+  one, W0501) and has `resumes_at`. Until the continuation summary of stage F16,
+  the rest of the handled body at a `Resume` is the set of the nodes of the handled
+  body that a perform of the clause reaches, with `Exit` and `Post`: the `Resume`
+  lends each place that they change and frees each place that they free; a change
+  or a free of a place that a parameter of the clause points into (or of the
+  handle of an `rc` object that the argument depends on) is a change or a free of
+  the parameter (a change above it across an unstable step frees it). `Handle`
+  gives `body_multi` if a node of the handled body has `multi_at`.
+- The frames of the clauses end at `Post` and at `Landing`: `releases_at` of the
+  roots of the locals of the clauses (`K(h)` of 6.3 in this form).
+- Parts of stage F15 in a first form: the value of the `handle` binds at the
+  `AbortValue` node of an abort to its handler (the value of the clause where it
+  ends with no `resume`, with the values of the arguments of that perform); the
+  `Landing` edge; `spared_at` of each variable outside the handled bodies at a
+  perform whose aborts all go to local handlers, if no node of the `pre` part can
+  abort (other than a `resume`).
+- A call in a handled body that performs through a local handler (or fails to a
+  local `Fail` handler) runs the clauses of the handler: the analysis runs each
+  clause up to its resume points with plain parameters, and the call node gets the
+  `pre` part with no σ, `performs_at`, and no `escapes_at` of the effect. This
+  needs operations with no reference in their parameters and results
+  (`clause::plain_ops`); else the program is not in scope. A call of a function
+  value does not run a local clause: the effects of a function value resolve where
+  it was made (the interpreter agrees, a run prints the outer handler).
+- A parameter of an operation with an `in` place (R3RT7): the op gives the place
+  (`OpDef::places`, resolved after the signatures, with no diagnostic: the old lowering
+  does not use it). At a perform through a local handler, the argument of such a
+  parameter has the root of the parameter of its place in `call_arg`, and a change
+  through it in the clause has that root in `call_mut` (`ClauseRun::ins`): an aliased
+  argument inside the place is no W0312, as for a function. `param_in` and `arg_at`
+  give W0203 for an argument outside the place (`handlers::check_in_places`, the
+  checks of a call). O3-7 (a function value that an operation gives to a local
+  handler) is not done: the program is not in scope (stage F16, with the closures of
+  the clauses).
+- A clause that aborts past its handler (to a handler outside the clause, or past
+  the function; a `fail` in a clause) aborts at the node of the handled body that
+  runs it: that node gets the destinations of the clause, and the frames of the
+  handled body unwind too (`Frames::clause_aborts`). The cleanup chain of the
+  handled body then goes on in the cleanup chain of the site, as for its own aborts.
+  The analysis gives the edge the state at the perform, not the state of the clause
+  at its abort; the facts of the `pre` part are at the node, so a reference that the
+  clause stores into a place of the site before it fails is in the facts (a later
+  change of its referent is W0301). Stage F15 gives the edge the state of the clause.
+- The fact oracle (8.5) follows the frames of the handled bodies and the clauses:
+  each is a component of its site (`FactInput` gives their entry nodes). A frame
+  that waits at a `handle`, or a clause frame that waits at a `resume`, checks the
+  accesses of a callee (A3) and an abort that unwinds it (D4) with the nodes of the
+  frame above it (the handled body). Above a clause frame, the nodes are the node
+  of the handled body that ran the clause (the nodes of a clause are in the terms of
+  its parameters). When the oracle does not know them (a clause that a callee of
+  the handled body runs), it counts the check as not made
+  (`FactReport::summary_skipped`, `abort_skipped`).
+- `handler(H, E)` and the capability id come at `Main` of the first `handle` of a
+  handler; `clause_performs(H, E)` for each effect that a clause lets leave the
+  function. `footprint` is not given: the `pre` part gives the changes of each
+  perform with its own σ (the rule of the spec would apply the changes of each
+  perform at every perform, and the `post` part at the perform too).
+- Not in scope until a later stage (the old pipeline checks the program): a
+  handler of an effect with a `multi` operation, a perform through a captured
+  capability, a `resume` of a captured continuation or in a body inside the clause,
+  a handler in a closure body, a closure that a clause makes, a function value that
+  an operation gives to a local handler, a call that runs a clause whose operation
+  has a reference.
+
 ### 6.6 The analysis
 
 The analysis gives the abstract values that the templates read. It replaces the abstract

@@ -48,6 +48,9 @@ pub struct Cx<'a> {
     pub sums: &'a super::summary::Summaries,
     /// The blocks of the component that are in a cycle of the CFG.
     pub cycles: &'a super::widen::Cycles,
+    /// The handlers of the component: the handled bodies that run now, and
+    /// what the runs of each handler found (plan stage F14).
+    pub hx: &'a mut super::clause::Handlers,
 }
 
 /// The key of local `l` of body `body`: the site local of an upvar local.
@@ -1056,13 +1059,19 @@ pub fn term(
             args,
             dest,
             ..
-        } => call(cx, body, block, st, *f, targs, args, dest),
+        } => {
+            call(cx, body, block, st, *f, targs, args, dest)?;
+            super::clause::call_clauses(cx, body, st, t)
+        }
         TermKind::Call {
             callee: weft_ir::Callee::Value(f),
             args,
             dest,
             ..
-        } => call_value(cx, body, block, st, f, args, dest),
+        } => {
+            call_value(cx, body, block, st, f, args, dest)?;
+            super::clause::call_clauses(cx, body, st, t)
+        }
         TermKind::Perform {
             cap: weft_ir::CapOperand::Row(e),
             op,
@@ -1070,12 +1079,20 @@ pub fn term(
             dest,
             ..
         } => perform_row(cx, body, st, *e, *op, args, dest),
-        TermKind::Perform { .. } => Err(AlphaError::Later(
-            "a perform through a capability of a handler (stage F14)",
-        )),
-        TermKind::Resume { .. } => Err(AlphaError::Later("a continuation (stage F16)")),
+        TermKind::Perform {
+            cap: weft_ir::CapOperand::Local(cap),
+            op,
+            args,
+            dest,
+            ..
+        } => super::clause::perform_local(cx, body, st, (cap, *op, args), dest),
+        TermKind::Resume {
+            kont, arg, dest, ..
+        } => super::clause::resume(cx, body, st, (kont, arg, dest)),
         TermKind::IterNext { iter, dest, .. } => iter_next(cx, body, st, iter, dest),
-        TermKind::Handle { .. } => Err(AlphaError::Later("a handler (stage F14)")),
+        TermKind::Handle { handler, dest, .. } => {
+            super::clause::handle(cx, body, st, *handler, dest)
+        }
         TermKind::Scope { .. }
         | TermKind::ScopeWait { .. }
         | TermKind::Spawn { .. }
@@ -3460,7 +3477,7 @@ fn no_fns(t: &mut Tree) {
 /// # Errors
 ///
 /// The errors of α.
-fn bind_result(
+pub(crate) fn bind_result(
     cx: &mut Cx<'_>,
     body: BodyId,
     st: &mut State,

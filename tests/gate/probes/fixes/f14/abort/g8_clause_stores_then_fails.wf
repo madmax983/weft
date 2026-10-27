@@ -1,0 +1,13 @@
+// F14 self-attack (a clause stores a reference into the site and fails to an outer handler): scratchpad f14/att/v/g8_clause_stores_then_fails.wf
+effect Ask { fn ask(x: &u64) -> u64 }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    handle Fail { fn fail(m) { print("caught", m) } } in {
+        let r = handle Ask { fn ask(x) { out.push(x); fail("x"); resume(0) } } in ask(&v[0])
+        print(r)
+    }
+    v.clear()
+    print(out[0])
+}

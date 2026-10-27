@@ -1,0 +1,20 @@
+// A call in the handled body performs through the local handler: the clause
+// runs at the call (`05_effects.wf`), and the effect does not leave the
+// function (no W0702, no W0805).
+effect Log { fn log(msg: String) }
+
+fn work() / Log { log("x") }
+
+fn clears(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        work()
+        print(r) //~ W0301
+    }
+}
+
+fn main() / io {
+    let lines = Vec.new()
+    handle Log { fn log(msg) { lines.push(msg); resume(()) } } in work()
+    print(lines.len())
+}

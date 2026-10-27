@@ -270,6 +270,7 @@ fn run_with(p: Program, t: &Tys, init: State) -> Run {
             roots: &mut roots,
             sums: &Summaries::default(),
             cycles: &Cycles::default(),
+            hx: &mut analysis::clause::Handlers::default(),
         };
         analysis::run_all(&mut cx, B, init).unwrap_or_else(|e| panic!("the analysis: {e:?}"))
     };
@@ -615,6 +616,7 @@ fn alpha_of_a_dereference_reads_the_state() {
         roots: &mut out.roots,
         sums: &sums,
         cycles: &Cycles::default(),
+        hx: &mut analysis::clause::Handlers::default(),
     };
     let al = analysis::transfer::alpha(&mut cx, B, &st, &deref(r, vec![]))
         .unwrap_or_else(|e| panic!("α: {e:?}"));

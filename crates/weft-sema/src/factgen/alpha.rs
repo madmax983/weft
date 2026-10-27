@@ -296,6 +296,16 @@ impl Roots {
         r
     }
 
+    /// The `Param` root of parameter `i` of body `body`, if α made it.
+    pub fn param_of(&self, body: BodyId, i: u32) -> Option<PlaceId> {
+        self.params.get(&(body, i)).copied()
+    }
+
+    /// The `Held` root of parameter `i` of body `body`, if α made it.
+    pub fn held_of(&self, body: BodyId, i: u32) -> Option<PlaceId> {
+        self.helds.get(&(body, i)).copied()
+    }
+
     /// The `Held` root of parameter `i` of body `body` (the text `*name`):
     /// what the references behind the parameter point into. A caller puts
     /// in the places that the references in its argument point into.

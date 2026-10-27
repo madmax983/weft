@@ -1,0 +1,10 @@
+// F14 self-attack (the clause pushes one parameter into the vector of another parameter; old hole): scratchpad f14/att/v/a5_param_vec_push.wf
+effect Keep { fn keep(out: &Vec<&u64>, x: &u64) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(o, x) { o.push(x); resume(()) } } in keep(&out, &v[0])
+    v.clear()
+    print(out[0])
+}

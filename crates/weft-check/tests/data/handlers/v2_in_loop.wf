@@ -1,0 +1,18 @@
+// V035 v2: a perform in a loop changes what a reference of the loop points
+// into.
+effect Bump { fn bump(v: &Vec<u64>) }
+
+fn main() {
+    let n = 3
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        let i = 0
+        while i < n {
+            print(r) //~ W0301
+            bump(&v)
+            i += 1
+        }
+    }
+}

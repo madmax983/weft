@@ -348,9 +348,11 @@ impl super::Machine<'_, '_> {
             .skip_while(|c| c.uid != uid)
             .skip(1)
             .take(crate::oracle::facts::SUMMARY_DEPTH);
+        fo.begin_summary(uid);
         for c in below {
             if c.uid == 0 || c.chain.is_some() {
                 fo.report.summary_skipped += 1;
+                fo.break_summary();
                 continue;
             }
             fo.check_summary(c.uid, &c.code, &c.slots, &self.heap, &events)?;

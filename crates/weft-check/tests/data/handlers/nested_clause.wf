@@ -1,0 +1,21 @@
+// A clause performs the operation of an outer local handler: the code of the
+// outer clause runs at the perform of the inner clause, and both run at the
+// perform of the handled body (`s5r/p/cic_mut.wf`).
+effect Log { fn log(msg: String) }
+effect Op { fn op() }
+
+fn cic(v: &Vec<u64>) / mut(v) {
+    handle Op { fn op() { v.clear(); resume(()) } } in {
+        handle Log { fn log(m) { op(); resume(()) } } in {
+            let r = &v[0]
+            log("x")
+            print(r) //~ W0301
+        }
+    }
+}
+
+fn main() {
+    let a = Vec.new()
+    a.push(1)
+    cic(&a)
+}

@@ -1,0 +1,15 @@
+// V035 v3: a handler of another effect between the clause and the perform.
+effect Bump { fn bump(v: &Vec<u64>) }
+effect Peek { fn peek(x: &u64) }
+
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.clear(); resume(()) } } in {
+        handle Peek { fn peek(y) { print(y); resume(()) } } in {
+            let r = &v[0]
+            bump(&v)
+            print(r) //~ W0301
+        }
+    }
+}

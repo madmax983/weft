@@ -4895,3 +4895,119 @@ repro = [
     "tests/gate/probes/fixes/f13d/var/a09_rebind_in_closure_loop_c.wf",
 ]
 note = "the clean twins of F13D-UR: the value that the body runs only reads (the made closure runs the values that it holds, not code of a caller), and a closure of the body that a callee runs changes its own environment (no W0312: `Sigma::env`)"
+
+# ----------------------------------------------------------------------
+# Stage F14: handlers, the splice, `perform`, `Exit` and `Post` (group D,
+# part 1). The self-attack of the stage (scratchpad f14/att/v): each faulting
+# program has a clean twin (`_c`). Group D is off until stage F17.
+
+[[claim]]
+finding = "F14-OH"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/oh/a3_slot_resume_result.wf",
+    "tests/gate/probes/fixes/f14/oh/a5_param_vec_push.wf",
+    "tests/gate/probes/fixes/f14/oh/d3_clause_writes_through_param.wf",
+    "tests/gate/probes/fixes/f14/oh/g1_abort_value_param_local.wf",
+]
+code = "W0301"
+note = "old holes of the self-attack of stage F14: a clause stores a parameter into a place of the site through another parameter (`h.0 = to`, `o.push(x)`: `handlers::map_stored` gives the holder variable of the site the places of the argument), keeps the result of `resume` in a slot of the site, or gives a value with no `resume` that points into the argument (M3, the `AbortValue` node). A later change of the referent is W0301"
+
+[[claim]]
+finding = "F14-OH"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/oh/a3_slot_resume_result_c.wf",
+    "tests/gate/probes/fixes/f14/oh/a5_param_vec_push_c.wf",
+    "tests/gate/probes/fixes/f14/oh/d3_clause_writes_through_param_c.wf",
+    "tests/gate/probes/fixes/f14/oh/g1_abort_value_param_local_c.wf",
+]
+note = "the clean twins of F14-OH: the reads come before the change"
+
+[[claim]]
+finding = "F14-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/abort/g5_clause_fails_past_linear.wf",
+    "tests/gate/probes/fixes/f14/abort/g6_clause_fails_outer_linear.wf",
+]
+code = "W0602"
+note = "a clause that fails past its handler aborts at the node of the handled body that runs it (`Frames::clause_aborts`): a linear value of the site with no `on abort` is live there"
+
+[[claim]]
+finding = "F14-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/abort/g8_clause_stores_then_fails.wf"]
+code = "W0301"
+note = "a clause stores its parameter into a vector of the site and then fails to an outer handler: the vector holds the reference after the outer `handle`"
+
+[[claim]]
+finding = "F14-ABORT"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/abort/g5_clause_fails_past_linear_c.wf",
+    "tests/gate/probes/fixes/f14/abort/g6_clause_fails_outer_linear_c.wf",
+    "tests/gate/probes/fixes/f14/abort/g8_clause_stores_then_fails_c.wf",
+]
+note = "the clean twins of F14-ABORT"
+
+[[claim]]
+finding = "F14-POST"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/post/a2_body_push_post_clear.wf",
+    "tests/gate/probes/fixes/f14/post/a4_clause_push_body_clears.wf",
+    "tests/gate/probes/fixes/f14/post/n3_outer_post_clears.wf",
+]
+code = "W0301"
+note = "the code of a clause after `resume` runs at `Post` (the `post` part), and the rest of the handled body runs in the `resume`: a change there of a place that a kept reference points into is W0301"
+
+[[claim]]
+finding = "F14-POST"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/post/h3_loop_body_perform_post.wf"]
+code = "W0301"
+note = "F14-POST in a loop of the handled body"
+
+[[claim]]
+finding = "F14-POST"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/post/a2_body_push_post_clear_c.wf",
+    "tests/gate/probes/fixes/f14/post/a4_clause_push_body_clears_c.wf",
+    "tests/gate/probes/fixes/f14/post/n3_outer_post_clears_c.wf",
+]
+note = "the clean twins of F14-POST (the fact oracle and its summary oracle check the frames of the site and of the clause after `resume` with them)"
+
+[[claim]]
+finding = "F14-POST"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/post/h3_loop_body_perform_post_c.wf"]
+note = "the clean twin of F14-POST in a loop"

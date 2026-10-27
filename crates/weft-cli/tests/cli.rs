@@ -1193,10 +1193,20 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         out.stderr
     );
     assert!(out.stderr.contains("ir-trace: frame 1 b"), "{}", out.stderr);
-    // A program that is not in scope (a handler, group D): the oracle checks
-    // nothing.
+    // A local handler (plan stage F14): the oracle checks the handled body
+    // and the clause in the component of the site.
     let handled = format!("{INTERP}/effects_log.wf");
-    let looped = cmd(&["run", "--fact-oracle", &handled]);
+    let checked = cmd(&["run", "--fact-oracle", &handled]);
+    assert_eq!(checked.code, 0, "{}", checked.stderr);
+    assert!(
+        checked.stderr.contains("note: --fact-oracle: 7 frame(s)"),
+        "{}",
+        checked.stderr
+    );
+    // A program that is not in scope (a `multi` handler, stage F16): the
+    // oracle checks nothing.
+    let multi = format!("{INTERP}/multi_choose.wf");
+    let looped = cmd(&["run", "--fact-oracle", &multi]);
     assert!(
         looped.stderr.contains("the oracle checks nothing"),
         "{}",

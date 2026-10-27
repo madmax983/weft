@@ -1,0 +1,12 @@
+// F3 (`specreview/progs/p13_perform_alias.wf`): a perform is checked as a
+// call. The clause clears `v` and reads its parameter, which points into `v`.
+effect Peek { fn peek(x: &i64) }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(x) { v.clear(); print(x); resume(()) } } in {
+        let r = &v[0]
+        peek(r) //~ W0312
+    }
+}

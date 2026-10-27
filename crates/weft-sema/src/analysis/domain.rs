@@ -657,6 +657,87 @@ impl State {
         }
     }
 
+    /// Removes the value, the may part, the must part and the holes of each
+    /// local of a body for which `of` is true: the locals of a frame that
+    /// ended (a handled body, a clause, plan stage F14).
+    pub fn remove_bodies(&mut self, of: &dyn Fn(BodyId) -> bool) {
+        let keys: BTreeSet<Key> = self
+            .vals
+            .iter()
+            .map(|(k, _)| *k)
+            .chain(self.may.0.iter().map(|(k, _)| *k))
+            .chain(self.must.0.iter().map(|(k, _)| *k))
+            .chain(self.holes.0.iter().map(|(k, _)| *k))
+            .filter(|k| of(k.0))
+            .collect();
+        for k in keys {
+            self.vals.remove(k);
+            self.may.0.remove(k);
+            self.must.0.remove(k);
+            self.holes.0.remove(k);
+        }
+    }
+
+    /// A copy of `self` where each local of a body for which `of` is true has
+    /// its value, its may part, its must part and its holes from `o`: the
+    /// locals of a clause keep their values across a `resume`, and the
+    /// other locals get the values at the end of the handled body (plan
+    /// stage F14).
+    #[must_use]
+    pub fn with_bodies_of(&self, o: &Self, of: &dyn Fn(BodyId) -> bool) -> Self {
+        let mut out = self.clone();
+        out.remove_bodies(of);
+        for (k, t) in o.vals.iter() {
+            if of(k.0) {
+                out.vals.insert(*k, Rc::clone(t));
+            }
+        }
+        for (k, ps) in o.may.0.iter() {
+            if of(k.0) {
+                out.may.0.insert(*k, Rc::clone(ps));
+            }
+        }
+        for (k, ps) in o.must.0.iter() {
+            if of(k.0) {
+                out.must.0.insert(*k, Rc::clone(ps));
+            }
+        }
+        for (k, ps) in o.holes.0.iter() {
+            if of(k.0) {
+                out.holes.0.insert(*k, Rc::clone(ps));
+            }
+        }
+        out
+    }
+
+    /// Joins the value in `o` of each local of a body for which `of` is
+    /// false into its value in `self`, if `self` has one. The may parts, the
+    /// must parts and the holes stay. After a `resume`, a local of the site
+    /// has its value at the end of the handled body (in the terms of the
+    /// site) and its value at the resume point (in the terms of the clause:
+    /// a reference that the clause put there points below a parameter of
+    /// the clause, plan stage F14).
+    pub fn join_values_but(&mut self, o: &Self, of: &dyn Fn(BodyId) -> bool) {
+        let mut new: Vec<(Key, Rc<Tree>)> = Vec::new();
+        for (k, t) in o.vals.iter() {
+            if of(k.0) {
+                continue;
+            }
+            if let Some(mine) = self.vals.get(*k) {
+                if Rc::ptr_eq(mine, t) || **mine == **t {
+                    continue;
+                }
+                let mut j = (**mine).clone();
+                if j.join(t) {
+                    new.push((*k, Rc::new(j)));
+                }
+            }
+        }
+        for (k, t) in new {
+            self.vals.insert(k, t);
+        }
+    }
+
     /// Joins `o` into `self`: a union of the values and of the may parts,
     /// and an intersection of the must parts. Returns true if `self`
     /// changed.

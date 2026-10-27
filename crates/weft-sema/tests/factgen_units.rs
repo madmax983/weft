@@ -1163,6 +1163,26 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
     m
 }
 
+/// The relations that the code of a clause gives to a node that runs it
+/// (plan stage F14, `factgen::handlers::project`).
+const CLAUSE_PART: [&str; 15] = [
+    "cfg_edge",
+    "uses",
+    "moved_at",
+    "rest_linear",
+    "overwrites",
+    "unset_at",
+    "mutates_at",
+    "lends_mut",
+    "call",
+    "reads_at",
+    "releases_at",
+    "moved_part",
+    "performs_at",
+    "may_abort",
+    "multi_at",
+];
+
 /// The relations that the template of each node label can emit
 /// (`docs/ir.md` 6.4), and the relations that a cleanup path adds. `entry`
 /// is the node where the parameters bind.
@@ -1170,12 +1190,19 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
     Some(match label {
         // The entry of a closure body (stage F11): its parameters and its
         // `ByMove` captures bind, as the parameters of a function.
-        "entry" | "closure entry" => (&["cfg_edge", "rebound_at", "empty_at"], &[]),
+        // The entry of a clause: its parameters and its continuation bind;
+        // `Main` of a `handle`: the capability binds (plan stage F14).
+        "entry" | "closure entry" | "clause entry" | "handle" => {
+            (&["cfg_edge", "rebound_at", "empty_at"], &[])
+        }
         // `Live` of the temporary that the value of an assignment starts
         // with binds the `N` variables of the variant steps of the target
         // (stage F8d, `docs/ir.md` 6.3).
         "live" => (&["cfg_edge", "rebound_at"], &[]),
-        "unwind continuation" | "goto" | "unreachable" => (&["cfg_edge"], &[]),
+        "unwind continuation" | "goto" | "unreachable" | "resume frame end" => (&["cfg_edge"], &[]),
+        // The end of an abort to a local handler: the frames of the clauses
+        // end (plan stage F14).
+        "handle landing" => (&["cfg_edge", "releases_at"], &[]),
         // The unwinder finishes the `ByMove` captures of a closure body
         // (stage F11).
         "unwind exit" => (&["cfg_edge"], &["unwound_at"]),
@@ -1264,12 +1291,19 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "writes_via",
                 "rebound_at",
                 "overwrites",
+                // A call that runs a clause of a local handler (plan stage
+                // F14).
+                "performs_at",
+                "releases_at",
+                "unset_at",
             ],
             &[],
         ),
         // A perform through the capability of a caller (plan stage F6): the
         // operands, the places that the clause gets and can change, the
         // places of the callers, the effect, the abort.
+        // A perform through the capability of a local handler (plan stage
+        // F14) has the code of the clause before its resume points too.
         "perform" => (
             &[
                 "cfg_edge",
@@ -1284,11 +1318,18 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "may_abort",
                 "multi_at",
                 "overwrites",
+                "performs_at",
+                "mutates_at",
+                "releases_at",
+                "unset_at",
+                // An abort to the local handler does not reach the values
+                // outside the handled body (ADR 0005).
+                "spared_at",
             ],
             &[],
         ),
         // The result binds.
-        "perform ret" => (
+        "perform ret" | "resume ret" => (
             &[
                 "cfg_edge",
                 "rebound_at",
@@ -1331,6 +1372,54 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         ),
         "call frame end" => (&["cfg_edge", "scope_end"], &[]),
         "call frame end (abort)" => (&["cfg_edge", "scope_end", "unwound_at"], &[]),
+        // Handlers (plan stage F14, `docs/ir.md` 6.4). `Exit`: the value of
+        // the handled body is used and the value of the `handle` binds, as
+        // the destination of an `Assign`.
+        // The value of the `handle` binds at the `AbortValue` node of an
+        // abort to its handler, as at `Exit`.
+        "handle exit"
+        | "perform abort value (abort)"
+        | "call abort value (abort)"
+        | "resume abort value (abort)" => (
+            &[
+                "cfg_edge",
+                "uses",
+                "rebound_at",
+                "empty_at",
+                "mutates_at",
+                "reads_at",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "overwrites",
+                "writes_via",
+                "unset_at",
+                "ref_at",
+                "ref_in",
+            ],
+            &[],
+        ),
+        // `Post`: the code of the clauses after their resume points
+        // (`factgen::handlers::project`); the frames of the clauses end.
+        "handle post" => (&CLAUSE_PART, &[]),
+        "resume frame end (abort)" => (&["cfg_edge", "unwound_at"], &[]),
+        // A `resume`: its operand, the continuation, and the rest of the
+        // handled body (`factgen::handlers::continuations`).
+        "resume" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "overwrites",
+                "may_abort",
+                "lends_mut",
+                "releases_at",
+            ],
+            &[],
+        ),
         _ => return None,
     })
 }

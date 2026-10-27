@@ -1,0 +1,9 @@
+// F14 self-attack (clean twin): scratchpad f14/att/v/g5_clause_fails_past_linear_c.wf
+linear struct Tok { id: u64 }
+effect Ask { fn ask() -> u64 }
+fn main() / fail {
+    let t = Tok { id: 1 }
+    let r = handle Ask { fn ask() { resume(2) } } in ask()
+    let Tok(i) = t
+    print(r + i)
+}

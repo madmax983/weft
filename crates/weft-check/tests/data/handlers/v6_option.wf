@@ -1,0 +1,10 @@
+// V035 v6: an `Option` of a reference as the argument.
+effect Opt { fn opt(x: Option<&u64>) }
+
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Opt { fn opt(x) { v.clear(); match x { Some(r) => print(r), None => print(0) }; resume(()) } } in {
+        opt(Some(&v[0])) //~ W0312
+    }
+}

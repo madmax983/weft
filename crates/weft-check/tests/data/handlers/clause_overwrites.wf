@@ -1,0 +1,15 @@
+// A clause gives a linear local of the site a new value: the old value is
+// dropped (`partb/S4/p/d4_overwrite_more.wf` h1).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+effect Note { fn note() }
+
+fn h1() {
+    let t = begin()
+    handle Note { fn note() { t = begin(); resume(()) } } in note() //~ W0601
+    rollback(t)
+}
+
+fn main() {}

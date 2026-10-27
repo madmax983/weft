@@ -1,0 +1,12 @@
+// F14 self-attack (a perform in a loop of the handled body, a change after resume): scratchpad f14/att/v/h3_loop_body_perform_post.wf
+effect Tick { fn tick() }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let keep: Vec<&u64> = Vec.new()
+    handle Tick { fn tick() { resume(()); v.clear() } } in {
+        let i = 0
+        while i < 2 { tick(); keep.push(&v[0]); i += 1 }
+    }
+    print(keep[0])
+}

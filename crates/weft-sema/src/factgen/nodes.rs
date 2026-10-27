@@ -11,9 +11,10 @@
 //! that reaches it ([`NodeKey::dest`]). Destination [`NORMAL`] is the normal
 //! path, [`PAST`] an abort past the function, and the destinations of local
 //! handlers come after it (`super::frames`, stage F7). A terminator with no
-//! destination has no abort edge. The splices of handled and scope bodies
-//! (F14, F18), the `Landing` of an abort to a handler (F15) and the `Copy`
-//! nodes of re-entry edges (F16) come later.
+//! destination has no abort edge. A handled body splices into its site
+//! ([`NodeTable::splice`], plan stage F14), with the `Landing` of an abort to
+//! its handler. The splice of a scope body (F18) and the `Copy` nodes of
+//! re-entry edges (F16) come later.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -456,7 +457,13 @@ impl NodeTable {
             self.chain(facts, &mut last, n, body, block, dest);
         }
         let name = term_name(&blk.term.kind);
+        // The handled body runs between `Main` and `Exit` of a `handle`
+        // (the splice, [`NodeTable::splice`]): no edge from `Main` to `Exit`.
+        let handle = matches!(blk.term.kind, TermKind::Handle { .. });
         for phase in normal_phases(&blk.term.kind) {
+            if handle && phase == Phase::Exit {
+                last = None;
+            }
             let key = NodeKey {
                 body,
                 block,
@@ -476,7 +483,31 @@ impl NodeTable {
                 span(blk.term.origin.span),
                 [label, &kind, &detail],
             );
+            if handle && phase == Phase::Exit {
+                last = Some(n);
+                continue;
+            }
             self.chain(facts, &mut last, n, body, block, dest);
+        }
+        // The end of an abort to the handler of a `handle`: no edge from the
+        // nodes before it ([`NodeTable::splice`]).
+        if handle && dest == NORMAL {
+            for phase in landing_phases(&blk.term.kind) {
+                let key = NodeKey {
+                    body,
+                    block,
+                    at: TERM,
+                    phase,
+                    dest,
+                };
+                let kind = format!("{name} {}", phase.name());
+                self.node(
+                    facts,
+                    key,
+                    span(blk.term.origin.span),
+                    [&kind, &kind, &detail],
+                );
+            }
         }
     }
 
@@ -528,14 +559,16 @@ impl NodeTable {
         let last = normal_phases(kind)
             .last()
             .and_then(|ph| self.get(at(*ph, dest)));
-        if let Some(last) = last {
+        // The `Landing` of a `handle` goes on with the next block too.
+        let landing = self.get(at(Phase::Landing, dest));
+        for from in last.into_iter().chain(landing) {
             for s in kind.normal_successors() {
                 let to_dest = match b.blocks.get(s.index()) {
                     Some(sb) if sb.cleanup => dest,
                     _ => NORMAL,
                 };
                 if let Some(first) = self.first(body, s, to_dest) {
-                    facts.cfg_edge.push((last, first));
+                    facts.cfg_edge.push((from, first));
                 }
             }
         }
@@ -545,6 +578,11 @@ impl NodeTable {
         let (Some(u), false) = (kind.unwind(), blk.cleanup) else {
             return;
         };
+        // An abort of a handled body goes through its cleanup chain to the
+        // cleanup chain of the site ([`NodeTable::splice`]).
+        if matches!(kind, TermKind::Handle { .. }) {
+            return;
+        }
         let Some(main) = self.get(at(Phase::Main, NORMAL)) else {
             return;
         };
@@ -567,6 +605,101 @@ impl NodeTable {
             }
             if let Some(first) = self.first(body, u, d) {
                 facts.cfg_edge.push((prev, first));
+            }
+        }
+    }
+
+    /// The splice of each handled body of the `handle` terminators of body
+    /// `site` (`docs/ir.md` 6.5, plan stage F14): an edge from `Main` of the
+    /// `handle` to the entry of the handled body, from each `Return` of the
+    /// handled body to `Exit` of the `handle`, and from the end of the
+    /// cleanup chain of the handled body for each destination past the
+    /// handler to the copy of the cleanup block of the `handle` for that
+    /// destination. The nodes of both bodies must be in the table.
+    pub fn splice(&self, p: &Program, facts: &mut FnFacts, site: BodyId) {
+        let Some(b) = p.bodies.get(site.index()) else {
+            return;
+        };
+        for (bi, blk) in b.blocks.iter().enumerate() {
+            let TermKind::Handle {
+                handler, unwind, ..
+            } = &blk.term.kind
+            else {
+                continue;
+            };
+            if blk.cleanup {
+                continue;
+            }
+            let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+            let Some(hb) = p.handlers.get(handler.index()).map(|d| d.handled) else {
+                continue;
+            };
+            let Some(h) = p.bodies.get(hb.index()) else {
+                continue;
+            };
+            let at = |phase| NodeKey {
+                body: site,
+                block,
+                at: TERM,
+                phase,
+                dest: NORMAL,
+            };
+            if let (Some(main), Some(first)) =
+                (self.get(at(Phase::Main)), self.first(hb, h.entry, NORMAL))
+            {
+                facts.cfg_edge.push((main, first));
+            }
+            if let Some(exit) = self.get(at(Phase::Exit)) {
+                for (ri, rb) in h.blocks.iter().enumerate() {
+                    if rb.cleanup || !matches!(rb.term.kind, TermKind::Return) {
+                        continue;
+                    }
+                    let r = NodeKey {
+                        body: hb,
+                        block: BlockId(u32::try_from(ri).unwrap_or(u32::MAX)),
+                        at: TERM,
+                        phase: Phase::Main,
+                        dest: NORMAL,
+                    };
+                    if let Some(n) = self.get(r) {
+                        facts.cfg_edge.push((n, exit));
+                    }
+                }
+            }
+            let own = Dest::Handler {
+                handler: *handler,
+                value: true,
+            }
+            .id();
+            // An abort to this handler ends at the `Landing` of the `handle`
+            // (plan stage F15, the minimal form of stage F14).
+            let end = |d: u32| NodeKey {
+                body: hb,
+                block: h.unwind_exit,
+                at: TERM,
+                phase: Phase::Main,
+                dest: d,
+            };
+            if let (Some(from), Some(to)) = (self.get(end(own)), self.get(at(Phase::Landing))) {
+                facts.cfg_edge.push((from, to));
+            }
+            let Some(u) = unwind else {
+                continue;
+            };
+            for d in self.copies(hb, h.unwind_exit) {
+                if d == own {
+                    continue;
+                }
+                let end = NodeKey {
+                    body: hb,
+                    block: h.unwind_exit,
+                    at: TERM,
+                    phase: Phase::Main,
+                    dest: d,
+                };
+                if let (Some(from), Some(to)) = (self.get(end), self.first(site, *u, d)) {
+                    facts.cfg_edge.push((from, to));
+                }
             }
         }
     }

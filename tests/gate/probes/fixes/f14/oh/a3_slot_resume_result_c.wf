@@ -1,0 +1,13 @@
+// F14 self-attack (clean twin): scratchpad f14/att/v/a3_slot_resume_result_c.wf
+effect Tick { fn tick() }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let slot: Option<&u64> = None
+    handle Tick { fn tick() { let x = resume(()); slot = Some(x); x } } in {
+        tick()
+        &v[0]
+    }
+    match slot { Some(r) => print(r), None => print(0) }
+    v.clear()
+}

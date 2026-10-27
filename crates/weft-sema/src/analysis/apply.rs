@@ -1236,7 +1236,13 @@ pub fn main(
 /// stated `in` place of its parameter (`param_in`, `arg_at`, W0203), and the
 /// argument of a `@ uniq` parameter must be `@ uniq` (`uniq_param`,
 /// `arg_aliased`, W0406).
-fn check_args(cx: &mut Cx<'_>, n: NodeId, sum: &Summary, s: &Sigma, site: &Site<'_>) -> R {
+pub(crate) fn check_args(
+    cx: &mut Cx<'_>,
+    n: NodeId,
+    sum: &Summary,
+    s: &Sigma,
+    site: &Site<'_>,
+) -> R {
     // A by-value argument is the base of the places inside it.
     let mut bases = s.clone();
     for (i, a) in bases.args.iter_mut().enumerate() {

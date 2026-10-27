@@ -1,0 +1,17 @@
+// A linear value outside the handled body is live across a perform that can
+// abort only to its local handler: the abort does not reach it (ADR 0005,
+// `spared_at`; `or_fp_abort_outside.wf`).
+effect Ask { fn ask() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn inline_form() {
+    let l = Lk { id: 1 }
+    let n = handle Ask { fn ask() { 0 } } in { ask() + 1 }
+    print(n)
+    unlock(l)
+}
+
+fn main() {
+    inline_form()
+}

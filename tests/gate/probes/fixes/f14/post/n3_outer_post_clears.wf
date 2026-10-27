@@ -1,0 +1,15 @@
+// F14 self-attack (the code after resume of an outer handler clears what an inner body keeps): scratchpad f14/att/v/n3_outer_post_clears.wf
+effect Log { fn log(m: String) }
+effect Op { fn op() }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let keep: Vec<&u64> = Vec.new()
+    handle Op { fn op() { resume(()); v.clear() } } in {
+        handle Log { fn log(m) { op(); resume(()) } } in {
+            log("x")
+            keep.push(&v[0])
+        }
+    }
+    print(keep[0])
+}
