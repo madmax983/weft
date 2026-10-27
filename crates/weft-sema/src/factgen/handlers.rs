@@ -47,6 +47,68 @@ use crate::analysis::transfer;
 /// The result of a template.
 type R = Result<(), AlphaError>;
 
+/// The nodes of the component by body, and the bodies below each body: the
+/// passes over the clauses read these, not the whole node table (a function
+/// with many `handle`s, `s5/h4000.wf`).
+struct Index {
+    /// The nodes of each body.
+    by_body: HashMap<BodyId, Vec<(NodeKey, NodeId)>>,
+    /// The bodies whose parent is each body.
+    kids: HashMap<BodyId, Vec<BodyId>>,
+}
+
+impl Index {
+    /// The index of the node table `table`.
+    fn new(p: &Program, table: &NodeTable) -> Self {
+        let mut by_body: HashMap<BodyId, Vec<(NodeKey, NodeId)>> = HashMap::new();
+        for (k, &n) in table.iter() {
+            by_body.entry(k.body).or_default().push((*k, n));
+        }
+        let mut kids: HashMap<BodyId, Vec<BodyId>> = HashMap::new();
+        for (i, b) in p.bodies.iter().enumerate() {
+            if let Some(parent) = b.parent {
+                kids.entry(parent)
+                    .or_default()
+                    .push(BodyId(u32::try_from(i).unwrap_or(u32::MAX)));
+            }
+        }
+        Self { by_body, kids }
+    }
+
+    /// Body `b` and each body below it (`inside(p, x, b)`).
+    fn subtree(&self, b: BodyId) -> Vec<BodyId> {
+        let mut out = vec![b];
+        let mut i = 0;
+        while let Some(&x) = out.get(i) {
+            i += 1;
+            out.extend(self.kids.get(&x).into_iter().flatten().copied());
+        }
+        out
+    }
+
+    /// The nodes of the bodies `bodies`.
+    fn nodes<'a>(&'a self, bodies: &'a [BodyId]) -> impl Iterator<Item = &'a (NodeKey, NodeId)> {
+        bodies
+            .iter()
+            .flat_map(|b| self.by_body.get(b).into_iter().flatten())
+    }
+
+    /// The nodes of the bodies that splice into the component below body
+    /// `hb` (with `hb`): the nodes of a handled body and of the handled
+    /// bodies inside it.
+    fn spliced_nodes(&self, p: &Program, hb: BodyId, normal: bool) -> HashSet<NodeId> {
+        let bodies: Vec<BodyId> = self
+            .subtree(hb)
+            .into_iter()
+            .filter(|&b| splice_root(p, b) != b)
+            .collect();
+        self.nodes(&bodies)
+            .filter(|(k, _)| !normal || k.dest == NORMAL)
+            .map(|(_, n)| *n)
+            .collect()
+    }
+}
+
 /// The body that the nodes of body `b` splice into: the site of a handled
 /// body (through each handled body on the way), or `b` itself.
 pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
@@ -612,7 +674,7 @@ fn regions(b: &weft_ir::Body) -> (BTreeSet<BlockId>, BTreeSet<BlockId>) {
 /// The nodes of the `pre` part and of the `post` part of clause body `c`,
 /// with the nodes of the handled bodies that splice into it (the region of
 /// the block of their `handle`).
-fn clause_nodes(p: &Program, table: &NodeTable, c: BodyId) -> (HashSet<NodeId>, HashSet<NodeId>) {
+fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet<NodeId>) {
     let mut pre = HashSet::new();
     let mut post = HashSet::new();
     let Some(b) = p.body(c) else {
@@ -642,7 +704,18 @@ fn clause_nodes(p: &Program, table: &NodeTable, c: BodyId) -> (HashSet<NodeId>, 
         }
         None
     };
-    for (key, &n) in table.iter() {
+    // The clause and the handled bodies that splice into it.
+    let mut bodies = vec![c];
+    let mut i = 0;
+    while let Some(&x) = bodies.get(i) {
+        i += 1;
+        bodies.extend(ix.kids.get(&x).into_iter().flatten().copied().filter(|&k| {
+            p.body(k)
+                .is_some_and(|d| matches!(d.kind, BodyKind::Handled(_)))
+        }));
+    }
+    for (key, n) in ix.nodes(&bodies) {
+        let n = *n;
         if key.dest != NORMAL {
             continue;
         }
@@ -665,11 +738,22 @@ fn clause_nodes(p: &Program, table: &NodeTable, c: BodyId) -> (HashSet<NodeId>, 
 }
 
 /// The variables of the locals of body `c` and of the bodies inside it.
-fn own_vars(p: &Program, vars: &Vars, c: BodyId) -> HashSet<VarId> {
-    vars.keys()
-        .filter(|k| inside(p, key_body(k), c))
-        .filter_map(|k| vars.get(k))
+fn own_vars(ix: &Index, by_body: &HashMap<BodyId, Vec<VarId>>, c: BodyId) -> HashSet<VarId> {
+    ix.subtree(c)
+        .iter()
+        .flat_map(|b| by_body.get(b).into_iter().flatten().copied())
         .collect()
+}
+
+/// The variables of the component by the body of their local.
+fn vars_by_body(vars: &Vars) -> HashMap<BodyId, Vec<VarId>> {
+    let mut out: HashMap<BodyId, Vec<VarId>> = HashMap::new();
+    for k in vars.keys() {
+        if let Some(v) = vars.get(k) {
+            out.entry(key_body(k)).or_default().push(v);
+        }
+    }
+    out
 }
 
 /// The text of the last step of place `q` (the display of `q` after the
@@ -826,37 +910,16 @@ pub struct Tables<'a> {
 /// `nodes` can abort (other than a `resume`, whose aborts are of the
 /// handled body), the abort can go further: no variable is spared.
 fn spare(
-    t: &Tables<'_>,
+    p: &Program,
     facts: &mut FnFacts,
-    nodes: &HashSet<NodeId>,
+    cands: &[(BodyId, VarId)],
     (n, hs): (NodeId, &[BodyId]),
 ) {
-    let resumes: HashSet<NodeId> = t
-        .table
-        .iter()
-        .filter(|(k, _)| {
-            k.at == TERM
-                && k.phase == Phase::Main
-                && t.p
-                    .body(k.body)
-                    .and_then(|b| b.blocks.get(k.block.index()))
-                    .is_some_and(|b| matches!(b.term.kind, TermKind::Resume { .. }))
-        })
-        .map(|(_, &x)| x)
-        .collect();
-    if facts
-        .may_abort
-        .iter()
-        .any(|x| nodes.contains(x) && !resumes.contains(x))
-    {
-        return;
-    }
     facts.spared_at.extend(
-        t.vars
-            .keys()
-            .filter(|k| !hs.iter().any(|&hb| inside(t.p, key_body(k), hb)))
-            .filter_map(|k| t.vars.get(k))
-            .map(|v| (v, n)),
+        cands
+            .iter()
+            .filter(|(b, _)| !hs.iter().any(|&hb| inside(p, *b, hb)))
+            .map(|&(_, v)| (v, n)),
     );
 }
 
@@ -896,6 +959,7 @@ fn clause_depth(p: &Program, b: BodyId) -> usize {
 pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
     let p = t.p;
     let _ = t.tys;
+    let ix = Index::new(p, t.table);
     // The join of σ over the runs of a clause (for `Post`).
     let joined = joined_sigma(hx);
     let locals: HashSet<VarId> = t
@@ -904,21 +968,61 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         .filter(|k| matches!(k, VarKey::S(..)))
         .filter_map(|k| t.vars.get(k))
         .collect();
+    let by_body = vars_by_body(t.vars);
     let mut regions: HashMap<BodyId, (HashSet<NodeId>, HashSet<NodeId>)> = HashMap::new();
+    for r in &hx.runs {
+        regions
+            .entry(r.clause)
+            .or_insert_with(|| clause_nodes(p, &ix, r.clause));
+    }
     let mut owned: HashMap<BodyId, HashSet<VarId>> = HashMap::new();
+    // The rows of the facts at the nodes of each clause: each run of the
+    // clause reads these, and a run node in a clause adds its rows to the
+    // rows of that clause.
+    let mut clause_of: HashMap<NodeId, BodyId> = HashMap::new();
+    for (&c, (pre, post)) in &regions {
+        for &x in pre.iter().chain(post) {
+            clause_of.insert(x, c);
+        }
+    }
+    let mut parts: HashMap<BodyId, FnFacts> = clause_rows(facts, &clause_of);
+    // The `Main` nodes of the `Resume`s (their aborts are of the handled
+    // body), and the variables that `spared_at` can matter for: a linear
+    // or `!Move` value (W0602, W0503).
+    let resumes: HashSet<NodeId> = t
+        .table
+        .iter()
+        .filter(|(k, _)| {
+            k.at == TERM
+                && k.phase == Phase::Main
+                && p.body(k.body)
+                    .and_then(|b| b.blocks.get(k.block.index()))
+                    .is_some_and(|b| matches!(b.term.kind, TermKind::Resume { .. }))
+        })
+        .map(|(_, &x)| x)
+        .collect();
+    let cands: Vec<(BodyId, VarId)> = t
+        .vars
+        .keys()
+        .filter_map(|k| t.vars.get(k).map(|v| (key_body(k), v)))
+        .filter(|&(_, v)| {
+            let info = facts.var(v);
+            info.linear || info.immovable
+        })
+        .collect();
     // A run node in a clause gets the facts of the clauses that it runs
     // before that clause goes to its own run nodes: the runs of the deepest
     // clauses first.
     let mut order: Vec<&ClauseRun> = hx.runs.iter().collect();
     order.sort_by_key(|r| std::cmp::Reverse(clause_depth(p, r.at)));
     for r in order {
-        let (pre, post) = regions
-            .entry(r.clause)
-            .or_insert_with(|| clause_nodes(p, t.table, r.clause));
-        let nodes = if r.post { &*post } else { &*pre };
+        let Some((pre, post)) = regions.get(&r.clause) else {
+            continue;
+        };
+        let nodes = if r.post { post } else { pre };
         let own = owned
             .entry(r.clause)
-            .or_insert_with(|| own_vars(p, t.vars, r.clause));
+            .or_insert_with(|| own_vars(&ix, &by_body, r.clause));
         let s = if r.post {
             joined.get(&r.clause).cloned().unwrap_or_default()
         } else {
@@ -935,25 +1039,45 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             roots: t.roots,
             clause: r.clause,
         };
-        copy_part(facts, &m, (nodes, own), (&s, &r.ins), (r.node, cap));
-        if let Some(hs) = &r.spares {
-            spare(t, facts, nodes, (r.node, hs));
+        let empty = FnFacts::default();
+        let part = parts.get(&r.clause).unwrap_or(&empty);
+        let new = copy_part(facts, part, &m, (nodes, own), (&s, &r.ins), (r.node, cap));
+        let abort = part
+            .may_abort
+            .iter()
+            .any(|x| nodes.contains(x) && !resumes.contains(x));
+        add_rows(facts, &new);
+        if let Some(c) = clause_of.get(&r.node) {
+            add_rows(parts.entry(*c).or_default(), &new);
+        }
+        if let (Some(hs), false) = (&r.spares, abort) {
+            spare(p, facts, &cands, (r.node, hs));
         }
     }
     // A clause that puts a reference of its parameter into a place outside
     // it (`keep = x`): the variable points into the places of the
-    // arguments.
+    // arguments. Only a row whose place is below a parameter of a clause
+    // can map.
+    let mut rows_of: HashMap<BodyId, Vec<(VarId, PlaceId)>> = HashMap::new();
+    for &(v, q) in &facts.points_into {
+        if let Some(Role::Param(b, _) | Role::Held(b, _)) = t.roots.role(facts.place(q).root) {
+            if joined.contains_key(&b) {
+                rows_of.entry(b).or_default().push((v, q));
+            }
+        }
+    }
     for (&c, s) in &joined {
-        let own = owned.entry(c).or_insert_with(|| own_vars(p, t.vars, c));
+        let own = owned.entry(c).or_insert_with(|| own_vars(&ix, &by_body, c));
         let m = Mapper {
             p,
             locals: &locals,
             roots: t.roots,
             clause: c,
         };
-        let rows: Vec<(VarId, PlaceId)> = facts
-            .points_into
-            .iter()
+        let rows: Vec<(VarId, PlaceId)> = rows_of
+            .get(&c)
+            .into_iter()
+            .flatten()
             .filter(|(v, _)| !own.contains(v))
             .copied()
             .collect();
@@ -970,9 +1094,10 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         let Some(&(hid, _)) = hx.ids.get(&h) else {
             continue;
         };
-        let escapes: BTreeSet<String> = facts
-            .escapes_at
-            .iter()
+        let escapes: BTreeSet<String> = parts
+            .get(c)
+            .into_iter()
+            .flat_map(|x| x.escapes_at.iter())
             .filter(|(n, _)| pre.contains(n) || post.contains(n))
             .map(|(_, e)| e.clone())
             .collect();
@@ -980,6 +1105,57 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .clause_performs
             .extend(escapes.into_iter().map(|e| (hid, e)));
     }
+}
+
+/// The rows of `facts` at the nodes of each clause (`clause_of`), of the
+/// relations that [`copy_part`] reads.
+fn clause_rows(facts: &FnFacts, clause_of: &HashMap<NodeId, BodyId>) -> HashMap<BodyId, FnFacts> {
+    let mut out: HashMap<BodyId, FnFacts> = HashMap::new();
+    let at = |x: &NodeId| clause_of.get(x).copied();
+    macro_rules! rows {
+        ($rel:ident, $node:expr) => {
+            for row in &facts.$rel {
+                if let Some(c) = at(&$node(row)) {
+                    out.entry(c).or_default().$rel.push(row.clone());
+                }
+            }
+        };
+    }
+    rows!(uses, |r: &(VarId, NodeId)| r.1);
+    rows!(moved_at, |r: &(VarId, NodeId)| r.1);
+    rows!(rest_linear, |r: &(VarId, NodeId)| r.1);
+    rows!(overwrites, |r: &(VarId, NodeId)| r.1);
+    rows!(rebound_at, |r: &(VarId, NodeId)| r.1);
+    rows!(unset_at, |r: &(VarId, NodeId)| r.1);
+    rows!(mutates_at, |r: &(NodeId, PlaceId)| r.0);
+    rows!(lends_mut, |r: &(NodeId, PlaceId)| r.0);
+    rows!(reads_at, |r: &(NodeId, PlaceId)| r.0);
+    rows!(releases_at, |r: &(NodeId, PlaceId)| r.0);
+    rows!(moved_part, |r: &(PlaceId, NodeId)| r.1);
+    rows!(performs_at, |r: &(NodeId, CapId)| r.0);
+    rows!(escapes_at, |r: &(NodeId, String)| r.0);
+    rows!(may_abort, |r: &NodeId| *r);
+    rows!(multi_at, |r: &NodeId| *r);
+    out
+}
+
+/// Adds the rows of the relations of [`copy_part`] of `src` to `dst`.
+fn add_rows(dst: &mut FnFacts, src: &FnFacts) {
+    dst.uses.extend(src.uses.iter().copied());
+    dst.moved_at.extend(src.moved_at.iter().copied());
+    dst.rest_linear.extend(src.rest_linear.iter().copied());
+    dst.overwrites.extend(src.overwrites.iter().copied());
+    dst.unset_at.extend(src.unset_at.iter().copied());
+    dst.mutates_at.extend(src.mutates_at.iter().copied());
+    dst.lends_mut.extend(src.lends_mut.iter().copied());
+    dst.call_mut.extend(src.call_mut.iter().copied());
+    dst.reads_at.extend(src.reads_at.iter().copied());
+    dst.releases_at.extend(src.releases_at.iter().copied());
+    dst.moved_part.extend(src.moved_part.iter().copied());
+    dst.performs_at.extend(src.performs_at.iter().copied());
+    dst.escapes_at.extend(src.escapes_at.iter().cloned());
+    dst.may_abort.extend(src.may_abort.iter().copied());
+    dst.multi_at.extend(src.multi_at.iter().copied());
 }
 
 /// σ of each clause: the join of σ of its performs.
@@ -1003,11 +1179,13 @@ fn joined_sigma(hx: &Handlers) -> BTreeMap<BodyId, Sigma> {
 /// `cap` for a place of the site.
 fn copy_part(
     facts: &mut FnFacts,
+    part: &FnFacts,
     m: &Mapper<'_>,
     (nodes, own): (&HashSet<NodeId>, &HashSet<VarId>),
     (s, ins): (&Sigma, &[usize]),
     (n, cap): (NodeId, Option<CapId>),
-) {
+) -> FnFacts {
+    let mut new = FnFacts::default();
     let at = |x: &NodeId| nodes.contains(x);
     let vars = |rows: &[(VarId, NodeId)]| -> Vec<VarId> {
         rows.iter()
@@ -1015,25 +1193,24 @@ fn copy_part(
             .map(|(v, _)| *v)
             .collect()
     };
-    let uses = vars(&facts.uses);
-    facts.uses.extend(uses.into_iter().map(|v| (v, n)));
-    let moved = vars(&facts.moved_at);
-    facts.moved_at.extend(moved.into_iter().map(|v| (v, n)));
-    let rest = vars(&facts.rest_linear);
-    facts.rest_linear.extend(rest.into_iter().map(|v| (v, n)));
-    let mut over = vars(&facts.overwrites);
+    new.uses = vars(&part.uses).into_iter().map(|v| (v, n)).collect();
+    new.moved_at = vars(&part.moved_at).into_iter().map(|v| (v, n)).collect();
+    new.rest_linear = vars(&part.rest_linear)
+        .into_iter()
+        .map(|v| (v, n))
+        .collect();
+    let mut over = vars(&part.overwrites);
     // A new value of a variable outside the clause is a new value at the
     // run node on some paths: the old value can be overwritten, and the
     // variable can hold the new value after (no `rebound_at`: the clause
     // need not give it on each path).
     over.extend(
-        vars(&facts.rebound_at)
+        vars(&part.rebound_at)
             .into_iter()
             .filter(|v| m.locals.contains(v)),
     );
-    facts.overwrites.extend(over.into_iter().map(|v| (v, n)));
-    let unset = vars(&facts.unset_at);
-    facts.unset_at.extend(unset.into_iter().map(|v| (v, n)));
+    new.overwrites = over.into_iter().map(|v| (v, n)).collect();
+    new.unset_at = vars(&part.unset_at).into_iter().map(|v| (v, n)).collect();
     let places = |rows: &[(NodeId, PlaceId)]| -> Vec<PlaceId> {
         rows.iter()
             .filter(|(x, _)| at(x))
@@ -1041,11 +1218,10 @@ fn copy_part(
             .collect()
     };
     let clause_root = cap.map_or(crate::body::roots::STORED, crate::body::roots::clause);
-    let mut changes: Vec<(PlaceId, u32)> = Vec::new();
-    for (q, lends) in places(&facts.mutates_at)
+    for (q, lends) in places(&part.mutates_at)
         .into_iter()
         .map(|q| (q, false))
-        .chain(places(&facts.lends_mut).into_iter().map(|q| (q, true)))
+        .chain(places(&part.lends_mut).into_iter().map(|q| (q, true)))
     {
         let (root, ps) = match m.map(facts, s, q) {
             Mapped::Param(i, ps) => {
@@ -1060,25 +1236,22 @@ fn copy_part(
         };
         for x in ps {
             if lends {
-                facts.lends_mut.push((n, x));
+                new.lends_mut.push((n, x));
             } else {
-                facts.mutates_at.push((n, x));
+                new.mutates_at.push((n, x));
             }
-            changes.push((x, root));
+            new.call_mut.push((n, x, root));
         }
     }
-    for (x, root) in changes {
-        facts.call_mut.push((n, x, root));
-    }
-    for q in places(&facts.reads_at) {
+    for q in places(&part.reads_at) {
         let ps = m.places(facts, s, q);
-        facts.reads_at.extend(ps.into_iter().map(|x| (n, x)));
+        new.reads_at.extend(ps.into_iter().map(|x| (n, x)));
     }
-    for q in places(&facts.releases_at) {
+    for q in places(&part.releases_at) {
         let ps = m.places(facts, s, q);
-        facts.releases_at.extend(ps.into_iter().map(|x| (n, x)));
+        new.releases_at.extend(ps.into_iter().map(|x| (n, x)));
     }
-    let parts: Vec<PlaceId> = facts
+    let parts: Vec<PlaceId> = part
         .moved_part
         .iter()
         .filter(|(_, x)| at(x))
@@ -1086,28 +1259,27 @@ fn copy_part(
         .collect();
     for q in parts {
         let ps = m.places(facts, s, q);
-        facts.moved_part.extend(ps.into_iter().map(|x| (x, n)));
+        new.moved_part.extend(ps.into_iter().map(|x| (x, n)));
     }
-    let performs: Vec<(NodeId, CapId)> = facts
+    new.performs_at = part
         .performs_at
         .iter()
         .filter(|(x, _)| at(x))
         .map(|(_, c)| (n, *c))
         .collect();
-    facts.performs_at.extend(performs);
-    let escapes: Vec<(NodeId, String)> = facts
+    new.escapes_at = part
         .escapes_at
         .iter()
         .filter(|(x, _)| at(x))
         .map(|(_, e)| (n, e.clone()))
         .collect();
-    facts.escapes_at.extend(escapes);
-    if facts.may_abort.iter().any(at) {
-        facts.may_abort.push(n);
+    if part.may_abort.iter().any(at) {
+        new.may_abort.push(n);
     }
-    if facts.multi_at.iter().any(at) {
-        facts.multi_at.push(n);
+    if part.multi_at.iter().any(at) {
+        new.multi_at.push(n);
     }
+    new
 }
 
 /// The references that the clauses put behind a reference parameter of the
@@ -1199,20 +1371,28 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         .map(|&(h, _, post)| (h, post))
         .chain(hx.landings.iter().copied())
         .collect();
+    let ix = Index::new(p, t.table);
+    let mut roots_of: HashMap<BodyId, Vec<PlaceId>> = HashMap::new();
+    for (k, r) in t.roots.local_roots().chain(t.roots.cell_roots()) {
+        roots_of.entry(k.0).or_default().push(r);
+    }
     for &(h, post) in &ends {
         let clauses: Vec<BodyId> = p
             .handlers
             .get(h.index())
             .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
             .unwrap_or_default();
-        facts.releases_at.extend(
-            t.roots
-                .local_roots()
-                .chain(t.roots.cell_roots())
-                .filter(|(k, _)| clauses.iter().any(|&c| inside(p, k.0, c)))
-                .map(|(_, r)| (post, r)),
-        );
+        let mut rs: Vec<PlaceId> = Vec::new();
+        for &c in &clauses {
+            for b in ix.subtree(c) {
+                rs.extend(roots_of.get(&b).into_iter().flatten().copied());
+            }
+        }
+        rs.sort();
+        rs.dedup();
+        facts.releases_at.extend(rs.into_iter().map(|r| (post, r)));
     }
+    let multi: HashSet<NodeId> = facts.multi_at.iter().copied().collect();
     // `body_multi`: a node of the handled body can resume more than once,
     // so a `resume` of a clause is a `multi` point (`multi_at` by the rule of
     // the spec, W0503).
@@ -1220,13 +1400,8 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
             continue;
         };
-        let nodes: HashSet<NodeId> = t
-            .table
-            .iter()
-            .filter(|(k, _)| inside(p, k.body, hb) && splice_root(p, k.body) != k.body)
-            .map(|(_, &n)| n)
-            .collect();
-        if facts.multi_at.iter().any(|n| nodes.contains(n)) {
+        let nodes = ix.spliced_nodes(p, hb, false);
+        if multi.iter().any(|n| nodes.contains(n)) {
             facts.body_multi.push(cap);
         }
     }
@@ -1237,20 +1412,43 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
     for &(a, b) in &facts.cfg_edge {
         succ.entry(a).or_default().push(b);
     }
+    // The rows of the relations that a continuation reads, by node. A
+    // `Resume` adds its rows to them (a resume node of an inner clause can
+    // be in the region of an outer continuation).
+    let mut changes: HashMap<NodeId, Vec<PlaceId>> = HashMap::new();
+    for &(x, q) in facts.mutates_at.iter().chain(&facts.lends_mut) {
+        changes.entry(x).or_default().push(q);
+    }
+    let mut ends_of: HashMap<NodeId, Vec<VarId>> = HashMap::new();
+    for &(v, x) in facts
+        .moved_at
+        .iter()
+        .chain(&facts.scope_end)
+        .chain(&facts.unwound_at)
+    {
+        ends_of.entry(x).or_default().push(v);
+    }
+    let mut frees_of: HashMap<NodeId, Vec<PlaceId>> = HashMap::new();
+    for &(q, x) in &facts.moved_part {
+        frees_of.entry(x).or_default().push(q);
+    }
+    for &(x, q) in &facts.releases_at {
+        frees_of.entry(x).or_default().push(q);
+    }
+    let owners: HashMap<VarId, Vec<PlaceId>> = {
+        let mut m: HashMap<VarId, Vec<PlaceId>> = HashMap::new();
+        for &(q, v) in &facts.owner {
+            m.entry(v).or_default().push(q);
+        }
+        m
+    };
     for &(r, h, c) in &hx.resumes {
         let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
             continue;
         };
         // The nodes of the handled body (and of the bodies that splice into
         // it): the region of the continuation.
-        let body_nodes: HashSet<NodeId> = t
-            .table
-            .iter()
-            .filter(|(k, _)| {
-                k.dest == NORMAL && inside(p, k.body, hb) && splice_root(p, k.body) != k.body
-            })
-            .map(|(_, &n)| n)
-            .collect();
+        let body_nodes = ix.spliced_nodes(p, hb, true);
         let ends: Vec<NodeId> = hx
             .ends
             .iter()
@@ -1273,38 +1471,13 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         }
         seen.extend(ends);
         let mut changed: BTreeSet<PlaceId> = BTreeSet::new();
-        for (x, q) in facts.mutates_at.iter().chain(&facts.lends_mut) {
-            if seen.contains(x) {
-                changed.insert(*q);
-            }
-        }
         let mut freed: BTreeSet<PlaceId> = BTreeSet::new();
-        let owners: HashMap<VarId, Vec<PlaceId>> = {
-            let mut m: HashMap<VarId, Vec<PlaceId>> = HashMap::new();
-            for &(q, v) in &facts.owner {
-                m.entry(v).or_default().push(q);
-            }
-            m
-        };
-        for (v, x) in facts
-            .moved_at
-            .iter()
-            .chain(&facts.scope_end)
-            .chain(&facts.unwound_at)
-        {
-            if seen.contains(x) {
+        for x in &seen {
+            changed.extend(changes.get(x).into_iter().flatten().copied());
+            for v in ends_of.get(x).into_iter().flatten() {
                 freed.extend(owners.get(v).into_iter().flatten().copied());
             }
-        }
-        for (q, x) in &facts.moved_part {
-            if seen.contains(x) {
-                freed.insert(*q);
-            }
-        }
-        for (x, q) in &facts.releases_at {
-            if seen.contains(x) {
-                freed.insert(*q);
-            }
+            freed.extend(frees_of.get(x).into_iter().flatten().copied());
         }
         // The places of the parameters of the clause.
         let mut params: Vec<(PlaceId, PlaceId)> = Vec::new();
@@ -1367,6 +1540,8 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
                 }
             }
         }
+        changes.entry(r).or_default().extend(lends.iter().copied());
+        frees_of.entry(r).or_default().extend(frees.iter().copied());
         facts.lends_mut.extend(lends.into_iter().map(|q| (r, q)));
         facts.releases_at.extend(frees.into_iter().map(|q| (r, q)));
     }
