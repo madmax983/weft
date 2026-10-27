@@ -169,6 +169,10 @@ pub struct Run {
     pub param: u32,
     /// True if `param` is a capture of the closure, not a parameter.
     pub capture: bool,
+    /// True for a run of a result of a run of the parameter
+    /// (`FnVal::ParamResult`): the caller applies the values that the
+    /// runs of its values give back.
+    pub result: bool,
     /// The body can run it more than once.
     pub many: bool,
     /// The body runs it as a task.
@@ -265,12 +269,6 @@ pub struct Summary {
     pub frees: Vec<IPlace>,
     /// Places that the body gives to code that it does not know.
     pub lends: Vec<IPlace>,
-    /// In the summary of a closure: the places that code of a caller can
-    /// change at the runs of the function values of its interface (part
-    /// `runs`). A caller that applies the runs with the values that it
-    /// gives does not use them; a closure that a callee made (`Made`) runs
-    /// its captures as code of a caller, so they are `lends` there.
-    pub code_lends: Vec<IPlace>,
     /// The operations that the body performs.
     pub performs: BTreeSet<Perform>,
     /// The ways the body can abort.
@@ -307,12 +305,21 @@ pub struct Summary {
     /// path). A call gives the new values at `Ret`, and these changes there
     /// too, so the new value of a capture sees them.
     pub late_muts: Vec<(IPlace, u32)>,
-    /// The references that the body of a closure puts into an interface
-    /// place: a capture, a part of it, or a place behind a reference (the
-    /// heap slots of the body at its `Return`). Each entry is the place and
-    /// the places that the references there can point into. A place of a
-    /// local of the body is the `Frame` root.
+    /// The references that the body puts into an interface place: for a
+    /// closure, a capture, a part of it, or a place behind a reference (the
+    /// heap slots of the body at its `Return`); for a function, a place of
+    /// an `rc` object, and the environments of the function values that it
+    /// puts behind a reference (stage F13; the part `stores` has the other
+    /// references of a function). Each entry is the place and the places
+    /// that the references there can point into. A place of a local of the
+    /// body of a closure is the `Frame` root.
     pub puts: Vec<(IPlace, Vec<IPlace>)>,
+    /// The function values that the body puts into an interface place (a
+    /// place behind a reference parameter, in an `rc` object, a capture):
+    /// the function values of the heap slots of the body at its `Return`
+    /// (stage F13). The places that their environments point into are in
+    /// `puts`. A run node gives the place of the caller these values.
+    pub put_fns: Vec<(IPlace, Vec<RetFn>)>,
     /// The reference parameters that are `@ uniq`.
     pub uniq_needs: BTreeSet<u32>,
     /// Each change of the body is below its first parameter (`writes_via`
@@ -321,6 +328,16 @@ pub struct Summary {
     /// The interface of each parameter: its name, its callee root index
     /// (`call_arg`), and its stated `in` place (`param_in`).
     pub params: Vec<ParamIface>,
+    /// The body can give a place of its own frame (a local of the body or
+    /// of a callee) to an operation of a caller, also through a callee
+    /// (plan stage F15): a local clause that a call runs can get a
+    /// reference into the callee frame (`clause::given`).
+    pub gives_frame: bool,
+    /// The places of `lends` that code of a caller other than an operation
+    /// of the row gets (the inferred part `lends`, follow-up F13.2). A call
+    /// that runs a local clause for each effect of the row lends only these
+    /// (plan stage F15): it runs the clauses itself.
+    pub code_lends: Vec<IPlace>,
 }
 
 /// The interface of one parameter.
@@ -380,7 +397,9 @@ impl Summary {
                     || !self.ret.flows.is_empty()
                     || !self.ret.fns.is_empty()
             }
-            Part::Stores => !self.stores.is_empty() || !self.puts.is_empty(),
+            Part::Stores => {
+                !self.stores.is_empty() || !self.puts.is_empty() || !self.put_fns.is_empty()
+            }
             Part::Drops => !self.drops.is_empty(),
             Part::Holds => !self.holds.is_empty(),
             Part::UsesMoves => !self.uses.is_empty() || !self.moves.is_empty(),

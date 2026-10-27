@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f6e2bf4cf0452f4fe5ec468a6472e2ea5dbd5ae27f5c034f5d35bafb7ba3a1fd # shrinks to stmts = [Stmt { kind: Loop(Block { stmts: [Stmt { kind: Expr(Expr { id: ExprId(0), kind: If { cond: Expr { id: ExprId(0), kind: Name(Ident { name: "a", span: 0..0 }), span: 0..0 }, then: Block { stmts: [], span: 0..0 }, else_: Some(Expr { id: ExprId(0), kind: If { cond: Expr { id: ExprId(0), kind: Name(Ident { name: "a", span: 0..0 }), span: 0..0 }, then: Block { stmts: [Stmt { kind: Let { pat: Pattern { id: PatId(0), kind: Bind(Ident { name: "a", span: 0..0 }) }, ty: Some(TypeExpr { kind: Ref { inner: TypeExpr { kind: Path { segments: [Ident { name: "a", span: 0..0 }], args: [] }, modes: [], span: 0..0 }, place: Some(PlaceExpr { root: Ident { name: "a", span: 0..0 }, steps: [Wildcard], span: 0..0 }) }, modes: [], span: 0..0 }), init: None }, span: 0..0 }, Stmt { kind: Assign { target: Expr { id: ExprId(0), kind: Array([]), span: 0..0 }, op: Assign, value: Expr { id: ExprId(0), kind: Unary { op: Neg, expr: Expr { id: ExprId(0), kind: Lit(Int(31129349638155)), span: 0..0 } }, span: 0..0 } }, span: 0..0 }], span: 0..0 }, else_: None }, span: 0..0 }) }, span: 0..0 }), span: 0..0 }], span: 0..0 }), span: 0..0 }]

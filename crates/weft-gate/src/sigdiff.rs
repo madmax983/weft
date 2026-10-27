@@ -27,7 +27,8 @@ use crate::manifest::Entry;
 use crate::pool::{self, Ended};
 use crate::Error;
 
-/// The most differences that the report lists.
+/// The most differences with a ledger entry that the report lists. It lists
+/// each difference with no ledger entry.
 pub const LISTED: usize = 400;
 
 /// A `mut` place with no text: its root and the kinds of its steps.
@@ -233,7 +234,8 @@ pub struct Summary {
     pub same: usize,
     /// The number of functions with a difference of each part.
     pub by_part: BTreeMap<&'static str, usize>,
-    /// The differences, at most [`LISTED`].
+    /// The differences: each one with no ledger entry, and at most
+    /// [`LISTED`] with an entry.
     pub listed: Vec<Listed>,
     /// The differences with no ledger entry.
     pub unledgered: usize,
@@ -284,7 +286,8 @@ impl Summary {
                 Some(i) => *self.by_entry.entry(i).or_insert(0) += 1,
                 None => self.unledgered += 1,
             }
-            if self.listed.len() < LISTED {
+            let shown = self.listed.iter().filter(|l| l.entry.is_some()).count();
+            if entry.is_none() || shown < LISTED {
                 self.listed.push(Listed {
                     path: path.to_string(),
                     diff: d,

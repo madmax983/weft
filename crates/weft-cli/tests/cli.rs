@@ -1027,17 +1027,17 @@ fn oracle_turns_on_the_strict_run_time_checks() {
 
 #[test]
 fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
-    // Only the groups A and B are on by default (stages F8 and F10, plan
-    // §2.6): a program with a closure (group C) goes to the old pipeline,
-    // and the command says why on standard error.
+    // Only the groups A, B and C are on by default (stages F8, F10 and F13,
+    // plan §2.6): a program with a handler (group D) goes to the old
+    // pipeline, and the command says why on standard error.
     let dir = scratch(
         "fallback",
         &[(
-            "closure_bad.wf",
-            "fn bad() {\n    let v = [1]\n    let w = v\n    let g = || 1\n    print(g())\n    print(v.len())\n}\nfn main() { bad() }\n",
+            "handler_bad.wf",
+            "effect Log { fn log(msg: String) }\nfn bad() {\n    let v = [1]\n    let w = v\n    handle Log { fn log(msg) { resume(()) } } in log(\"a\")\n    print(v.len())\n}\nfn main() { bad() }\n",
         )],
     );
-    let path = format!("{dir}/closure_bad.wf");
+    let path = format!("{dir}/handler_bad.wf");
     let path = path.as_str();
     let old = cmd(&["check", path]);
     assert_eq!(old.code, 1, "{}", old.text);
@@ -1048,7 +1048,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         assert_eq!(out.text, old.text, "{f}");
         assert_eq!(out.code, old.code, "{f}");
         let note =
-            format!("note: {f}: the old pipeline checks the program: the program uses group C");
+            format!("note: {f}: the old pipeline checks the program: the program uses group D");
         assert!(out.stderr.starts_with(&note), "{f}: {}", out.stderr);
         assert_eq!(out.stderr.lines().count(), 1, "{}", out.stderr);
     }
@@ -1193,10 +1193,20 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         out.stderr
     );
     assert!(out.stderr.contains("ir-trace: frame 1 b"), "{}", out.stderr);
-    // A program that is not in scope (a handler, group D): the oracle checks
-    // nothing.
+    // A local handler (plan stage F14): the oracle checks the handled body
+    // and the clause in the component of the site.
     let handled = format!("{INTERP}/effects_log.wf");
-    let looped = cmd(&["run", "--fact-oracle", &handled]);
+    let checked = cmd(&["run", "--fact-oracle", &handled]);
+    assert_eq!(checked.code, 0, "{}", checked.stderr);
+    assert!(
+        checked.stderr.contains("note: --fact-oracle: 7 frame(s)"),
+        "{}",
+        checked.stderr
+    );
+    // A program that is not in scope (a `multi` handler, stage F16): the
+    // oracle checks nothing.
+    let multi = format!("{INTERP}/multi_choose.wf");
+    let looped = cmd(&["run", "--fact-oracle", &multi]);
     assert!(
         looped.stderr.contains("the oracle checks nothing"),
         "{}",

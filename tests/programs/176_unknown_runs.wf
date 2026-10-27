@@ -1,0 +1,155 @@
+// A function value that a body runs and that no caller gives (follow-up
+// F13.2): a capture of a closure that a callee made and gave back, or a
+// local that a closure gives a new value. The run changes the places that
+// the body gives it, so the summary of the body has the change (the parts
+// `muts` and `lends`), and a caller that holds a reference across the call
+// gets W0301. The clean twins run a value that only reads.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Hook { f: fn() }
+fn push1(x: &World) { x.entities.push(Entity { hp: 1 }) }
+fn read1(x: &World) { print(x.entities.len()) }
+fn noop(x: &World) {}
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn mk_twice(g: fn(&World), w: &World) -> fn() { || { g(w); g(w) } }
+fn mk_nested(g: fn(&World), w: &World) -> fn() { let h = mk_call(g, w); || h() }
+fn give(g: fn(&World), w: &World) -> fn() { mk_call(g, w) }
+fn call0(f: fn()) { f() }
+
+// The made closure runs a closure literal, an item, a parameter of the body.
+fn made_closure(world: &World) {
+    let f = mk_call(|x| x.entities.push(Entity { hp: 1 }), world)
+    f()
+}
+fn made_item(world: &World) { let f = mk_call(push1, world); f() }
+fn made_param(g: fn(&World), world: &World) { let f = mk_call(g, world); f() }
+// The made closure goes to a callee, into a field, into a vector, into an
+// `Option`, into an `rc` object, through another maker, two times.
+fn made_to_callee(world: &World) { let f = mk_call(push1, world); call0(f) }
+fn made_in_field(world: &World) { let h = Hook { f: mk_call(push1, world) }; let f = h.f; f() }
+fn made_in_vec(world: &World) {
+    let v: Vec<fn()> = Vec.new()
+    v.push(mk_call(push1, world))
+    let f = v[0]
+    f()
+}
+fn made_in_option(world: &World) {
+    let o = Some(mk_call(push1, world))
+    match o { Some(f) => f(), None => {} }
+}
+fn made_in_rc(world: &World) { let b = Rc.new(Hook { f: mk_call(push1, world) }); let f = b.f; f() }
+fn made_nested(world: &World) { let f = mk_nested(push1, world); call0(f) }
+fn made_by_callee(world: &World) { let f = give(push1, world); f() }
+fn made_twice(world: &World) { let f = mk_twice(push1, world); f() }
+fn made_in_loop(world: &World, n: u64) {
+    let i = 0
+    while i < n { let f = mk_call(push1, world); f(); i += 1 }
+}
+// A closure gives a function-value local a new value.
+fn rebind_once(world: &World) {
+    let g = noop
+    let set = || { g = push1 }
+    set()
+    g(world)
+}
+fn rebind_loop(world: &World, n: u64) {
+    let g = noop
+    let i = 0
+    while i < n {
+        g(world)
+        let set = || { g = push1 }
+        set()
+        i += 1
+    }
+}
+// A closure of the body that runs a captured item goes to a callee: the
+// change goes through the environment of the closure, not through a place
+// that the callee gives (no W0312).
+fn local_to_callee(world: &World) { let g = push1; let f = || g(world); call0(f) }
+
+// The clean twins.
+fn made_closure_c(world: &World) { let f = mk_call(|x| print(x.entities.len()), world); f() }
+fn made_item_c(world: &World) { let f = mk_call(read1, world); f() }
+fn made_to_callee_c(world: &World) { let f = mk_call(read1, world); call0(f) }
+fn made_nested_c(world: &World) { let f = mk_nested(read1, world); call0(f) }
+fn made_by_callee_c(world: &World) { let f = give(read1, world); f() }
+fn rebind_once_c(world: &World) {
+    let g = noop
+    let set = || { g = read1 }
+    set()
+    g(world)
+}
+fn rebind_loop_c(world: &World, n: u64) {
+    let g = noop
+    let i = 0
+    while i < n {
+        g(world)
+        let set = || { g = read1 }
+        set()
+        i += 1
+    }
+}
+
+fn bad() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let a = &w.entities[0]
+    made_closure(&w)
+    print(a.hp)   //~ W0301
+    let b = &w.entities[0]
+    made_item(&w)
+    print(b.hp)   //~ W0301
+    let c = &w.entities[0]
+    made_param(push1, &w)
+    print(c.hp)   //~ W0301
+    let d = &w.entities[0]
+    made_to_callee(&w)
+    print(d.hp)   //~ W0301
+    let e = &w.entities[0]
+    made_in_field(&w)
+    print(e.hp)   //~ W0301
+    let f = &w.entities[0]
+    made_in_vec(&w)
+    print(f.hp)   //~ W0301
+    let g = &w.entities[0]
+    made_in_option(&w)
+    print(g.hp)   //~ W0301
+    let h = &w.entities[0]
+    made_in_rc(&w)
+    print(h.hp)   //~ W0301
+    let i = &w.entities[0]
+    made_nested(&w)
+    print(i.hp)   //~ W0301
+    let j = &w.entities[0]
+    made_by_callee(&w)
+    print(j.hp)   //~ W0301
+    let k = &w.entities[0]
+    made_twice(&w)
+    print(k.hp)   //~ W0301
+    let l = &w.entities[0]
+    made_in_loop(&w, 2)
+    print(l.hp)   //~ W0301
+    let m = &w.entities[0]
+    rebind_once(&w)
+    print(m.hp)   //~ W0301
+    let n = &w.entities[0]
+    rebind_loop(&w, 2)
+    print(n.hp)   //~ W0301
+    let o = &w.entities[0]
+    local_to_callee(&w)
+    print(o.hp)   //~ W0301
+}
+
+fn good() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let a = &w.entities[0]
+    made_closure_c(&w)
+    made_item_c(&w)
+    made_param(read1, &w)
+    made_to_callee_c(&w)
+    made_nested_c(&w)
+    made_by_callee_c(&w)
+    rebind_once_c(&w)
+    rebind_loop_c(&w, 2)
+    print(a.hp)
+    local_to_callee(&w)
+}

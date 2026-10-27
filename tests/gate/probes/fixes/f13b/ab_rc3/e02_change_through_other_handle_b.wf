@@ -1,0 +1,25 @@
+// Review of stage F13, class AB-RC3: a callee reads the references of an rc object after a change of the group (s7c/e02_change_through_other_handle_b.wf).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn fill_self(c: Rc<Cache>) / mut(Cache) {
+    c.data.push(7)
+    c.refs.push(&c.data[0])
+}
+fn read0(c: Rc<Cache>) {
+    let r = c.refs[0]
+    print(r + 0)
+}
+fn grow(c: Rc<Cache>) / mut(Cache) {
+    let i = 0
+    while i < 40 {
+        c.data.push(1)
+        i += 1
+    }
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    let d = c.clone()
+    fill_self(c.clone())
+    grow(d.clone())
+    read0(c.clone())
+}

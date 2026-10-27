@@ -1,0 +1,72 @@
+// A clause that resumes on each path never ends with no `resume`: a perform
+// of its operation (or a call that runs it) has no abort edge to the handler,
+// and no path reaches the code after the `handle` through its `Landing`
+// (plan stage F15).
+effect Pick { fn pick() -> &u64 }
+effect Op { fn op(n: u64) }
+
+// D-NEWFP (`scale400.wf`, `scale_ops.wf`): a closure captures a local of the
+// handled body that the perform binds, and runs after the `handle`. The
+// clause resumes on each path, so `r0` has its value there.
+fn captured_after() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(0)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r0 = pick()
+        f = || print(r0)
+    }
+    f()
+}
+
+// The clause changes `v` and resumes on each path: the new value of `r` in
+// the handled body runs.
+fn each_path(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Op { fn op(n) { v.clear(); if n > 0 { resume(()) } else { resume(()) } } } in {
+        op(0)
+        r = &w[0]
+    }
+    print(r)
+}
+
+// A call in the handled body runs the clause; the clause resumes.
+fn work() / Op { op(1) }
+
+fn call_each_path(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Op { fn op(n) { v.clear(); resume(()) } } in {
+        work()
+        r = &w[0]
+    }
+    print(r)
+}
+
+// One path of the clause ends with no `resume`: the abort lands after the
+// `handle` with the old `r`.
+fn some_path(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Op { fn op(n) { v.clear(); if n > 0 { resume(()) } } } in {
+        op(0)
+        r = &w[0]
+    }
+    print(r) //~ W0301
+}
+
+fn call_some_path(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Op { fn op(n) { v.clear(); if n > 0 { resume(()) } } } in {
+        work()
+        r = &w[0]
+    }
+    print(r) //~ W0301
+}
+
+fn main() {
+    captured_after()
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    each_path(&v, &w)
+}

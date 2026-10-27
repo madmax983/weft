@@ -1,0 +1,13 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/f01_body_linear_unwound_by_landing_c.wf
+linear struct Tok { id: u64 }
+    on abort = drop_tok
+fn drop_tok(t: Tok) { let Tok(i) = t }
+fn eat(t: Tok) { let Tok(i) = t; print(i) }
+effect Op { fn op(n: u64) }
+fn main() {
+    handle Op { fn op(n) { if n > 5 { resume(()) } else { resume(()) } } } in {
+        let t = Tok { id: 1 }
+        op(1)
+        eat(t)
+    }
+}

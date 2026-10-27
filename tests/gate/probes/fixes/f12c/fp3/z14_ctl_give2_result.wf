@@ -1,0 +1,21 @@
+// Third review of the ABC preview, false positive FP3: the result of a callee that runs code of a caller (n1/z14_ctl_give2_result.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct KM { m: fn() -> fn() }
+struct K { f: fn() }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn go2(m: fn() -> fn()) { go(m) }
+fn go3(m: fn() -> fn()) { go2(m) }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn gok(km: KM) { let m = km.m; let g = m(); g() }
+fn gor(km: &KM) { let m = km.m; let g = m(); g() }
+fn give2(m: fn() -> fn()) -> fn() { give(m) }
+fn main() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let g = give2(|| || print(w.entities.len()))
+    g()
+    print(first.hp)
+}

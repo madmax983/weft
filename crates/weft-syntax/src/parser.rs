@@ -980,7 +980,10 @@ impl Parser {
                 T::DotDot => {
                     self.bump();
                     steps.push(PlaceStep::Wildcard);
-                    if matches!(self.kind(), T::Dot | T::LBracket | T::DotDot) {
+                    // A step token at the start of the next line starts the
+                    // next statement (`soft_break`): it is no step here.
+                    if !self.soft_break() && matches!(self.kind(), T::Dot | T::LBracket | T::DotDot)
+                    {
                         return Err(ParseError::new(
                             "the wildcard step `..` must be the last step",
                             self.peek().span,

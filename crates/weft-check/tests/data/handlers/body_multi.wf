@@ -1,0 +1,19 @@
+// The handled body can resume more than once (a `multi` operation of a
+// caller): a `once` value of a clause across `resume` is W0503
+// (`partb/S3/p/eff3.wf`).
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+fn chooser() -> bool / Choice { choose() }
+
+fn body_call() / Choice {
+    handle Log { fn log(m) { let t = mint(); resume(()); spend(t) } } in { //~ W0503
+        log("x")
+        let b = chooser()
+    }
+}
+
+fn main() {}

@@ -1,0 +1,177 @@
+// F13 (stored values): a copy of crates/weft-check/tests/data/stored/rc.wf.
+// (A copy of tests/programs/116_rc_stores.wf with no clause, and stored closures.)
+// A reference that a function puts into an `rc` object stays there after the
+// function returns: each function with a handle can read it, as a global. So it
+// must not point into a local, a by-value parameter or a temporary of the
+// function (W0204), as for a reference behind a reference parameter (ADR 0003).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) {
+    c.refs.push(x)
+}
+fn put(rs: &Vec<&u64>, x: &u64) / mut(rs) { rs.push(x) }
+
+fn fill(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    stash(c, &v[0])   //~ W0204
+}
+fn fill_direct(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.refs.push(&v[0])   //~ W0204
+}
+fn fill_through_ref(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    put(&c.refs, &v[0])   //~ W0204
+}
+fn fill_param(c: Rc<Cache>, x: u64) / mut(Cache) {
+    c.refs.push(&x)   //~ W0204
+}
+// A function that passes a reference on to `stash` puts it there too.
+fn pass_on(c: Rc<Cache>, x: &u64) / mut(Cache) {
+    stash(c, x)
+}
+fn fill_two_levels(c: Rc<Cache>) / mut(Cache) {
+    let n: u64 = 3
+    pass_on(c, &n)   //~ W0204
+}
+
+// A closure points into what it captures, so a closure in an `rc` object or
+// behind a reference parameter must not capture a local either.
+struct Calls { fs: Vec<fn()>, refs: Vec<&u64>, data: Vec<u64> }
+struct Data { xs: Vec<u64> }
+struct Hooks { fs: Vec<fn()> }
+fn apply(f: fn(&u64), x: &u64) { f(x) }
+fn stash_fn(c: Rc<Calls>, f: fn()) / mut(Calls) { c.fs.push(f) }
+fn store_closure(c: Rc<Calls>) / mut(Calls) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.fs.push(|| print(v.len()))   //~ W0204
+}
+fn store_closure_ref(c: Rc<Calls>) / mut(Calls) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let r = &v[0]
+    c.fs.push(|| print(r + 0))   //~ W0204
+}
+fn store_closure_callee(c: Rc<Calls>) / mut(Calls) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    stash_fn(c, || print(v.len()))   //~ W0204
+}
+fn store_closure_behind(h: &Hooks) / mut(h) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    h.fs.push(|| print(v.len()))   //~ W0204
+}
+// A closure puts its reference parameter there: each call gives
+// the places.
+fn closure_param(c: Rc<Calls>) / mut(Calls) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let put = |x: &u64| c.refs.push(x)
+    put(&v[0])   //~ W0204
+}
+fn closure_param_hof(c: Rc<Calls>) / mut(Calls) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    apply(|r: &u64| c.refs.push(r), &v[0])   //~ W0204
+}
+// A reference behind a local `Rc` handle of another `rc` type: the object can
+// go away with the handle.
+fn local_handle(c: Rc<Calls>) / mut(Calls, Data) {
+    let d = Rc.new(Data { xs: Vec.new() })
+    d.xs.push(1)
+    c.refs.push(&d.xs[0])   //~ W0204
+}
+// A closure refers to the variable that it captures: the handle `d` goes out
+// of scope at the return.
+fn store_handle(c: Rc<Calls>, d: Rc<Data>) / mut(Calls, Data) {
+    d.xs.push(1)
+    c.fs.push(|| print(d.xs.len()))   //~ W0204
+}
+
+// Clean: a reference into the group itself.
+fn fill_self(c: Rc<Cache>) / mut(Cache) {
+    c.data.push(7)
+    c.refs.push(&c.data[0])
+}
+// Clean: a callee that changes the object, but keeps no reference.
+fn count(c: Rc<Cache>, x: &u64) / mut(Cache) { c.data.push(x + 0) }
+fn fill_value(c: Rc<Cache>) / mut(Cache) {
+    let n: u64 = 3
+    count(c, &n)
+}
+// Clean: a closure that captures a reference parameter, and a closure
+// parameter that gets a place of the object itself.
+fn store_param_ref(c: Rc<Calls>, x: &u64) / mut(Calls) {
+    c.fs.push(|| print(x + 0))
+}
+fn closure_param_group(c: Rc<Calls>) / mut(Calls) {
+    c.data.push(2)
+    let put = |x: &u64| c.refs.push(x)
+    put(&c.data[0])
+}
+fn store_closure_value(c: Rc<Calls>) / mut(Calls) {
+    let n: u64 = 3
+    c.fs.push(|| print(n))
+}
+
+// A closure in an `rc` object runs at a later call that gets a handle.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Hook { f: fn() }
+fn set_hook(h: Rc<Hook>, f: fn()) / mut(Hook) { h.f = f }
+fn set_own(h: Rc<Hook>, w: &World) / mut(Hook, w.entities) { h.f = || w.entities.clear() }
+fn run_hook(h: Rc<Hook>) {
+    let g = h.f
+    g()
+}
+fn hook_arg(world: &World) / mut(world.entities, Hook) {
+    let h = Rc.new(Hook { f: || print(0) })
+    set_hook(h.clone(), || world.entities.clear())
+    let first = &world.entities[0]
+    run_hook(h.clone())
+    print(first.hp)   //~ W0301
+}
+fn hook_own(world: &World) / mut(world.entities, Hook) {
+    let h = Rc.new(Hook { f: || print(0) })
+    set_own(h.clone(), world)
+    let first = &world.entities[0]
+    run_hook(h.clone())
+    print(first.hp)   //~ W0301
+}
+fn hook_direct(world: &World, h: Rc<Hook>) / mut(world.entities, Hook) {
+    h.f = || world.entities.clear()
+    let first = &world.entities[0]
+    run_hook(h)
+    print(first.hp)   //~ W0301
+}
+fn hook_harmless(world: &World) / mut(Hook) {
+    let h = Rc.new(Hook { f: || print(0) })
+    set_hook(h.clone(), || print(4))
+    let first = &world.entities[0]
+    run_hook(h.clone())
+    print(first.hp)
+}
+
+// The clean cases run. The `rc` object keeps what a callee put there: after
+// `fill_value` changes `c.data`, the reference in `c.refs` that `fill_self`
+// put there points into the old buffer, so a use of `c.refs` is W0301, as for
+// a `Vec<&u64>` local (stricter than the old pipeline, which accepts it).
+fn main() {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    fill_self(c.clone())
+    fill_value(c.clone())
+    print(c.refs.len(), c.data.len())   //~ W0301
+    let k = Rc.new(Calls { fs: Vec.new(), refs: Vec.new(), data: Vec.new() })
+    closure_param_group(k.clone())
+    store_closure_value(k.clone())
+    let f = k.fs[0]
+    f()
+    print(k.refs.len())   //~ W0301
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    hook_harmless(&w)
+}

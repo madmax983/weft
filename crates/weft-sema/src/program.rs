@@ -105,6 +105,10 @@ pub struct OpDef {
     pub ret: Ty,
     /// The operation is `multi`.
     pub multi: bool,
+    /// The `in` place of each reference parameter that states one. The old
+    /// lowering does not use them; the `ir` pipeline checks a perform
+    /// through a local handler against them (R3RT7).
+    pub places: Vec<Option<SigPlace>>,
     /// The location of the operation.
     pub span: Span,
 }
@@ -731,6 +735,9 @@ pub struct Collector {
     /// Diagnostics.
     pub diags: Vec<Diagnostic>,
     pending_fns: Vec<(FnId, Option<AdtId>, Vec<String>)>,
+    /// The operations whose `in` places resolve after the signatures: the
+    /// effect, the index of the operation, the module and the parameters.
+    pending_ops: Vec<(EffectId, usize, ModId, Vec<ast::Param>)>,
     marked: usize,
     /// Each struct with `on abort`, and the written function name.
     on_aborts: Vec<(AdtId, ast::Ident)>,
@@ -743,6 +750,7 @@ impl Collector {
             prog: Program::default(),
             diags: Vec::new(),
             pending_fns: Vec::new(),
+            pending_ops: Vec::new(),
             marked: 0,
             on_aborts: Vec::new(),
         };
@@ -775,6 +783,7 @@ impl Collector {
         }
         c.check_sizes();
         c.resolve_signatures();
+        c.resolve_op_places();
         c.check_on_aborts();
         c.check_op_names();
         // A duplicate definition (W0107) keeps the first effect, as the search does.
@@ -1229,12 +1238,14 @@ impl Collector {
                             .ret
                             .as_ref()
                             .map_or(Ty::Unit, |t| self.resolve_ty(t, m, &[], None));
+                        self.pending_ops.push((id, ops.len(), m, o.params.clone()));
                         ops.push(OpDef {
                             name: o.name.name.clone(),
                             params,
                             param_names: o.params.iter().map(|p| p.name.name.clone()).collect(),
                             ret,
                             multi: o.is_multi,
+                            places: Vec::new(),
                             span: o.name.span,
                         });
                     }
@@ -1319,6 +1330,56 @@ impl Collector {
             span: it.span,
         });
         FnId(self.prog.fns.len() - 1)
+    }
+
+    /// Resolves the `in` places of the parameters of each operation. A place
+    /// that does not resolve is no place, with no diagnostic: the old
+    /// lowering does not use them (R3RT7, plan stage F14).
+    fn resolve_op_places(&mut self) {
+        let pending = std::mem::take(&mut self.pending_ops);
+        for (e, oi, m, ps) in pending {
+            let Some(op) = self.prog.effects[e].ops.get(oi) else {
+                continue;
+            };
+            let params: Vec<ParamSig> = op
+                .params
+                .iter()
+                .zip(&ps)
+                .map(|(t, p)| ParamSig {
+                    name: p.name.name.clone(),
+                    ty: t.clone(),
+                    place: None,
+                    shared: false,
+                    uniq: false,
+                    span: p.span,
+                })
+                .collect();
+            let names: BTreeMap<String, usize> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (p.name.clone(), i))
+                .collect();
+            let before = self.diags.len();
+            let mut places = vec![None; params.len()];
+            for (i, p) in ps.iter().enumerate() {
+                if let Some(TypeExpr {
+                    kind:
+                        TypeExprKind::Ref {
+                            place: Some(pl), ..
+                        },
+                    ..
+                }) = &p.ty
+                {
+                    if let Some(slot) = places.get_mut(i) {
+                        *slot = self.resolve_sig_place(pl, &params, &names, m);
+                    }
+                }
+            }
+            self.diags.truncate(before);
+            if let Some(op) = self.prog.effects[e].ops.get_mut(oi) {
+                op.places = places;
+            }
+        }
     }
 
     fn resolve_signatures(&mut self) {

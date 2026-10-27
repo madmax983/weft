@@ -1,0 +1,9 @@
+// F15 self-attack (a clause that resumes on each path can still abort past its handler): scratchpad f15/att/v/c05_clause_fails_some_path.wf
+linear struct Tok { id: u64 }
+effect Ask { fn ask(n: u64) -> u64 }
+fn main() / fail {
+    let t = Tok { id: 1 }
+    let r = handle Ask { fn ask(n) { if n > 0 { fail("x") }; resume(n) } } in ask(1)
+    let Tok(i) = t
+    print(r + i)
+}

@@ -671,7 +671,9 @@ const CLOSURE_COPY: [&str; 14] = [
 /// IR moves `t` into the inner closure (the parameter of the outer closure is
 /// not one of its captures). The IR is right: the oracle runs the inner
 /// closure with the moved value. Variants of hole H3 of the review of the
-/// ABC preview (F12-fix). A new program in this list needs a review.
+/// ABC preview (F12-fix). A new program in this list needs a review. The
+/// filter names the parameter `t`, so a second difference in these files
+/// stays visible (second review of the ABC preview, 7.1).
 const NESTED_PARAM_MOVE: [&str; 2] = [
     "tests/gate/probes/fixes/f12/h3/d11_ret_from_closure_maker_drop.wf",
     "tests/gate/probes/fixes/f12/h3/hl_e_localmaker.wf",
@@ -704,7 +706,7 @@ fn the_by_move_captures_of_the_ir_are_the_by_value_captures() {
         .filter(|l| {
             !NESTED_PARAM_MOVE
                 .iter()
-                .any(|p| l.starts_with(&format!("{p}:")) && l.contains("is in by_value"))
+                .any(|p| l.starts_with(&format!("{p}:")) && l.contains("`t` is in by_value"))
         })
         .cloned()
         .collect();

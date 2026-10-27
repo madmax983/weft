@@ -1,0 +1,138 @@
+// A `once` closure that a callee copies out of a referent that an argument
+// holds inside an `Option`, a tuple or a `Vec` (old holes b14-agg of the third
+// review of the ABC preview): the copy moves the owners of the referent, so a
+// second copy is W0302. The clean twins run the closure one time.
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn run(f: fn()) { f() }
+struct H { fs: Vec<fn()> }
+struct K { f: fn() }
+// b14r/g04
+fn ro_g04(o: Option<&Vec<fn()>>) { match o { Some(v) => { let g = v[0]; g() }, None => {} } }
+fn g04() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    ro_g04(Some(&fs))
+    ro_g04(Some(&fs)) //~ W0302
+}
+// b14r/g06
+fn rt_g06(t: (&Vec<fn()>, u64)) { let (v, n) = t; let g = v[0]; g() }
+fn g06() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    rt_g06((&fs, 1))
+    rt_g06((&fs, 2)) //~ W0302
+}
+// b14r/g17
+fn g17() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let t = (&fs, 1)
+    let k = |y: (&Vec<fn()>, u64)| { let (v, n) = y; let g = v[0]; g() }
+    k(t)
+    k(t) //~ W0301
+}
+// b14s/h01
+fn rv_h01(vs: Vec<&Vec<fn()>>) { let g = vs[0][0]; g() }
+fn h01() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let v1 = Vec.new()
+    v1.push(&fs)
+    rv_h01(v1)
+    let v2 = Vec.new()
+    v2.push(&fs) //~ W0302
+    rv_h01(v2)
+}
+// b14s/h03
+fn rt_h03(t: (&Vec<fn()>, &Vec<fn()>)) { let (a, c) = t; let g = a[0]; g() }
+fn h03() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let es = Vec.new()
+    rt_h03((&fs, &es))
+    rt_h03((&fs, &es)) //~ W0302
+}
+// b14s/h04
+fn ro_h04(o: Option<(&Vec<fn()>, u64)>) { match o { Some(t) => { let (v, n) = t; let g = v[0]; g() }, None => {} } }
+fn h04() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    ro_h04(Some((&fs, 1)))
+    ro_h04(Some((&fs, 1))) //~ W0302
+}
+// b14s/h08
+fn ro_h08(o: Option<&Vec<fn()>>) { match o { Some(v) => { let g = v[0]; g() }, None => {} } }
+fn h08() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    ro_h08(Some(&fs))
+    let g = fs[0] //~ W0302
+    g()
+}
+// b14s/h09
+fn ro_h09(o: Option<&Vec<fn()>>) { match o { Some(v) => run(v[0]), None => {} } }
+fn h09() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let i = 0
+    while i < 2 { ro_h09(Some(&fs)); i += 1 } //~ W0302
+}
+// b14r/t04
+fn ro_t04(o: Option<&Vec<fn()>>) { match o { Some(v) => { let g = v[0]; g() }, None => {} } }
+fn t04() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| print(b.items.len()))
+    ro_t04(Some(&fs))
+    ro_t04(Some(&fs))
+}
+// b14r/t06
+fn rt_t06(t: (&Vec<fn()>, u64)) { let (v, n) = t; let g = v[0]; g() }
+fn t06() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| print(b.items.len()))
+    rt_t06((&fs, 1))
+    rt_t06((&fs, 2))
+}
+// b14s/s01
+fn rv_s01(vs: Vec<&Vec<fn()>>) { let g = vs[0][0]; g() }
+fn s01() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| print(b.items.len()))
+    let v1 = Vec.new()
+    v1.push(&fs)
+    rv_s01(v1)
+    let v2 = Vec.new()
+    v2.push(&fs)
+    rv_s01(v2)
+}
+// b14s/s04
+fn ro_s04(o: Option<(&Vec<fn()>, u64)>) { match o { Some(t) => { let (v, n) = t; let g = v[0]; g() }, None => {} } }
+fn s04() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| print(b.items.len()))
+    ro_s04(Some((&fs, 1)))
+    ro_s04(Some((&fs, 1)))
+}
+// b14s/s09
+fn ro_s09(o: Option<&Vec<fn()>>) { match o { Some(v) => run(v[0]), None => {} } }
+fn s09() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| print(b.items.len()))
+    let i = 0
+    while i < 2 { ro_s09(Some(&fs)); i += 1 }
+}

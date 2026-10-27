@@ -1,0 +1,16 @@
+// V035 v7: the clause keeps its parameter in a local of the site; the site
+// then changes the place.
+effect Peek { fn peek(x: &u64) }
+
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(5)
+    let keep = &w[0]
+    handle Peek { fn peek(x) { keep = x; resume(()) } } in {
+        peek(&v[0])
+    }
+    v.clear()
+    print(keep) //~ W0301
+}

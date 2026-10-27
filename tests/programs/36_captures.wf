@@ -18,19 +18,19 @@ fn ret_vec_closure(v: Vec<u64>) -> fn() -> usize { || v.len() }   //~ W0204
 fn block_vec() {
     let f = {
         let v: Vec<u64> = Vec.new()
-        || v.len()   //~ W0301
+        || v.len()   //~ old: W0301
     }
-    print(f())
+    print(f())   //~ ir: W0301
 }
 
 // A closure that moves a capture takes it when it runs. Until then the
 // variable holds it, so the closure cannot leave the scope of the variable.
-fn ret_moving_closure(b: Bag) -> fn() -> usize { || take_bag(b) }   //~ W0204
+fn ret_moving_closure(b: Bag) -> fn() -> usize { || take_bag(b) }   //~ old: W0204
 fn block_moving() {
     let f = {
         let b = Bag { items: Vec.new() }
         b.items.push(1)
-        || take_bag(b)   //~ W0301
+        || take_bag(b)   //~ old: W0301
     }
     print(f())
 }

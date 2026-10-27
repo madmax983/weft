@@ -1,0 +1,24 @@
+// Review of stage F13, class K3-Made: a closure that a closure makes leaves the body and sees the late value of a kept variable (s3b/m02_made_into_slot_then_rebind_b.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Holder { f: fn() }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn st(h: &Holder, a: &World, b: &World) / mut(h.f) {
+    let r = &a.entities[0]
+    let m = || || print(r.hp)
+    h.f = m()
+    let w = mkw(3)
+    r = &w.entities[0]
+}
+fn main() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let h = Holder { f: || print(0) }
+    st(&h, &a, &b)
+    let g = h.f
+    g()
+}

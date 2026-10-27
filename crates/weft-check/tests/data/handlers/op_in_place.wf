@@ -1,0 +1,32 @@
+// R3RT7: a parameter of an operation with an `in` place. As for a function,
+// an argument inside the place is no alias of the argument of the root of
+// the place (no W0312), and an argument outside the place is W0203.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, other: Vec<Entity> }
+effect Hit { fn hit_op(w: &World, a: &Entity in w.entities[]) }
+effect Hit2 { fn hit2(w: &World, a: &Entity) }
+
+fn op_ok(world: &World) / mut(world.entities[]) {
+    handle Hit { fn hit_op(w, a) { a.hp -= 1; print(w.other.len()); resume(()) } } in {
+        hit_op(world, &world.entities[0])
+    }
+}
+
+fn op_outside(world: &World) / mut(world.other[]) {
+    handle Hit { fn hit_op(w, a) { a.hp -= 1; resume(()) } } in {
+        hit_op(world, &world.other[0]) //~ W0203
+    }
+}
+
+// With no `in` place, the aliased arguments are W0312.
+fn op_aliased(world: &World) / mut(world.entities[]) {
+    handle Hit2 { fn hit2(w, a) { a.hp -= 1; print(w.other.len()); resume(()) } } in {
+        hit2(world, &world.entities[0]) //~ W0312
+    }
+}
+
+fn main() {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    op_ok(&w)
+}

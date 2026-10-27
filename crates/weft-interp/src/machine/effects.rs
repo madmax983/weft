@@ -575,8 +575,9 @@ impl super::Machine<'_, '_> {
         let Some(pad) = pad else {
             return Ok(Some(cf));
         };
-        if cf.uid != 0 && self.facts.is_some() && self.holds_live_linear(&cf) {
-            if let Some(Err(m)) = self.facts.as_mut().map(|f| f.check_abort(cf.uid)) {
+        if cf.uid != 0 && self.facts.is_some() {
+            let live = self.holds_live_linear(&cf);
+            if let Some(Err(m)) = self.facts.as_mut().map(|f| f.check_abort(cf.uid, live)) {
                 return Err(self.fault(m));
             }
         }

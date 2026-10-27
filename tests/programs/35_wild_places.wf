@@ -16,8 +16,8 @@ fn via_param(f: fn(&World) -> &Entity, world: &World) / mut(world.entities) {
 fn via_param_option(f: fn(&World) -> Option<&Entity>, world: &World) / mut(world.entities) {
     let o = f(world)
     world.entities.clear()
-    match o {   //~ W0301
-        Some(e) => print(e.hp),
+    match o {   //~ old: W0301
+        Some(e) => print(e.hp),   //~ ir: W0301
         None => {},
     }
 }

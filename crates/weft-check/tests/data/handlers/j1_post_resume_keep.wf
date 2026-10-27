@@ -1,0 +1,16 @@
+// J1: the clause changes `v` after `resume`. The handled body keeps a
+// reference into `v` in a local of the site after the operation.
+effect Tick { fn tick() }
+
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() { resume(()); v.clear() } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1) //~ W0301
+}

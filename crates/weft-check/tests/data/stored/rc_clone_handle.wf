@@ -1,0 +1,17 @@
+// A copy of a handle of the object that gets the store (`let d = c.clone()`)
+// is a handle of the same object: the reference goes away with the object.
+// The facts cannot tell a copy from a handle of another object, so the old
+// pipeline checks the program (it accepts it).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn fill(c: Rc<Cache>) / mut(Cache) {
+    let d = c.clone()
+    d.data.push(1)
+    c.refs.push(&d.data[0])
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    fill(c.clone())
+    let r = c.refs[0]
+    print(r + 0)
+}

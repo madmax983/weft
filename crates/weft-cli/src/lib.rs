@@ -44,8 +44,8 @@ note tells why. --facts=both makes both fact sets: the output is that of the
 old pipeline; `check` writes a note for each diagnostic that only one
 pipeline gives, `facts` also prints the facts of the ir pipeline, and `agree`
 compares both. FACTS can also have --groups=LETTERS (for example --groups=A):
-the construct groups that are on (A to F, in order). The groups A and B are
-on by default.
+the construct groups that are on (A to F, in order). The groups A, B and C
+are on by default.
 
 RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--fact-oracle]
 [--ir-trace] [--engine=ast|ir].
@@ -966,8 +966,8 @@ fn trace_notes(o: &weft_interp::RunOutcome) -> String {
             None => {
                 let _ = writeln!(
                     s,
-                    "note: --fact-oracle: {} frame(s), {} step(s), {} check(s), {} place(s) with no name",
-                    r.frames, r.steps, r.checks, r.unnamed
+                    "note: --fact-oracle: {} frame(s), {} step(s), {} check(s), {} place(s) with no name, {} summary check(s), {} summary access(es) not checked, {} frame op(s) not checked, {} abort check(s) not made",
+                    r.frames, r.steps, r.checks, r.unnamed, r.summary, r.summary_unnamed, r.summary_skipped, r.abort_skipped
                 );
             }
         }

@@ -1,0 +1,45 @@
+// Review of stage F13, a false positive that F13-fix removes (s1/s1_08_readback_vec_last_c.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+struct Cw { f: fn(&World) }
+struct Slot { o: Option<fn()> }
+struct Fs { fs: Vec<fn()> }
+fn noop() { print(0) }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn run_ref(cb: &Cb) {
+    let g = cb.f
+    g()
+}
+fn run_slot(s: &Slot) {
+    let o = s.o
+    match o {
+        Some(f) => f(),
+        None => {}
+    }
+}
+fn run_all(fs: &Vec<fn()>) {
+    let i = 0
+    while i < fs.len() {
+        let f = fs[i]
+        f()
+        i += 1
+    }
+}
+fn bad(world: &World, fs: &Vec<fn()>) / mut(world.entities, fs) {
+    fs.push(noop)
+    fs.push(|| print(world.entities.len()))
+    let first = &world.entities[0]
+    let f = fs[fs.len() - 1]
+    f()
+    print(first.hp)
+}
+fn main() {
+    let w = mkw(1)
+    let fs: Vec<fn()> = Vec.new()
+    bad(&w, &fs)
+}

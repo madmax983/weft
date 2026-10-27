@@ -1,0 +1,12 @@
+// Third review of the ABC preview, false positive W0502: a once maker that a callee runs one time (fpx2/o03_once_maker.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn go2(m: fn() -> fn()) { go(m) }
+fn main() { let b = mkbuf(); let k = |m: fn() -> fn()| { let g = m(); g() }; k(|| || eat(b)) }

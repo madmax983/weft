@@ -1,0 +1,9 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b19_post_reads_callee_local_c.wf
+effect Peek { fn peek(e: &u64) }
+fn deep() / Peek {
+    let x = 5
+    peek(&x)
+}
+fn main() {
+    handle Peek { fn peek(e) { print(e); resume(()) } } in deep()
+}

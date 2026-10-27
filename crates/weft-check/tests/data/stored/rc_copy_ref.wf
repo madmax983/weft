@@ -1,0 +1,21 @@
+// A copy of a reference that an `rc` object holds goes into the object
+// again (false positive FP-AB-RC of the review of stage F13). A `&u64` in
+// `Cache.refs` can point into `Cache.data`, not into `Cache.refs`: the push
+// into `Cache.refs` changes no place that the copy points into.
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn read0(c: Rc<Cache>) {
+    let r = c.refs[0]
+    print(r + 0)
+}
+fn copy_in_place(c: Rc<Cache>) / mut(Cache) {
+    c.data.push(1)
+    c.refs.push(&c.data[0])
+    c.refs.push(c.refs[0])
+    read0(c)
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    copy_in_place(c.clone())
+    read0(c)
+}

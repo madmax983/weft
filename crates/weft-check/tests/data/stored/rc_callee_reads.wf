@@ -1,0 +1,47 @@
+// A callee that reads the references in an `rc` object after a change of
+// their referents (class AB-RC3 of the review of stage F13): the run node
+// uses the variables of the heap slot, as a read in the body does.
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn fill_self(c: Rc<Cache>) / mut(Cache) {
+    c.data.push(7)
+    c.refs.push(&c.data[0])
+}
+fn read0(c: Rc<Cache>) {
+    let r = c.refs[0]
+    print(r + 0)
+}
+fn grow(c: Rc<Cache>) / mut(Cache) {
+    c.data.push(1)
+}
+fn change_by_callee() / mut(Cache) {
+    let c = newc()
+    fill_self(c.clone())
+    grow(c.clone())
+    read0(c.clone())   //~ W0301
+}
+fn change_in_body() / mut(Cache) {
+    let c = newc()
+    fill_self(c.clone())
+    c.data.clear()
+    read0(c.clone())   //~ W0301
+}
+fn read_two_levels(c: Rc<Cache>) {
+    read0(c)
+}
+fn change_then_two_levels() / mut(Cache) {
+    let c = newc()
+    fill_self(c.clone())
+    grow(c.clone())
+    read_two_levels(c)   //~ W0301
+}
+// A read before the change is no use of a dangling reference.
+fn read_first() / mut(Cache) {
+    let c = newc()
+    fill_self(c.clone())
+    read0(c.clone())
+    grow(c.clone())
+}
+fn main() / mut(Cache) {
+    read_first()
+}

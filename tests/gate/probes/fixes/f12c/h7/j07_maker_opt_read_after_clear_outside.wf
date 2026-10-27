@@ -1,0 +1,19 @@
+// Third review of the ABC preview, H7 shape that failed the fact oracle (h7/j07_maker_opt_read_after_clear_outside.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mkw2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 2 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    let mk = || || { o = Some(first) }
+    let g = mk()
+    g()
+    let r = match o { Some(e) => e, None => &w.entities[0] }
+    w.entities.clear()
+    print(r.hp)
+}

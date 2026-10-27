@@ -115,7 +115,7 @@ pub fn op_of_caller(
 /// reference parameter, the pointees of the references of a by-value
 /// parameter, and the pointees of the references behind a reference
 /// parameter.
-fn param_places(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>, AlphaError> {
+pub(super) fn param_places(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>, AlphaError> {
     let p = cx.p;
     let b = p
         .bodies
@@ -201,6 +201,9 @@ pub fn code_of_caller(
         s.ret.places.push(IPlace::wild(IRoot::Caller));
     }
     s.aborts.insert(Abort::Raises);
+    // The code can give a place that it gets to an operation (plan stage
+    // F15).
+    s.gives_frame = true;
     // A stated row: the code performs its effects (with no row the effects
     // of the value pass through, ADR 0005).
     for e in row.unwrap_or(&[]) {

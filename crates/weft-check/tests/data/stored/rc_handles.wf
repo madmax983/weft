@@ -1,0 +1,65 @@
+// The W0204 store check with `rc` handles (class AB-RC1 and AB-RC2 of the
+// review of stage F13). A reference through a handle of the object that
+// gets it goes away with the object. A reference through another handle of
+// the same `rc` type can point into another object: that object can go away
+// at the return, and the reference stays in the object that the caller keeps.
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+struct Holder { h: Rc<Cache> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) { c.refs.push(x) }
+
+// The handle of the store itself: the object keeps its own data.
+fn fill_self(c: Rc<Cache>) / mut(Cache) {
+    c.data.push(7)
+    c.refs.push(&c.data[0])
+}
+// AB-RC1: a whole local handle of a new object.
+fn local_object(c: Rc<Cache>) / mut(Cache) {
+    let d = newc()
+    d.data.push(1)
+    c.refs.push(&d.data[0])   //~ W0204
+}
+// AB-RC1: the payload of an `Option`.
+fn option_payload(c: Rc<Cache>) / mut(Cache) {
+    let o = Some(newc())
+    match o {
+        Some(d) => {
+            d.data.push(1)
+            c.refs.push(&d.data[0])   //~ W0204
+        },
+        None => {}
+    }
+}
+// AB-RC1: a second by-value handle parameter can be the only handle of its
+// object (`other(c, newc())`).
+fn other(c: Rc<Cache>, d: Rc<Cache>) / mut(Cache) {
+    d.data.push(1)
+    c.refs.push(&d.data[0])   //~ W0204
+}
+// AB-RC2: a handle in a local `Vec`, a struct, a tuple, or a by-value `Vec`
+// parameter is no handle of the object (as the old pipeline).
+fn vec_of_handles(c: Rc<Cache>) / mut(Cache) {
+    let hs: Vec<Rc<Cache>> = Vec.new()
+    hs.push(newc())
+    hs[0].data.push(1)
+    c.refs.push(&hs[0].data[0])   //~ W0204
+}
+fn struct_field(c: Rc<Cache>) / mut(Cache) {
+    let s = Holder { h: newc() }
+    s.h.data.push(1)
+    c.refs.push(&s.h.data[0])   //~ W0204
+}
+fn tuple_part(c: Rc<Cache>) / mut(Cache) {
+    let t = (newc(), 1)
+    t.0.data.push(1)
+    c.refs.push(&t.0.data[0])   //~ W0204
+}
+fn vec_param(c: Rc<Cache>, hs: Vec<Rc<Cache>>) / mut(Cache) {
+    hs[0].data.push(1)
+    stash(c, &hs[0].data[0])   //~ W0204 W0312
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    fill_self(c.clone())
+    print(c.refs.len())
+}

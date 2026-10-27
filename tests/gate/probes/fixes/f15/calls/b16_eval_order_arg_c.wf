@@ -1,0 +1,12 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b16_eval_order_arg_c.wf
+effect Bump { fn bump(v: &Vec<u64>) }
+fn bump_it(v: &Vec<u64>) -> u64 / Bump { bump(v); 0 }
+fn use_two(r: &u64, n: u64) { print(r) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); x.clear(); x.push(5); resume(()) } } in {
+        let n = bump_it(&v)
+        use_two(&v[0], n)
+    }
+}

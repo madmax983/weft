@@ -249,3 +249,187 @@ variant.
   on some paths only (claim F12-H5).
 - `fixes/f12/h6/*.wf`: hole H6, linear closures that a loop makes and pushes
   into a `Vec` (claim F12-H6).
+
+## Programs that the second F12 fixes added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a variant of the second review of the ABC
+preview (scratchpad `f12/review2.md`, section 4), with one line of header that
+names the variant.
+
+- `fixes/f12b/n1/*.wf`: hole N1, the result of a closure maker, called or given
+  back in a second closure or in a callee (claim F12R2-N1).
+- `fixes/f12b/h5b/*.wf`: hole H5b, a callee gives a linear closure to a second
+  callee that runs it on some paths only (claim F12R2-H5b).
+- `fixes/f12b/h3b/*.wf`: hole H3b, a callee drops or gives back the linear result
+  of a closure maker of its caller (claim F12R2-H3b).
+- `fixes/f12b/oldholes/*.wf`: old holes b14-run (review 2, 4.5): a callee or a
+  closure runs a `once` closure that it copies out of a referent, two times; the
+  default pipeline gives them to the old pipeline (ledger `open-old`, claim
+  F12R2-OH2).
+
+## Programs that stage F13 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header.
+
+- `fixes/f13/stored_*.wf`: copies of `crates/weft-check/tests/data/stored/*.wf`:
+  function values behind a reference, in a `Vec`, a `Box`, an `Option` and an
+  `rc` object, and the W0204 store forms (claims F13-S1, F13-S2, F13-S3).
+- `fixes/f13/ol1a_code_runs_stored.wf`, `ol4a_read_back.wf`: the repros of OL-1a
+  (with no task) and OL-4a that stage G7 did not have (claims OL-1a, OL-4a).
+- `fixes/f13/rc_closure_run.wf`: a closure in an `rc` object that a callee runs
+  (ABC accepted it before F13; claim F13-S3).
+- `fixes/f13/kept_rebind_ret.wf`: a returned closure keeps a variable that gets a
+  reference into a local later (class K3 of stage F12; claim F13-K3).
+
+## Programs that the third F12 fixes added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the third review of the ABC
+preview (scratchpad `f12/review3.md`, `f12/variants3/`), with one line of header
+that names the class and the review file.
+
+- `fixes/f12c/h7/*.wf`: hole H7, a closure that a maker gives back stores a
+  reference into a variable that it captures (claim F12R3-H7), the H7 shapes that
+  ABC rejected only through the wrong fact of FP4, and their clean twins (claim
+  F12R3-FP4; they failed the fact oracle).
+- `fixes/f12c/fp4/*.wf`: false positive FP4, a wrong capture mapping of a made
+  closure (claim F12R3-FP4).
+- `fixes/f12c/fp3/*.wf`: false positive FP3, the result of a callee that runs code
+  of a caller (claim F12R3-FP3).
+- `fixes/f12c/w0204/*.wf`: the W0204 class at a unit tail call (claim
+  F12R3-W0204), and made closures that read a reference that the maker took
+  (`c05*`, claim F12R3-N1c; two of them are F12-fix3 variants).
+- `fixes/f12c/b14agg/*.wf`: old holes b14-agg, a `once` closure copied out through
+  a reference inside an aggregate argument, and their clean twins (claim
+  F12R3-OH3, ledger `open-old`).
+- `fixes/f12c/n1d/*.wf`: old holes N1-aggregate that ABC closes (claim
+  F12R3-OH4, ledger `open-old`).
+- `fixes/f12c/h6/*.wf`: a callee stores a linear closure into a place of its caller
+  (`variants2/ah6/h6_08` of the rerun after F13, and two F12-fix3 variants; claim
+  F12R3-H6).
+- `fixes/f12c/w0502/*.wf`: the W0502 class, a `once` maker that a callee runs one
+  time (claim F12R3-W0502).
+- `fixes/f12c/n2/tw.wf`: a map N2 row (by design; ledger `new-fp`, `stricter`).
+
+## Programs that the F13 fixes added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the review of stage F13 part 1
+(scratchpad `f13/review.md`, `f13/variants/`), with one line of header that
+names the class and the review file.
+
+- `fixes/f13b/ab_rc2/*.wf`: class AB-RC2, a reference through a handle in a local
+  `Vec`, struct or tuple goes into an `rc` object of the same type (claim
+  F13B-AB-RC2), and clean twins.
+- `fixes/f13b/ab_rc1/*.wf`: class AB-RC1, a reference through a whole local handle
+  of another object (claim F13B-AB-RC1), clean twins, a copy of the handle of the
+  store (`k01`, the old pipeline checks it), and the old hole `a13` (ledger
+  `open-old`).
+- `fixes/f13b/ab_rc3/*.wf`: class AB-RC3, a callee reads the references of an `rc`
+  object after a change of the group (claim F13B-AB-RC3), clean twins, and the old
+  hole `e17` (ledger `open-old`).
+- `fixes/f13b/hs1/*.wf`: class H-S1, a made closure (or a closure that captures a
+  reference parameter) in a heap slot of a parameter runs or is read back after a
+  change of its referent (claim F13B-HS1; old holes: ledger `open-old`), and clean
+  twins.
+- `fixes/f13b/hrc1/*.wf`: class H-RC1, a closure in an `rc` object keeps a reference
+  into the group (claim F13B-HRC1; old holes: ledger `open-old`), and clean twins.
+- `fixes/f13b/k3made/*.wf`: class K3-Made, a closure that a closure makes sees the late
+  value of a kept variable (claim F13B-K3MADE), clean twins, and `m01x` (an F13-fix
+  variant: the late value is a place of a parameter that `main` clears).
+- `fixes/f13b/hlin/*.wf`: class H-LIN, a linear closure in a part of a local, behind
+  a reference, in a `Box` or in an `rc` object (claim F13B-HLIN).
+- `fixes/f13b/fp/*.wf`: false positives that F13-fix removes: FP-AB-RC (`k05`, claim
+  F13B-FP-AB-RC), FP-S2 (claim F13B-FP-S2), FP-K4 (claim F13B-FP-K4), and `both_once`
+  (finding (a) of stage F12-fix3, claim F12R3-BOTH).
+
+- `fixes/f13b/fp/w09_ctl_outer_runs_after_maybe_other.wf`: the lost-clean row of the
+  F13-fix rerun (F12 sets, `variants3/h5b/w09_ctl`): a callee runs two linear closures
+  one time each (claim F12R3-BOTH; ledger `lost-clean`, signed in scratchpad
+  `f13/final_check.md` 4).
+
+## Programs that the final check of group C added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the final check of group C
+(scratchpad `f13/final_check.md`, `f13/final_variants/`), with one line of header
+that names the class and the file of the check.
+
+- `fixes/f13c/ord/*.wf`: class H-ORD, a body that runs two values gets a closure that
+  runs a `once` value of the caller two times, or gets the same value as one argument
+  and in a closure (claim F13C-ORD), and clean twins (`q04_nested_each_c` runs the
+  value in a loop: W0502 in both pipelines). `o11` and `q06`: the old pipeline misses
+  them (ledger `open-old` while group C is off).
+- `fixes/f13c/w4/w01_*.wf`, `j03_*.wf`, `j04_*.wf`: class AB-RC1-join, a store through
+  a reference that can reach the `rc` object of the caller and a local object (claim
+  F13C-JOIN; the old pipeline misses them).
+- `fixes/f13c/w4/w09_closure_param_store_b.wf`: class H-W9, a closure stores its
+  reference parameter into the object of a captured handle (both pipelines miss it;
+  ledger `open-old`, issue #41).
+
+## Programs that follow-up F13.2 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class and
+its file in the scratchpad.
+
+- `fixes/f13d/ur/*.wf`: class UR, a value that a body runs and that no caller
+  gives (claim F13D-UR). The five repros of the signature diff of stage F13 part 2
+  (`f13p2/hole/`) and `f13p2/t/rb.wf` (`_b`), each with a clean twin (`_c`): a
+  closure that a callee made runs a value of the body, and a closure gives a
+  function-value local a new value.
+- `fixes/f13d/var/*.wf`: more shapes of class UR (`_b`) with clean twins (`_c`): a
+  made closure in a loop, in a field, in a vector, in an `Option`, in an `rc`
+  object, through a callee and another maker, in a join, a rebound local in a loop
+  and into a maker. `a01_*_noref_c` and `a14_*_noref_c`: a closure of the body that
+  a callee runs changes its own environment (no W0312).
+
+## Programs that stage F14 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the self-attack of stage F14 (scratchpad
+`f14/att/v/`), with one line of header that names the class. Each faulting program
+has a clean twin (`_c`). They use group D, which is off until stage F17: the old
+pipeline checks them by default.
+
+- `fixes/f14/oh/*.wf`: class F14-OH, old holes: a clause stores a parameter into a
+  place of the site through another parameter, keeps the result of `resume` in a
+  slot of the site, or gives a value with no `resume` that points into the argument
+  (M3). Ledger `open-old` while group D is off.
+- `fixes/f14/abort/*.wf`: class F14-ABORT, a clause that fails past its handler
+  (past the function, or to an outer handler): the abort starts at the node of the
+  handled body that runs the clause.
+- `fixes/f14/post/*.wf`: class F14-POST, the code of a clause after `resume` and the
+  rest of the handled body in the `resume`. The clean twins are the shapes that the
+  fact oracle and its summary oracle check at `Post`.
+- `fixes/f14/made/*.wf`: class F14-MADE, a clause or a handled body runs a closure
+  that a closure of the site made. The `ir` pipeline with group D missed it before
+  `apply::other_maker` took a clause and a handled body as the function of their site
+  (the old pipeline checks it).
+
+## Stage F15: abort destinations of local handlers (group D, part 2)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the self-attack of stage F15 (scratchpad
+`f15/att/v/`), with one line of header that names the class. Each faulting program
+has a clean twin (`_c`). They use group D, which is off until stage F17: the old
+pipeline checks them by default.
+
+- `fixes/f15/resume/*.wf`: class F15-RESUME, a clause that resumes on some paths only
+  (an abort edge to the handler and a path to `Landing`) or on each path (no abort
+  edge). `sf1_captured_after.wf` is the minimal form of the D-NEWFP rows of the F14
+  preview whose clause resumes on each path.
+- `fixes/f15/calls/*.wf`: class F15-CALL, a call that runs a clause whose operation
+  takes a reference: the callee gives the clause a local of its frame or a place that
+  its arguments reach (F3-2, M4). Ledger `open-old` for the old holes while group D is
+  off.
+- `fixes/f15/twice/*.wf`: class F15-TWICE, a clause that can run more than once in one
+  run of the handled body runs its code after `resume` once for each run
+  (`PostAgain`).
+- `fixes/f15/abort/*.wf`: class F15-ABORT, a clause that resumes on each path but can
+  abort past its handler, and an abort to a local handler that spares a value outside
+  the handled body.
+- `fixes/f15/part/*.wf`: class F15-PART, a clause puts its parameter into a part of a
+  local of the site (an old hole of F14 and of the old pipeline; ledger `open-old`).

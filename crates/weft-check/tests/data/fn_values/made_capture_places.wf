@@ -1,0 +1,138 @@
+// A closure that a maker gives back (a made closure) changes and reads the
+// variables that it captures `Kept` or `ByRef`, each one at its own place
+// (hole H7 and false positive FP4 of the third review of the ABC preview).
+// It stores a reference that it holds by value into a captured variable: the
+// value that the caller takes out of the variable points into the referent.
+// A store into one capture is no change of another capture.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mkw2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 2 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+// H7 (review files h7/j01, pi/i09): the made closure stores `first` into `o`.
+fn j01() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    let mk = || || { o = Some(first) }
+    let g = mk()
+    g()
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} } //~ W0301
+}
+// H7 (h7/j02, pi/i10): a callee runs the maker and the made closure.
+fn j02() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    go(|| || { o = Some(first) })
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} } //~ W0301
+}
+// H7 (h7/j08): a tuple.
+fn j08() {
+    let w = mkw()
+    let w2 = mkw2()
+    let t = (&w2.entities[0], 0)
+    let first = &w.entities[0]
+    let mk = || || { t = (first, 1) }
+    let g = mk()
+    g()
+    let (e, n) = t
+    w.entities.clear()
+    print(e.hp) //~ W0301
+}
+// H7 (h7/j10): a function with a parameter world.
+fn j10(w: &World) / mut(w.entities) {
+    let o = None
+    let first = &w.entities[0]
+    let mk = || || { o = Some(first) }
+    let g = mk()
+    g()
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} } //~ W0301
+}
+// H7 (h7/j11): a closure parameter runs the maker.
+fn j11() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    let ap = |m: fn() -> fn()| { let g = m(); g() }
+    ap(|| || { o = Some(first) })
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} } //~ W0301
+}
+// H7 (h7b/l06): the made closure runs in a loop.
+fn l06() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    let mk = || || { o = Some(first) }
+    let i = 0
+    while i < 2 { let g = mk(); g(); i += 1 }
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} } //~ W0301
+}
+// Rejected before only through a wrong fact (pi/i01, i03): now at the line
+// of the use.
+fn i01() {
+    let w = mkw()
+    let o = None
+    let mk = || || { o = Some(&w.entities[0]) }
+    let g = mk()
+    g()
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} } //~ W0301
+}
+fn i03() {
+    let w = mkw()
+    let o = None
+    go(|| || { o = Some(&w.entities[0]) })
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} } //~ W0301
+}
+// FP4 (st/m02, m03, m05): a push into one capture is no change of `w`.
+fn m02() {
+    let w = mkw()
+    let rs = Vec.new()
+    let mk = || || rs.push(&w.entities[0])
+    let g = mk()
+    g()
+    print(rs[0].hp)
+}
+fn m03() {
+    let w = mkw()
+    let rs = Vec.new()
+    let g = give(|| || rs.push(&w.entities[0]))
+    g()
+    print(rs[0].hp)
+}
+fn m05() {
+    let w = mkw()
+    let rs = Vec.new()
+    let mk = || || rs.push(&w.entities[0])
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    print(rs.len())
+}
+// FP4 (st/q03, pi/i08): the value that the caller takes out is valid.
+fn q03() {
+    let w = mkw()
+    let o = None
+    let mk = || || { o = Some(&w.entities[0]) }
+    let g = mk()
+    g()
+    match o { Some(e) => print(e.hp), None => {} }
+}
+// FP4 (h7/j12): the made closure changes `o` only, not `first`.
+fn j12(w: &World, first: &Entity) / mut(w.entities) {
+    let o = None
+    let mk = || || { o = Some(first) }
+    let g = mk()
+    g()
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} }
+}
+// FP4 (h7/k03): a read of `w` after `give` is no use of a changed place.
+fn k03() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    let g = give(|| || { o = Some(first) })
+    g()
+    match o { Some(e) => { print(w.entities.len()); print(e.hp) }, None => {} }
+}

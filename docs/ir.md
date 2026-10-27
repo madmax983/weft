@@ -1870,7 +1870,7 @@ pub struct NodeKey {
 | `Call`, `Resume` | `Main` → `Ret` → `FrameEnd` → next | `Main` → [`AbortValue(d)` if `d` is a local handler whose clause gives a value] → `FrameEnd(d)` → the cleanup copy for `d` |
 | `Perform` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)`] → the cleanup copy for `d` |
 | `Join`, `Fork` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler: a child failure, 6.5] → the cleanup copy for `d` |
-| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → next | the end of an abort to this handler: `Landing` → next |
+| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → [`PostAgain` if a clause can run more than once] → next | the end of an abort to this handler: `Landing` → next |
 | `Scope` | `Main` → (the spliced scope body) → `Exit` → `FrameEnd` → next | through the chain of the scope body to the cleanup copy of the `Scope` |
 | `ScopeWait` | `Main` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler] → the cleanup copy for `d` |
 | `Assert` | `Main` → next | `Main` → the cleanup copy past the function (a failed `assert` ends the task, `abort_task`) |
@@ -2247,7 +2247,7 @@ As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 - `emit` writes the facts of a body of group A with no `Call`, `Perform` or `Resume`, no
   loop and no `OnAbort` action. Another construct gives `Unsupported`, and the old pipeline
   checks the program. `factgen::preview` gives the facts of one body.
-- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B), no program is in scope, also a program
+- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B, from F13 the groups A, B and C), no program is in scope, also a program
   whose bodies have no IR and so use no group. `weft check|facts|agree|lint|run|test`
   take `--groups=LETTERS` to turn groups on.
 - A node `entry` before the entry block binds the parameters: `rebound_at`, `points_into`
@@ -2451,8 +2451,8 @@ spec sees the real aliasing between two captures or two parameters inside the cl
 The summary (6.7) stays in interface terms.
 
 As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
-`emit_closure`; group C stays off by default until F13, so this is a preview with
-`--groups ABC`):
+`emit_closure`; group C was a preview with `--groups ABC` until stage F13 puts it in
+the default set):
 
 - A closure body is a component of the `FnFacts` of its function: a node `closure entry`
   (its parameters and the `E` variables of its `ByMove` captures bind there, `rebound_at`,
@@ -2513,6 +2513,199 @@ As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
   for it (`Inference::old_rows`), which adds the effects of the closures that the
   function makes. A function that returns a closure inside a struct has a summary with
   no row for the closure: its W0701 waits for F12.
+
+As built (plan stage F14, `crates/weft-sema/src/analysis/clause.rs`,
+`factgen/handlers.rs`; group D is a preview with `--groups ABCD` until stage F17
+puts it in the default set):
+
+- The splice. The handled body of a `handle` is part of the component of its site
+  (`handlers::spliced`, `NodeTable::splice`): an edge from `Main` of the `handle` to
+  the entry of the handled body, from each `Return` of the handled body to `Exit`,
+  then `Post` and the next block. The end of the cleanup chain of the handled body
+  for a destination past the handler goes to the copy of the cleanup block of the
+  `handle` for that destination; a `handle` takes the destinations of its handled
+  body that are not its own handler (`Frames::of_bodies`). The end of the cleanup
+  chain for its own handler goes to the `Landing` node, then to the next block.
+- The analysis runs the handled body in the transfer of the `handle`
+  (`clause::handle_run`), from the state before the `handle` and the capability. A
+  perform through the capability of a local handler runs the clause of its
+  operation up to its resume points (`clause::perform_run`), with the parameters
+  bound to the values of the arguments: the state after the perform is the join of
+  the states at the resume points, and the result is the join of the values that
+  the clause gives to `resume`. When the handled body returns, the code of each
+  clause after its resume points runs from the state at the end of the handled
+  body (the locals of the clause from the state at the resume point), with the
+  value of the handled body (and of a clause that resumed) as the result of
+  `resume`. The state after the `handle` is the join of the end of the handled
+  body, the ends of the clauses after a resume, and the ends of the clauses with
+  no `resume` (the abort to the handler). The value of the `handle` is the join of
+  `_0` of the handled body and of the values of the clauses.
+- The clauses in the facts. Each clause body is a component of the facts of its
+  function (node `clause entry`), as a closure body is: its parameters have `Param`
+  roots of the `Arg` kind (`decls::clause_params`), and its upvar locals are the
+  places of the site (the tables are shared). Its analysis starts from the join of
+  the states at the performs that run it (`clause::Info::seeds`); a `Resume` there
+  gives back the value of the handled body, and the other locals get the state at
+  the end of the handled body (`clause::resume`).
+- The `pre` and `post` parts are projections of the facts of the nodes of the
+  clause, in the terms of the site (`handlers::project`), not summaries in the
+  terms of an interface (deviation from 6.7: a clause runs only at nodes of its
+  component, and its upvars are places of the site). The nodes of a clause from
+  its entry up to and with its resume points are the `pre` part; the nodes after
+  them are the `post` part. Each perform gets the facts of the `pre` part with σ of
+  the perform (a place below a parameter of the clause is a place below the
+  argument; a place of a local of the clause stays in the clause): `uses`,
+  `moved_at`, `moved_part`, `rest_linear`, `overwrites` (also for a new value of a
+  local of the site: the clause need not give it on each path), `unset_at`,
+  `mutates_at`, `lends_mut`, `reads_at`, `releases_at`, `performs_at`,
+  `escapes_at`, `may_abort`, `multi_at`. A change gets `call_mut` with the root of
+  the parameter, or the root of the clauses of the capability for a place of the
+  site, against the `call_arg` of each argument (W0312, as a call, F3 and V035). A
+  run node in a clause is projected before the runs of that clause. `Post` gets the
+  facts of the `post` part with the join of σ of the performs. A variable outside
+  the clause that points into a parameter of the clause points into the places of
+  the arguments too (`keep = x`). The W0204 store check maps the places of the
+  parameters of a clause the same way (`handlers::map_stored`).
+- `resume`. A `Resume` of a clause uses its continuation (and moves a `once`
+  one, W0501) and has `resumes_at`. Until the continuation summary of stage F16,
+  the rest of the handled body at a `Resume` is the set of the nodes of the handled
+  body that a perform of the clause reaches, with `Exit` and `Post`: the `Resume`
+  lends each place that they change and frees each place that they free; a change
+  or a free of a place that a parameter of the clause points into (or of the
+  handle of an `rc` object that the argument depends on) is a change or a free of
+  the parameter (a change above it across an unstable step frees it). `Handle`
+  gives `body_multi` if a node of the handled body has `multi_at`.
+- The frames of the clauses end at `Post` and at `Landing`: `releases_at` of the
+  roots of the locals of the clauses (`K(h)` of 6.3 in this form).
+- Parts of stage F15 in a first form: the value of the `handle` binds at the
+  `AbortValue` node of an abort to its handler (the value of the clause where it
+  ends with no `resume`, with the values of the arguments of that perform); the
+  `Landing` edge; `spared_at` of each variable outside the handled bodies at a
+  perform whose aborts all go to local handlers, if no node of the `pre` part can
+  abort (other than a `resume`).
+- A call in a handled body that performs through a local handler (or fails to a
+  local `Fail` handler) runs the clauses of the handler: the analysis runs each
+  clause up to its resume points with plain parameters, and the call node gets the
+  `pre` part with no σ, `performs_at`, and no `escapes_at` of the effect. This
+  needs operations with no reference in their parameters and results
+  (`clause::plain_ops`); else the program is not in scope. A call of a function
+  value does not run a local clause: the effects of a function value resolve where
+  it was made (the interpreter agrees, a run prints the outer handler).
+- A parameter of an operation with an `in` place (R3RT7): the op gives the place
+  (`OpDef::places`, resolved after the signatures, with no diagnostic: the old lowering
+  does not use it). At a perform through a local handler, the argument of such a
+  parameter has the root of the parameter of its place in `call_arg`, and a change
+  through it in the clause has that root in `call_mut` (`ClauseRun::ins`): an aliased
+  argument inside the place is no W0312, as for a function. `param_in` and `arg_at`
+  give W0203 for an argument outside the place (`handlers::check_in_places`, the
+  checks of a call). O3-7 (a function value that an operation gives to a local
+  handler) is not done: the program is not in scope (stage F16, with the closures of
+  the clauses).
+- A clause that aborts past its handler (to a handler outside the clause, or past
+  the function; a `fail` in a clause) aborts at the node of the handled body that
+  runs it: that node gets the destinations of the clause, and the frames of the
+  handled body unwind too (`Frames::clause_aborts`). The cleanup chain of the
+  handled body then goes on in the cleanup chain of the site, as for its own aborts.
+  The analysis gives the edge the state at the perform, not the state of the clause
+  at its abort; the facts of the `pre` part are at the node, so a reference that the
+  clause stores into a place of the site before it fails is in the facts (a later
+  change of its referent is W0301). Stage F15 gives the edge the state of the clause.
+- The fact oracle (8.5) follows the frames of the handled bodies and the clauses:
+  each is a component of its site (`FactInput` gives their entry nodes). A frame
+  that waits at a `handle`, or a clause frame that waits at a `resume`, checks the
+  accesses of a callee (A3) and an abort that unwinds it (D4) with the nodes of the
+  frame above it (the handled body). Above a clause frame, the nodes are the node
+  of the handled body that ran the clause (the nodes of a clause are in the terms of
+  its parameters). When the oracle does not know them (a clause that a callee of
+  the handled body runs), it counts the check as not made
+  (`FactReport::summary_skipped`, `abort_skipped`).
+- `handler(H, E)` and the capability id come at `Main` of the first `handle` of a
+  handler; `clause_performs(H, E)` for each effect that a clause lets leave the
+  function. `footprint` is not given: the `pre` part gives the changes of each
+  perform with its own σ (the rule of the spec would apply the changes of each
+  perform at every perform, and the `post` part at the perform too).
+- Not in scope until a later stage (the old pipeline checks the program): a
+  handler of an effect with a `multi` operation, a perform through a captured
+  capability, a `resume` of a captured continuation or in a body inside the clause,
+  a handler in a closure body, a closure that a clause makes, a function value that
+  an operation gives to a local handler, a call that runs a clause whose operation
+  has a reference.
+
+As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
+`factgen/handlers.rs`; group D stays a preview with `--groups ABCD` until stage F17):
+
+- Abort destinations. A clause *lands* if a path from its entry reaches a `Return`
+  with no `Resume` on the way (`clause::lands`). A `perform` through a local
+  capability aborts to its handler only if the clause of its operation lands; a call
+  (or a child failure) only if a clause of the handler lands
+  (`frames::destinations`). The handlers whose clauses a node runs are a separate
+  list (`frames::clause_handlers`, `Frames::runs`): the clauses run there also when no
+  abort goes to the handler, and their aborts past the handler go to the node
+  (`clause_aborts`). So a clause that resumes on each path gives no `AbortValue`, no
+  cleanup copy for the handler and no path to `Landing`. The node still has
+  `may_abort` from the clause (its `resume`): each named effect can abort (ADR 0005),
+  so W0602 holds there for the values of the handled body, and the values outside
+  it are spared (`handlers::spares` takes the handled bodies of `clause_handlers`).
+- The state of an abort edge. The analysis gives the `unwind` edge of a terminator
+  that runs a clause the state of the clause where it aborts (`clause::AbortEdge`,
+  taken in `analysis::edges`): the states at the ends of the clause with no `resume`
+  and at its `UnwindExit` (`Ends::unwinds`), with no local of the clause. A `perform`
+  through a local capability takes them alone; a call joins them with the state
+  before it (the callee can abort too).
+- Calls that run clauses whose operations take references (F3-2, M4). A parameter of
+  the clause that can hold a reference points into the places that the call gives
+  (`clause::given`): the wildcard places of the arguments (their places, the places
+  that their references point into, the places behind those, the `rc` groups that
+  their types reach) and the callee frame root `F(n)` if the summary of the callee
+  says that it can give a place of its frame to an operation of a caller
+  (`Summary::gives_frame`: a node that lets an effect leave the body gives a code of a
+  caller a local, or a callee that gives its frame performs an effect that leaves the
+  body, or the body runs a function value). The frame root then ends at `FrameEnd`
+  and at each `FrameEnd(d)`. The frame root has a heap slot with the given places
+  while the clauses run (a reference that the callee keeps in a local); the states
+  that leave the runs do not have it. A change through a parameter of such a clause
+  has, in `call_mut`, the callee root of the argument whose given place it is below
+  (none for the frame or a group; W0312 as for a call). A call whose effects of the
+  row all go to local handlers runs the clauses itself, so the operations lend no
+  place there (`Sigma::local_ops`): only the lends of code of a caller other than an
+  operation stay (`Summary::code_lends`, the inferred `lends`). At a `resume` of such a
+  clause, a change or a free of a place at or below the base of a given wildcard place
+  frees the parameter (the argument can be below the changed place,
+  `handlers::through_param`). A store of such a clause of a reference into the callee
+  frame root behind a reference parameter or into an `rc` object is W0204 (the local of
+  the callee ends at the end of the call; `Stored::clause`). Not in scope (stage
+  F16, `clause::GIVES_BACK`): an operation with a function value or a value of a type
+  parameter, and a result with a reference whose clause can resume (the continuation
+  summary).
+- The parameters of a clause in its own facts point into their roots and into the
+  places of the arguments of the nodes that run it (`Info::params`). So a version of a
+  part of a local of the site that the clause writes (`h.0 = r`) is current after the
+  perform (F15-PART, an old hole of F14). A row of a change at a place of an argument
+  at a node that also changes the root of that parameter is the same change: the row
+  of the parameter maps it (no W0312 of the clause against its own argument).
+- A clause that can run more than once in one run of the handled body (two nodes run
+  it, one node in a cycle, also through the `handle`s on the way, or in a clause of
+  another handler that can run more than once: `Frames::runs_twice`) runs its code
+  after `resume` once for each run: `Post` and `PostAgain` both get the `post` part,
+  and the frames of the clauses end at each (F15-TWICE: a move there is a second move).
+- An abort to a local handler: each local of the body of the terminator that a closure
+  captures (`Kept`, `ByRef`), that can hold a reference, and that no path from the entry
+  to the terminator assigns binds at the `AbortValue` node (`rebound_at`, `empty_at`;
+  `handlers::unbound_at_aborts`). The analysis joins the values of a closure local of
+  the site over the paths, so after the `Landing` a run of a closure that the handled
+  body made later used a local that the path never bound (D-NEWFP of the F14 preview:
+  `s5r/p/scale400.wf`, `S5a/x/p/scale_ops.wf`). The same class with no handler (a
+  closure made in a branch or a loop, run after it: `let f = ..; while .. { let r = &v[0];
+  f = || print(r) }; f()`) is a false positive of group C in the default pipeline too;
+  stage F15 does not change it.
+- A closure that the handled body makes keeps the values of the locals of the handled
+  body that it captures after the `handle` (`clause::captured_locals`,
+  `State::keep_value`): a run of it after the `handle` reads their places (the summary
+  oracle failed on `sf1`).
+- Not yet: the `gen_kill` lint holds on the M3 and F3-2 facts
+  (`crates/weft-check/tests/ir_handlers.rs`), but a version of a part or of a heap slot
+  binds at each node where it is not current, also at a node that invalidates it (also
+  in the default pipeline: `h.0 = &v[0]; h.0 = &w[0]; v.clear()`).
 
 ### 6.6 The analysis
 
@@ -2649,6 +2842,119 @@ that no local owns uses the slots that overlap it (`owner_vars`: an access throu
 place, a copy of a reference out of it, a read through a chain of references, and so each
 argument of a call that reaches the slot). As in the old pipeline, a use of `out` that
 reaches the slot after the change (`out.len()`, a call with `out`) is W0301 too.
+
+A vector of closures is a vector of references for this rule (group C, F12-fix H4): a
+closure that a loop pushes and that borrows a local of the iteration (a `ByRef` capture,
+or a `ByMove` capture that holds `&v[0]`) makes the vector invalid at the end of the
+iteration, so the next push and each later use of the vector is W0301, also when no
+code runs the closures after the iteration (`while .. { let v = mk_v(); ks.push(|| print(v[0])) };
+print(ks.len())`). The old pipeline accepts that program, and it rejects the same loop
+with `rs.push(&v[0])`. This is stricter than the old pipeline by design (FP2 of the
+second review of the ABC preview), not unsound.
+
+As built (plan stage F13, function values in heap slots): a heap slot holds function
+values too (`State::behind_fns`, joined by union, widened by `FNS_MAX` as a function set).
+A store of a value with function values into a place that no local of the component owns
+(an `Assign` through a pointer, `cb.f = || ..`; a callee that changes such a place and
+gets a function argument, `keep(f, cb)`; the parts `put_fns` of a callee) puts the values
+and the references of their environments into the slot of the place. Before F13 such a
+program stayed with the old pipeline ("a function value stored behind a reference").
+
+- A read of a place that no local owns gets the values of each slot that overlaps it
+  (`transfer::fns_at`, `place_value`), with the references that the store put there. The
+  references of the role of the place (the `Held` wildcard of a parameter) come only with
+  a closure of the role, as before, so a value of a caller in the same place does not get
+  the environment of a stored closure.
+- A callee that reads a function value behind a parameter runs a value of the parameter
+  (`FnVal::Param`, part `runs`); the caller applies each value that the argument reaches
+  (`transfer::reach_fns`), and that is the values of the slots too. So a value that the
+  body stored behind `cb` runs at `run_cb(cb)` (`reaches` of the old lowering is the part
+  `runs` of a value inside or behind a parameter). Code of a caller runs each value that
+  its arguments reach, also the values of a slot (OL-1a without a task).
+- An `rc` object (`Rc<T>`): a place of the group root of `T` holds what a body stores
+  through a handle (`h.f = ..`), and a read of such a place gets the function values of
+  the handles on the way (`Rc.new` of a value with a closure gives the handle the closure:
+  the result of a type parameter, F12), and of the slot. A callee whose argument type
+  reaches an `Rc<T>` (`transfer::rc_inners`) reaches the slot of the group root of `T`
+  (`rc_stored`). A reference in an `rc` object points into the wildcard place of the
+  group and into the places of the slot (`held_at` of a `Group` root; before F13 the
+  program stayed with the old pipeline). A reference in a local of a callee frame (a
+  value that a closure put behind a reference) points into the wildcard place of the frame
+  root (stage F14 before).
+- Each slot keeps its variables (`factgen::holders`, F10.1): a stored closure with a
+  `ByRef` capture holds the cell of the variable, so the end of the variable makes the
+  slot invalid. A slot of an `rc` object is as a `Vec<&T>` local: after a change of the
+  referent, each use of the container that reaches the slot is W0301
+  (`tests/data/stored/rc.wf`, `main`; the old pipeline accepts a use that does not read
+  the reference).
+- A run node uses the variables of each heap slot that overlaps a place that the applied
+  summary reads (part `reads`, `templates::slot_reads`; F13-fix, class AB-RC3 of the review
+  of stage F13): a callee that reads `c.refs[0]` after a change of the group is W0301, as
+  the same read in the body. Before, only an argument that reaches the slot through a
+  reference (`deep_uses`) used it, and an `Rc` handle argument is no reference. The same
+  rule holds for a closure run (`emit_apps`): a closure in a heap slot that keeps a
+  reference into the group, or a made closure in a slot of a parameter, reads the slot
+  (classes H-RC1 and H-S1). Not done: a callee whose caller filled the object, and that
+  changes the group and then reads the references (`use_it` of
+  `tests/gate/probes/fixes/f13b/ab_rc3/e17_read_in_param_fn_b.wf`): the body has no heap
+  slot of its own for the references that the object holds at its entry (both pipelines
+  miss it; ledger `open-old`).
+- Stricter than the old pipeline by design (class FP-RC-strict of the review of stage F13):
+  a use of the references of an `rc` object (in the body, or in a callee that reads them)
+  after a callee whose row allows a change of the group is W0301, also when the callee
+  does not change the group at run time (a loop that runs zero times).
+- Stricter than the old pipeline by design (class AB-RC1-copy-strict of the final check of
+  group C): a reference through a copy of a local `rc` handle that the facts do not follow
+  (`let keep = h.clone()`, `let d = same(c.clone())`) that goes into the object of the
+  handle is W0204, also when the copy is a handle of the same object at run time (6.9, the
+  W0204 store forms).
+- A reference in an `rc` object points into the wildcard place of each field of the group
+  that its type can point into (`Roots::group_targets`; F13-fix, false positive FP-AB-RC):
+  a `&u64` in `Cache.refs` points into `Cache.data..`, so `c.refs.push(c.refs[0])` changes no
+  place that the copy points into (before: `Cache..`, W0312 and W0301). A generic struct
+  keeps the wildcard place of the group.
+- A heap slot holds the join of the values that each store puts there (a weak update):
+  after a callee stores another value over a closure that an earlier callee stored there,
+  the slot still holds the old closure, and a run of the slot applies its summary too.
+  This is stricter than the old pipeline by design (class FP-S3 of the review of stage F13:
+  `reg(cb, world); calm(cb); run_ref(cb)` is W0301 for a reference into `world`).
+- A value of a caller and a closure in one value (a slot that holds both): the run of the
+  value of the caller (code of a caller) gets no environment from the references of the
+  value, which are the environment of the closure (F13-fix, false positive FP-S2:
+  `s.o = Some(|| ..); let o = s.o; match o { Some(f) => f(), .. }` lent `world..`).
+- A closure that another function made (its maker frame is gone) keeps the cell of each
+  `Kept` and `ByRef` variable with it: σ of such a capture is the place of the closure
+  value, not the places that the variable points into (`apply::other_maker`; F13-fix,
+  false positive FP-K4: a returned closure that runs `r = &b.entities[0]` changed `b`).
+- A callee that runs two function values runs them in each order (`Applied::again` with
+  `order`): each run applies at `Main` or at `Ret`, but one time, so a `once` closure that
+  it runs one time is no W0502 (`fn both(f, g) { f(); g() }`, finding (a) of stage
+  F12-fix3). The same value that runs two times is W0502.
+  As built (class H-ORD of the final check of group C): the order applies only to an
+  app that runs one time. An app that a value already runs two times
+  (`both(|| { h(); h() }, g)`, `|| twice(h)`, `|| each(2, h)`) keeps `again` without
+  `order`. A value that the runs of two keys reach, also through the values that a value
+  runs (`both(h, || h())`, `both(|| h(), || h())`), runs two times: `apply_value` writes
+  each value that it is asked to apply into `Apps::reached`, also a value that it applied
+  before, and `apply_runs` gives the app of such a value `again` without `order` (not for
+  an item, which has no `once` part).
+- A copy of a function value through a pointer is a copy of the references of its
+  environment (`templates::copied_refs`; F13-fix, classes H-S1 and H-RC1): a read back of a
+  closure from a heap slot (`let g = cb.f`, `let g = h.f`) uses the variables of the slot.
+  A closure that an `rc` object holds and that points into the group can point into the
+  object itself, so a copy of it out of the object depends on the handles on the way
+  (`transfer::place_value`): `h.f = d.f; d = newh(); run_hook(h)` and a block value `d.f`
+  after the end of `d` are W0301.
+- A linear closure in a part of a local (`cb.f = || rollback(t)`), through a pointer, in a
+  `Box`, or through an `rc` handle makes the local (or the local of the handle) linear
+  (`templates::mark_fn_linear_in`; F13-fix, class H-LIN). The store gives `overwrites` of
+  the variable, so a linear value there before is overwritten. The drop of an aggregate
+  does not run the `on abort` functions of the captures of a closure in it, so such a
+  variable has no `has_on_abort` (W0602 across an abort; the interpreter leaks the value).
+  A callee that changes a part of a function type of a local that holds a linear closure
+  (`calm(&cb)` with `cb.f = || print(2)`) overwrites it; a change of a container
+  (`ks.pop()`) does not. This is as strict as the old pipeline, which rejects each such
+  store at the closure ("it can go out of scope without a call").
 
 **The post-passes of today**, and where each one goes:
 
@@ -2875,7 +3181,7 @@ behind a parameter: a heap slot).
   `tests/programs/165_store_through_held_ref.wf` (claim F10-HC).
 
 As built (plan stage F11, `analysis::transfer::value_out`, `apply::closure_sigma`,
-`summarize::closure`; group C is a preview until F13):
+`summarize::closure`; group C was a preview until stage F13 put it in the default set):
 
 - The analysis gives a closure aggregate the value `fns = {Closure(c)}`, the cell root
   `x (cell)` of the variable of each `ByRef` capture (owned by `C(x)`: only `Dead(x)` and
@@ -2935,7 +3241,8 @@ As built (plan stage F11, `analysis::transfer::value_out`, `apply::closure_sigma
   summaries at its own node.
 
 As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknown::code_of_caller`,
-`summarize::runs_of`, `summarize::ret_fns_of`; group C is a preview until F13):
+`summarize::runs_of`, `summarize::ret_fns_of`; group C was a preview until stage F13 put it
+in the default set):
 
 - Function sets (`domain::FnVal`): an item, a closure of the component, `Made(c)` (a closure that a
   callee made and gave back: the value holds its environment, so σ maps each capture to the place
@@ -2944,8 +3251,8 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   and `Unknown`. A function parameter starts with `Param(i)`; a read through a pointer or of an
   element gives the values of the places (`transfer::fns_at`). A set with more than
   `domain::FNS_MAX` (32) values drops its items for `Unknown` (the widening; the other values are
-  finite). A value with a function part that goes behind a reference (a heap slot) is stage F13: the
-  program stays with the old pipeline.
+  finite). A value with a function part that goes behind a reference (a heap slot) was stage F13:
+  until F13 the program stayed with the old pipeline (heap slots of function values: 6.6).
 - A closure aggregate holds the references of its `Kept` captures too (a closure that leaves its
   maker, or that a closure gives back, reads them). A call of a value that the analysis does not
   know (`Param`, `Capture`, `Unknown`) is code of a caller (map N2): it reads and lends the places
@@ -2955,7 +3262,12 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   `Caller..`, and can be each function value of the arguments and the value of the parameter
   again; it can abort (`raises`), and it is `multi` if an effect of the row of its type has a
   `multi` operation (with no row: an effect of the program). It runs each function value that its
-  arguments reach, more than once.
+  arguments reach, more than once. As built (F13-fix): it also reads (`reads_at`, no `lends_mut`) the wildcard
+  places of the parameters of the body and of the `rc` groups that their types reach
+  (`transfer::caller_reads`): the value of a caller can point there, and the summary oracle
+  found the reads (`let g = h.f; g()` reads `Hook.data[]`). A change there through the value
+  is not in the facts of the body: the caller applies the value that it gives, and its W0312
+  check rejects a value that changes a place of another argument (map N2).
 - Part `runs`: each run node of a `Param(i)` or `Capture(k)` value records a run with the places of
   its arguments (`transfer::RunOf`); `many` for two run nodes, a node in a cycle, or a run again.
   At a call of an item or a closure, `apply_runs` applies each value that the argument (or the
@@ -3003,10 +3315,9 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   places that the callee gives to it and against the other arguments of the call
   (`Sigma::others`, W0312): the callee can keep references into them across the run. A
   change through a parameter of the value is a change of what the callee gives.
-- A closure summary keeps the `lends` of code of a caller at the runs of its captures and
-  parameters apart (`Summary::code_lends`): a caller applies the values that it gives
-  there. A closure that a callee made (`Made`) runs its captures as code of a caller, so
-  they are `lends` where it runs.
+- A closure summary has no `lends` of code of a caller at the runs of its captures and
+  parameters: a caller applies the values that it gives there. A closure that a callee
+  made (`Made`) runs the values that it holds (follow-up F13.2, below).
 - A function value carries the places that its environment points into wherever its
   values go (F12-fix, hole H2 of the review of the ABC preview): `store_fns` gives a
   place that a call changes the references of each function argument with its values
@@ -3017,11 +3328,82 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   or `Kept` capture to each place that the value points into as well as to the value
   itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
   its `ByRef` capture.
+- A `Kept` or `ByRef` capture of a `Made` closure whose variable is a variable of the
+  body of the run node, through the `Kept` and `ByRef` captures of its makers
+  (`let mk = || || { o = Some(first) }` in the same body), maps to that variable only,
+  as for a closure of the component (`apply::made_capture_source`; hole H7 and false
+  positive FP4 of the third review of the ABC preview). The closure changes and reads
+  each captured variable at its own place, and a reference that it stores into one
+  capture goes into the value of that variable (`Some(e)` points into the referent).
+  Before, each such capture mapped to all the references of the value: a push into
+  `rs` was a change of `w`, and the variable `o` did not get the reference. A capture
+  whose variable is not in the body (a maker that a callee gives back) keeps the
+  mapping to the value and its references.
+- A run that a callee does late (at `Ret`, `Applied::late`) lends at `Main`: the callee
+  runs the value before it returns, so the lend invalidates each reference that lives
+  across the call, but not the result of the call. The body of the callee checks that a
+  run leaves its result valid. A capture that the call rebinds at `Ret` keeps the lends
+  at `Ret` (`templates::emit_apps`; false positive FP3 of the third review of the ABC
+  preview: `fn g2(m) { let g = give(m); g() }` was W0301 at `g()`).
+- The result of a run node whose type holds no reference and no function value (no
+  type parameter) gets none (`transfer::typed_result`): the values of a run join their
+  results, so the `()` result of a tail call `g()` pointed into the environment of a
+  closure that a maker gives back (W0204 class of the third review of the ABC preview).
+- The result of a run of a closure maker through a closure or a callee (`|| mk()`,
+  `give(mk)`) points into the environment of the closure that the maker makes: the
+  places of part `ret` of the maker with σ of the maker at the run node
+  (`transfer::result_refs`, for a maker with no parameter, through `RESULT_DEPTH`
+  captures that give back captures). Before, only the W0204 of a unit tail call caught
+  a made closure that reads a reference that its maker took (`n1c/c05`).
+- The closure-copy rule of a callee (`once_copied_out`, the copy-out at a run node)
+  also holds for an argument of a type that holds references (an `Option`, a tuple,
+  a `Vec` of references, `templates::through_ref`): the call moves the owners of each
+  referent behind which a `once` closure can be (`templates::once_vars`, two levels),
+  and the argument itself if it holds a `once` closure by value (old holes b14-agg of
+  the third review of the ABC preview: `ro(Some(&fs))` two times).
+- A callee that puts a closure with a linear capture into a place of its caller (part
+  `put_fns`) makes the local of that place linear in the facts
+  (`templates::put_linear`, as `fn_linear_args` for a closure argument): W0601 where
+  the caller can drop it (`fn add(ks: &Vec<fn()>, t: Tx) { ks.push(|| rollback(t)) }`,
+  a hole of stage F13 that the rerun of the review sets found).
+- The result of a run of a value of a parameter is `FnVal::ParamResult(i)`, not the
+  parameter again, and part `runs` keeps a run of the result apart from a run of the
+  parameter (`Run::result`). A caller applies to a run of the result only the values
+  that the runs of its values give back (`transfer::results_of`), and a run of a
+  parameter and a run of its result are not two values that run in each order. So a
+  `once` maker that `fn go(m) { let g = m(); g() }` runs one time runs once (the W0502
+  class of the third review of the ABC preview); a maker that a callee runs two times is
+  still W0502. Part `ret` gives back `RetFn::Param(i)` for a result, as before.
+- Stricter than the old pipeline by design (map N2): a result of code of a caller
+  (`let g = m()`) can point into `Caller..`, so a later run of code of a caller, or a
+  `fail` operation through a callee, between `m()` and the use of `g` makes it invalid
+  (W0301; `twice(m) { let g = m(); let h = m(); g(); h() }`). A `fail` operation does
+  not resume, but its clause runs before the body unwinds and an `on abort` function can
+  read a reference that the clause invalidated, so the lend stays on both edges: the
+  facts have no node for effects of the abort edge only. Ledger `new-fp` (`stricter`).
+- The result of a closure maker keeps its effects in a second closure and in a callee
+  (F12-fix2, hole N1 of the second review of the ABC preview: `let mk2 = || mk()`,
+  `|| run(mk())`, `fn go(m) { let g = m(); g() }`):
+  - The result of a run of a function value of the interface (a parameter or a
+    capture) is that value of the interface again (`FnVal::Param`, `FnVal::Capture`),
+    with no `Unknown`. The caller knows the values that it gives, and it applies their
+    results (`transfer::with_results`), also at a run of a capture.
+  - A capture that a closure gives back (`RetFn::Capture`) carries the places that the
+    environments of its values point into (`transfer::capture_refs`).
+  - A cell root in the environment of a `Made` closure or of code of a caller also
+    stands for the current value of its variable (`transfer::cell_values`): the
+    closure changes the variable through the cell (6.3).
+  - A `Made` closure that a run gives back is not in the place of the value that runs:
+    σ maps its captures only to the places that the value points into.
 - A callee whose result is a function value of a reference argument (`RetFn::Param` of
   `first(fs: &Vec<fn()>) -> fn() { fs[0] }`) copies the value out of the referent: when
   it can be a `once` closure, the `Ret` node moves the owners of the referent
   (`templates::once_copied_out`, the closure-copy rule of 5.22; old hole `b14` of the
-  review of the ABC preview, F12-fix).
+  review of the ABC preview, F12-fix). A closure that gives back such a copy does the
+  same at its call. A callee or a closure that runs a `once` closure that it copies out
+  of a referent (`fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }`) moves the owners
+  of the referent at the run node (`templates::emit_apps`, `once_args`), so a second
+  run is W0302 (old holes b14-run of the second review of the ABC preview, F12-fix2).
 - A run in part `runs` has `maybe` (`Run::maybe`, F12-fix H5): a normal path of the body
   from its entry to a `Return` passes no block whose terminator runs the value
   (`summarize::returns_without`). A linear closure that goes to such a parameter can go
@@ -3029,7 +3411,17 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   closure literal gives the `E` variable of a `ByMove` capture of a type with a function
   part the flags of a linear value when the captured value is a linear closure
   (`templates::linear_fn_captures`): a closure that runs it on some paths only is W0601
-  at its `Return`.
+  at its `Return`. A run that a callee gives (part `runs` of its summary) is on some
+  paths only at the run node when it is `maybe` in the callee, and a run that code of
+  a caller can do is on some paths only (`RunOf::maybe`): the block of such a run node
+  is not a block that runs the value (hole H5b of the second review of the ABC
+  preview, F12-fix2: `fn outer(f, c) { maybe(f, c) }`).
+- A closure maker whose result is linear (`Ret::linear` of one of its values, also
+  through a maker of makers, `templates::gives_linear`) that goes to a callee is
+  W0601 at the call, also when the callee runs the maker: the callee does not know
+  that the result is linear, so it can drop it (hole H3b of the second review of the
+  ABC preview, F12-fix2: `fn go(m) { let g = m() }`). The old pipeline rejects each
+  of these programs too.
 - A run node in a cycle that changes a local whose type has a function part (and cannot
   be linear by its type) gives it `overwrites` (`templates::gets_linear_but`) also when
   the state joins a linear value of the back edge: the local starts empty
@@ -3069,9 +3461,37 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
 - A function item as a value whose summary drops or holds a linear type argument stays
   with the old pipeline (`factgen::checks::item_value`, `check_item_value` of the old
   lowering; the facts have no node for it).
-- Not done: a run as a task (W0405 of code of a caller, stage F18), a value stored behind a
-  reference (F13), the environment of a `Made` closure capture by capture (a wildcard environment
-  can give a W0703 that the old pipeline does not give, `44_returned_fns`).
+- Not done: a run as a task (W0405 of code of a caller, stage F18), the environment of a
+  `Made` closure capture by capture (a wildcard environment can give a W0703 that the old
+  pipeline does not give, `44_returned_fns`).
+
+As built (plan stage F13, `analysis::summarize::stored_parts_of`, `transfer::put_values`;
+group C stayed off until the review of the C shapes passed, and F13 part 2 put it in the
+default set):
+
+- Part `stores` of a function body has two halves. The signature gives the references
+  that go behind a reference parameter (R3RT6, F10.2, as before). The body gives the
+  heap slots of the interface places at its `Return` (`Summary::puts`, `put_fns`): a slot
+  of an `rc` object (its references), and each slot with function values (the values in
+  interface terms, `RetFn`, with the places of their environments, as part `ret`). A
+  closure summary gets `put_fns` for its slots too. A function that stores a closure has
+  its effects in its row, as a function that gives one back (`summarize::made_effects`,
+  W0701, W0703 as the old inference).
+- At a run node (an item call, a value of an item, a closure) the caller maps `puts` and
+  `put_fns` with σ: the references go with the part `stores` (a weak definition of the
+  holder; the W0204 store check gets them), and the function values join the move path of
+  the place, or its heap slot (`transfer::apply_put_fns`). `RetFn::Param(i)` gives the
+  values that argument `i` reaches.
+- A foreign function that changes an `rc` object can put each argument there
+  (`sig::foreign_group_puts`, as `Lower::group_stores_of`); before F13 it stayed with the
+  old pipeline, and so did a function whose old signature had `group_stores`.
+- Part `reads` gets the reads of a place of an `rc` object (the summary oracle found that
+  `run_hook(h)` read `Hook.f` with no `reads` place for it).
+- `reaches` (a callee that can run a stored value that its arguments reach) is the part
+  `runs` of a value inside or behind a parameter: the caller applies the values that the
+  argument reaches, the heap slots included. Plan deviation: there is no
+  `analysis/heap.rs`; the slots are in `domain::State` (F10a), cut by the widening of the
+  places that α gives.
 
 ### 6.8 Effect inference and signatures
 
@@ -3113,6 +3533,78 @@ the interpreter read them; W0701 comes from them, with the text of the old lower
 `weft-gate sigdiff` compares them with the old ones on each program in scope; each
 difference needs a ledger entry of class `sig`.
 
+As built (plan stage F13 part 2, group C on): `DEFAULT_GROUPS` is A, B and C, so the
+`ir` pipeline checks closures, function values and stored function values by default.
+The signature diff with the groups A to C has these classes (one `sig` entry each in
+`tests/gate/ledger.toml`):
+
+- The parts of the old inference for the function values of a body (`passthrough`,
+  `lent`, `ret`, `stores`, `reaches`, `reach_given`, `reach_repeats`, `repeats`,
+  `ret_refs`, `fn_stores`, `fn_store_refs`, `group_stores`, `tasks`, `task_runs`):
+  `to_effect_sig` does not give them. The summary holds the same facts in its parts
+  `runs`, `ret`, `puts` and `put_fns` (6.7), and the `ir` pipeline applies the summary
+  at each call. This is most of the difference (1813 of 1841 functions on tier 1).
+- `multi` of a run of a function value that the body reads from a field or a
+  parameter: the summary has the run in `runs`, and the caller applies the `multi` of
+  the value that it gives.
+- `muts` of a maker of a maker (`|| || w.entities.clear()`): the old inference puts the
+  change of the made closure into the maker; the summary keeps it in the made closure
+  (more precise).
+- `named` of the old hole RR7 (a rebind of a captured function value): the `ir` summary
+  has the effect, the old one does not.
+- `muts` of `Sigma::others` (a function parameter that runs with two reference
+  arguments changes both): larger than the old place set, sound.
+- The text of a place (a segment step, a cut place with `..`), and a wider place at the
+  cut of the summary (generated probes of tier 2, groups A and B).
+
+The diff also found two holes of group C (follow-up F13.2 of the plan): an unknown
+function value that runs in a body (a capture of a made closure that holds a function
+parameter of the maker, `mk_call(push1, world)()`; a function-value local that a
+closure gives a new value, `let set = || { g = grow }; set(); g(world)`) was code of a
+caller, and its `lends_mut` of the reference parameter and of `a place of a caller` did
+not reach the summary of the body. A caller of the body then missed the change
+(`verify/p/v06_ret_paths.wf` `ret_passthrough` and the mutant `m01258_43_loops.wf`
+`item_later_pub` showed it in the diff; the summary oracle failed on a caller).
+
+As built (follow-up F13.2): the root cause is that the summary of a function body had no
+part for code that the body runs and that no caller gives. Code of a caller of a value
+of a parameter is in the part `runs`, and the caller applies the value that it gives
+there. Code of a caller of any other value (`FnVal::Unknown`) changed the places of the
+body only. Two values were code of a caller with no reason:
+
+- A capture of a closure that a callee made (`Made`). The closure holds the values that
+  it runs in its own value (`summarize::fn_parts_of` puts the values of each `Kept`
+  capture into the part `ret` of the maker). A run of a capture now runs each of these
+  values with the places of the run (`transfer::made_held`, through `apply_runs`); a
+  capture that is not `Kept`, or a value with no known values, adds code of a caller.
+  A node applies each value one time for the arguments of the call and one time for
+  each set of places that a run gives it (`Apps::modes`): `f = mk_call(push1, w)`
+  holds `push1` and is not `push1`.
+- A local that a closure of the body gives a whole new value (part `rebinds`): the new
+  value is the value that the closure puts into the capture (part `put_fns`), not
+  `Unknown`.
+
+The summary of a function body has the part `lends` (`Inferred::lends`): the interface
+places of each `lends_mut` of a summary that the body applies with no entry of `runs`
+(`Em::own_lends`): code of a caller of a value that the body does not know, a callee
+or a closure that lends. The caller applies it at each call (`apply::main`). A closure
+summary keeps these lends at a run node of `run_nodes` too.
+
+A value that a closure runs through a capture changes the places of the environment of
+the closure through that environment (`Sigma::env`): the change has the root of the
+environment (`STORED`), as the places of `cap_helds`. Before, a closure of the body that
+a callee runs (`let f = || g(world); call0(f)`) got W0312 against its own environment
+(a false positive of the `ir` pipeline).
+
+Each of the 5 repros and `f13p2/t/rb.wf` is W0301 at the line of the old pipeline, and
+the clean twins are clean (probes `tests/gate/probes/fixes/f13d/`, claim F13D-UR;
+test `crates/weft-check/tests/data/fn_values/unknown_runs.wf`). The signature of
+`ret_passthrough` and of `item_later_pub` now has the change of the old inference.
+A value that a callee gives to a run of a maker parameter (`fn rp2(m, w) { let f =
+m(push1, w); f() }`) stays code of a callee for a caller of `rp2`: the part `runs` has
+places, not function values, so a caller of `rp2` with a maker `mk_call` changes `w`
+through code that it does not know (stricter than the old pipeline, sound).
+
 ### 6.9 Checks in Rust, and diagnostics
 
 These checks stay outside the spec in the migration (ADR 0002 lists why), but they read
@@ -3131,6 +3623,60 @@ the IR and the analysis, not a surface walk:
 | W0303 | the old lowering; the body gets no IR (5.36) |
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
+
+As built (plan stage F13, the W0204 store forms): the check (`factgen::stored_behind`)
+reads the stores of each body of the component, also of the instantiated closure bodies,
+and the stores that a run node applies (parts `stores`, `puts`, `put_fns` of a callee or a
+closure). A reference into the cell of a local that a closure captures `ByRef` counts as a
+reference into the local ("puts a closure that captures `v`"). A handle place `h.*` of the
+handle of the store itself is no local: the reference goes away with the object
+(`fill_self` of `tests/programs/116_rc_stores.wf`, as `check_stored_behind`).
+
+As built (F13-fix, classes AB-RC1 and AB-RC2 of the review of stage F13): the template of
+the store gives the handle places through which the store reaches the object (`al.handles`
+of the destination, the handles `σ.deps` of the argument of a callee;
+`templates::rc_handles`), and the check skips only those. A handle in a local `Vec`, struct
+or tuple (`hs[0].data[0]`) is no handle of the object: W0204, as the old lowering (F13 part 1
+skipped each handle of the same `rc` type, a regression). A whole local handle of another
+object (`let d = newc()`, an `Option` payload, a second by-value handle parameter) is W0204
+too: the old lowering skips each whole local handle of the same type and misses the dangling
+reference. This is stricter than the old pipeline when the other handle is a handle of a
+living object (`other(c, d)` with `d` a handle that the caller keeps; two local objects of
+`main` that point into each other). A whole local handle whose value can come from the same
+local or parameter as a handle of the store (`let d = c.clone()`, `transfer` gives the clone
+the place of `c`) can be a handle of the same object: the facts cannot tell, so the program
+goes to the old pipeline ("a reference through a copy of an `rc` handle"). As built (class
+AB-RC1-join of the final check of group C): a handle of the store is the handle of the object
+only if each other handle of the store is a handle of the same local. A store through a
+reference that can reach the object of the caller and a local object (`let x = if b { &c }
+else { &d }; x.refs.push(&d.data[0])`, the same through an `Option` or a loop) is W0204
+when the sources of the other handle and of `d` are disjoint, and goes to the old pipeline
+when they share one. Stricter than the old pipeline by design (class AB-RC1-copy-strict of
+the final check of group C): a copy of a local handle that the facts do not follow to the
+store (`let keep = h.clone()` and then a store into `h` of a reference through `keep`; `let d
+= same(c.clone())` through a callee) is a handle of another object, so W0204, also when it
+is a handle of the same object at run time. A store with no
+known handle (the `puts` of a callee with a by-value handle argument, a closure) keeps the
+rule of the old lowering; such a callee also gets W0312 for an argument that points into the
+group. The references of the part `puts` flow from the values of the arguments with their
+handle places (`apply::vplaces`), as the part `stores`. A new
+check, `factgen::kept_escapes`, gives the late values of `Kept` captures: a closure that
+the function gives back or puts into a heap slot of an interface place sees the value of
+each variable that it keeps at the `Return`, and a reference there into a local is W0204
+(at the returned expression, or at the closure literal for a store). The value of the
+closure keeps the references of the variable where the closure is made only (class K3 of
+stage F12), so the facts alone did not see `r = &w.entities[0]` after `let f = || print(r.hp)`
+(`fixes/f13/kept_rebind_ret.wf`, a hole of ABC before F13).
+
+As built (F13-fix, class K3-Made of the review of stage F13): the check and the summary
+part `ret` follow a closure that a closure of the body makes (`FnVal::Made`) and a capture
+of a capture (`env.j`): `apply::made_capture_source` gives the variable of the body that the
+capture shares through the `Kept` and `ByRef` captures of the makers, and its value at the
+`Return` counts (`kept_escapes`, `summarize::fn_parts_of`). So `let m = || || print(r.hp);
+let g = m(); r = &w.entities[0]; g` is W0204, and with `r = &b.entities[0]` (a parameter) the
+result points into `b.entities[]` too: a caller that clears `b` before the run is W0301
+(the run of the result read the late value, and the summary oracle failed on the clean
+twins).
 
 As built (plan stage F8a): `_0` has the variable kind `Result` (`weft-facts`), and its
 name tells the frame: `the result` (a function or a test), `the closure result`,
@@ -3675,10 +4221,22 @@ table, the roots, the variables, the versions of the parts, the entry node).
   gives the fact places; each IR place that reaches a cell gives its places. A place with
   no name is counted, not checked. In a frame of a closure body (F12-fix), captured cell
   `k` is `env.k` and the targets of the references in it are `(*env.k)` and below: α of
-  the instantiated body names them with the places of the maker (the cell root of a
+  the instantiated body names `env.k` with the places of the maker (the cell root of a
   `ByRef` capture, the place of the variable of a `Kept` capture), so C1, C5 and D1
   check the captured cells too (a move of a whole `ByMove` capture is a move of its `E`
-  variable). The oracle reads the heap with `Heap::peek`: a look at a freed cell does not
+  variable). A place through a `ByRef` capture (`(*env.k).f`) is the place of the
+  source of the capture in the maker (`x.f`, `oracle::facts::through_env`), through
+  each closure that makes the closure, and a place below a parameter of a function
+  body starts at its `Param` root. Before F12-fix2 such a place had no name: a change
+  or a read of a `ByRef` capture in a closure body was not checked (second review of
+  the ABC preview, 5; tests `a_missing_*_of_a_borrowed_*` of `fact_oracle.rs`). A
+  place behind a reference that a `ByMove` or `Kept` capture holds (`(*env.k).f` for a
+  capture of a reference `x`) is `(*x).f` in the maker (F12-fix3, gap FO-G1 of the third
+  review of the ABC preview: `fn go(w: &W) { let f = || w.items.push(10); f() }` was not
+  checked): a parameter starts at its `Param` root, and a local of the maker names the
+  `points_into` places of its variable (`Comp::s_any`; tests
+  `a_missing_mutates_at_behind_a_captured_reference_*`). A deeper reference with no
+  parameter still has no name (counted, not checked). The oracle reads the heap with `Heap::peek`: a look at a freed cell does not
   flag the memory oracle.
 - C1: at the entry of each node, each reference that a used `S(l)` (the value of `l`
   outside the parts with variables of their own) or a used version of a part holds is
@@ -3720,6 +4278,70 @@ table, the roots, the variables, the versions of the parts, the entry node).
   references of the earlier iterations stay in the old cells (5.10): the oracle keeps the
   old cell of each temporary that gets a new one (`FactOracle::retire`) and names it as
   the local, so C1 checks those references too (before, they were places with no name).
+
+**As built (F13): the summary oracle (A3).** It runs with the fact oracle
+(`RunOptions::fact_oracle`, `oracle::facts::FactOracle::check_summary`). An access of an
+op of a frame is an access of each frame below it on the stack (at most
+`SUMMARY_DEPTH` = 16 frames) that waits at a run node: the frame names the concrete place
+with its own map (its slots, the cells that its values own, the targets of its parameters
+and captures: that is σ of the run node), and the facts of its current nodes (the phases of
+the run node, where the applied summary is) must cover it: a change (a write of a place
+that had a value, a take) a `mutates_at` or a `lends_mut` at or above it, a read a
+`reads_at` that overlaps it. A place that the frame cannot name (a local of the callee) is
+not checked; a cell that the op frees and the buffer handle of an array follow the rules of
+the fact oracle. A failure is a fault "summary oracle (A3)" (`weft-gate fact-oracle`
+class `summary-oracle`). The frees and the pointers of the result are not compared here:
+C4 and C1 of the frame check them at its own nodes. Tests:
+`crates/weft-interp/tests/summary_oracle.rs` (a `muts` place and a `reads` place of an
+applied summary, and a `muts` place of a closure summary, removed by hand at the run node:
+the run fails; stored function values pass). It found one defect: part `reads` had no
+place of an `rc` object (fixed, 6.7).
+
+**As built (F13-fix): what the summary oracle checks, and what it does not.** The review of
+stage F13 found that A3 did not check the parts `puts` and `put_fns` (a missing
+`points_into` of the value that a callee puts into a place of the caller passed:
+`so02`, `so03`, `so04` of the review).
+
+- Now each write of a callee (also a write of a new place, such as `push`) whose value
+  holds references (in its parts, boxes, buffers, and the captured cells of its closures)
+  is checked against each frame below that can name the place
+  (`FactOracle::check_put`): each reference that the frame can name is inside a
+  `points_into` place of a variable that holds the place (a variable of the local that owns
+  it, or a version of the heap slot that overlaps it; `Emitted::slots`). A closure that
+  captures a local by reference points into the cell root of the local in the facts, and
+  the run gives the place of the local: the cell root covers it (review rows `fc/c20`,
+  `fc/c21` of stage F12 failed the first form of the check). Tests:
+  `crates/weft-interp/tests/summary_oracle.rs` (`a_missing_put_fns_place_*`,
+  `a_missing_puts_place_of_an_rc_object_*`, each seen passing the broken facts before).
+- The report counts what A3 does not check (`FactReport::summary_unnamed`,
+  `summary_skipped`; the note of `weft run --fact-oracle`): an access or a reference that the
+  frame below cannot name (a local of the callee, a place that no IR place of the frame
+  reaches), a captured cell of a closure that a callee puts there (the cell itself is not
+  named; the references in its value are), a place of another body of the component, and the
+  frames that it
+  does not follow: a frame below that unwinds or that is a copied frame of a continuation
+  (`uid` 0, group D), and each op of such a frame. A clause frame that waits at a `resume`
+  checks with the nodes of the frame above it, in the terms of the site: a name of the
+  frame below a parameter of the clause (an anchor of the clause) is in the terms of the
+  clause, so it does not count (plan stage F15; before, a run of the rest of the handled
+  body that read the argument of the clause failed A3 with "a read of `r`").
+- Limits that stay: at most `SUMMARY_DEPTH` = 16 frames below the callee (a write 18
+  frames down is not checked); the frees and the pointers of the result are not compared
+  (C4 and C1 of the frame check them at its own nodes); a fresh write is checked for the
+  references that it puts, not for the change cover; a `Deref`, the read of the buffer
+  handle of an array and an access of a cell that the op frees are skipped; only the frames
+  of the current task are walked (a task that writes a place of its parent is not checked
+  against the spawn node); only the IR engine has A3 (the AST engine has no facts).
+- Code of a caller reads the places behind the parameters of the body and the `rc` groups
+  that they reach (6.7, `transfer::caller_reads`): the four A3 failures of the review rows
+  of stage F12-fix3 were reads there (`n1c/x08` passes now). A write there through the
+  value of the caller is not in the facts of the body by design (map N2): `fc/c19`,
+  `lcv/cr_h_vecref` and `h2w/w04` still fail A3, and the checker rejects all three (W0312
+  or W0301 at the caller), so the gate does not run them.
+- σ of a run of a closure behind a reference argument (`run_all(&fs)`) takes the places of
+  the environment from the closures that the reference reaches, not the places that the
+  reference itself points into: the facts had `reads_at` of `fs.entities`, a place that
+  does not exist (`so04`).
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

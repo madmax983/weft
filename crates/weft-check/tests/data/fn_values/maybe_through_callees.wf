@@ -1,0 +1,61 @@
+// A callee that gives a function value to a second callee that runs it on
+// some paths only can drop it too (second review of the ABC preview, hole
+// H5b: `ah5/h5_05`, `h5x/m01`, `m02`, `m03`, `m05`, `m09`). A run that a
+// callee gives (part `runs` of its summary) is `maybe` at the run node when
+// it is `maybe` in the callee.
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn run(f: fn()) { f() }
+fn maybe(f: fn(), c: bool) { if c { f() } }
+fn outer(f: fn(), c: bool) { maybe(f, c) }
+fn outer2(f: fn(), c: bool) { outer(f, c) }
+fn outer_r(f: fn(), c: bool) { if c { run(f) } }
+fn outer_r2(f: fn(), c: bool) { outer_r(f, c) }
+struct K { f: fn() }
+fn maybe_k(k: K, c: bool) { if c { let g = k.f; g() } }
+fn outer_k(f: fn(), c: bool) { maybe_k(K { f: f }, c) }
+fn nested_callee() {
+    let t = begin(1)
+    outer(|| rollback(t), false) //~ W0601
+}
+fn three_levels() {
+    let t = begin(2)
+    outer2(|| rollback(t), false) //~ W0601
+}
+fn closure_wraps() {
+    let t = begin(3)
+    let o = |f: fn()| maybe(f, false)
+    o(|| rollback(t)) //~ W0601
+}
+fn local_closure() {
+    let t = begin(4)
+    let k = || rollback(t)
+    outer(k, false) //~ W0601
+}
+fn through_run() {
+    let t = begin(5)
+    outer_r2(|| rollback(t), false) //~ W0601
+}
+fn struct_field() {
+    let t = begin(6)
+    outer_k(|| rollback(t), false) //~ W0601
+}
+// Clean: a plain closure, and a callee that also runs it on each path.
+fn plain() {
+    outer(|| print(1), false)
+    outer2(|| print(2), true)
+}
+fn each_path() {
+    let t = begin(7)
+    let s = begin(8)
+    run(|| rollback(t))
+    let k = || rollback(s)
+    let o = || run(k)
+    o()
+}
+fn main() {
+    plain()
+    each_path()
+}

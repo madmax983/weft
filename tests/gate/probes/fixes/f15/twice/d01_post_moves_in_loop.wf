@@ -1,0 +1,14 @@
+// F15 self-attack (a clause that runs more than once runs its code after `resume` once for each run): scratchpad f15/att/v/d01_post_moves_in_loop.wf
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+effect Tick { fn tick() }
+fn main() {
+    let t = Tx { id: 1 }
+    let i = 0
+    handle Tick { fn tick() { resume(()); commit(t) } } in {
+        while i < 2 {
+            tick()
+            i = i + 1
+        }
+    }
+}

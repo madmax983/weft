@@ -1,0 +1,36 @@
+// A callee that gives a linear closure to a second callee that runs it on
+// some paths only can drop it: the call is W0601.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn maybe(f: fn(), c: bool) { if c { f() } }
+fn outer(f: fn(), c: bool) { maybe(f, c) }
+fn outer2(f: fn(), c: bool) { outer(f, c) }
+
+fn through_a_callee() {
+    let t = begin(1)
+    outer(|| rollback(t), false)   //~ W0601
+}
+
+fn through_two_callees() {
+    let t = begin(2)
+    outer2(|| rollback(t), false)   //~ W0601
+}
+
+fn through_a_closure() {
+    let t = begin(3)
+    let o = |f: fn()| maybe(f, false)
+    o(|| rollback(t))   //~ W0601
+}
+
+// A closure that is not linear can go away.
+fn plain() {
+    outer(|| print(1), false)
+    outer2(|| print(2), true)
+}
+
+fn main() {
+    plain()
+}

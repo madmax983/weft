@@ -1,0 +1,14 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a rebound local goes into a maker (scratchpad f13d/w/a11_made_rebind.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { x.entities.push(Entity { hp: 1 }) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn call0(f: fn()) { f() }
+fn noop(w: &World) {}
+fn rp(world: &World) { let g = noop; let set = || { g = push1 }; set(); let f = mk_call(g, world); f() }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    rp(&w)
+    print(first.hp)
+}

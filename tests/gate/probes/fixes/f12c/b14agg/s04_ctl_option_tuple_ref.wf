@@ -1,0 +1,14 @@
+// Third review of the ABC preview, clean twin of old hole b14-agg (b14s/s04_ctl_option_tuple_ref.wf).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn run(f: fn()) { f() }
+struct K { f: fn() }
+fn ro(o: Option<(&Vec<fn()>, u64)>) { match o { Some(t) => { let (v, n) = t; let g = v[0]; g() }, None => {} } }
+fn main() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| print(b.items.len()))
+    ro(Some((&fs, 1)))
+    ro(Some((&fs, 1)))
+}

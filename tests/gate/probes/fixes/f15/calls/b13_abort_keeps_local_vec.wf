@@ -1,0 +1,11 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b13_abort_keeps_local_vec.wf
+effect Keep { fn keep(r: &u64) }
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn main() {
+    let store: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(r) { store.push(r) } } in deep()
+    print(store[0])
+}

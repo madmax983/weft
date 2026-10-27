@@ -1,0 +1,63 @@
+// Clean programs with stored and returned closures that the ir pipeline
+// rejected before F13-fix (false positives FP-S2 and FP-K4 of the review of
+// stage F13, and finding (a) of stage F12-fix3).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Slot { o: Option<fn()> }
+struct Cb { f: fn() }
+struct Buf { items: Vec<u64> }
+fn noop() { print(0) }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+// FP-S2: a body stores a closure behind a parameter, reads the slot back
+// and runs it. The value of the caller in the slot has no environment of
+// the stored closure.
+fn readback_option(world: &World, s: &Slot) / mut(world.entities, s.o) {
+    s.o = Some(|| print(world.entities.len()))
+    let first = &world.entities[0]
+    let o = s.o
+    match o {
+        Some(f) => f(),
+        None => {}
+    }
+    print(first.hp)
+}
+fn readback_vec(world: &World, fs: &Vec<fn()>) / mut(world.entities, fs) {
+    fs.push(noop)
+    fs.push(|| print(world.entities.len()))
+    let first = &world.entities[0]
+    let f = fs[fs.len() - 1]
+    f()
+    print(first.hp)
+}
+// FP-K4: a returned closure gives its `Kept` variable a new value; a run of
+// it changes no place of `b`.
+fn mk(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || {
+        print(r.hp)
+        r = &b.entities[0]
+    }
+    f
+}
+// F12-fix3 finding (a): a callee runs two values one time each.
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn both(f: fn(), g: fn()) { f(); g() }
+fn main() {
+    let w = mkw(1)
+    let s = Slot { o: None }
+    readback_option(&w, &s)
+    let fs: Vec<fn()> = Vec.new()
+    readback_vec(&w, &fs)
+    let a = mkw(1)
+    let b = mkw(2)
+    let f = mk(&a, &b)
+    f()
+    f()
+    let buf = mkbuf()
+    both(|| eat(buf), || print(1))
+}

@@ -1,0 +1,68 @@
+// A closure that a maker makes changes the variables that it captures. The
+// result of a maker keeps these changes when a second closure gives it
+// back or runs it, and when a callee runs the result of a maker that it
+// gets from its caller.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn run(f: fn()) { f() }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+
+fn closure_gives_back_the_result() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    print(first.hp)   //~ W0301
+}
+
+fn closure_runs_the_result() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let k = || run(mk())
+    k()
+    print(first.hp)   //~ W0301
+}
+
+fn callee_runs_the_result() {
+    let w = mkw()
+    let first = &w.entities[0]
+    go(|| || w.entities.clear())
+    print(first.hp)   //~ W0301
+}
+
+// The made closure reads only, or the reference comes after the run.
+fn reads_only() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || print(w.entities.len())
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    go(|| || print(w.entities.len()))
+    print(first.hp)
+}
+
+fn reference_after_the_run() {
+    let w = mkw()
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    w.entities.push(Entity { hp: 2 })
+    let first = &w.entities[0]
+    print(first.hp)
+}
+
+fn main() {
+    reads_only()
+    reference_after_the_run()
+}

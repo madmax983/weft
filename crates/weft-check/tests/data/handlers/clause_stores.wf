@@ -1,0 +1,13 @@
+// A clause puts the reference of its parameter into an `rc` object of the
+// caller (`116_rc_stores.wf` clause_param): W0204 with the places of the
+// argument.
+struct Calls { refs: Vec<&u64> }
+effect Keep { fn keep(x: &u64) }
+
+fn clause_param(c: Rc<Calls>) / mut(Calls) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    handle Keep { fn keep(x) { c.refs.push(x); resume(()) } } in keep(&v[0]) //~ W0204
+}
+
+fn main() {}

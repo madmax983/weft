@@ -1,0 +1,16 @@
+// J3: a clause that resumes and then gives another reference as the value of
+// the `handle`.
+effect Tick { fn tick() }
+
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Tick { fn tick() { let x = resume(()); &u[0] } } in {
+        tick()
+        &v[0]
+    }
+    u.clear()
+    print(r + 1) //~ W0301
+}

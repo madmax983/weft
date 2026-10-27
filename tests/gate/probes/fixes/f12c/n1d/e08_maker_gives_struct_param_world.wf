@@ -1,0 +1,17 @@
+// Third review of the ABC preview, old hole N1-aggregate that ABC closes: a maker gives a closure inside a struct, an Option, a Vec or a tuple (n1d/e08_maker_gives_struct_param_world.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn gok(m: fn() -> K) { let k = m(); let g = k.f; g() }
+fn goo(m: fn() -> Option<fn()>) { match m() { Some(g) => g(), None => {} } }
+fn gov(m: fn() -> Vec<fn()>) { let fs = m(); let g = fs[0]; g() }
+fn got(m: fn() -> (u64, fn())) { let (a, g) = m(); g() }
+fn givek(m: fn() -> K) -> K { m() }
+fn inner(w: &World) / mut(w.entities) {
+    let first = &w.entities[0]
+    gok(|| K { f: || w.entities.clear() })
+    print(first.hp)
+}
+fn main() { let w = mkw(); inner(&w) }

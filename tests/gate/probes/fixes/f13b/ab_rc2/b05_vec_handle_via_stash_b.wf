@@ -1,0 +1,22 @@
+// Review of stage F13, class AB-RC2: a reference through a handle in a local container goes into an rc object (s7b/b05_vec_handle_via_stash_b.wf).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+struct Store { xs: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn news() -> Rc<Store> { Rc.new(Store { xs: Vec.new() }) }
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) { c.refs.push(x) }
+fn read0(c: Rc<Cache>) {
+    let r = c.refs[0]
+    print(r + 0)
+}
+fn fill(c: Rc<Cache>) / mut(Cache) {
+    let hs: Vec<Rc<Cache>> = Vec.new()
+    hs.push(newc())
+    hs[0].data.push(1)
+    let r = &hs[0].data[0]
+    c.refs.push(r)
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    fill(c.clone())
+    read0(c)
+}

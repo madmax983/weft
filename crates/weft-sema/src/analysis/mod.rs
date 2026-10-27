@@ -24,6 +24,7 @@
 
 pub mod apply;
 pub mod callgraph;
+pub mod clause;
 pub mod domain;
 pub mod sig;
 pub mod summarize;
@@ -79,7 +80,10 @@ impl States {
 ///
 /// `st` is the state after the statements of block `blk_id` of body `body`:
 /// an `unwind` edge gets the state before the terminator `term`, a normal
-/// edge the state after it.
+/// edge the state after it. A terminator that runs a clause gives its
+/// `unwind` edge the state of the clause where it aborts (plan stage F15):
+/// a `perform` through a local capability the states of the clause alone,
+/// a call that runs clauses the join of both.
 ///
 /// # Errors
 ///
@@ -92,10 +96,22 @@ pub fn edges(
     mut st: State,
 ) -> Result<Vec<(BlockId, State)>, AlphaError> {
     let mut out: Vec<(BlockId, State)> = Vec::new();
-    if let Some(u) = term.unwind() {
-        out.push((u, st.clone()));
-    }
+    let before = term.unwind().map(|u| (u, st.clone()));
+    cx.hx.abort_edge = None;
     transfer::term(cx, body, blk_id, &mut st, term)?;
+    // A terminator that runs a clause: the abort edge gets the state of the
+    // clause where it aborts (plan stage F15, `clause::AbortEdge`).
+    let hook = cx.hx.abort_edge.take();
+    if let Some((u, mut s)) = before {
+        match hook {
+            Some(clause::AbortEdge::Replace(a)) => s = a,
+            Some(clause::AbortEdge::Join(a)) => {
+                s.join(&a);
+            }
+            None => {}
+        }
+        out.push((u, s));
+    }
     for s in term.normal_successors() {
         out.push((s, st.clone()));
     }
@@ -161,6 +177,32 @@ pub fn run_all(cx: &mut Cx<'_>, body: BodyId, init: State) -> Result<States, Alp
     run_with(cx, body, init, true)
 }
 
+/// What [`run_from`] gives besides the states.
+#[derive(Clone, Debug, Default)]
+pub struct Ends {
+    /// The state after the statements of each `Resume` block (before its
+    /// terminator) that the run stopped at (plan stage F14: the resume
+    /// points of a clause).
+    pub resumes: std::collections::BTreeMap<BlockId, State>,
+    /// The state after the statements of each `Return` block of the normal
+    /// path (before its terminator).
+    pub returns: std::collections::BTreeMap<BlockId, State>,
+    /// The state after the statements of each `UnwindExit` block: an abort
+    /// that leaves the body (plan stage F15).
+    pub unwinds: std::collections::BTreeMap<BlockId, State>,
+}
+
+/// How [`run_from`] runs.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Mode {
+    /// Keep the state of each block, not only of the join blocks.
+    pub all: bool,
+    /// A `Resume` terminator ends the run: its state goes to
+    /// [`Ends::resumes`], and its successors get no state (the code of a
+    /// clause before its first resume point, plan stage F14).
+    pub stop_at_resume: bool,
+}
+
 /// [`run`], with `all`: keep the state of each block.
 fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<States, AlphaError> {
     let p = cx.p;
@@ -168,25 +210,63 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
         .bodies
         .get(body.index())
         .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", body.0)))?;
+    let mode = Mode {
+        all,
+        stop_at_resume: false,
+    };
+    run_from(cx, body, vec![(b.entry, init)], mode).map(|(s, _)| s)
+}
+
+/// Runs the analysis of body `body` from the states `seeds` at some blocks.
+///
+/// A seed is the entry block, or a block after a resume point of a clause
+/// (plan stage F14). The run has the mode `mode`. Returns the states and the
+/// states at the ends of the run ([`Ends`]).
+///
+/// # Errors
+///
+/// The errors of [`run`].
+pub fn run_from(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    seeds: Vec<(BlockId, State)>,
+    mode: Mode,
+) -> Result<(States, Ends), AlphaError> {
+    let p = cx.p;
+    let b = p
+        .bodies
+        .get(body.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", body.0)))?;
+    let all = mode.all;
     let order = weft_ir::order::reverse_post_order(b);
     let rank = widen::ranks(b);
-    let join = join_blocks(b, &rank);
+    let mut join = join_blocks(b, &rank);
     let is_head = widen::heads(b, &rank);
     let mut heads: Vec<Option<widen::Head>> = vec![None; b.blocks.len()];
-    let mut out = States {
-        entry: vec![None; b.blocks.len()],
-        join,
-    };
     let mut work: BTreeSet<usize> = BTreeSet::new();
-    if let Some(e) = out.entry.get_mut(b.entry.index()) {
-        if is_head.get(b.entry.index()).copied().unwrap_or(false) {
-            if let Some(h) = heads.get_mut(b.entry.index()) {
-                *h = Some(widen::Head::new(&init));
-            }
+    let mut entry: Vec<Option<State>> = vec![None; b.blocks.len()];
+    for (blk, init) in seeds {
+        // A seed block keeps its state: more than one state can come in.
+        if let Some(j) = join.get_mut(blk.index()) {
+            *j = true;
         }
-        *e = Some(init);
-        work.insert(rank.get(b.entry.index()).copied().unwrap_or(0));
+        let Some(e) = entry.get_mut(blk.index()) else {
+            continue;
+        };
+        if let Some(have) = e {
+            have.join(&init);
+        } else {
+            if is_head.get(blk.index()).copied().unwrap_or(false) {
+                if let Some(h) = heads.get_mut(blk.index()) {
+                    *h = Some(widen::Head::new(&init));
+                }
+            }
+            *e = Some(init);
+        }
+        work.insert(rank.get(blk.index()).copied().unwrap_or(0));
     }
+    let mut out = States { entry, join };
+    let mut ends = Ends::default();
     while let Some(r) = work.pop_first() {
         let Some(&blk_id) = order.get(r) else {
             continue;
@@ -207,6 +287,28 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
         };
         for s in &blk.stmts {
             transfer::stmt(cx, body, &mut st, &s.kind)?;
+        }
+        if matches!(blk.term.kind, weft_ir::TermKind::UnwindExit) {
+            match ends.unwinds.get_mut(&blk_id) {
+                Some(have) => {
+                    have.join(&st);
+                }
+                None => {
+                    ends.unwinds.insert(blk_id, st.clone());
+                }
+            }
+        }
+        if !blk.cleanup {
+            match blk.term.kind {
+                weft_ir::TermKind::Return => {
+                    ends.returns.insert(blk_id, st.clone());
+                }
+                weft_ir::TermKind::Resume { .. } if mode.stop_at_resume => {
+                    ends.resumes.insert(blk_id, st);
+                    continue;
+                }
+                _ => {}
+            }
         }
         for (to, s) in edges(cx, body, blk_id, &blk.term.kind, st)? {
             let Some(slot) = out.entry.get_mut(to.index()) else {
@@ -244,5 +346,5 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
             }
         }
     }
-    Ok(out)
+    Ok((out, ends))
 }

@@ -1,0 +1,12 @@
+// F14 self-attack (clean twin): scratchpad f14/att/v/k1_clause_runs_made_c.wf
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Log { fn log(n: u64) }
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let mk = || || w.entities.clear()
+    let first = &w.entities[0]
+    handle Log { fn log(n) { let g = mk(); g(); resume(()) } } in log(1)
+    print(w.entities.len())
+}

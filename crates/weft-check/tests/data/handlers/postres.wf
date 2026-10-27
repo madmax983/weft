@@ -1,0 +1,12 @@
+// M1 in one line (`ir/work/mir/postres.wf`).
+effect Tick { fn tick() }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Tick { fn tick() { let x = resume(()); v.clear(); x } } in { //~ W0301
+        tick()
+        &v[0]
+    }
+    print(r + 1) //~ W0301
+}

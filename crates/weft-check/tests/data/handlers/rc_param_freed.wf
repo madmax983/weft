@@ -1,0 +1,23 @@
+// The handled body holds the last `Rc` of an object, and the clause holds a
+// reference into the object across `resume` (`rr5_v2_rc_freed.wf`).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity) }
+
+fn mk() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+
+fn main() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp) //~ W0301
+        }
+    } in {
+        let w = Rc.new(mk())
+        peek(&w.entities[0])
+    }
+}

@@ -45,6 +45,12 @@ pub enum FnVal {
     /// reference): a value of a caller. A call of it is code of a caller,
     /// and the summary of the body runs it (part `runs`).
     Param(u32),
+    /// The result of a run of a value of parameter `i` (`let g = m()`): a
+    /// value that a run of the value of the caller gives back. A run of it
+    /// is a run of the result, not of the parameter, so a `once` maker that
+    /// the body runs one time, and whose result it runs one time, runs
+    /// once (the W0502 class of the third review of the ABC preview).
+    ParamResult(u32),
     /// A function value that capture `k` of the closure body holds, in the
     /// summary of the closure (its interface): the run node of the closure
     /// runs the value of the capture (part `runs`).
@@ -339,6 +345,11 @@ pub struct State {
     /// in a place of a caller), the places that the references stored
     /// there can point into (may; a store there is a weak update).
     behind: Rc<BTreeMap<PlaceId, BTreeSet<PlaceId>>>,
+    /// The function values of the heap slots (stage F13): for each fact
+    /// place that no local of the component owns, the function values that a
+    /// store put there (may; a weak update). The places that their
+    /// environments point into are in `behind`.
+    behind_fns: Rc<BTreeMap<PlaceId, BTreeSet<FnVal>>>,
 }
 
 /// The number of locals of one chunk of a [`Chunked`] map.
@@ -551,6 +562,14 @@ impl State {
         self.vals.get(key).map(Rc::as_ref)
     }
 
+    /// Gives local `key` the value `v` and no may part, must part or holes:
+    /// the local ended, but a closure that captured it keeps the value that
+    /// it had (a `Kept` or a `ByRef` capture of a local of a handled body
+    /// that runs after the `handle`, plan stage F15).
+    pub fn keep_value(&mut self, key: Key, v: Tree) {
+        *self.vals.entry(key, || Rc::new(Tree::none())) = Rc::new(v);
+    }
+
     /// Gives the move path `path` of local `key` the value `v` (a strong
     /// update): it can and must hold a value now, and its parts get the
     /// parts of `v`.
@@ -646,6 +665,87 @@ impl State {
         }
     }
 
+    /// Removes the value, the may part, the must part and the holes of each
+    /// local of a body for which `of` is true: the locals of a frame that
+    /// ended (a handled body, a clause, plan stage F14).
+    pub fn remove_bodies(&mut self, of: &dyn Fn(BodyId) -> bool) {
+        let keys: BTreeSet<Key> = self
+            .vals
+            .iter()
+            .map(|(k, _)| *k)
+            .chain(self.may.0.iter().map(|(k, _)| *k))
+            .chain(self.must.0.iter().map(|(k, _)| *k))
+            .chain(self.holes.0.iter().map(|(k, _)| *k))
+            .filter(|k| of(k.0))
+            .collect();
+        for k in keys {
+            self.vals.remove(k);
+            self.may.0.remove(k);
+            self.must.0.remove(k);
+            self.holes.0.remove(k);
+        }
+    }
+
+    /// A copy of `self` where each local of a body for which `of` is true has
+    /// its value, its may part, its must part and its holes from `o`: the
+    /// locals of a clause keep their values across a `resume`, and the
+    /// other locals get the values at the end of the handled body (plan
+    /// stage F14).
+    #[must_use]
+    pub fn with_bodies_of(&self, o: &Self, of: &dyn Fn(BodyId) -> bool) -> Self {
+        let mut out = self.clone();
+        out.remove_bodies(of);
+        for (k, t) in o.vals.iter() {
+            if of(k.0) {
+                out.vals.insert(*k, Rc::clone(t));
+            }
+        }
+        for (k, ps) in o.may.0.iter() {
+            if of(k.0) {
+                out.may.0.insert(*k, Rc::clone(ps));
+            }
+        }
+        for (k, ps) in o.must.0.iter() {
+            if of(k.0) {
+                out.must.0.insert(*k, Rc::clone(ps));
+            }
+        }
+        for (k, ps) in o.holes.0.iter() {
+            if of(k.0) {
+                out.holes.0.insert(*k, Rc::clone(ps));
+            }
+        }
+        out
+    }
+
+    /// Joins the value in `o` of each local of a body for which `of` is
+    /// false into its value in `self`, if `self` has one. The may parts, the
+    /// must parts and the holes stay. After a `resume`, a local of the site
+    /// has its value at the end of the handled body (in the terms of the
+    /// site) and its value at the resume point (in the terms of the clause:
+    /// a reference that the clause put there points below a parameter of
+    /// the clause, plan stage F14).
+    pub fn join_values_but(&mut self, o: &Self, of: &dyn Fn(BodyId) -> bool) {
+        let mut new: Vec<(Key, Rc<Tree>)> = Vec::new();
+        for (k, t) in o.vals.iter() {
+            if of(k.0) {
+                continue;
+            }
+            if let Some(mine) = self.vals.get(*k) {
+                if Rc::ptr_eq(mine, t) || **mine == **t {
+                    continue;
+                }
+                let mut j = (**mine).clone();
+                if j.join(t) {
+                    new.push((*k, Rc::new(j)));
+                }
+            }
+        }
+        for (k, t) in new {
+            self.vals.insert(k, t);
+        }
+    }
+
     /// Joins `o` into `self`: a union of the values and of the may parts,
     /// and an intersection of the must parts. Returns true if `self`
     /// changed.
@@ -675,7 +775,36 @@ impl State {
                 changed |= self.store_behind(*q, refs.iter().copied());
             }
         }
+        if !Rc::ptr_eq(&self.behind_fns, &o.behind_fns) {
+            for (q, fns) in o.behind_fns.iter() {
+                changed |= self.store_fns_behind(*q, fns.iter().cloned());
+            }
+        }
         changed
+    }
+
+    /// A store of the function values `fns` at the fact place `q` that no
+    /// local of the component owns (a heap slot, stage F13). Returns true if
+    /// the slot changed. A slot with more than [`FNS_MAX`] values widens.
+    pub fn store_fns_behind(&mut self, q: PlaceId, fns: impl IntoIterator<Item = FnVal>) -> bool {
+        let new: Vec<FnVal> = fns
+            .into_iter()
+            .filter(|f| self.behind_fns.get(&q).is_none_or(|have| !have.contains(f)))
+            .collect();
+        if new.is_empty() {
+            return false;
+        }
+        let slot = Rc::make_mut(&mut self.behind_fns).entry(q).or_default();
+        let before = slot.clone();
+        slot.extend(new);
+        widen_fns(slot);
+        *slot != before
+    }
+
+    /// The function values of the heap slots: each place that got a store of
+    /// a function value, and the values (stage F13).
+    pub fn behind_fns(&self) -> &BTreeMap<PlaceId, BTreeSet<FnVal>> {
+        &self.behind_fns
     }
 
     /// A store of references that point into `refs` at the fact place `q`

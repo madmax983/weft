@@ -1,0 +1,10 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b05_clause_clears_given.wf
+effect Bump { fn bump(v: &Vec<u64>) }
+fn bump_it(v: &Vec<u64>) / Bump { bump(v) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Bump { fn bump(x) { x.clear(); resume(()) } } in bump_it(&v)
+    print(r)
+}

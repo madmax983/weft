@@ -1,0 +1,19 @@
+// F13 (stored values): a closure in an `rc` object that a callee runs; the handle carries the closure (Rc.new), so the callee applies its summary (ABC accepted this before F13 and the run faults; the old pipeline rejects it).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Hook { f: fn() }
+fn run_hook(h: Rc<Hook>) {
+    let g = h.f
+    g()
+}
+fn hook_local(world: &World) / mut(world.entities, Hook) {
+    let h = Rc.new(Hook { f: || world.entities.clear() })
+    let first = &world.entities[0]
+    run_hook(h.clone())
+    print(first.hp)
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    hook_local(&w)
+}

@@ -1,0 +1,10 @@
+// F12-fix3 variant of ah6/h6_08: a callee stores a linear closure into a vector of the caller (a_one_dropped).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn add(ks: &Vec<fn()>, t: Tx) / mut(ks) { ks.push(|| rollback(t)) }
+fn main() {
+    let ks = Vec.new()
+    add(&ks, begin(1))
+}

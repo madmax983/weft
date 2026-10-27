@@ -1,0 +1,10 @@
+// V035 v4: named arguments of an operation.
+effect Two { fn two(a: &Vec<u64>, b: &u64) }
+
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Two { fn two(a, b) { a.clear(); print(b); resume(()) } } in {
+        two(b: &v[0], a: &v) //~ W0312
+    }
+}

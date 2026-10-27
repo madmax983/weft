@@ -1,0 +1,16 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/d03_post_moves_nested_inner_twice_c.wf
+linear struct Tx { id: u64 }
+    on abort = drop_tx
+fn drop_tx(t: Tx) { let Tx(i) = t }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+effect Tick { fn tick() }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let t = Tx { id: 1 }
+    handle Tick { fn tick() { resume(()); commit(t) } } in {
+        let r = handle Ask { fn ask() { tick(); resume(1) } } in {
+            ask()
+        }
+        print(r)
+    }
+}

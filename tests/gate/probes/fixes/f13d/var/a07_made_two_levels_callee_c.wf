@@ -1,0 +1,15 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a made closure from a callee goes to a callee two levels down; the clean twin (scratchpad f13d/w/a07_made_two_levels_callee_c.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { print(x.entities.len()) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn call0(f: fn()) { f() }
+fn give(w: &World) -> fn() { mk_call(push1, w) }
+fn run_it(w: &World) { let f = give(w); call0(f) }
+fn rp(world: &World) { run_it(world) }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    rp(&w)
+    print(first.hp)
+}

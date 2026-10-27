@@ -1,0 +1,46 @@
+// A clause that ends with no `resume` aborts to its handler: the value of the
+// clause is the value of the `handle`, the handled body unwinds, and the code
+// after the `handle` runs (`Landing`).
+linear struct Lk { id: u64 }
+fn lock() -> Lk { Lk { id: 1 } }
+fn unlock(l: Lk) { let Lk(i) = l }
+effect Op { fn op() }
+
+// The clause clears `v` and does not resume: the new value of `r` in the
+// handled body does not run.
+fn skip_rebind(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Op { fn op() { v.clear() } } in {
+        op()
+        r = &w[0]
+    }
+    print(r) //~ W0301
+}
+
+// The value of the body moves into the value of the `handle`; when the
+// clause does not resume, `a` does not move (`88_empty_values.wf`).
+fn body_value_moves() {
+    let a = Some(lock())
+    let o = handle Op { fn op() { Some(lock()) } } in {
+        op()
+        a
+    }
+    match o { Some(l) => unlock(l), None => {} }
+} //~ W0601
+
+// M3 (`m8_abort_value_into_body.wf`): the value of a clause that does not
+// resume points into a local of the handled body, which unwinds.
+effect Pick2 { fn pick2(v: &Vec<u64>) -> &u64 }
+
+fn abort_value_into_body() {
+    let r = handle Pick2 {
+        fn pick2(v) { &v[0] }
+    } in {
+        let w = Vec.new()
+        w.push(3)
+        pick2(&w)
+    }
+    print(r) //~ W0301
+}
+
+fn main() {}

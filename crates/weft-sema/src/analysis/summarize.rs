@@ -192,64 +192,23 @@ pub fn summarize(
         .map(|d| d.ty);
     if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t)) {
         let (fns, places, caps) = ret_fns_of(ir, fv.returns, fv.made, entry, &place);
-        // The effects of a closure that the function gives back are in its
-        // row, as the old inference says (W0701, W0702 at a caller): its
-        // effects, and its changes through the references of its captures.
-        // The effects of the closures that those closures give back too.
-        let mut work: Vec<weft_ir::ClosureId> = fns
-            .iter()
-            .filter_map(|f| match f {
-                super::summary::RetFn::Made(c) => Some(*c),
-                _ => None,
-            })
-            .collect();
-        let mut seen = std::collections::BTreeSet::new();
-        while let Some(c) = work.pop() {
-            if !seen.insert(c) {
-                continue;
-            }
-            if let Ok(cs) = sums.closure(c) {
-                changed
-                    .named
-                    .extend(cs.performs.iter().map(|pf| pf.effect.clone()));
-                work.extend(cs.ret.fns.iter().filter_map(|f| match f {
-                    super::summary::RetFn::Made(x) => Some(*x),
-                    _ => None,
-                }));
-            }
-        }
-        for f in &fns {
-            if let super::summary::RetFn::Made(c) = f {
-                if let Ok(cs) = sums.closure(*c) {
-                    for (m, _) in &cs.muts {
-                        let (k, wild) = match m.root {
-                            IRoot::CaptureHeld(k) => (k, false),
-                            IRoot::CaptureDeep(k) => (k, true),
-                            _ => continue,
-                        };
-                        for base in caps.get(&(*c, k)).into_iter().flatten() {
-                            let mut steps = base.steps.clone();
-                            if wild {
-                                steps.push(IStep::Wild);
-                            } else {
-                                steps.extend(m.steps.iter().cloned());
-                            }
-                            let ip = IPlace::cut(base.root.clone(), steps);
-                            let idx = match base.root {
-                                IRoot::Param(i) | IRoot::Held(i) => {
-                                    super::sig::sig_root(sig, i as usize)
-                                }
-                                _ => continue,
-                            };
-                            changed.muts.push((ip, idx));
-                        }
-                    }
-                }
-            }
-        }
+        made_effects(sums, sig, (&fns, &caps), &mut changed);
         changed.ret_fns = fns;
         changed.ret_places = places;
         changed.ret_linear = ret_linear(ir, tys, fv.returns, entry);
+    }
+    // The values that the body puts into the heap slots of interface places
+    // (stage F13): the closures there have their effects in the row too.
+    for (into, (fns, places, caps)) in
+        stored_parts_of(ir, facts, roots, fv.returns, fv.made, entry, &place, false)
+    {
+        made_effects(sums, sig, (&fns, &caps), &mut changed);
+        if !places.is_empty() {
+            changed.puts.entry(into.clone()).or_default().extend(places);
+        }
+        if !fns.is_empty() {
+            changed.put_fns.entry(into).or_default().extend(fns);
+        }
     }
     for &(n, m) in &facts.mutates_at {
         if n.index() >= nodes {
@@ -262,6 +221,32 @@ pub fn summarize(
     }
     changed.muts.sort();
     changed.muts.dedup();
+    // The code that the body runs and that a caller does not run again (code
+    // of a caller of a value that the body does not know, the captures of a
+    // closure that a callee made): a change through the places of the
+    // interface that it gets is a lend of the body (follow-up F13.2).
+    for &(n, l) in fv.lends {
+        if n.index() >= nodes {
+            continue;
+        }
+        let base = facts.wild_base(l).unwrap_or(l);
+        if let Some(ip) = place(base) {
+            changed.lends.insert(ip);
+        }
+    }
+    // The reads of a place of an `rc` object: the signature gives the reads
+    // of the parameters (stage F13, the summary oracle).
+    for &(n, r) in &facts.reads_at {
+        if n.index() >= nodes {
+            continue;
+        }
+        let base = facts.wild_base(r).unwrap_or(r);
+        if let Some((ip, _)) = interface_place(facts, roots, entry, sig, &owned, base) {
+            if matches!(ip.root, IRoot::Group(_)) {
+                changed.reads.insert(ip);
+            }
+        }
+    }
     let made_named = changed.named.clone();
     out.join(&changed);
     out.named = facts
@@ -273,6 +258,7 @@ pub fn summarize(
     out.named.extend(made_named);
     out.raises |= applied.contains(&Abort::Raises);
     out.assert |= applied.contains(&Abort::Assert);
+    out.gives_frame |= gives_frame(ir, tys, sums, (facts, roots), comp, nodes);
     for &b in comp.iter().filter(|&&b| ir.closure_of(b).is_none()) {
         let Some(body) = ir.bodies.get(b.index()) else {
             continue;
@@ -305,6 +291,74 @@ pub fn summarize(
     out
 }
 
+/// True if a body can give a place of its own frame to an operation of a
+/// caller (`Summary::gives_frame`, plan stage F15).
+///
+/// An effect leaves the body (`escapes_at` at a node of the function
+/// component, the first `nodes` nodes), and a node that lets an effect
+/// leave (also in a clause) gives the code there a place of a local (`call_arg`: an argument of a perform through the capability
+/// of a caller, or of a call); or a call in the body runs a callee that
+/// gives its frame and performs an effect that leaves the body (no local
+/// handler of the body handles it), or runs a function value.
+fn gives_frame(
+    ir: &weft_ir::Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    (facts, roots): (&FnFacts, &Roots),
+    comp: &[BodyId],
+    nodes: usize,
+) -> bool {
+    // The effects that leave the body: at the nodes of the function
+    // component (the code of the clauses there too, `handlers::project`).
+    if !facts.escapes_at.iter().any(|(n, _)| n.index() < nodes) {
+        return false;
+    }
+    // The nodes where code gets places: also the nodes of the clauses of the
+    // body, whose performs through the capability of a caller give the
+    // places of their parameters (a local of a callee, `clause::given`).
+    let escapes: std::collections::HashSet<weft_facts::NodeId> =
+        facts.escapes_at.iter().map(|(n, _)| *n).collect();
+    let local = |q: PlaceId| {
+        let root = facts.place(q).root;
+        matches!(
+            roots.role(root),
+            Some(Role::Local(_) | Role::Frame(_) | Role::Cell(_))
+        )
+    };
+    if facts
+        .call_arg
+        .iter()
+        .any(|&(n, q, _)| escapes.contains(&n) && local(q))
+    {
+        return true;
+    }
+    comp.iter()
+        .filter(|&&b| ir.closure_of(b).is_none())
+        .filter_map(|&b| ir.body(b))
+        .flat_map(|b| &b.blocks)
+        .any(|blk| match &blk.term.kind {
+            TermKind::Call {
+                callee: Callee::Fn(f, _),
+                caps,
+                ..
+            } => sums.get(*f).is_ok_and(|s| {
+                s.gives_frame
+                    && s.performs.iter().any(|pf| match (&pf.cap, caps) {
+                        (super::summary::CapIface::Row, weft_ir::CapArgs::Lexical(env)) => {
+                            crate::factgen::frames::resolve(ir, tys, *env, &pf.effect, true)
+                                == crate::factgen::frames::Dest::Past
+                        }
+                        _ => true,
+                    })
+            }),
+            TermKind::Call {
+                callee: Callee::Value(_),
+                ..
+            } => true,
+            _ => false,
+        })
+}
+
 /// What the fact generation of a body gives for its function values (stage
 /// F12): the runs at its run nodes (each with `many`), and the states at its
 /// `Return` nodes.
@@ -321,7 +375,7 @@ pub struct FnParts<'a> {
     /// the value that its variable has there, also after the variable ends.
     pub made: Option<&'a super::State>,
     /// The run nodes of code of a caller for a value of the interface
-    /// (`Em::run_nodes`): the `lends` of these nodes are `code_lends` in a
+    /// (`Em::run_nodes`): the `lends` of these nodes are no `lends` of a
     /// closure summary, because a caller applies the value that it gives
     /// there.
     pub run_nodes: &'a [weft_facts::NodeId],
@@ -329,6 +383,12 @@ pub struct FnParts<'a> {
     /// new value (`whole_capture`), with the index of the capture. The
     /// changes at the nodes after them are the part `late_muts`.
     pub rebind_nodes: &'a [(u32, weft_facts::NodeId)],
+    /// The `lends_mut` of the summaries that the body applies and that no
+    /// entry of `runs` gives again to a caller (`templates::Em::own_lends`).
+    /// In a function body their interface places are the part `lends`; in a
+    /// closure body they stay `lends` at a run node of `run_nodes`
+    /// (follow-up F13.2).
+    pub lends: &'a [(weft_facts::NodeId, PlaceId)],
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -344,9 +404,13 @@ fn runs_of(
 ) -> Vec<super::summary::Run> {
     let mut out: Vec<super::summary::Run> = Vec::new();
     for (r, many) in runs {
+        // The blocks that run the value on each path through them: a run
+        // that a callee does on some paths only does not count (H5b).
         let blocks: std::collections::BTreeSet<weft_ir::BlockId> = runs
             .iter()
-            .filter(|(x, _)| x.param == r.param && x.capture == r.capture)
+            .filter(|(x, _)| {
+                x.param == r.param && x.capture == r.capture && x.result == r.result && !x.maybe
+            })
             .map(|(x, _)| x.block)
             .collect();
         // A function body has no capture.
@@ -359,6 +423,7 @@ fn runs_of(
         let run = super::summary::Run {
             param: r.param,
             capture: r.capture,
+            result: r.result,
             many: *many,
             task: r.task,
             args,
@@ -368,7 +433,7 @@ fn runs_of(
         // A second run node of the value runs it again.
         if let Some(x) = out
             .iter_mut()
-            .find(|x| x.param == run.param && x.capture == run.capture)
+            .find(|x| x.param == run.param && x.capture == run.capture && x.result == run.result)
         {
             x.many = true;
         }
@@ -417,25 +482,56 @@ fn ret_fns_of(
     body: BodyId,
     place: &dyn Fn(PlaceId) -> Option<IPlace>,
 ) -> RetParts {
+    let Some(b) = ir.body(body) else {
+        return RetParts::default();
+    };
+    let values: Vec<(&super::State, super::AbsVal)> = returns
+        .iter()
+        .map(|st| (st, st.value((body, b.ret), &[]).flat()))
+        .collect();
+    fn_parts_of(ir, &values, made, body, place)
+}
+
+/// The move path of the leading field and variant projections of `proj`.
+fn field_path(proj: &[weft_ir::Proj]) -> Vec<super::PathStep> {
+    proj.iter()
+        .map_while(|p| match p {
+            weft_ir::Proj::Field(f) => Some(super::PathStep::Field(f.0)),
+            weft_ir::Proj::Variant(v) => Some(super::PathStep::Variant(v.0)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The function values `v` of each pair (`st`, `v`) of `values` in the
+/// terms of the interface (`place`), with the places that the values and
+/// the environments of their closures point into, and the places of each
+/// capture ([`ret_fns_of`]; stage F13 for the values that a body stores).
+fn fn_parts_of(
+    ir: &weft_ir::Program,
+    values: &[(&super::State, super::AbsVal)],
+    made: Option<&super::State>,
+    body: BodyId,
+    place: &dyn Fn(PlaceId) -> Option<IPlace>,
+) -> RetParts {
     use super::summary::RetFn;
     use super::FnVal;
     let mut fns = std::collections::BTreeSet::new();
     let mut places = std::collections::BTreeSet::new();
     let mut caps: CapPlaces = BTreeMap::new();
-    let Some(b) = ir.body(body) else {
-        return (fns, places, caps);
-    };
     let one = |f: &FnVal| match f {
         FnVal::Item(g, t) => RetFn::Item(*g, t.clone()),
         FnVal::Closure(c) | FnVal::Made(c) => RetFn::Made(*c),
-        FnVal::Param(i) => RetFn::Param(*i),
+        // For a result of a run of a parameter, the caller gives back the
+        // values of the argument and what their runs give back
+        // (`transfer::with_results`).
+        FnVal::Param(i) | FnVal::ParamResult(i) => RetFn::Param(*i),
         FnVal::Capture(k) => RetFn::Capture(*k),
         FnVal::Unknown => RetFn::Unknown,
     };
-    for st in returns {
-        let v = st.value((body, b.ret), &[]).flat();
+    for (st, v) in values {
         places.extend(v.refs.iter().filter_map(|&q| place(q)));
-        // The closures of the result, and the closures that their `Kept`
+        // The closures of the value, and the closures that their `Kept`
         // captures hold (a closure that runs a captured closure), each one
         // time.
         let mut work: Vec<FnVal> = v.fns.iter().cloned().collect();
@@ -445,7 +541,12 @@ fn ret_fns_of(
                 continue;
             }
             fns.insert(one(&f));
-            let FnVal::Closure(c) = f else {
+            // A closure of the body, or a closure that a closure of the body
+            // made (`let m = || || print(r.hp); m()`): a `Kept` capture
+            // shares a variable of the body through the captures of the
+            // makers, so it holds the value of the variable at the `Return`
+            // (class K3-Made of the review of stage F13).
+            let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
                 continue;
             };
             let Some(decl) = ir.closures.get(c.index()) else {
@@ -458,14 +559,34 @@ fn ret_fns_of(
                 ) {
                     continue;
                 }
-                let Ok(k) = crate::factgen::alpha::owner_local(ir, decl.maker, cap.source.local)
-                else {
-                    fns.insert(RetFn::Unknown);
-                    continue;
+                let shared = (cap.mode == weft_ir::CaptureMode::Kept)
+                    .then(|| super::apply::made_capture_source(ir, c, ki, body))
+                    .flatten();
+                let (k, path) = match shared {
+                    Some(src) => {
+                        let Ok(k) = crate::factgen::alpha::owner_local(ir, body, src.local) else {
+                            fns.insert(RetFn::Unknown);
+                            continue;
+                        };
+                        (k, field_path(&src.proj))
+                    }
+                    // A made closure of another maker holds its environment
+                    // in its value.
+                    None if decl.maker != body && matches!(f, FnVal::Made(_)) => continue,
+                    // A `ByMove` capture: the value where the closure is made.
+                    None => {
+                        let Ok(k) =
+                            crate::factgen::alpha::owner_local(ir, decl.maker, cap.source.local)
+                        else {
+                            fns.insert(RetFn::Unknown);
+                            continue;
+                        };
+                        (k, Vec::new())
+                    }
                 };
-                let mut src = st.value(k, &[]).flat();
+                let mut src = st.value(k, &path).flat();
                 if let Some(m) = made {
-                    src.join(&m.value(k, &[]).flat());
+                    src.join(&m.value(k, &path).flat());
                 }
                 let ps: Vec<IPlace> = src.refs.iter().filter_map(|&q| place(q)).collect();
                 caps.entry((c, u32::try_from(ki).unwrap_or(u32::MAX)))
@@ -479,6 +600,135 @@ fn ret_fns_of(
         }
     }
     (fns, places, caps)
+}
+
+/// The values that body `body` puts into the heap slots of interface places
+/// at its `Return` states `returns` (parts `puts` and `put_fns`, stage F13):
+/// for each slot place that `place` names, the places that the stored
+/// references point into, and the function values with the places of their
+/// environments ([`fn_parts_of`]). With `all`, each slot with references
+/// counts; else only a slot of an `rc` object and a slot with function
+/// values (a function has the part `stores` from its signature for the
+/// other references).
+#[allow(clippy::too_many_arguments)]
+fn stored_parts_of(
+    ir: &weft_ir::Program,
+    facts: &FnFacts,
+    roots: &Roots,
+    returns: &[super::State],
+    made: Option<&super::State>,
+    body: BodyId,
+    place: &dyn Fn(PlaceId) -> Option<IPlace>,
+    all: bool,
+) -> Vec<(IPlace, RetParts)> {
+    let mut keys: std::collections::BTreeSet<PlaceId> = std::collections::BTreeSet::new();
+    for st in returns {
+        keys.extend(st.behind_fns().keys().copied());
+        for (q, refs) in st.behind() {
+            let group = facts
+                .places
+                .get(q.index())
+                .is_some_and(|i| matches!(roots.role(i.root), Some(Role::Group)));
+            if !refs.is_empty() && (all || group) {
+                keys.insert(*q);
+            }
+        }
+    }
+    let mut out: Vec<(IPlace, RetParts)> = Vec::new();
+    for q in keys {
+        let Some(into) = place(q) else {
+            continue;
+        };
+        let values: Vec<(&super::State, super::AbsVal)> = returns
+            .iter()
+            .map(|st| {
+                let mut v = super::AbsVal::none();
+                v.fns = st.behind_fns().get(&q).cloned().unwrap_or_default();
+                v.refs = st.behind().get(&q).cloned().unwrap_or_default();
+                (st, v)
+            })
+            .collect();
+        let parts = fn_parts_of(ir, &values, made, body, place);
+        match out.iter_mut().find(|(k, _)| *k == into) {
+            Some((_, have)) => {
+                have.0.extend(parts.0);
+                have.1.extend(parts.1);
+                for (k, v) in parts.2 {
+                    have.2.entry(k).or_default().extend(v);
+                }
+            }
+            None => out.push((into, parts)),
+        }
+    }
+    out
+}
+
+/// The changes and the effects of the closures `fns` that a body gives to
+/// its callers (a result, or a value that it stores, stage F12 and F13): the
+/// effects of each closure, of the closures that they give back, and the
+/// changes through the references of their captures (`caps`), in the terms
+/// of the interface of the function with signature `sig`. The old inference
+/// puts them in the row (W0701, W0702 at a caller).
+fn made_effects(
+    sums: &Summaries,
+    sig: &FnSig,
+    (fns, caps): (
+        &std::collections::BTreeSet<super::summary::RetFn>,
+        &CapPlaces,
+    ),
+    changed: &mut Inferred,
+) {
+    let mut work: Vec<weft_ir::ClosureId> = fns
+        .iter()
+        .filter_map(|f| match f {
+            super::summary::RetFn::Made(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(c) = work.pop() {
+        if !seen.insert(c) {
+            continue;
+        }
+        if let Ok(cs) = sums.closure(c) {
+            changed
+                .named
+                .extend(cs.performs.iter().map(|pf| pf.effect.clone()));
+            work.extend(cs.ret.fns.iter().filter_map(|f| match f {
+                super::summary::RetFn::Made(x) => Some(*x),
+                _ => None,
+            }));
+        }
+    }
+    for f in fns {
+        if let super::summary::RetFn::Made(c) = f {
+            if let Ok(cs) = sums.closure(*c) {
+                for (m, _) in &cs.muts {
+                    let (k, wild) = match m.root {
+                        IRoot::CaptureHeld(k) => (k, false),
+                        IRoot::CaptureDeep(k) => (k, true),
+                        _ => continue,
+                    };
+                    for base in caps.get(&(*c, k)).into_iter().flatten() {
+                        let mut steps = base.steps.clone();
+                        if wild {
+                            steps.push(IStep::Wild);
+                        } else {
+                            steps.extend(m.steps.iter().cloned());
+                        }
+                        let ip = IPlace::cut(base.root.clone(), steps);
+                        let idx = match base.root {
+                            IRoot::Param(i) | IRoot::Held(i) => {
+                                super::sig::sig_root(sig, i as usize)
+                            }
+                            _ => continue,
+                        };
+                        changed.muts.push((ip, idx));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// True if `_0` of body `body` can hold a linear closure (`Ret::linear`).
@@ -875,21 +1125,20 @@ pub fn closure(
     reads.sort();
     reads.dedup();
     out.reads = reads;
-    let (code, other): (Vec<_>, Vec<_>) = facts
+    // The lends of code of a caller at the runs of the values of the
+    // interface are not lends of the closure: a caller applies the values
+    // that it gives there (part `runs`; follow-up F13.2 for a closure that a
+    // callee made, which runs the values that it holds). The lends of
+    // another summary at such a node stay (`Em::own_lends`).
+    let mut lends: Vec<IPlace> = facts
         .lends_mut
         .iter()
-        .partition(|(n, _)| fv.run_nodes.contains(n));
-    let lends_of = |v: Vec<&(weft_facts::NodeId, PlaceId)>| {
-        let mut l: Vec<IPlace> = v
-            .iter()
-            .filter_map(|&&(_, r)| place(r).map(|x| x.0))
-            .collect();
-        l.sort();
-        l.dedup();
-        l
-    };
-    out.lends = lends_of(other);
-    out.code_lends = lends_of(code);
+        .filter(|x| !fv.run_nodes.contains(&x.0) || fv.lends.contains(x))
+        .filter_map(|&(_, r)| place(r).map(|x| x.0))
+        .collect();
+    lends.sort();
+    lends.dedup();
+    out.lends = lends;
     for (_, e) in &facts.escapes_at {
         let pf = Perform {
             effect: e.clone(),
@@ -899,6 +1148,9 @@ pub fn closure(
         out.performs.insert(pf);
     }
     out.aborts.extend(aborts.iter().cloned());
+    // A closure that performs through the capability of a caller can give
+    // a place of its frame to an operation (plan stage F15).
+    out.gives_frame = !facts.escapes_at.is_empty();
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can.
     out.multi = !facts.multi_at.is_empty();
@@ -990,10 +1242,21 @@ pub fn closure(
             }
         }
     }
-    let (fns, places, _) = ret_fns_of(ir, returns, fv.made, body, &|q| {
-        closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
-    });
+    let iface = |q: PlaceId| closure_place(ir, facts, roots, body, q, false).map(|x| x.0);
+    let (fns, places, _) = ret_fns_of(ir, returns, fv.made, body, &iface);
     out.ret.fns = fns.into_iter().collect();
+    // The function values that the body puts into the heap slots of
+    // interface places, with the places of their environments (stage F13).
+    for (into, (fs, ps, _)) in
+        stored_parts_of(ir, facts, roots, returns, fv.made, body, &iface, true)
+    {
+        if !ps.is_empty() {
+            puts.entry(into.clone()).or_default().extend(ps);
+        }
+        if !fs.is_empty() {
+            out.put_fns.push((into, fs.into_iter().collect()));
+        }
+    }
     ret.extend(places);
     out.puts = puts
         .into_iter()

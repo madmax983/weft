@@ -1,0 +1,11 @@
+// F14 self-attack (the clause keeps its parameter, the handled body clears the argument): scratchpad f14/att/v/a4_clause_push_body_clears.wf
+effect Peek { fn peek(x: &u64) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    handle Peek { fn peek(x) { out.push(x); resume(()); print(out[0]) } } in {
+        peek(&v[0])
+        v.clear()
+    }
+}

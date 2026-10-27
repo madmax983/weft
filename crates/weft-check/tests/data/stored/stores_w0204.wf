@@ -1,0 +1,62 @@
+// The W0204 store check over the stores of each body, also of closures
+// (plan stage F13, `docs/ir.md` 6.9): a reference into a local of the body
+// that goes behind a reference parameter or into a place of a caller.
+struct Cb { f: fn() }
+struct Rs { rs: Vec<&u64> }
+// A closure puts a reference into its own local behind a captured reference.
+fn closure_local(out: &Vec<&u64>) / mut(out) {
+    let k = || {
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        out.push(&v[0])   //~ W0204
+    }
+    k()
+}
+// A closure that captures a local goes behind a reference parameter.
+fn closure_behind(cb: &Cb) / mut(cb.f) {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    cb.f = || print(v.len())   //~ W0204
+}
+fn closure_ref_behind(cb: &Cb) / mut(cb.f) {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    cb.f = || print(r + 0)   //~ W0204
+}
+// A callee stores the closure of the caller.
+fn keep(f: fn(), cb: &Cb) / mut(cb.f) { cb.f = f }
+fn closure_through_callee(cb: &Cb) / mut(cb.f) {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    keep(|| print(v.len()), cb)   //~ W0204
+}
+// A field of a by-value parameter.
+fn into_field(s: &Rs) / mut(s.rs) {
+    let n: u64 = 3
+    s.rs.push(&n)   //~ W0204
+}
+// Controls: a closure that captures a reference parameter, a closure of plain
+// values, a reference into the pointee.
+fn param_closure(cb: &Cb, v: &Vec<u64>) / mut(cb.f) {
+    cb.f = || print(v.len())
+}
+fn value_closure(cb: &Cb) / mut(cb.f) {
+    let n: u64 = 3
+    cb.f = || print(n)
+}
+fn closure_param_ok(out: &Vec<&u64>, v: &Vec<u64>) / mut(out) {
+    let k = |o: &Vec<&u64>| o.push(&v[0])
+    k(out)
+}
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    let cb = Cb { f: || print(0) }
+    param_closure(&cb, &v)
+    value_closure(&cb)
+    closure_param_ok(&out, &v)
+    let g = cb.f
+    g()
+}

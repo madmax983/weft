@@ -1,0 +1,17 @@
+// Clean twin of hole H7 of the third review of the ABC preview (h7/k01).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mkw2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 2 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    let mk = || || { o = Some(first) }
+    let g = mk()
+    g()
+    match o { Some(e) => { print(w.entities.len()); print(e.hp) }, None => {} }
+}

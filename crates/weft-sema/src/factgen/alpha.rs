@@ -111,12 +111,20 @@ pub struct Roots {
     roles: HashMap<RootId, Role>,
     /// The handle places `h.*` that α made.
     handles: HashSet<PlaceId>,
+    /// The group root of the `rc` type of each handle place `h.*` that α
+    /// made (the W0204 store check, stage F13).
+    handle_groups: HashMap<PlaceId, PlaceId>,
     /// The callee frame root of each run node.
     frames: HashMap<u32, PlaceId>,
     /// The root of the places of a caller, if α made it.
     caller: Option<PlaceId>,
     /// The definition of each group root of a definition.
     group_adts: HashMap<RootId, AdtId>,
+    /// For each group root of a struct and each field of the struct: the
+    /// fields that a reference in the field can point into
+    /// ([`Roots::group_targets`]). A field with no entry can point anywhere
+    /// in the group.
+    group_fields: HashMap<(RootId, u32), Vec<(u32, String)>>,
     /// The stated place of each place field of a struct (`cur: &u8 in
     /// self.buf[]`), in terms of the struct (`self`).
     fields: HashMap<(AdtId, u32), crate::program::SigPlace>,
@@ -288,6 +296,16 @@ impl Roots {
         r
     }
 
+    /// The `Param` root of parameter `i` of body `body`, if α made it.
+    pub fn param_of(&self, body: BodyId, i: u32) -> Option<PlaceId> {
+        self.params.get(&(body, i)).copied()
+    }
+
+    /// The `Held` root of parameter `i` of body `body`, if α made it.
+    pub fn held_of(&self, body: BodyId, i: u32) -> Option<PlaceId> {
+        self.helds.get(&(body, i)).copied()
+    }
+
     /// The `Held` root of parameter `i` of body `body` (the text `*name`):
     /// what the references behind the parameter point into. A caller puts
     /// in the places that the references in its argument point into.
@@ -356,6 +374,11 @@ impl Roots {
         self.handles.contains(&p)
     }
 
+    /// The group root of the `rc` type of handle place `p`, if α made it.
+    pub fn handle_group(&self, p: PlaceId) -> Option<PlaceId> {
+        self.handle_groups.get(&p).copied()
+    }
+
     /// The handle place `h.*` of the `Rc` handle at place `h`: a reference
     /// into the group through the handle depends on it (ADR 0003).
     pub fn handle_place(&mut self, facts: &mut FnFacts, h: PlaceId) -> PlaceId {
@@ -417,6 +440,7 @@ impl Roots {
         self.groups.insert(key, r);
         self.roles.insert(facts.place(r).root, Role::Group);
         self.group_adts.insert(facts.place(r).root, a);
+        self.narrow_group(tys, facts.place(r).root, a);
         r
     }
 
@@ -576,8 +600,79 @@ impl Roots {
         self.roles.insert(facts.place(r).root, Role::Group);
         if let GroupKey::Adt(a) = key {
             self.group_adts.insert(facts.place(r).root, a);
+            self.narrow_group(tys, facts.place(r).root, a);
         }
         r
+    }
+
+    /// Records for each field of struct `a` (the group root `root`) the
+    /// fields that a reference in it can point into: a field whose values
+    /// can have a type that a reference in the first field points to. A
+    /// generic struct, or a field whose types are not known, gets no entry
+    /// (each place of the group).
+    fn narrow_group(&mut self, tys: &TyTable, root: RootId, a: AdtId) {
+        let Some(AdtKind::Struct(fs)) = tys.adts().get(a.index()).map(|d| &d.kind) else {
+            return;
+        };
+        if fs.iter().any(|f| tys.mentions_param(f.ty)) {
+            return;
+        }
+        let inside: Vec<Option<HashSet<TyId>>> =
+            fs.iter().map(|f| inside_types(tys, f.ty)).collect();
+        for (i, f) in fs.iter().enumerate() {
+            let Some(targets) = ref_targets(tys, f.ty) else {
+                continue;
+            };
+            let mut into = Vec::new();
+            for (j, g) in fs.iter().enumerate() {
+                let hit = inside
+                    .get(j)
+                    .and_then(Option::as_ref)
+                    .is_none_or(|ts| ts.iter().any(|t| targets.contains(t)));
+                if hit {
+                    into.push((u32::try_from(j).unwrap_or(u32::MAX), g.name.clone()));
+                }
+            }
+            self.group_fields
+                .insert((root, u32::try_from(i).unwrap_or(u32::MAX)), into);
+        }
+    }
+
+    /// The places that a reference in place `at` of the group root `top`
+    /// can point into (`transfer::held_at` of a `Group` root): the wildcard
+    /// place of each field of the group that its type can point into (a
+    /// `&u64` in `Cache.refs` points into `Cache.data..`, not into
+    /// `Cache.refs`: false positive FP-AB-RC of the review of stage F13), or
+    /// the wildcard place of the group.
+    pub fn group_targets(&self, facts: &mut FnFacts, top: PlaceId, at: PlaceId) -> Vec<PlaceId> {
+        let first = facts
+            .places
+            .get(at.index())
+            .and_then(|i| i.steps.first().copied());
+        let root = facts.place(top).root;
+        let fields = match first {
+            Some(
+                st @ Step {
+                    kind: StepKind::Field { id },
+                    ..
+                },
+            ) if !weft_facts::is_wild_step(&st) => self.group_fields.get(&(root, id)).cloned(),
+            _ => None,
+        };
+        match fields {
+            Some(fs) => fs
+                .into_iter()
+                .map(|(id, name)| {
+                    let step = Step {
+                        kind: StepKind::Field { id },
+                        unstable: false,
+                    };
+                    let f = facts.child(top, step, &format!(".{name}"));
+                    facts.wildcard(f)
+                })
+                .collect(),
+            None => vec![facts.wildcard(top)],
+        }
     }
 }
 
@@ -1019,13 +1114,15 @@ pub fn alpha_with(
                     kind: StepKind::Deref,
                     unstable: true,
                 };
+                let group = roots.group(tys, facts, inner);
                 for &h in &out.places {
                     out.ptrs.push(h);
                     let hp = facts.child(h, handle, ".*");
                     roots.handles.insert(hp);
+                    roots.handle_groups.insert(hp, group);
                     out.handles.push(hp);
                 }
-                out.places = vec![roots.group(tys, facts, inner)];
+                out.places = vec![group];
                 at = At::Ty(inner);
                 last = None;
             }
@@ -1153,4 +1250,103 @@ pub fn place_ty(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) -> 
         At::Ty(t) => Some(t),
         At::Variant(..) => None,
     }
+}
+
+/// The types that the references in a value of type `t` can point to:
+/// through each reference in it, its fields, elements and payloads (not
+/// through an `Rc` handle: the object is in another group). `None` if a type
+/// parameter is in it.
+fn ref_targets(tys: &TyTable, t: TyId) -> Option<HashSet<TyId>> {
+    let mut out = HashSet::new();
+    let ok = walk_types(tys, t, &mut |x| {
+        if let Some(Ty::Ref(y)) = tys.try_get(x) {
+            out.insert(*y);
+        }
+    });
+    ok.then_some(out)
+}
+
+/// The types of the values inside a value of type `t`: `t`, its fields,
+/// elements and payloads, not through a reference or an `Rc` handle. `None`
+/// if a type parameter is in it.
+fn inside_types(tys: &TyTable, t: TyId) -> Option<HashSet<TyId>> {
+    let mut out = HashSet::new();
+    let mut ok = true;
+    let mut work = vec![t];
+    while let Some(x) = work.pop() {
+        if !out.insert(x) || out.len() > 256 {
+            continue;
+        }
+        match tys.try_get(x) {
+            Some(Ty::Param(_)) => ok = false,
+            Some(Ty::Tuple(ts)) => work.extend(ts.iter().copied()),
+            Some(Ty::Array(y, _) | Ty::Slice(y)) => work.push(*y),
+            Some(Ty::Adt(a, args)) => {
+                if matches!(
+                    tys.lang(x),
+                    Some((weft_ir::ty::Lang::Rc | weft_ir::ty::Lang::Weak, _))
+                ) {
+                    continue;
+                }
+                match tys.adts().get(a.index()).map(|d| &d.kind) {
+                    Some(AdtKind::Struct(fs)) if args.is_empty() => {
+                        work.extend(fs.iter().map(|f| f.ty));
+                    }
+                    Some(AdtKind::Enum(vs)) if args.is_empty() => {
+                        work.extend(vs.iter().flat_map(|v| v.fields.iter().copied()));
+                    }
+                    Some(AdtKind::Extern { .. }) => work.extend(args.iter().copied()),
+                    // A generic struct or enum: its arguments can be inside
+                    // (the field types name the parameters).
+                    Some(AdtKind::Struct(_) | AdtKind::Enum(_)) => {
+                        work.extend(args.iter().copied());
+                        ok = false;
+                    }
+                    None => ok = false,
+                }
+            }
+            _ => {}
+        }
+    }
+    ok.then_some(out)
+}
+
+/// Calls `f` with each type reachable from `t` through fields, elements,
+/// payloads and references (not through an `Rc` handle). False if a type
+/// parameter or a generic struct or enum is on the way.
+fn walk_types(tys: &TyTable, t: TyId, f: &mut dyn FnMut(TyId)) -> bool {
+    let mut seen = HashSet::new();
+    let mut work = vec![t];
+    let mut ok = true;
+    while let Some(x) = work.pop() {
+        if !seen.insert(x) || seen.len() > 256 {
+            continue;
+        }
+        f(x);
+        match tys.try_get(x) {
+            Some(Ty::Param(_)) => ok = false,
+            Some(Ty::Tuple(ts)) => work.extend(ts.iter().copied()),
+            Some(Ty::Array(y, _) | Ty::Slice(y) | Ty::Ref(y)) => work.push(*y),
+            Some(Ty::Adt(a, args)) => {
+                if matches!(
+                    tys.lang(x),
+                    Some((weft_ir::ty::Lang::Rc | weft_ir::ty::Lang::Weak, _))
+                ) {
+                    continue;
+                }
+                match tys.adts().get(a.index()).map(|d| &d.kind) {
+                    Some(AdtKind::Struct(fs)) if args.is_empty() => {
+                        work.extend(fs.iter().map(|g| g.ty));
+                    }
+                    Some(AdtKind::Enum(vs)) if args.is_empty() => {
+                        work.extend(vs.iter().flat_map(|v| v.fields.iter().copied()));
+                    }
+                    Some(AdtKind::Extern { .. }) => work.extend(args.iter().copied()),
+                    _ => ok = false,
+                }
+            }
+            _ => {}
+        }
+    }
+    ok
 }

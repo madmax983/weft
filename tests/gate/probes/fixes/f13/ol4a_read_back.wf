@@ -1,0 +1,13 @@
+// F13 repro of OL-4a: references stored behind a reference parameter; a read back gets the places of the stored references, so a change of the referent before the read is W0301.
+fn keep(out: &Vec<&u64>, v: &Vec<u64>) / mut(out, v) {
+    out.push(&v[0])
+    v.clear()
+    let r = out[0]
+    print(r + 0)
+}
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    keep(&out, &v)
+}

@@ -45,14 +45,14 @@ fn block_value() {
     let r = {
         let v = Vec.new()
         v.push(1)
-        &v[0]   //~ W0301
+        &v[0]   //~ old: W0301
     }
-    print(r)
+    print(r)   //~ ir: W0301
 }
 
 fn block_value_field() {
-    let r = { let e = Entity { hp: 1 }; &e.hp }   //~ W0301
-    print(r)
+    let r = { let e = Entity { hp: 1 }; &e.hp }   //~ old: W0301
+    print(r)   //~ ir: W0301
 }
 
 // A reference that is given a place in an inner block outlives it.
@@ -71,9 +71,9 @@ fn closure_outlives() {
     let f = {
         let n = Vec.new()
         n.push(1)
-        || print(n.len())   //~ W0301
+        || print(n.len())   //~ old: W0301
     }
-    f()
+    f()   //~ ir: W0301
 }
 
 // A reference into a loop body local does not reach the next iteration.
@@ -110,9 +110,9 @@ fn rc_block() {
     let a = Rc.new(Cell2 { items: Vec.new() })
     let r = {
         let b = a.clone()
-        &b.items   //~ W0301
+        &b.items   //~ old: W0301
     }
-    print(r.len())
+    print(r.len())   //~ ir: W0301
 }
 
 fn box_overwrite() {

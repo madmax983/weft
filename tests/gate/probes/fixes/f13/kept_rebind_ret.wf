@@ -1,0 +1,20 @@
+// F13 (stored values, K3): a returned closure keeps a variable that gets a value into a local of the maker after the closure is made; the old pipeline reports W0204 at the return (late stores), and ABC accepted it before F13 (the run faults).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn mk_local(a: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let w = mkw(3)
+    r = &w.entities[0]
+    f
+}
+fn main() {
+    let a = mkw(1)
+    let f = mk_local(&a)
+    f()
+}

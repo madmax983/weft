@@ -241,3 +241,114 @@ fn a_once_closure_that_a_callee_copies_out_of_a_referent_moves() {
     // again. The call moves the referent (the closure-copy rule).
     check("once_copied_out.wf");
 }
+
+#[test]
+fn the_result_of_a_closure_maker_in_a_closure_or_a_callee_keeps_its_effects() {
+    // Second review of the ABC preview, hole N1: a closure that gives back
+    // or runs the result of a captured maker (`|| mk()`, `|| run(mk())`), and
+    // a callee that runs the result of a maker of the caller
+    // (`fn go(m) { let g = m(); g() }`), lost the changes of the made closure
+    // to a variable that it captures `ByRef`.
+    check("maker_results.wf");
+}
+
+#[test]
+fn a_run_that_a_callee_does_on_some_paths_only_is_on_some_paths_only_for_its_caller() {
+    // Second review of the ABC preview, hole H5b: `outer(f, c) { maybe(f, c) }`
+    // ran `f` on each path for its caller, because the block of the call of
+    // `maybe` runs it. A run that a callee gives is `maybe` when the callee
+    // says so (`RunOf::maybe`), through closures, `run`, three levels and a
+    // field of a struct argument.
+    check("maybe_through_callees.wf");
+}
+
+#[test]
+fn a_callee_that_gets_a_maker_of_a_linear_closure_can_drop_its_result() {
+    // Second review of the ABC preview, hole H3b: `fn go(m) { let g = m() }`
+    // with `go(|| || rollback(t))` dropped the linear closure that the
+    // maker gives back, and the callee does not know that it is linear. The
+    // call is W0601, also when the callee runs the maker or gives back its
+    // result (as the old pipeline).
+    check("maker_to_callee.wf");
+}
+
+#[test]
+fn a_once_closure_that_a_callee_runs_from_behind_a_reference_moves() {
+    // Second review of the ABC preview, old holes b14-run:
+    // `fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }` called two times,
+    // and a closure that copies a closure out of a reference, ran a `once`
+    // closure again. The run moves the owners of the referent.
+    check("once_run_through_ref.wf");
+}
+
+#[test]
+fn a_made_closure_changes_each_captured_variable_at_its_own_place() {
+    // Third review of the ABC preview, hole H7 and false positive FP4: σ of
+    // a closure that a maker gives back mapped each `Kept` or `ByRef`
+    // capture to all the references of the value. A store of a reference
+    // into `o` lost the reference (`Some(e)` pointed into nothing), and a
+    // push into `rs` was a change of `w`.
+    check("made_capture_places.wf");
+}
+
+#[test]
+fn the_result_of_a_call_that_runs_a_function_value_is_valid_after_the_call() {
+    // Third review of the ABC preview, false positive FP3: a callee that runs
+    // code of a caller (`give(m)` in `fn g2(m) { let g = give(m); g() }`)
+    // lent the places of a caller at `Ret`, where its result binds, so the
+    // result was invalid. The W0204 class: the `()` result of a tail call
+    // `g()` pointed into the environment of a made closure. A reference that
+    // lives across the call is still invalid after a change.
+    check("call_results.wf");
+}
+
+#[test]
+fn a_once_closure_that_a_callee_copies_out_through_an_aggregate_moves() {
+    // Third review of the ABC preview, old holes b14-agg: a reference to a
+    // vector of `once` closures inside an `Option`, a tuple or a `Vec`
+    // argument (`ro(Some(&fs))` two times). The copy-out rule looked only at
+    // arguments of a reference type; a value that holds references moves the
+    // owners of the referents behind which a `once` closure can be.
+    check("once_through_aggregates.wf");
+}
+
+#[test]
+fn a_linear_closure_that_a_callee_stores_into_a_place_of_the_caller_is_linear_there() {
+    // A hole of stage F13 that the rerun of the review sets found
+    // (`ah6/h6_08`): `fn add(ks: &Vec<fn()>, t: Tx) { ks.push(|| rollback(t)) }`
+    // put a linear closure into `ks`, and `ks` went out of scope with it.
+    check("stored_linear.wf");
+}
+
+#[test]
+fn a_once_maker_that_a_callee_runs_one_time_runs_once() {
+    // Third review of the ABC preview, the W0502 class: `fn go(m) { let g =
+    // m(); g() }` ran `m` two times in its summary, because the result of a
+    // run of a parameter was the parameter again. The result is
+    // `FnVal::ParamResult`, and a run of it is a run of the result.
+    check("once_maker_runs.wf");
+}
+
+#[test]
+fn a_value_that_runs_a_value_of_the_caller_two_times_runs_it_two_times() {
+    // Class H-ORD of the final check of group C: `both(|| { h(); h() }, g)`
+    // runs `h` two times, and `both(h, || h())` too. The order of the two
+    // runs of `both` (`Applied::order`) is no reason to run `h` one time.
+    // The controls run each value of the caller one time.
+    check("run_order.wf");
+}
+
+#[test]
+fn a_value_that_a_body_runs_and_that_no_caller_gives_changes_the_places_of_the_caller() {
+    // Follow-up F13.2: a capture of a closure that a callee made (`let f =
+    // mk_call(push1, w); f()`) and a local that a closure gives a new value
+    // (`let set = || { g = grow }; set(); g(w)`) were code of a caller. Their
+    // changes did not reach the summary of the body, so a caller that holds a
+    // reference across the call missed W0301. The made closure now runs the
+    // values that it holds with the places of the run, the rebound local gets
+    // the values that the closure puts there, and the summary has the lends
+    // of code that no caller gives (`lends`). The clean twins only read, and
+    // a closure of the body that a callee runs changes its own environment
+    // (no W0312).
+    check("unknown_runs.wf");
+}

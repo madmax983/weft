@@ -1,0 +1,36 @@
+// O3-2: the value of a handled body points into a temporary of the body. The
+// handled body ends its temporaries at its end (ADR 0003).
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn show(r: &u64) { print(r + 1) }
+
+fn plain() {
+    let r = handle Note { fn note(x) { resume(()) } } in { &mk_v()[0] } //~ W0301
+    print(r + 1)
+}
+
+fn callee() {
+    let r = handle Note { fn note(x) { resume(()) } } in { first(&mk_v()) } //~ W0301
+    print(r + 1)
+}
+
+fn argument() {
+    show(handle Note { fn note(x) { resume(()) } } in { first(&mk_v()) }) //~ W0301
+}
+
+fn assigned() {
+    let r = &[5][0]
+    r = handle Ask { fn ask() { resume(1) } } in { let k = ask(); first(&mk_v()) } //~ W0301
+    print(r + 1)
+}
+
+fn with_local() {
+    let r = handle Note { fn note(x) { resume(()) } } in { let t = mk_v(); &t[0] } //~ W0301
+    print(r + 1)
+}
+
+fn main() {
+    plain()
+}

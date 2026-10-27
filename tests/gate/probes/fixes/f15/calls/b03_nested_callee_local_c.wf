@@ -1,0 +1,12 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b03_nested_callee_local_c.wf
+effect Keep { fn keep(r: &u64) }
+fn inner(g: &Vec<u64>) / Keep { keep(&g[0]) }
+fn outer(g: &Vec<u64>) / Keep { inner(g) }
+fn main() {
+    let g: Vec<u64> = Vec.new()
+    g.push(3)
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in outer(&g)
+    print(last)
+}

@@ -1,0 +1,13 @@
+// F15 self-attack (a clause that resumes on some paths only, or on each path): scratchpad f15/att/v/c02_captured_r0_cleared.wf
+effect Pick { fn pick() -> &u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(0)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r0 = pick()
+        f = || print(r0)
+    }
+    v.clear()
+    f()
+}

@@ -1,0 +1,15 @@
+// F12 review 2 (ABC preview), hole N1: the result of a closure maker, called or given back in a second closure or a callee (old W0301) (h2x/x01_main_mk2.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn clr(w: &World) -> fn() / mut(w.entities) { || w.entities.clear() }
+fn main() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    print(first.hp)
+}

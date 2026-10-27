@@ -1,0 +1,18 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/f05_callee_handles_itself_c.wf
+effect Keep { fn keep(r: &u64) }
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn wrap(g: &Vec<u64>) / Keep {
+    keep(&g[0])
+    handle Keep { fn keep(r) { print(r); resume(()) } } in deep()
+}
+fn main() {
+    let g: Vec<u64> = Vec.new()
+    g.push(3)
+    let z = 1
+    let last = &z
+    handle Keep { fn keep(r) { last = r; resume(()) } } in wrap(&g)
+    print(last)
+}

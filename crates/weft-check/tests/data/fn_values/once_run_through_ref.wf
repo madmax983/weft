@@ -1,0 +1,71 @@
+// A callee or a closure that runs a `once` closure that it copies out of a
+// referent moves the closure there (the closure-copy rule, docs/ir.md
+// 5.22): a second run is W0302 (second review of the ABC preview, old
+// holes b14-run: `ab14/b14_09`, `b14_11`, `b14x/q01`, `q03`, `q04`, `q06`).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn runfirst(fs: &Vec<fn()>) { let g = fs[0]; g() }
+fn runfirst_twice() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    runfirst(&fs)
+    runfirst(&fs) //~ W0302
+}
+fn runfirst_then_direct() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    runfirst(&fs)
+    let g = fs[0] //~ W0302
+    g()
+}
+fn runfirst_in_a_loop() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let i = 0
+    while i < 2 {
+        runfirst(&fs) //~ W0302
+        i += 1
+    }
+}
+fn closure_copies_out() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let fst = |v: &Vec<fn()>| v[0]
+    let g = fst(&fs)
+    g()
+    let h = fst(&fs) //~ W0302
+    h()
+}
+fn closure_runs_twice() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let rf = |v: &Vec<fn()>| { let g = v[0]; g() }
+    rf(&fs)
+    rf(&fs) //~ W0302
+}
+// Clean: a closure that is not `once`, and one run.
+fn plain_twice() {
+    let fs = Vec.new()
+    fs.push(|| print(1))
+    runfirst(&fs)
+    runfirst(&fs)
+    let rf = |v: &Vec<fn()>| { let g = v[0]; g() }
+    rf(&fs)
+    rf(&fs)
+}
+fn once_one_run() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    runfirst(&fs)
+}
+fn main() {
+    plain_twice()
+    once_one_run()
+}

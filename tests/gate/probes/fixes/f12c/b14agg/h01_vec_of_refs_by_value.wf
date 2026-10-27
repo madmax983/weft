@@ -1,0 +1,18 @@
+// Third review of the ABC preview, old hole b14-agg: a once closure copied out through a reference inside an aggregate argument (b14s/h01_vec_of_refs_by_value.wf).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn run(f: fn()) { f() }
+struct K { f: fn() }
+fn rv(vs: Vec<&Vec<fn()>>) { let g = vs[0][0]; g() }
+fn main() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let v1 = Vec.new()
+    v1.push(&fs)
+    rv(v1)
+    let v2 = Vec.new()
+    v2.push(&fs)
+    rv(v2)
+}

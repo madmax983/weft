@@ -1,0 +1,25 @@
+// A callee that stores a closure with a linear capture into a place of its
+// caller (part `put_fns`, stage F13): the place holds a linear value, so W0601
+// if it can go out of scope with it (variants of `ah6/h6_08`, rerun of the
+// review sets of the ABC preview).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn add(ks: &Vec<fn()>, t: Tx) / mut(ks) { ks.push(|| rollback(t)) }
+fn add_plain(ks: &Vec<fn()>, n: u64) / mut(ks) { ks.push(|| print(n)) }
+fn one_dropped() {
+    let ks = Vec.new()
+    add(&ks, begin(1))
+} //~ W0601
+fn in_loop() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 2 { add(&ks, begin(i)); i += 1 } //~ W0601
+    match ks.pop() { Some(f) => f(), None => {} }
+} //~ W0601
+fn plain() {
+    let ks = Vec.new()
+    add_plain(&ks, 1)
+    match ks.pop() { Some(f) => f(), None => {} }
+}

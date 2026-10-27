@@ -1,0 +1,11 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/e02_clause_moves_then_fails_outer_c.wf
+linear struct Tok { id: u64 }
+fn eat(t: Tok) { let Tok(i) = t; print(i) }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let t = Tok { id: 1 }
+    handle Fail { fn fail(m) { print("caught", m) } } in {
+        let r = handle Ask { fn ask() { eat(t); fail("x"); resume(0) } } in ask()
+        print(r)
+    }
+}

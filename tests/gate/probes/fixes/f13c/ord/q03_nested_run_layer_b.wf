@@ -1,0 +1,13 @@
+// Final check of group C, class H-ORD: a closure argument of a body that runs two values runs a value of the caller two times (ord2/q03_nested_run_layer_b.wf).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn both(f: fn(), g: fn()) { f(); g() }
+fn twice(f: fn()) { f(); f() }
+fn run(f: fn()) { f() }
+fn each(n: u64, f: fn()) { let i = 0; while i < n { f(); i += 1 } }
+fn outer(h: fn()) { both(|| run(|| { h(); h() }), || print(1)) }
+fn main() {
+    let b = mkbuf()
+    outer(|| eat(b))
+}

@@ -1,0 +1,13 @@
+// F15 self-attack (a clause that runs more than once runs its code after `resume` once for each run): scratchpad f15/att/v/d04_post_reads_after_body_clears.wf
+effect Tick { fn tick(x: &u64) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(2)
+    handle Tick { fn tick(x) { resume(()); print(x) } } in {
+        tick(&w[0])
+        tick(&v[0])
+        v.clear()
+    }
+}

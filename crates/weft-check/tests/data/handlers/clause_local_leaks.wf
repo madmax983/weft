@@ -1,0 +1,13 @@
+// A clause puts a reference into its own local in a local of the site; the
+// frame of the clause ends at `Post` (`31_body_locals.wf` clause_local).
+effect Log { fn log(msg: String) }
+
+fn clause_local() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let s = &keep[0]
+    handle Log { fn log(m) { let u = Vec.new(); u.push(7); s = &u[0]; resume(()) } } in log("x")
+    print(s) //~ W0301
+}
+
+fn main() {}

@@ -1163,6 +1163,26 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
     m
 }
 
+/// The relations that the code of a clause gives to a node that runs it
+/// (plan stage F14, `factgen::handlers::project`).
+const CLAUSE_PART: [&str; 15] = [
+    "cfg_edge",
+    "uses",
+    "moved_at",
+    "rest_linear",
+    "overwrites",
+    "unset_at",
+    "mutates_at",
+    "lends_mut",
+    "call",
+    "reads_at",
+    "releases_at",
+    "moved_part",
+    "performs_at",
+    "may_abort",
+    "multi_at",
+];
+
 /// The relations that the template of each node label can emit
 /// (`docs/ir.md` 6.4), and the relations that a cleanup path adds. `entry`
 /// is the node where the parameters bind.
@@ -1170,12 +1190,19 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
     Some(match label {
         // The entry of a closure body (stage F11): its parameters and its
         // `ByMove` captures bind, as the parameters of a function.
-        "entry" | "closure entry" => (&["cfg_edge", "rebound_at", "empty_at"], &[]),
+        // The entry of a clause: its parameters and its continuation bind;
+        // `Main` of a `handle`: the capability binds (plan stage F14).
+        "entry" | "closure entry" | "clause entry" | "handle" => {
+            (&["cfg_edge", "rebound_at", "empty_at"], &[])
+        }
         // `Live` of the temporary that the value of an assignment starts
         // with binds the `N` variables of the variant steps of the target
         // (stage F8d, `docs/ir.md` 6.3).
         "live" => (&["cfg_edge", "rebound_at"], &[]),
-        "unwind continuation" | "goto" | "unreachable" => (&["cfg_edge"], &[]),
+        "unwind continuation" | "goto" | "unreachable" | "resume frame end" => (&["cfg_edge"], &[]),
+        // The end of an abort to a local handler: the frames of the clauses
+        // end (plan stage F14).
+        "handle landing" => (&["cfg_edge", "releases_at"], &[]),
         // The unwinder finishes the `ByMove` captures of a closure body
         // (stage F11).
         "unwind exit" => (&["cfg_edge"], &["unwound_at"]),
@@ -1264,12 +1291,19 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "writes_via",
                 "rebound_at",
                 "overwrites",
+                // A call that runs a clause of a local handler (plan stage
+                // F14).
+                "performs_at",
+                "releases_at",
+                "unset_at",
             ],
             &[],
         ),
         // A perform through the capability of a caller (plan stage F6): the
         // operands, the places that the clause gets and can change, the
         // places of the callers, the effect, the abort.
+        // A perform through the capability of a local handler (plan stage
+        // F14) has the code of the clause before its resume points too.
         "perform" => (
             &[
                 "cfg_edge",
@@ -1284,11 +1318,18 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "may_abort",
                 "multi_at",
                 "overwrites",
+                "performs_at",
+                "mutates_at",
+                "releases_at",
+                "unset_at",
+                // An abort to the local handler does not reach the values
+                // outside the handled body (ADR 0005).
+                "spared_at",
             ],
             &[],
         ),
         // The result binds.
-        "perform ret" => (
+        "perform ret" | "resume ret" => (
             &[
                 "cfg_edge",
                 "rebound_at",
@@ -1331,6 +1372,56 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         ),
         "call frame end" => (&["cfg_edge", "scope_end"], &[]),
         "call frame end (abort)" => (&["cfg_edge", "scope_end", "unwound_at"], &[]),
+        // Handlers (plan stage F14, `docs/ir.md` 6.4). `Exit`: the value of
+        // the handled body is used and the value of the `handle` binds, as
+        // the destination of an `Assign`.
+        // The value of the `handle` binds at the `AbortValue` node of an
+        // abort to its handler, as at `Exit`.
+        "handle exit"
+        | "perform abort value (abort)"
+        | "call abort value (abort)"
+        | "resume abort value (abort)" => (
+            &[
+                "cfg_edge",
+                "uses",
+                "rebound_at",
+                "empty_at",
+                "mutates_at",
+                "reads_at",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "overwrites",
+                "writes_via",
+                "unset_at",
+                "ref_at",
+                "ref_in",
+            ],
+            &[],
+        ),
+        // `Post`: the code of the clauses after their resume points
+        // (`factgen::handlers::project`); the frames of the clauses end.
+        // `PostAgain`: the code of a clause that can run more than once runs
+        // again (plan stage F15).
+        "handle post" | "handle post again" => (&CLAUSE_PART, &[]),
+        "resume frame end (abort)" => (&["cfg_edge", "unwound_at"], &[]),
+        // A `resume`: its operand, the continuation, and the rest of the
+        // handled body (`factgen::handlers::continuations`).
+        "resume" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "overwrites",
+                "may_abort",
+                "lends_mut",
+                "releases_at",
+            ],
+            &[],
+        ),
         _ => return None,
     })
 }
@@ -1887,11 +1978,11 @@ fn holds(t: Tx) / log {
     keep(t)
 }
 
-extern fn mk() -> u64
+extern fn mk() -> Vec<&u64>
 
 fn frame() {
     let a = mk()
-    print(a)
+    print(a.len())
 }
 
 fn extend(dst: &Vec<&Entity>, src: &Vec<&Entity>) / mut(dst) {
@@ -2031,7 +2122,9 @@ fn a_callee_frame_place_in_a_result_ends_at_frame_end() {
     let Outcome::Built(entry) = b.entries[i].outcome else {
         panic!("`frame` has no IR");
     };
-    // A summary of `mk` whose result points into a local of `mk`.
+    // A summary of `mk` whose result points into a local of `mk` (the
+    // result type holds references: a result of a type with none gets none,
+    // `transfer::typed_result`).
     let mut sums = weft_sema::factgen::summaries(&a, &b);
     let mk = b
         .program
@@ -2682,6 +2775,120 @@ fn a_child_failure_aborts_to_the_local_fail_handler_and_a_cancel_past_the_functi
     }
 }
 
+/// Clauses that resume on each path, and on some paths (plan stage F15).
+const RESUMES: &str = "effect Op { fn op(n: u64) }
+effect Keep { fn keep(r: &u64) }
+fn each(v: &Vec<u64>) / mut(v) {
+    handle Op { fn op(n) { v.clear(); if n > 0 { resume(()) } else { resume(()) } } } in op(1)
+}
+fn some(v: &Vec<u64>) / mut(v) {
+    handle Op { fn op(n) { v.clear(); if n > 0 { resume(()) } } } in op(1)
+}
+fn twice() {
+    let t = 0
+    handle Op { fn op(n) { resume(()); print(t) } } in {
+        op(1)
+        op(2)
+    }
+}
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn given(g: &Vec<u64>) / Keep {
+    keep(&g[0])
+}
+fn keeps() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in deep()
+    print(last)
+}
+fn main() {}
+";
+
+/// The options of the `ir` pipeline with the groups A to D on.
+fn abcd() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("ABCD").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::default()
+    }
+}
+
+#[test]
+fn a_perform_aborts_to_its_handler_only_if_the_clause_can_end_with_no_resume() {
+    use weft_sema::factgen::frames::{self, Dest};
+    let (a, b) = built(RESUMES);
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let p = &b.program;
+    let performs = |f: &str| -> Vec<(Vec<Dest>, Vec<HandlerId>)> {
+        let site = body_of(&b, f);
+        let hb = p
+            .handlers
+            .iter()
+            .find(|h| h.site == site)
+            .unwrap_or_else(|| panic!("no handle in `{f}`"))
+            .handled;
+        p.bodies[hb.index()]
+            .blocks
+            .iter()
+            .filter(|blk| matches!(blk.term.kind, TermKind::Perform { .. }))
+            .map(|blk| {
+                (
+                    frames::destinations(p, &b.tys, &sums, hb, &blk.term.kind),
+                    frames::clause_handlers(p, &b.tys, &sums, hb, &blk.term.kind),
+                )
+            })
+            .collect()
+    };
+    let each = performs("each");
+    assert_eq!(each.len(), 1, "{each:?}");
+    assert!(each[0].0.is_empty(), "no abort edge: {each:?}");
+    assert_eq!(each[0].1.len(), 1, "the perform runs the clause");
+    let some = performs("some");
+    assert!(
+        matches!(some[0].0.as_slice(), [Dest::Handler { value: true, .. }]),
+        "{some:?}"
+    );
+    // The clause of `twice` runs at two performs: its code after `resume`
+    // runs at `Post` and again at `PostAgain`.
+    let f = ir_facts_with(RESUMES, abcd(), "twice");
+    check_templates(&f, "twice");
+    assert_eq!(nodes_labelled(&f, "handle post").len(), 1);
+    assert_eq!(nodes_labelled(&f, "handle post again").len(), 1);
+    let g = ir_facts_with(RESUMES, abcd(), "each");
+    assert!(nodes_labelled(&g, "handle post again").is_empty());
+    assert!(nodes_labelled(&g, "handle landing").len() <= 1);
+    assert!(nodes_labelled(&g, "perform abort value (abort)").is_empty());
+}
+
+#[test]
+fn a_call_gives_a_clause_the_places_of_the_callee_frame_and_of_its_arguments() {
+    let (a, b) = built(RESUMES);
+    // `deep` gives a local of its frame to the operation, `given` a place
+    // of its argument.
+    assert!(summary_named(&a, &b, "deep").gives_frame);
+    assert!(!summary_named(&a, &b, "given").gives_frame);
+    let f = ir_facts_with(RESUMES, abcd(), "keeps");
+    check_templates(&f, "keeps");
+    let last = var_named(&f, "last");
+    assert!(
+        points(&f, last).contains("a local of deep.."),
+        "{:?}",
+        points(&f, last)
+    );
+    // The frame of `deep` ends at the end of the call.
+    let frame = var_named(&f, "a local of `deep`");
+    let ends: Vec<&str> = f
+        .scope_end
+        .iter()
+        .filter(|(v, _)| *v == frame)
+        .map(|(_, n)| f.nodes[n.index()].kind.as_str())
+        .collect();
+    assert!(ends.contains(&"call frame end"), "{ends:?}");
+}
+
 // ------------------------------------------------------- the fact oracle
 
 /// The components of the fact oracle (`docs/ir.md` 8.5) have the facts that
@@ -2740,8 +2947,8 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
 
 // -------------------------------------------------------------- closures
 
-/// The options of the `ir` pipeline with the groups A, B and C on (stage
-/// F11: group C stays off by default).
+/// The options of the `ir` pipeline with the groups A, B and C on (the
+/// default groups from stage F13).
 fn abc() -> Options {
     Options {
         facts: weft_sema::FactGen::Ir,

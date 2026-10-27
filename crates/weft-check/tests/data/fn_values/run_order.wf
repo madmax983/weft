@@ -1,0 +1,60 @@
+// A body that runs two values runs each one time, in each order
+// (`Applied::order`). A value that runs a value of the caller two times, or
+// two values that run the same value of the caller, run it two times: W0502
+// for a `once` value of the caller (class H-ORD of the final check of group C).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn both(f: fn(), g: fn()) { f(); g() }
+fn twice(f: fn()) { f(); f() }
+fn run(f: fn()) { f() }
+fn each(n: u64, f: fn()) { let i = 0; while i < n { f(); i += 1 } }
+
+// A closure argument runs the value of the caller two times.
+fn nested(h: fn()) { both(|| { h(); h() }, || print(1)) }
+fn nested_second(h: fn()) { both(|| print(1), || { h(); h() }) }
+fn nested_callee(h: fn()) { both(|| twice(h), || print(1)) }
+fn nested_layer(h: fn()) { both(|| run(|| { h(); h() }), || print(1)) }
+fn nested_each(h: fn()) { both(|| each(2, h), || print(1)) }
+fn nested_param(h: fn(), g: fn()) { both(|| { h(); h() }, g) }
+// The two arguments run the same value of the caller.
+fn param_and_capture(h: fn()) { both(h, || h()) }
+fn two_captures(h: fn()) { both(|| h(), || h()) }
+
+fn bad() {
+    let b1 = mkbuf()
+    nested(|| eat(b1))   //~ W0502
+    let b2 = mkbuf()
+    nested_second(|| eat(b2))   //~ W0502
+    let b3 = mkbuf()
+    nested_callee(|| eat(b3))   //~ W0502
+    let b4 = mkbuf()
+    nested_layer(|| eat(b4))   //~ W0502
+    let b5 = mkbuf()
+    nested_each(|| eat(b5))   //~ W0502
+    let b6 = mkbuf()
+    nested_param(|| eat(b6), || print(2))   //~ W0502
+    let b7 = mkbuf()
+    param_and_capture(|| eat(b7))   //~ W0502
+    let b8 = mkbuf()
+    two_captures(|| eat(b8))   //~ W0502
+}
+
+// Controls: each value of the caller runs one time.
+fn one_nested(h: fn()) { both(|| { h(); print(0) }, || print(1)) }
+fn one_each(h: fn()) { both(|| each(1, h), || print(1)) }
+fn one_each_other(h: fn(), g: fn()) { both(h, || g()) }
+
+fn good() {
+    let b1 = mkbuf()
+    one_nested(|| eat(b1))
+    let b2 = mkbuf()
+    both(|| eat(b2), || print(1))
+    let b3 = mkbuf()
+    let b4 = mkbuf()
+    one_each_other(|| eat(b3), || eat(b4))
+}
+fn main() {
+    bad()
+    good()
+}

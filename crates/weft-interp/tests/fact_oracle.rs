@@ -53,6 +53,17 @@ fn check_abc(src: &str) -> Checked {
     check_source("test.wf", src, opts)
 }
 
+/// Checks `src` with both pipelines and the groups A, B, C and D on (the
+/// handlers of stage F14, a preview).
+fn check_abcd(src: &str) -> Checked {
+    let opts = Options {
+        facts: FactGen::Both,
+        ir_groups: weft_sema::Groups::parse("ABCD").unwrap(),
+        ..Options::default()
+    };
+    check_source("test.wf", src, opts)
+}
+
 fn opts() -> RunOptions {
     RunOptions {
         fact_oracle: true,
@@ -190,6 +201,145 @@ fn a_missing_reads_at_of_a_captured_cell_fails_the_change_cover() {
     assert!(m.starts_with("fact oracle (C5)"), "{m}");
 }
 
+/// Closures that change and read variables that they borrow (`ByRef`): a
+/// whole local, a field of a local, and through a closure in a closure.
+/// No `Kept` capture: the oracle must name the variable through the
+/// reference in the environment (second review of the ABC preview, 5).
+const BORROWED: &str = "struct W { items: Vec<u64> }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    let f = || { v.push(2) }\n\
+    f()\n\
+    let g = || print(v.len())\n\
+    g()\n\
+    let w = W { items: Vec.new() }\n\
+    let h = || { w.items.push(3) }\n\
+    h()\n\
+    let k = || { let i = || w.items.push(4); i() }\n\
+    k()\n\
+    print(w.items.len())\n\
+    }\n";
+
+/// True if fact place `p` of `f` is the variable `root` or a place below it.
+fn below_root(f: &FnFacts, p: weft_facts::PlaceId, root: &str) -> bool {
+    let d = &f.places[p.index()].display;
+    d == root || d.starts_with(&format!("{root}.")) || d.starts_with(&format!("{root}["))
+}
+
+#[test]
+fn a_missing_mutates_at_of_a_borrowed_variable_in_a_closure_fails_the_change_cover() {
+    let m = broken_abc(BORROWED, |f| {
+        let e = in_closures(f);
+        let keep: Vec<bool> = (0..f.places.len())
+            .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), "v"))
+            .collect();
+        f.mutates_at
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+        f.lends_mut
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    });
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_missing_mutates_at_of_a_borrowed_field_in_a_nested_closure_fails_the_change_cover() {
+    let m = broken_abc(BORROWED, |f| {
+        let e = in_closures(f);
+        let keep: Vec<bool> = (0..f.places.len())
+            .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), "w"))
+            .collect();
+        f.mutates_at
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+        f.lends_mut
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    });
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_missing_reads_at_of_a_borrowed_variable_in_a_closure_fails_the_change_cover() {
+    let m = broken_abc(BORROWED, |f| {
+        let e = in_closures(f);
+        let keep: Vec<bool> = (0..f.places.len())
+            .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), "v"))
+            .collect();
+        f.reads_at
+            .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    });
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("read"),
+        "{m}"
+    );
+}
+
+/// A closure that changes a place behind a reference that it captures by
+/// value: a reference parameter of the maker (`fo23`), and a local that
+/// holds a reference (`fo15`, `fo21`). The oracle names the place through
+/// the source of the capture (gap FO-G1 of the third review of the ABC
+/// preview: the change was not checked).
+const PARAM_CAPTURED: &str = "struct W { items: Vec<u64> }\n\
+    fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }\n\
+    fn go(w: &W) / mut(w.items) {\n\
+    let f = || w.items.push(10)\n\
+    f()\n\
+    }\n\
+    fn main() {\n\
+    let w = W { items: mk_v() }\n\
+    go(&w)\n\
+    print(w.items.len())\n\
+    }\n";
+
+const LOCAL_REF_CAPTURED: &str = "struct W { items: Vec<u64> }\n\
+    fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }\n\
+    fn main() {\n\
+    let w = W { items: mk_v() }\n\
+    let r = &w\n\
+    let f = || r.items.push(8)\n\
+    f()\n\
+    let q = &w.items\n\
+    let g = || { let h = || q.push(9); h() }\n\
+    g()\n\
+    print(w.items.len())\n\
+    }\n";
+
+/// Removes the `mutates_at` and `lends_mut` facts at the nodes of the
+/// closure bodies for the places at or below variable `root`.
+fn without_changes_of(f: &mut FnFacts, root: &str) {
+    let e = in_closures(f);
+    let keep: Vec<bool> = (0..f.places.len())
+        .map(|p| !below_root(f, weft_facts::PlaceId(u32::try_from(p).unwrap()), root))
+        .collect();
+    f.mutates_at
+        .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+    f.lends_mut
+        .retain(|&(n, p)| n.index() < e || keep[p.index()]);
+}
+
+#[test]
+fn a_missing_mutates_at_behind_a_captured_reference_parameter_fails_the_change_cover() {
+    let m = broken_abc(PARAM_CAPTURED, |f| without_changes_of(f, "w"));
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_missing_mutates_at_behind_a_captured_reference_local_fails_the_change_cover() {
+    let m = broken_abc(LOCAL_REF_CAPTURED, |f| without_changes_of(f, "w"));
+    assert!(
+        m.starts_with("fact oracle (C5)") && m.contains("write"),
+        "{m}"
+    );
+}
+
 /// The clean twins of the holes of the review of the ABC preview
 /// (`tests/captured_cells/`, closures that keep, borrow or move captures,
 /// in vectors and through calls) that the `ir` pipeline accepts pass with
@@ -238,6 +388,100 @@ fn a_missing_may_abort_fails_the_suspension_cover() {
     );
 }
 
+/// A clause fails past its handler (plan stage F14): the abort starts at
+/// the `perform` of the handled body, and it unwinds the frame of `main`,
+/// which waits at the `handle` with a live linear value. D4 checks the
+/// node of the handled body.
+const CLAUSE_FAILS: &str = "linear struct Tx { n: u64 }\n\
+    on abort = rollback\n\
+    fn rollback(t: Tx) { let Tx(n) = t }\n\
+    effect Ask { fn ask() -> u64 }\n\
+    fn main() / fail {\n\
+    let t = Tx { n: 1 }\n\
+    let r = handle Ask { fn ask() { fail(\"stop\"); 0 } } in ask()\n\
+    print(r)\n\
+    rollback(t)\n\
+    }\n";
+
+#[test]
+fn a_missing_may_abort_at_a_perform_whose_clause_fails_fails_the_suspension_cover() {
+    let c = check_abcd(CLAUSE_FAILS);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    // The facts as the generator gives them pass: the run ends with the
+    // failure of the clause.
+    let first = run_main_with_facts(&c, &opts(), |_| {});
+    let m = first.as_ref().err().map(|e| e.message.clone());
+    assert!(m.as_deref().is_some_and(|m| m.contains("stop")), "{m:?}");
+    let report = first.err().and_then(|e| e.outcome.fact_oracle).unwrap();
+    assert_eq!(report.abort_skipped, 0, "{report:?}");
+    let m = match run_main_with_facts(&c, &opts(), |f| f.may_abort.clear()) {
+        Ok(_) => panic!("the broken facts pass"),
+        Err(e) => e.message,
+    };
+    assert!(m.starts_with("fact oracle (D4)"), "{m}");
+}
+
+/// The oracle follows the frames of a handled body and of a clause (stage
+/// F14): their nodes are in the facts of the site. A frame that waits at the
+/// `handle` or at the `resume` checks the accesses of a callee with the
+/// nodes of the frame above it (A3).
+#[test]
+fn the_frames_of_a_handled_body_and_of_a_clause_are_followed() {
+    let src = "effect Log { fn log(n: u64) }
+        fn step(v: &Vec<u64>) / Log { log(v[0]) }
+        fn main() {
+ let v = Vec.new()
+ v.push(1)
+ let seen = Vec.new()
+        handle Log { fn log(n) { seen.push(n)
+ resume(())
+ print(v.len()) } } in { step(&v)
+ step(&v) }
+        print(seen.len())
+}
+";
+    let c = check_abcd(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(failure(&r).is_none(), "{:?}", failure(&r));
+    let report = r.unwrap().fact_oracle.unwrap();
+    assert!(report.skipped.is_none(), "{report:?}");
+    // `main`, the handled body, two frames of `step` and two of the clause.
+    assert!(report.frames >= 6, "{report:?}");
+    assert!(report.summary > 0, "{report:?}");
+    // A perform in the handled body: `main` waits at the `handle` while the
+    // clause runs. Before its `resume`, A3 checks with the node of the
+    // perform; after it, with `Post` of the `handle`. A reference that the
+    // clause puts into a local of the site before `resume` is in the terms
+    // of the clause after it too.
+    let src = "effect Tick { fn tick(x: &u64) }
+        fn main() {
+ let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let out: Vec<&u64> = Vec.new()
+        handle Tick { fn tick(x) { out.push(x)
+ resume(())
+ print(v.len())
+ print(out[0]) } } in { tick(&v[0])
+ print(v.len()) }
+        print(out.len())
+}
+";
+    let c = check_abcd(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(failure(&r).is_none(), "{:?}", failure(&r));
+    let report = r.unwrap().fact_oracle.unwrap();
+    assert_eq!(report.summary_skipped, 0, "{report:?}");
+}
+
+#[test]
+fn each_accepted_corpus_program_in_scope_of_the_groups_a_to_d_passes_the_fact_oracle() {
+    // The handlers of the corpus (stage F14, a preview of group D): the
+    // oracle follows the frames of the handled bodies and the clauses.
+    corpus_passes(check_abcd);
+}
+
 /// The programs of the defects of the fact generator that the fact oracle
 /// found (`tests/gate/probes/fixes/f9`): each one passes now.
 #[test]
@@ -280,7 +524,10 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
 /// The failure of the fact oracle in a run, if any.
 fn failure(r: &Result<weft_interp::RunOutcome, weft_interp::RuntimeError>) -> Option<String> {
     let m = &r.as_ref().err()?.message;
-    (m.starts_with("fact oracle") || m.starts_with("trace conformance")).then(|| m.clone())
+    (m.starts_with("fact oracle")
+        || m.starts_with("trace conformance")
+        || m.starts_with("summary oracle"))
+    .then(|| m.clone())
 }
 
 #[test]

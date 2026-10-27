@@ -233,6 +233,11 @@ impl super::Machine<'_, '_> {
             return Err(self.fault("internal: the code has no instruction here"));
         };
         if uid == 0 {
+            // The fact oracle does not follow a copied frame: the summary
+            // oracle does not check its op either.
+            if let Some(fo) = self.facts.as_mut() {
+                fo.report.summary_skipped += 1;
+            }
             return self.exec(op);
         }
         if let Err(m) = self.before_op(uid, &code, pc, op) {
@@ -326,7 +331,33 @@ impl super::Machine<'_, '_> {
         // a value that is not a copy value). A take in another op (a drop,
         // the code of a native function) changes the place.
         let moves = matches!(op, Op::Take | Op::Read);
-        fo.check_events(uid, code, &cf.slots, &self.heap, &events, moves)
+        fo.check_events(uid, code, &cf.slots, &self.heap, &events, moves)?;
+        // The summary oracle (A3): the frames below wait at their run nodes,
+        // and the accesses of the op are accesses of their callees.
+        let Some(task) = self.tasks.get(self.cur) else {
+            return Ok(());
+        };
+        let below = task
+            .frames
+            .iter()
+            .rev()
+            .filter_map(|f| match f {
+                Frame::Code(c) => Some(c),
+                _ => None,
+            })
+            .skip_while(|c| c.uid != uid)
+            .skip(1)
+            .take(crate::oracle::facts::SUMMARY_DEPTH);
+        fo.begin_summary(uid);
+        for c in below {
+            if c.uid == 0 || c.chain.is_some() {
+                fo.report.summary_skipped += 1;
+                fo.break_summary();
+                continue;
+            }
+            fo.check_summary(c.uid, &c.code, &c.slots, &self.heap, &events)?;
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines)]

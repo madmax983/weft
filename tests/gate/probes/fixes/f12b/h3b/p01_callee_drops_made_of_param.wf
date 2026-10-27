@@ -1,0 +1,7 @@
+// F12 review 2 (ABC preview), hole H3b: a callee drops or gives back the linear result of a closure maker of its caller (old W0601) (pm/p01_callee_drops_made_of_param.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+fn go(m: fn() -> fn()) { let g = m() }
+fn main() { let t = begin(1); go(|| || rollback(t)) }

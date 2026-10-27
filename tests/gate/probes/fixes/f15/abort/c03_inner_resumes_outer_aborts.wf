@@ -1,0 +1,12 @@
+// F15 self-attack (a clause that resumes on each path can still abort past its handler): scratchpad f15/att/v/c03_inner_resumes_outer_aborts.wf
+linear struct Tok { id: u64 }
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+fn main() {
+    handle Stop { fn stop() { print("stopped") } } in {
+        let t = Tok { id: 1 }
+        let r = handle Ask { fn ask() { stop(); resume(0) } } in ask()
+        let Tok(i) = t
+        print(r + i)
+    }
+}

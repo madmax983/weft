@@ -1,0 +1,15 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b14_two_calls_one_local_c.wf
+effect Keep { fn keep(r: &u64) }
+fn given(g: &Vec<u64>) / Keep { keep(&g[0]) }
+fn main() {
+    let g: Vec<u64> = Vec.new()
+    g.push(1)
+    let h: Vec<u64> = Vec.new()
+    h.push(2)
+    let store: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in {
+        given(&g)
+        given(&h)
+    }
+    print(store[1])
+}

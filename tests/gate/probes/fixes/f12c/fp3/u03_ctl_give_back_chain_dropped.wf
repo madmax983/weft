@@ -1,0 +1,16 @@
+// Third review of the ABC preview, false positive FP3: the result of a callee that runs code of a caller (h3b/u03_ctl_give_back_chain_dropped.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn risky(n: u64) / fail { if n > 0 { fail("no") } }
+fn run(f: fn()) { f() }
+struct KM { m: fn() -> fn() }
+fn d0(m: fn() -> fn()) { let g = m() }
+fn gb(m: fn() -> fn()) -> fn() { m() }
+fn gb2(m: fn() -> fn()) -> fn() { gb(m) }
+fn main() {
+    let t = 1
+    let g = gb2(|| || print(t))
+    print(1)
+}

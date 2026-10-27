@@ -1,0 +1,12 @@
+// V035 v10: a tuple argument with a reference.
+effect Pair { fn pair(t: (&Vec<u64>, u64)) }
+
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Pair { fn pair(t) { let (a, n) = t; a.clear(); resume(()) } } in {
+        let r = &v[0]
+        pair((&v, 1))
+        print(r) //~ W0301
+    }
+}

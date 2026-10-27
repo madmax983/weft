@@ -1,0 +1,20 @@
+// M1 (plan stage F14): the clause changes `v` after `resume`, and the value of
+// the handled body points into `v`. The clause value `x` is the value of the
+// body: the clause reads it after the change.
+effect Tick { fn tick() }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Tick {
+        fn tick() {
+            let x = resume(())
+            v.clear()
+            x //~ W0301
+        }
+    } in {
+        tick()
+        &v[0]
+    }
+    print(r) //~ W0301
+}

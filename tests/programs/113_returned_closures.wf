@@ -21,9 +21,9 @@ fn scope_ended() {
     let f = {
         let v = Vec.new()
         v.push(1)
-        reader(&v)   //~ W0301
+        reader(&v)   //~ old: W0301
     }
-    f()
+    f()   //~ ir: W0301
 }
 fn cleared() {
     let v = Vec.new()
@@ -35,9 +35,9 @@ fn cleared() {
 fn plain_scope_ended() {
     let f = {
         let x = 5
-        elem_reader(&x)   //~ W0301
+        elem_reader(&x)   //~ old: W0301
     }
-    f()
+    f()   //~ ir: W0301
 }
 // A function argument flows into the result too.
 fn passed_on() {
@@ -137,9 +137,9 @@ fn out_elem_param() {
     let fs = Vec.new()
     let v = Vec.new()
     v.push(1)
-    out_elem(&v[0], &fs)
+    out_elem(&v[0], &fs)   //~ ir: W0301
     v.clear()
-    let f = fs[0]   //~ W0301
+    let f = fs[0]   //~ old: W0301
     f()
 }
 
@@ -193,7 +193,7 @@ fn held_before() {
     // only from the call on.
     let es = Vec.new()
     v.push(2)
-    out_elem(&v[0], &es)
+    out_elem(&v[0], &es)   //~ ir: W0301
     let e = es[0]
     e()
     take(v)

@@ -32,8 +32,12 @@
 //! query over the summaries ([`checks`]). Stage F11 adds the closures: each
 //! closure body is a component of the facts of its function, with a summary
 //! in the terms of its interface for the calls of the closure and facts that
-//! are instantiated with the places of the maker (`docs/ir.md` 6.5, 6.7). A
-//! program with another construct gets
+//! are instantiated with the places of the maker (`docs/ir.md` 6.5, 6.7).
+//! Stage F14 adds the handlers ([`handlers`]): the handled body splices into
+//! the component of its site, each clause body is a component of the facts
+//! of its function, and the code of a clause before and after its resume
+//! points goes to the nodes that run it. A program with another construct
+//! gets
 //! [`Unsupported`]: the old pipeline checks it. A test can give another emit
 //! ([`crate::analyze_with_emit`]), and [`preview`] gives the facts of one
 //! body.
@@ -43,6 +47,7 @@ pub mod checks;
 pub mod decls;
 mod exports;
 pub mod frames;
+pub mod handlers;
 pub mod holders;
 pub mod kernel;
 pub mod nodes;
@@ -289,6 +294,41 @@ fn unsupported(e: &alpha::AlphaError) -> Unsupported {
     }
 }
 
+/// True if body `b` is a clause body or a body inside one (through the
+/// parents).
+fn in_clause(p: &weft_ir::Program, b: weft_ir::BodyId) -> bool {
+    let mut at = Some(b);
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = at.and_then(|x| p.bodies.get(x.index())) else {
+            return false;
+        };
+        if matches!(x.kind, weft_ir::BodyKind::Clause(..)) {
+            return true;
+        }
+        at = match x.kind {
+            weft_ir::BodyKind::Closure(c) => p.closures.get(c.index()).map(|d| d.maker),
+            _ => x.parent,
+        };
+    }
+    false
+}
+
+/// True if body `b` is inside a closure body: a parent (or the maker of a
+/// closure on the way) is a closure body.
+fn in_closure(p: &weft_ir::Program, b: weft_ir::BodyId) -> bool {
+    let mut at = p.bodies.get(b.index()).and_then(|x| x.parent);
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = at.and_then(|x| p.bodies.get(x.index())) else {
+            return false;
+        };
+        if matches!(x.kind, weft_ir::BodyKind::Closure(_)) {
+            return true;
+        }
+        at = x.parent;
+    }
+    false
+}
+
 /// Checks that the fact generator supports each construct of the component
 /// `comp`: function and test bodies, the statements, the terminators that
 /// run no other body (stage F4), and the calls of the functions that have a
@@ -313,9 +353,27 @@ fn check_supported(
         match b.kind {
             // A closure body is a component of its own in the facts of its
             // function (stage F11).
-            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Closure(_) => {}
-            BodyKind::Clause(..) | BodyKind::Handled(_) => {
-                return no(Group::D, "a handler (stage F14)");
+            BodyKind::Fn(_) | BodyKind::Test(_) => {}
+            BodyKind::Closure(_) => {
+                // A closure that a clause makes (or a handled body inside a
+                // clause): its seed is the state of the clause (later).
+                let maker = p.closure_of(bid).map(|(_, d)| d.maker);
+                if maker.is_some_and(|m| in_clause(p, m)) {
+                    return no(Group::D, "a closure in a clause of a handler (stage F16)");
+                }
+            }
+            BodyKind::Clause(h, _) | BodyKind::Handled(h) => {
+                if p.handlers.get(h.index()).is_some_and(|d| d.multi) {
+                    return no(
+                        Group::D,
+                        "a handler of an effect with a `multi` operation (stage F16)",
+                    );
+                }
+                // A handler in a closure body: its clauses run where the
+                // closure runs (later).
+                if in_closure(p, bid) {
+                    return no(Group::D, "a handler in a closure body (stage F16)");
+                }
             }
             BodyKind::Scope(_) => return no(Group::E, "a task scope (stage F18)"),
         }
@@ -324,20 +382,29 @@ fn check_supported(
         }
         for blk in &b.blocks {
             for s in &blk.stmts {
-                match &s.kind {
-                    // The unwinder runs the `on abort` function: its summary
-                    // applies at the node (stage F7).
-                    StmtKind::UnwindValue(_, weft_ir::UnwindAction::OnAbort(f)) => {
-                        if let Err(why) = sums.get(*f) {
-                            return no(later_group(why), why);
-                        }
+                // The unwinder runs the `on abort` function: its summary
+                // applies at the node (stage F7).
+                if let StmtKind::UnwindValue(_, weft_ir::UnwindAction::OnAbort(f)) = &s.kind {
+                    if let Err(why) = sums.get(*f) {
+                        return no(later_group(why), why);
                     }
-                    StmtKind::UnwindKont(_) => return no(Group::D, "a continuation (stage F16)"),
-                    _ => {}
                 }
             }
+            // A call that can perform through a local handler or fail to a
+            // local `Fail` handler runs a clause there: the fact generator
+            // supports it when the clauses give no function value and no
+            // reference back to the callee (plan stages F14, F15).
+            if matches!(blk.term.kind, TermKind::Call { .. })
+                && frames::clause_handlers(p, tys, sums, bid, &blk.term.kind)
+                    .iter()
+                    .any(|h| !crate::analysis::clause::given_ops(p, tys, *h))
+            {
+                return no(Group::D, crate::analysis::clause::GIVES_BACK);
+            }
             match &blk.term.kind {
-                TermKind::Goto(_)
+                // A `handle` (stage F14).
+                TermKind::Handle { .. }
+                | TermKind::Goto(_)
                 | TermKind::Switch { .. }
                 | TermKind::Return
                 | TermKind::UnwindExit
@@ -362,14 +429,30 @@ fn check_supported(
                         return no(later_group(why), why);
                     }
                 }
-                TermKind::Perform { .. } => {
-                    return no(
-                        Group::D,
-                        "a perform through a capability of a handler (stage F14)",
-                    );
+                // A perform through the capability of a local handler, a
+                // `resume` of the continuation of the clause (stage F14).
+                TermKind::Perform {
+                    cap: weft_ir::CapOperand::Local(cap),
+                    ..
+                } => {
+                    if crate::analysis::clause::cap_handler(p, bid, cap).is_none() {
+                        return no(
+                            Group::D,
+                            "a perform through a captured capability (stage F16)",
+                        );
+                    }
                 }
-                TermKind::Resume { .. } => return no(Group::D, "a continuation (stage F16)"),
-                TermKind::Handle { .. } => return no(Group::D, "a handler (stage F14)"),
+                TermKind::Resume { kont, .. } => {
+                    match crate::analysis::clause::kont_handler(p, bid, kont) {
+                        Some((_, c, _)) if c == bid => {}
+                        _ => {
+                            return no(
+                                Group::D,
+                                "a `resume` of a captured continuation (stage F16)",
+                            )
+                        }
+                    }
+                }
                 _ => return no(Group::E, "a task (stage F18)"),
             }
         }
@@ -438,6 +521,8 @@ pub struct Emitted {
     pub vars: vars::Vars,
     /// The versions of each part with a variable of its own.
     pub parts: Vec<holders::PartVersions>,
+    /// The versions of each heap slot.
+    pub slots: Vec<holders::SlotVersions>,
     /// The entry node: the parameters bind there.
     pub entry_node: weft_facts::NodeId,
     /// The type table, with the types that the fact generator interned.
@@ -447,6 +532,12 @@ pub struct Emitted {
     pub entry_nodes: usize,
     /// The entry node of each closure body of the component.
     pub closure_entries: Vec<(weft_ir::BodyId, weft_facts::NodeId)>,
+    /// The entry node of each clause body of the component (plan stage
+    /// F14).
+    pub clause_entries: Vec<(weft_ir::BodyId, weft_facts::NodeId)>,
+    /// The `Main` node of the `handle` of each handled body of the component
+    /// (plan stage F14): the handled body splices in after it.
+    pub handled_entries: Vec<(weft_ir::BodyId, weft_facts::NodeId)>,
     /// The aborts (a failure, an `assert`) of the summaries that the entry
     /// body applies at its calls of function values.
     pub aborts: std::collections::BTreeSet<crate::analysis::summary::Abort>,
@@ -458,6 +549,9 @@ pub struct Emitted {
     /// A run node of the entry body runs code of a caller that can resume
     /// more than once.
     pub code_multi: bool,
+    /// The `lends_mut` of the summaries that the entry body applies and that
+    /// a caller does not apply again (`templates::Em::own_lends`).
+    pub own_lends: Vec<(weft_facts::NodeId, PlaceId)>,
     /// The join of the states of the entry body before each terminator and
     /// each closure literal (with closures in the component).
     pub made: Option<crate::analysis::State>,
@@ -513,8 +607,14 @@ pub fn emit_parts(
     let vars = vars::Vars::build(p, &mut tys, facts, &comp);
     let mut roots = alpha::Roots::default();
     roots.set_field_places(&a.program);
-    // The abort destinations of each node (`docs/ir.md` 6.5).
-    let frames = frames::Frames::of_body(p, &tys, sums, entry);
+    // The abort destinations of each node (`docs/ir.md` 6.5), of the entry
+    // body and of the handled bodies and the clauses of the component.
+    let framed: Vec<weft_ir::BodyId> = comp
+        .iter()
+        .copied()
+        .filter(|&b| p.closure_of(b).is_none())
+        .collect();
+    let frames = frames::Frames::of_bodies(p, &tys, sums, &framed);
     // The entry node: the parameters bind there. It is node `n0`, as in the
     // old lowering: the hypothesis `bound_before_use` of the proof link
     // starts at `n0` (`proofs/link/lints/unbound_use.dl`).
@@ -524,10 +624,19 @@ pub fn emit_parts(
     };
     let entry_node = facts.add_ir_node(sp, "entry", "entry", "");
     let mut table = nodes::NodeTable::default();
-    table.add_body(p, &tys, entry, facts, &frames);
+    // The handled bodies splice into the component of their site
+    // (`docs/ir.md` 6.1, plan stage F14).
+    let spliced = handlers::spliced(p, &comp, entry);
+    for &b in &spliced {
+        table.add_body(p, &tys, b, facts, &frames);
+    }
+    for &b in &spliced {
+        table.splice(p, facts, b);
+    }
     if let Some(first) = table.first(entry, body.entry, nodes::NORMAL) {
         facts.cfg_edge.push((entry_node, first));
     }
+    let mut hx = crate::analysis::clause::Handlers::default();
     let sig = a
         .bodies
         .get(index)
@@ -554,6 +663,7 @@ pub fn emit_parts(
             roots: &mut roots,
             sums,
             cycles: &cycles,
+            hx: &mut hx,
         };
         crate::analysis::run(&mut cx, entry, init).map_err(|e| unsupported(&e))?
     };
@@ -581,9 +691,11 @@ pub fn emit_parts(
             runs: Vec::new(),
             code_multi: false,
             run_nodes: Vec::new(),
+            own_lends: Vec::new(),
             last: (!closures.is_empty()).then(crate::analysis::State::new),
             aborts: std::collections::BTreeSet::new(),
             union: (!closures.is_empty()).then(crate::analysis::State::new),
+            hx: &mut hx,
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
@@ -594,10 +706,10 @@ pub fn emit_parts(
             em.runs,
             em.returns,
             em.last,
-            em.code_multi,
+            (em.code_multi, em.own_lends),
         )
     };
-    let (mut stored, aborts, union, runs, returns, last, code_multi) = stored;
+    let (mut stored, aborts, union, runs, returns, last, (code_multi, own_lends)) = stored;
     let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
         .iter()
         .filter_map(|&cb| p.closure_of(cb).map(|(c, _)| c))
@@ -622,7 +734,7 @@ pub fn emit_parts(
                 cycles: &cycles,
                 seed: p
                     .closure_of(cb)
-                    .and_then(|(_, d)| unions.get(&d.maker))
+                    .and_then(|(_, d)| unions.get(&handlers::splice_root(p, d.maker)))
                     .cloned()
                     .unwrap_or_default(),
             },
@@ -642,8 +754,74 @@ pub fn emit_parts(
         closure_entries.push((cb, n));
         unions.insert(cb, st);
     }
-    let parts = holders.finish(facts);
-    let diags = stored_behind(p, &tys, facts, &roots, body, &stored);
+    // The facts of each clause body (plan stage F14): a component of the
+    // function, from the join of the states at the performs that run it. A
+    // clause has a lower id than the clauses inside it, so the performs
+    // that run an inner clause are in the facts before it.
+    let mut clause_entries = Vec::new();
+    let mut clause_stored: Vec<(weft_ir::BodyId, templates::Stored)> = Vec::new();
+    let mut clause_bodies: Vec<weft_ir::BodyId> = comp
+        .iter()
+        .copied()
+        .filter(|&b| {
+            p.body(b)
+                .is_some_and(|x| matches!(x.kind, weft_ir::BodyKind::Clause(..)))
+        })
+        .collect();
+    clause_bodies.sort();
+    for &cb in &clause_bodies {
+        let n = emit_clause(
+            &ClosureCx {
+                a,
+                p,
+                sums,
+                cycles: &cycles,
+                seed: crate::analysis::State::new(),
+            },
+            &mut ClosureOut {
+                tys: &mut tys,
+                facts,
+                roots: &mut roots,
+                vars: &vars,
+                holders: &mut holders,
+                uniq: &mut uniq,
+                table: &mut table,
+                stored: &mut stored,
+            },
+            (&mut hx, &frames, &comp),
+            cb,
+        )
+        .map_err(|e| unsupported(&e))?;
+        clause_entries.push((cb, n.0));
+        clause_stored.extend(n.1.into_iter().map(|x| (cb, x)));
+    }
+    handlers::project(
+        &handlers::Tables {
+            p,
+            tys: &tys,
+            roots: &roots,
+            vars: &vars,
+            table: &table,
+        },
+        facts,
+        &hx,
+    );
+    stored.extend(handlers::map_stored(
+        &handlers::Tables {
+            p,
+            tys: &tys,
+            roots: &roots,
+            vars: &vars,
+            table: &table,
+        },
+        facts,
+        (&hx, &mut holders),
+        clause_stored,
+    ));
+    let (parts, slots) = holders.finish(facts);
+    let handled_entries = handled_entries(p, &comp, &table);
+    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored)?;
+    diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     // Each local with a root owns it, and the cell of a local that a closure
     // captures `ByRef` is owned by `C` of the local.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
@@ -656,6 +834,19 @@ pub fn emit_parts(
         )
         .collect();
     facts.owner.extend(owners);
+    // The rest of the handled body at each `resume` of a clause: it needs
+    // the owners of the roots.
+    handlers::continuations(
+        &handlers::Tables {
+            p,
+            tys: &tys,
+            roots: &roots,
+            vars: &vars,
+            table: &table,
+        },
+        facts,
+        &hx,
+    );
     // A `@ uniq` value is not `many` (`once_var`, as in the old lowering):
     // a `multi` resume would copy it (W0503).
     for (i, v) in facts.vars.iter_mut().enumerate() {
@@ -671,14 +862,18 @@ pub fn emit_parts(
         table,
         vars,
         parts,
+        slots,
         entry_node,
         tys,
         entry_nodes,
         closure_entries,
+        clause_entries,
+        handled_entries,
         aborts,
         runs,
         returns,
         code_multi,
+        own_lends,
         made: unions.remove(&entry).map(|mut u| {
             if let Some(l) = &last {
                 u.join(l);
@@ -687,6 +882,45 @@ pub fn emit_parts(
         }),
         closures: closure_sums,
     })
+}
+
+/// The `Main` node of the `handle` of each handled body of the component
+/// `comp` in the node table `table`.
+fn handled_entries(
+    p: &weft_ir::Program,
+    comp: &[weft_ir::BodyId],
+    table: &nodes::NodeTable,
+) -> Vec<(weft_ir::BodyId, weft_facts::NodeId)> {
+    let mut out = Vec::new();
+    for &b in comp {
+        let Some(x) = p.body(b) else {
+            continue;
+        };
+        let (weft_ir::BodyKind::Handled(h), Some(site)) = (x.kind, x.parent) else {
+            continue;
+        };
+        let Some(s) = p.body(site) else {
+            continue;
+        };
+        let block = s.blocks.iter().position(|blk| {
+            !blk.cleanup
+                && matches!(blk.term.kind, weft_ir::TermKind::Handle { handler, .. } if handler == h)
+        });
+        let Some(block) = block.and_then(|i| u32::try_from(i).ok()) else {
+            continue;
+        };
+        let key = nodes::NodeKey {
+            body: site,
+            block: weft_ir::BlockId(block),
+            at: nodes::TERM,
+            phase: nodes::Phase::Main,
+            dest: nodes::NORMAL,
+        };
+        if let Some(n) = table.get(key) {
+            out.push((b, n));
+        }
+    }
+    out
 }
 
 /// What the facts of a closure body read ([`emit_closure`]).
@@ -842,6 +1076,7 @@ fn closure_summary(
     let params = decls::closure_params(p, &mut tys, &mut facts, &mut roots, cb)
         .map_err(|e| unsupported(&e))?;
     let cycles = crate::analysis::widen::Cycles::of(p, &comp);
+    let mut hx = crate::analysis::clause::Handlers::default();
     let (env, states) = {
         let mut cx = crate::analysis::Cx {
             p,
@@ -850,6 +1085,7 @@ fn closure_summary(
             roots: &mut roots,
             sums,
             cycles: &cycles,
+            hx: &mut hx,
         };
         let env = env_value(&mut cx, cb, None).map_err(|e| unsupported(&e))?;
         let mut init = decls::entry_state(p, cb, &params.entry).map_err(|e| unsupported(&e))?;
@@ -861,7 +1097,7 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
-    let (returns, aborts, runs, made, run_nodes) = {
+    let (returns, aborts, runs, made, (run_nodes, own_lends)) = {
         let mut em = templates::Em {
             p,
             sema: &a.program,
@@ -883,9 +1119,11 @@ fn closure_summary(
             runs: Vec::new(),
             code_multi: false,
             run_nodes: Vec::new(),
+            own_lends: Vec::new(),
             last: Some(crate::analysis::State::new()),
             aborts: std::collections::BTreeSet::new(),
             union: Some(crate::analysis::State::new()),
+            hx: &mut hx,
         };
         templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
@@ -899,7 +1137,10 @@ fn closure_summary(
                 }
                 u
             }),
-            std::mem::take(&mut em.run_nodes),
+            (
+                std::mem::take(&mut em.run_nodes),
+                std::mem::take(&mut em.own_lends),
+            ),
         )
     };
     let rebind_nodes = rebind_nodes(p, &table, cb);
@@ -916,6 +1157,7 @@ fn closure_summary(
             returns: &returns,
             code_multi: false,
             run_nodes: &run_nodes,
+            lends: &own_lends,
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
         },
@@ -1005,6 +1247,7 @@ fn emit_closure(
         out.facts.cfg_edge.push((en, first));
     }
     let params = decls::closure_params(p, out.tys, out.facts, out.roots, cb)?;
+    let mut hx = crate::analysis::clause::Handlers::default();
     let (env, states) = {
         let mut acx = crate::analysis::Cx {
             p,
@@ -1013,6 +1256,7 @@ fn emit_closure(
             roots: out.roots,
             sums: cx.sums,
             cycles: cx.cycles,
+            hx: &mut hx,
         };
         let env = env_value(&mut acx, cb, Some(&cx.seed))?;
         let mut init = cx.seed.clone();
@@ -1046,15 +1290,143 @@ fn emit_closure(
         runs: Vec::new(),
         code_multi: false,
         run_nodes: Vec::new(),
+        own_lends: Vec::new(),
         last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),
+        hx: &mut hx,
     };
     templates::closure_entry(&mut em, en, &params.entry, &env)?;
     emit_blocks(&mut em, out.table, &frames, &states, body)?;
     out.stored.append(&mut em.stored);
     let union = em.union.take().unwrap_or_default();
     Ok((en, union))
+}
+
+/// The facts of clause body `cb` (plan stage F14): its nodes (with the
+/// handled bodies that splice into it), from a node `clause entry` where its
+/// parameters and its continuation bind, in the tables of the component.
+/// The parameters of the clause have `Param` roots of the `Arg` kind (a
+/// perform maps them onto its arguments, `handlers::project`), and the
+/// analysis starts from the join of the states at the performs that run the
+/// clause (`crate::analysis::clause::Info::seeds`). Returns the entry node.
+///
+/// # Errors
+///
+/// The errors of α and of the analysis.
+fn emit_clause(
+    cx: &ClosureCx<'_>,
+    out: &mut ClosureOut<'_, '_>,
+    (hx, frames, comp): (
+        &mut crate::analysis::clause::Handlers,
+        &frames::Frames,
+        &[weft_ir::BodyId],
+    ),
+    cb: weft_ir::BodyId,
+) -> Result<(weft_facts::NodeId, Vec<templates::Stored>), alpha::AlphaError> {
+    let p = cx.p;
+    let body = p
+        .bodies
+        .get(cb.index())
+        .ok_or_else(|| alpha::AlphaError::BadPlace("no body".to_string()))?;
+    let weft_ir::BodyKind::Clause(h, _) = body.kind else {
+        return Err(alpha::AlphaError::BadPlace("not a clause".to_string()));
+    };
+    let spliced = handlers::spliced(p, comp, cb);
+    for &b in &spliced {
+        out.table.add_body(p, out.tys, b, out.facts, frames);
+    }
+    for &b in &spliced {
+        out.table.splice(p, out.facts, b);
+    }
+    let sp = weft_facts::Span {
+        lo: body.origin.span.lo,
+        hi: body.origin.span.hi,
+    };
+    let en = out
+        .facts
+        .add_ir_node(sp, "clause entry", "clause entry", "");
+    if let Some(first) = out.table.first(cb, body.entry, nodes::NORMAL) {
+        out.facts.cfg_edge.push((en, first));
+    }
+    let params = decls::clause_params(p, out.tys, out.facts, out.roots, cb)?;
+    let states = {
+        let seed = hx
+            .info(h)
+            .and_then(|i| i.seeds.get(&cb))
+            .cloned()
+            .unwrap_or_default();
+        // Each parameter points into its own root and into the places of
+        // the arguments of the nodes that run the clause (plan stage F15):
+        // a value that the clause puts into a place of the site has places
+        // of the site there.
+        let given = hx
+            .info(h)
+            .and_then(|i| i.params.get(&cb))
+            .cloned()
+            .unwrap_or_default();
+        let mut acx = crate::analysis::Cx {
+            p,
+            tys: out.tys,
+            facts: out.facts,
+            roots: out.roots,
+            sums: cx.sums,
+            cycles: cx.cycles,
+            hx: &mut *hx,
+        };
+        let mut init = seed;
+        for (i, (l, v)) in params.entry.iter().enumerate() {
+            let mut v = v.clone();
+            if let Some(g) = given.get(i) {
+                v.join(&crate::analysis::Tree::leaf(crate::analysis::AbsVal::refs(
+                    g.flat().refs,
+                )));
+            }
+            init.write(crate::analysis::transfer::key(p, cb, *l)?, &[], v);
+        }
+        if let Some((k, _)) = body.kont {
+            init.write(
+                (cb, k),
+                &[],
+                crate::analysis::Tree::leaf(crate::analysis::AbsVal::plain()),
+            );
+        }
+        crate::analysis::run(&mut acx, cb, init)?
+    };
+    let mut em = templates::Em {
+        p,
+        sema: &cx.a.program,
+        tys: out.tys,
+        facts: out.facts,
+        roots: out.roots,
+        vars: out.vars,
+        holders: out.holders,
+        body: cb,
+        cleanup: false,
+        ret_places: None,
+        uniq: out.uniq,
+        skip_s: None,
+        sums: cx.sums,
+        cycles: cx.cycles,
+        stored: Vec::new(),
+        at: (weft_ir::BlockId(0), 0),
+        returns: Vec::new(),
+        runs: Vec::new(),
+        code_multi: false,
+        run_nodes: Vec::new(),
+        own_lends: Vec::new(),
+        last: None,
+        aborts: std::collections::BTreeSet::new(),
+        union: None,
+        hx,
+    };
+    handlers::clause_entry(&mut em, en, &params.entry)?;
+    emit_blocks(&mut em, out.table, frames, &states, body)?;
+    // The stores of the clause name the places of its parameters: they map
+    // onto the places of the arguments after the projection
+    // (`handlers::map_stored`).
+    let stored = std::mem::take(&mut em.stored);
+    Ok((en, stored))
 }
 
 /// The facts of one component and the tables that map its IR to them
@@ -1121,6 +1493,12 @@ pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsuppo
 /// caller keeps the reference. One diagnostic for each place that gets the
 /// reference and each local, at the span of the node, as the old lowering
 /// (`check_stored_behind`).
+///
+/// # Errors
+///
+/// Returns [`Unsupported`] for a reference through a whole local handle that
+/// can be a copy of a handle of the object that gets it
+/// (`templates::Stored::maybe_same`).
 fn stored_behind(
     p: &weft_ir::Program,
     tys: &weft_ir::TyTable,
@@ -1128,7 +1506,7 @@ fn stored_behind(
     roots: &alpha::Roots,
     body: &weft_ir::Body,
     stored: &[templates::Stored],
-) -> Vec<Diagnostic> {
+) -> Result<Vec<Diagnostic>, Unsupported> {
     use weft_syntax::diag::Code;
     let mut out = Vec::new();
     let mut seen: Vec<(String, weft_facts::RootId)> = Vec::new();
@@ -1154,8 +1532,48 @@ fn stored_behind(
             let Some(root) = facts.places.get(r.index()).map(|i| i.root) else {
                 continue;
             };
-            let Some(alpha::Role::Local(key)) = roots.role(root) else {
+            // A whole local handle of the object that gets the store: the
+            // reference goes away with the object (`templates::rc_handles`).
+            if st.same.contains(&r) {
                 continue;
+            }
+            // A whole local handle that can be a copy of a handle of the
+            // object: the facts cannot tell if the object is the same.
+            if st.maybe_same.contains(&r) {
+                return Err(Unsupported {
+                    group: Group::A,
+                    reason: "a reference through a copy of an `rc` handle goes into an `rc` object of the same type".to_string(),
+                });
+            }
+            // A reference into a local, or into the cell of a local that a
+            // closure captures `ByRef` (a closure that captures the local,
+            // stage F13).
+            let (key, cell) = match roots.role(root) {
+                Some(alpha::Role::Local(key)) => (key, false),
+                Some(alpha::Role::Cell(key)) => (key, true),
+                // A reference into a local of a callee that a call gives a
+                // clause (plan stage F15, `clause::given`): the local ends at
+                // the end of the call.
+                Some(alpha::Role::Frame(_)) if st.clause => {
+                    if seen.contains(&(into.clone(), root)) {
+                        continue;
+                    }
+                    seen.push((into.clone(), root));
+                    let msg = format!(
+                        "`{}` puts a reference into `{}` {into}: a local of a callee goes out of scope at the end of the call",
+                        facts.name,
+                        facts.place(r).display
+                    );
+                    let span = weft_syntax::ast::Span {
+                        lo: st.span.lo,
+                        hi: st.span.hi,
+                    };
+                    let mut diag = Diagnostic::error(Code::W0204, msg, span);
+                    diag.unit = body.origin.span.unit as usize;
+                    out.push(diag);
+                    continue;
+                }
+                _ => continue,
             };
             if seen.contains(&(into.clone(), root)) {
                 continue;
@@ -1174,10 +1592,17 @@ fn stored_behind(
                 _ => format!("the local `{name}`"),
             };
             let shown = facts.place(r).display.clone();
-            let msg = format!(
-                "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return",
-                facts.name
-            );
+            let msg = if cell {
+                format!(
+                    "`{}` puts a closure that captures `{name}` {into}: {what} goes out of scope at the return",
+                    facts.name
+                )
+            } else {
+                format!(
+                    "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return",
+                    facts.name
+                )
+            };
             let span = weft_syntax::ast::Span {
                 lo: st.span.lo,
                 hi: st.span.hi,
@@ -1185,6 +1610,186 @@ fn stored_behind(
             let mut diag = Diagnostic::error(Code::W0204, msg, span);
             diag.unit = body.origin.span.unit as usize;
             out.push(diag);
+        }
+    }
+    Ok(out)
+}
+
+/// The W0204 check of the `Kept` captures of a closure that leaves the
+/// body (stage F13, the `late_stores` of the old lowering): a closure that
+/// the function gives back, or puts into a heap slot of an interface place,
+/// shares the cell of each variable that it keeps, so it sees the value of
+/// the variable at the return. A reference there into a local of the
+/// component goes out of scope at the return. The value of the closure
+/// holds the references of the variable where the closure is made only
+/// (the analysis does not change them when the variable gets a new value):
+/// this check gives the references of the later values. A reference that
+/// the value holds is the spec error of `_0`, or the store check.
+fn kept_escapes(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    facts: &FnFacts,
+    roots: &alpha::Roots,
+    entry: weft_ir::BodyId,
+    returns: &[crate::analysis::State],
+) -> Vec<Diagnostic> {
+    use crate::analysis::FnVal;
+    use weft_syntax::diag::Code;
+    let mut out = Vec::new();
+    let Some(body) = p.body(entry) else {
+        return out;
+    };
+    let ret_span = body
+        .blocks
+        .iter()
+        .find(|b| !b.cleanup && matches!(b.term.kind, weft_ir::TermKind::Return))
+        .map_or(body.origin.span, |b| b.term.origin.span);
+    let mut seen: Vec<(bool, weft_facts::RootId)> = Vec::new();
+    let interface = |q: PlaceId| {
+        facts.places.get(q.index()).is_some_and(|i| {
+            matches!(
+                roots.role(i.root),
+                Some(
+                    alpha::Role::Param(..)
+                        | alpha::Role::Held(..)
+                        | alpha::Role::Group
+                        | alpha::Role::Caller
+                )
+            )
+        })
+    };
+    for st in returns {
+        // The closures that leave: the result, and the heap slots of the
+        // places of the callers, each with the references that it holds.
+        let mut leaving: Vec<(Option<PlaceId>, crate::analysis::AbsVal)> = Vec::new();
+        leaving.push((None, st.value((entry, body.ret), &[]).flat()));
+        for (q, fns) in st.behind_fns() {
+            if interface(*q) {
+                let mut v = crate::analysis::AbsVal::none();
+                v.fns.clone_from(fns);
+                v.refs = st.behind().get(q).cloned().unwrap_or_default();
+                leaving.push((Some(*q), v));
+            }
+        }
+        for (into, v) in leaving {
+            // The roots that the value holds already: the spec (or the store
+            // check) reports them.
+            let held: std::collections::BTreeSet<weft_facts::RootId> = v
+                .refs
+                .iter()
+                .filter_map(|r| facts.places.get(r.index()).map(|i| i.root))
+                .collect();
+            let mut work: Vec<FnVal> = v.fns.iter().cloned().collect();
+            let mut done = std::collections::BTreeSet::new();
+            while let Some(f) = work.pop() {
+                if !done.insert(f.clone()) {
+                    continue;
+                }
+                // A closure of the component, or a closure that a closure of
+                // the component made (class K3-Made of the review of stage
+                // F13: `let m = || || print(r.hp); let g = m()`).
+                let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
+                    continue;
+                };
+                let Some(decl) = p.closures.get(c.index()) else {
+                    continue;
+                };
+                for (j, cap) in decl.captures.iter().enumerate() {
+                    if cap.mode != weft_ir::CaptureMode::Kept {
+                        continue;
+                    }
+                    // The variable of the entry body that the capture shares,
+                    // through the `Kept` and `ByRef` captures of the makers (a
+                    // capture of a capture, `env.j`, has a projection).
+                    let Some(src) = crate::analysis::apply::made_capture_source(p, c, j, entry)
+                    else {
+                        continue;
+                    };
+                    let Ok(k) = alpha::owner_local(p, entry, src.local) else {
+                        continue;
+                    };
+                    let path: Vec<crate::analysis::PathStep> = src
+                        .proj
+                        .iter()
+                        .map_while(|pr| match pr {
+                            weft_ir::Proj::Field(f) => Some(crate::analysis::PathStep::Field(f.0)),
+                            weft_ir::Proj::Variant(v) => {
+                                Some(crate::analysis::PathStep::Variant(v.0))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    let src = st.value(k, &path).flat();
+                    work.extend(src.fns.iter().cloned());
+                    for &r in &src.refs {
+                        let Some(root) = facts.places.get(r.index()).map(|i| i.root) else {
+                            continue;
+                        };
+                        if held.contains(&root) {
+                            continue;
+                        }
+                        let Some(alpha::Role::Local(key)) = roots.role(root) else {
+                            continue;
+                        };
+                        if seen.contains(&(into.is_some(), root)) {
+                            continue;
+                        }
+                        seen.push((into.is_some(), root));
+                        let d = p
+                            .bodies
+                            .get(key.0.index())
+                            .and_then(|b| b.locals.get(key.1.index()));
+                        let name = d.map_or_else(String::new, |d| alpha::local_text(tys, d));
+                        let what = match d.map(|d| d.kind) {
+                            Some(weft_ir::LocalKind::Temp(_)) => "a temporary value".to_string(),
+                            Some(weft_ir::LocalKind::Param(_)) => {
+                                format!("the by-value parameter `{name}`")
+                            }
+                            _ => format!("the local `{name}`"),
+                        };
+                        let shown = facts.place(r).display.clone();
+                        let (msg, sp) = match into {
+                            None => (
+                                format!(
+                                    "the returned closure captures `{shown}`: {what} of `{}` goes out of scope at the return",
+                                    facts.name
+                                ),
+                                ret_span,
+                            ),
+                            Some(q) => {
+                                let place = match facts
+                                    .places
+                                    .get(q.index())
+                                    .and_then(|i| roots.role(i.root))
+                                {
+                                    Some(alpha::Role::Param(b, i) | alpha::Role::Held(b, i)) => {
+                                        format!(
+                                            "behind the parameter `{}`",
+                                            crate::analysis::transfer::param_name(p, b, i)
+                                        )
+                                    }
+                                    _ => "into a place of a caller".to_string(),
+                                };
+                                let lit = p.body(decl.body).map_or(ret_span, |b| b.origin.span);
+                                (
+                                    format!(
+                                        "`{}` puts a closure that captures `{shown}` {place}: {what} goes out of scope at the return",
+                                        facts.name
+                                    ),
+                                    lit,
+                                )
+                            }
+                        };
+                        let span = weft_syntax::ast::Span {
+                            lo: sp.lo,
+                            hi: sp.hi,
+                        };
+                        let mut diag = Diagnostic::error(Code::W0204, msg, span);
+                        diag.unit = body.origin.span.unit as usize;
+                        out.push(diag);
+                    }
+                }
+            }
         }
     }
     out
@@ -1381,7 +1986,15 @@ fn emit_block(
     let Some(n) = table.get(at(Phase::Main, dest)) else {
         return Ok(st);
     };
-    if matches!(blk.term.kind, weft_ir::TermKind::Return) && dest == NORMAL {
+    // The state at a `Return` of the function or closure body (a handled
+    // body and a clause give their value to the `handle`).
+    let own_return = em.p.body(bid).is_some_and(|b| {
+        !matches!(
+            b.kind,
+            weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Clause(..)
+        )
+    });
+    if matches!(blk.term.kind, weft_ir::TermKind::Return) && dest == NORMAL && own_return {
         em.returns.push(st.clone());
     }
     // The abort destinations of the terminator, and their `FrameEnd`
@@ -1392,11 +2005,23 @@ fn emit_block(
         .filter_map(|d| table.get(at(Phase::FrameEnd, d.id())))
         .collect();
     // Each node of the terminator sees the state before it.
+    // The `AbortValue` node of each destination whose clause gives a value.
+    let values: Vec<(u32, weft_facts::NodeId)> = dests
+        .iter()
+        .filter(|d| d.value())
+        .filter_map(|d| {
+            table
+                .get(at(Phase::AbortValue, d.id()))
+                .map(|n| (d.id(), n))
+        })
+        .collect();
+    handlers::unbound_at_aborts(em, block, &values);
     let phases = [Phase::Main, Phase::Ret, Phase::FrameEnd];
     for m in phases
         .iter()
         .filter_map(|&ph| table.get(at(ph, dest)))
         .chain(aborts.iter().copied())
+        .chain(values.iter().map(|(_, n)| *n))
     {
         em.holders.before(m, &st, em.facts);
     }
@@ -1409,22 +2034,114 @@ fn emit_block(
                 frame_end: table.get(at(Phase::FrameEnd, NORMAL)),
                 aborts,
                 may_abort: !dests.is_empty(),
+                values,
             };
             templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
+            handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
         }
-        weft_ir::TermKind::Perform { .. } => {
+        weft_ir::TermKind::Perform { cap, .. } => {
             let nodes = templates::CallNodes {
                 main: n,
                 ret: table.get(at(Phase::Ret, NORMAL)),
                 frame_end: None,
                 aborts: Vec::new(),
                 may_abort: !dests.is_empty(),
+                values,
             };
-            templates::perform(em, &nodes, &st, &blk.term.kind)?;
+            if matches!(cap, weft_ir::CapOperand::Local(_)) {
+                handlers::perform_local(em, &nodes, &st, block, &blk.term.kind)?;
+            } else {
+                templates::perform(em, &nodes, &st, &blk.term.kind)?;
+            }
+        }
+        weft_ir::TermKind::Resume { .. } => {
+            let nodes = templates::CallNodes {
+                main: n,
+                ret: table.get(at(Phase::Ret, NORMAL)),
+                frame_end: table.get(at(Phase::FrameEnd, NORMAL)),
+                aborts,
+                may_abort: !dests.is_empty(),
+                values,
+            };
+            handlers::resume(em, &nodes, &st, &blk.term.kind)?;
+        }
+        weft_ir::TermKind::Handle { handler, dest, .. } => {
+            emit_handle(em, table, frames, &st, block, n, (*handler, dest))?;
         }
         _ => templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?,
     }
     Ok(st)
+}
+
+/// The templates of the `handle` of handler `h` at the end of block
+/// `block`, whose `Main` node is `n`, from the state `st` before it (plan
+/// stage F14, `docs/ir.md` 6.4 and 6.5): `Main`; the handled body, with the
+/// states of its analysis from the state before the `handle`; then `Exit`
+/// in the state at the end of the handled body, and `Post` in the state
+/// after the code of the clauses.
+fn emit_handle(
+    em: &mut templates::Em<'_>,
+    table: &nodes::NodeTable,
+    frames: &frames::Frames,
+    st: &crate::analysis::State,
+    block: weft_ir::BlockId,
+    n: weft_facts::NodeId,
+    (h, dest): (weft_ir::HandlerId, &weft_ir::Place),
+) -> Result<(), alpha::AlphaError> {
+    use nodes::{NodeKey, Phase, NORMAL, TERM};
+    let site = em.body;
+    let p = em.p;
+    handlers::handle_main(em, n, h)?;
+    let out = crate::analysis::clause::handle_run(&mut em_cx(em), site, st, h)?;
+    let hb = p
+        .handlers
+        .get(h.index())
+        .map(|d| d.handled)
+        .ok_or_else(|| alpha::AlphaError::BadPlace(format!("no handler h{}", h.0)))?;
+    let hbody = p
+        .body(hb)
+        .ok_or_else(|| alpha::AlphaError::BadPlace(format!("no body b{}", hb.0)))?;
+    let saved = (em.ret_places.take(), em.cleanup, em.skip_s);
+    em.body = hb;
+    let r = emit_blocks(em, table, frames, &out.states, hbody);
+    em.body = site;
+    em.ret_places = saved.0;
+    em.cleanup = saved.1;
+    em.skip_s = saved.2;
+    r?;
+    let at = |phase| NodeKey {
+        body: site,
+        block,
+        at: TERM,
+        phase,
+        dest: NORMAL,
+    };
+    let exit = table.get(at(Phase::Exit));
+    if let (Some(x), Some(ex)) = (exit, &out.exit) {
+        em.holders.before(x, ex, em.facts);
+        handlers::handle_exit(em, x, ex, h, dest, &out.value)?;
+    }
+    if let Some(post) = table.get(at(Phase::Post)) {
+        em.holders.before(post, &out.after, em.facts);
+        // A clause that can run more than once runs its code after
+        // `resume` once for each run: again at `PostAgain` (plan stage
+        // F15).
+        let again = table.get(at(Phase::PostAgain));
+        if let Some(a) = again {
+            em.holders.before(a, &out.after, em.facts);
+        }
+        let posts: Vec<weft_facts::NodeId> = std::iter::once(post).chain(again).collect();
+        handlers::handle_post(em, exit, &posts, h);
+    }
+    if let Some(landing) = table.get(at(Phase::Landing)) {
+        em.holders.before(
+            landing,
+            out.landing.as_ref().unwrap_or(&out.after),
+            em.facts,
+        );
+        em.hx.landings.push((h, landing));
+    }
+    Ok(())
 }
 
 /// What a statement is for the binds of a pattern.
@@ -1505,6 +2222,7 @@ const fn em_cx<'b>(em: &'b mut templates::Em<'_>) -> crate::analysis::Cx<'b> {
         roots: em.roots,
         sums: em.sums,
         cycles: em.cycles,
+        hx: em.hx,
     }
 }
 

@@ -1,0 +1,11 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b02_given_arg_cleared.wf
+effect Keep { fn keep(r: &u64) }
+fn given(g: &Vec<u64>) / Keep { keep(&g[0]) }
+fn main() {
+    let g: Vec<u64> = Vec.new()
+    g.push(1)
+    let store: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in given(&g)
+    g.clear()
+    print(store[0])
+}

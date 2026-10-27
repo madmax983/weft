@@ -31,12 +31,15 @@
 //! block for each destination that reaches it ([`super::nodes::NodeKey::dest`]),
 //! and the abort phases of each terminator for each of its destinations.
 //!
-//! Plan stage F7 makes the destinations. The splices that join the cleanup
-//! chain of a handled body or of a scope body to its site (F14, F18), the
-//! `Landing` of a handler, the clauses that can end with no `resume` and
-//! `spared_at` (F15) come later. Until then a `perform` through a local
-//! handler counts as an abort with a value, and a capability of a closure
-//! environment counts as one of a caller.
+//! Plan stage F7 makes the destinations. Stage F14 joins the cleanup chain of
+//! a handled body to its site ([`Frames::of_bodies`]: a `handle` aborts where
+//! its handled body aborts past its handler), and gives the node that runs
+//! a clause the aborts of the clause past its handler. Stage F15 keeps the
+//! abort to a local handler only if a clause that the node runs can end with
+//! no `resume` (`clause::lands`); [`clause_handlers`] gives the handlers
+//! whose clauses a node runs. The splice of a scope body (F18) comes later.
+//! Until then a capability of a closure environment counts as one of a
+//! caller.
 
 use std::collections::BTreeMap;
 
@@ -46,6 +49,7 @@ use weft_ir::{
 };
 
 use super::nodes::PAST;
+use crate::analysis::clause;
 use crate::analysis::summary::{Abort, CapIface};
 use crate::analysis::Summaries;
 
@@ -143,6 +147,11 @@ fn site_env_of(p: &Program, body: BodyId) -> Option<CapEnvId> {
 
 /// The destinations of terminator `t` of body `body` (`docs/ir.md` 6.5).
 /// A terminator that cannot abort has none.
+///
+/// A local handler is a destination only if a clause that the terminator
+/// runs can end with no resume point (`clause::lands`, plan stage F15): the
+/// clause of the operation for a `perform`, a clause of the handler for a
+/// call. A clause that resumes on each path gives no abort to its handler.
 pub fn destinations(
     p: &Program,
     tys: &TyTable,
@@ -150,6 +159,80 @@ pub fn destinations(
     body: BodyId,
     t: &TermKind,
 ) -> Vec<Dest> {
+    let op = match t {
+        TermKind::Perform { op, .. } => Some(*op),
+        _ => None,
+    };
+    reach(p, tys, sums, body, t)
+        .into_iter()
+        .filter(|d| match d {
+            Dest::Handler { handler, .. } => clause::handler_lands(p, *handler, op),
+            Dest::Past => true,
+        })
+        .collect()
+}
+
+/// True if each effect of the row of call `t` goes to a local handler.
+///
+/// The call is a call of a function item whose summary performs effects
+/// through the capability of a caller, and each such effect goes to a local
+/// handler (plan stage F15): the call runs the clauses of the operations
+/// itself.
+pub fn row_local(p: &Program, tys: &TyTable, sums: &Summaries, t: &TermKind) -> bool {
+    let TermKind::Call {
+        callee: Callee::Fn(f, _),
+        caps: CapArgs::Lexical(env),
+        ..
+    } = t
+    else {
+        return false;
+    };
+    let Ok(sum) = sums.get(*f) else {
+        return false;
+    };
+    let mut row = sum
+        .performs
+        .iter()
+        .filter(|pf| matches!(pf.cap, CapIface::Row))
+        .peekable();
+    row.peek().is_some()
+        && row.all(|pf| {
+            matches!(
+                resolve(p, tys, *env, &pf.effect, true),
+                Dest::Handler { .. }
+            )
+        })
+}
+
+/// The local handlers whose clauses terminator `t` of body `body` runs.
+///
+/// They are the handler of a `perform` through a local capability, and each
+/// local handler that a call performs through or fails to. The clauses run
+/// also if they resume on each path ([`destinations`] has no abort to them
+/// then).
+pub fn clause_handlers(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    t: &TermKind,
+) -> Vec<HandlerId> {
+    let mut out: Vec<HandlerId> = reach(p, tys, sums, body, t)
+        .into_iter()
+        .filter_map(|d| match d {
+            Dest::Handler { handler, .. } => Some(handler),
+            Dest::Past => None,
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The destinations of terminator `t` of body `body` if each clause can end
+/// with no resume point: a [`Dest::Handler`] is a handler whose clauses the
+/// terminator runs.
+fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKind) -> Vec<Dest> {
     if t.unwind().is_none() {
         return Vec::new();
     }
@@ -251,6 +334,12 @@ fn cap_effect<'t>(
 pub struct Frames {
     /// The destinations of the terminator of each block.
     by: BTreeMap<(BodyId, BlockId), Vec<Dest>>,
+    /// The local handlers whose clauses the terminator of each block runs
+    /// ([`clause_handlers`]).
+    runs: BTreeMap<(BodyId, BlockId), Vec<HandlerId>>,
+    /// The handlers whose clauses can run more than once in one run of the
+    /// handled body ([`Frames::runs_twice`]).
+    twice: std::collections::BTreeSet<HandlerId>,
 }
 
 impl Frames {
@@ -260,6 +349,180 @@ impl Frames {
         let mut f = Self::default();
         f.add(body, p, |t| destinations(p, tys, sums, body, t));
         f
+    }
+
+    /// The destinations of each terminator of the bodies `bodies` of a
+    /// component (plan stage F14). A `handle` aborts where an abort of its
+    /// handled body goes past its handler: the handled body splices into
+    /// the site, so its cleanup chain goes on in the cleanup chain of the
+    /// site (`docs/ir.md` 6.5). A `handle` whose handled body cannot abort
+    /// past the handler has no abort edge.
+    pub fn of_bodies(p: &Program, tys: &TyTable, sums: &Summaries, bodies: &[BodyId]) -> Self {
+        let mut f = Self::default();
+        // A handled body has a higher id than its site: the destinations of
+        // its terminators are known before the `handle`.
+        let mut order: Vec<BodyId> = bodies.to_vec();
+        order.sort();
+        order.dedup();
+        for &body in order.iter().rev() {
+            let Some(b) = p.bodies.get(body.index()) else {
+                continue;
+            };
+            for (i, blk) in b.blocks.iter().enumerate() {
+                if blk.cleanup {
+                    continue;
+                }
+                let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+                let ds = match &blk.term.kind {
+                    TermKind::Handle {
+                        handler, unwind, ..
+                    } => {
+                        if unwind.is_none() {
+                            Vec::new()
+                        } else {
+                            f.past_handler(p, *handler)
+                        }
+                    }
+                    t => {
+                        let hs = clause_handlers(p, tys, sums, body, t);
+                        if !hs.is_empty() {
+                            f.runs.insert((body, block), hs);
+                        }
+                        destinations(p, tys, sums, body, t)
+                    }
+                };
+                if !ds.is_empty() {
+                    f.by.insert((body, block), ds);
+                }
+            }
+        }
+        f.clause_aborts(p, &order);
+        f.twice = f.twice_of(p);
+        f
+    }
+
+    /// True if a clause of handler `h` can run more than once in one run
+    /// of its handled body: the code of each run after its `resume` runs at
+    /// the end of the handled body, so `Post` runs that code twice
+    /// (`Phase::PostAgain`, plan stage F15).
+    pub fn runs_twice(&self, h: HandlerId) -> bool {
+        self.twice.contains(&h)
+    }
+
+    /// The handlers whose clauses can run more than once in one run of the
+    /// handled body: two nodes run a clause of the handler, or one node in
+    /// a cycle of the handled body (also through the `handle`s on the way,
+    /// [`run_weight`]), or one node in a clause.
+    fn twice_of(&self, p: &Program) -> std::collections::BTreeSet<HandlerId> {
+        let mut w = Weights {
+            p,
+            runs: &self.runs,
+            cyc: BTreeMap::new(),
+            count: BTreeMap::new(),
+        };
+        let hs: std::collections::BTreeSet<HandlerId> =
+            self.runs.values().flatten().copied().collect();
+        hs.into_iter().filter(|&h| w.count(h, 0) > 1).collect()
+    }
+
+    /// Adds the aborts of the clauses to the nodes that run them. A clause
+    /// can abort past its handler: to a handler outside the clause, or past
+    /// the function. The abort starts at the node of the handled body that
+    /// runs the clause (a `perform`, or a call that performs), and the
+    /// frames of the handled body unwind too. A `handle` then gets the new
+    /// destinations of its handled body. The loop stops when nothing
+    /// changes (one round for each level of nesting).
+    fn clause_aborts(&mut self, p: &Program, order: &[BodyId]) {
+        for _ in 0..=order.len() {
+            let mut changed = false;
+            for &body in order.iter().rev() {
+                let Some(b) = p.bodies.get(body.index()) else {
+                    continue;
+                };
+                for (i, blk) in b.blocks.iter().enumerate() {
+                    if blk.cleanup {
+                        continue;
+                    }
+                    let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+                    let old = self.dests(body, block).to_vec();
+                    let mut ds = old.clone();
+                    match &blk.term.kind {
+                        TermKind::Handle {
+                            handler,
+                            unwind: Some(_),
+                            ..
+                        } => ds.extend(self.past_handler(p, *handler)),
+                        TermKind::Perform { .. } | TermKind::Call { .. } => {
+                            let hs = self.runs.get(&(body, block)).cloned().unwrap_or_default();
+                            for h in hs {
+                                ds.extend(self.past_clauses(p, h));
+                            }
+                        }
+                        _ => {}
+                    }
+                    ds.sort();
+                    ds.dedup();
+                    if ds != old {
+                        self.by.insert((body, block), ds);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// The destinations of the aborts of the clauses of handler `h` that go
+    /// past the clause: an abort to a handler outside the clause, or past
+    /// the function. The abort of a `resume` is an abort of the handled
+    /// body: the nodes of the handled body have it.
+    fn past_clauses(&self, p: &Program, h: HandlerId) -> Vec<Dest> {
+        let Some(hd) = p.handlers.get(h.index()) else {
+            return vec![Dest::Past];
+        };
+        let mut out = Vec::new();
+        for &(_, c) in &hd.clauses {
+            let Some(cb) = p.bodies.get(c.index()) else {
+                continue;
+            };
+            for (i, blk) in cb.blocks.iter().enumerate() {
+                if blk.cleanup || matches!(blk.term.kind, TermKind::Resume { .. }) {
+                    continue;
+                }
+                let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+                out.extend(self.dests(c, block).iter().copied().filter(|d| {
+                    match d {
+                        Dest::Past => true,
+                        Dest::Handler { handler, .. } => {
+                            *handler != h
+                                && p.handlers
+                                    .get(handler.index())
+                                    .is_none_or(|x| !crate::analysis::clause::inside(p, x.site, c))
+                        }
+                    }
+                }));
+            }
+        }
+        out
+    }
+
+    /// The destinations of the aborts of the handled body of handler `h`
+    /// (and of the bodies that it splices) that go past `h`.
+    fn past_handler(&self, p: &Program, h: HandlerId) -> Vec<Dest> {
+        let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+            return vec![Dest::Past];
+        };
+        let mut out: Vec<Dest> = self
+            .by
+            .range((hb, BlockId(0))..=(hb, BlockId(u32::MAX)))
+            .flat_map(|(_, ds)| ds.iter().copied())
+            .filter(|d| !matches!(d, Dest::Handler { handler, .. } if *handler == h))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// Each terminator of body `body` that has a cleanup block aborts past
@@ -297,5 +560,126 @@ impl Frames {
     /// The destinations of the terminator of block `block` of body `body`.
     pub fn dests(&self, body: BodyId, block: BlockId) -> &[Dest] {
         self.by.get(&(body, block)).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// The blocks of body `b` that are in a cycle of its normal edges.
+fn cyclic(b: &weft_ir::Body) -> std::collections::BTreeSet<BlockId> {
+    let mut out = std::collections::BTreeSet::new();
+    for (i, _) in b.blocks.iter().enumerate() {
+        let start = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+        let mut seen = vec![false; b.blocks.len()];
+        let mut work: Vec<BlockId> = b
+            .blocks
+            .get(i)
+            .map(|x| x.term.kind.normal_successors())
+            .unwrap_or_default();
+        while let Some(x) = work.pop() {
+            if x == start {
+                out.insert(start);
+                break;
+            }
+            match seen.get_mut(x.index()) {
+                Some(s) if !*s => *s = true,
+                _ => continue,
+            }
+            if let Some(blk) = b.blocks.get(x.index()) {
+                work.extend(blk.term.kind.normal_successors());
+            }
+        }
+    }
+    out
+}
+
+/// The number of runs of the clauses of each handler in one run of its
+/// handled body, capped at 2 ([`Frames::runs_twice`]).
+struct Weights<'a> {
+    /// The program.
+    p: &'a Program,
+    /// The handlers whose clauses each node runs.
+    runs: &'a BTreeMap<(BodyId, BlockId), Vec<HandlerId>>,
+    /// The cyclic blocks of each body.
+    cyc: BTreeMap<BodyId, std::collections::BTreeSet<BlockId>>,
+    /// The count of each handler, once known.
+    count: BTreeMap<HandlerId, u32>,
+}
+
+impl Weights<'_> {
+    /// How many times (at most 2) a clause of handler `h` can run in one
+    /// run of its handled body: the sum over the nodes that run it.
+    /// `depth` bounds the walk through the clauses of other handlers.
+    fn count(&mut self, h: HandlerId, depth: usize) -> u32 {
+        if let Some(&c) = self.count.get(&h) {
+            return c;
+        }
+        let Some(hb) = self.p.handlers.get(h.index()).map(|d| d.handled) else {
+            return 2;
+        };
+        let nodes: Vec<(BodyId, BlockId)> = self
+            .runs
+            .iter()
+            .filter(|(_, hs)| hs.contains(&h))
+            .map(|(k, _)| *k)
+            .collect();
+        let mut c = 0u32;
+        for at in nodes {
+            c = c.saturating_add(self.weight(at, hb, depth));
+            if c > 1 {
+                break;
+            }
+        }
+        let c = c.min(2);
+        self.count.insert(h, c);
+        c
+    }
+
+    /// How many times (at most 2) the node at (`body`, `block`) can run in
+    /// one run of the handled body `hb`: 2 if it is in a cycle of its body,
+    /// or the `handle` of a handled body on the way to `hb` is; in a clause
+    /// of another handler on the way, the count of that handler; else 1.
+    fn weight(&mut self, (body, block): (BodyId, BlockId), hb: BodyId, depth: usize) -> u32 {
+        let p = self.p;
+        let (mut b, mut blk) = (body, block);
+        let mut times = 1u32;
+        for _ in 0..=p.bodies.len() {
+            let Some(d) = p.bodies.get(b.index()) else {
+                return 2;
+            };
+            let cyclic = self.cyc.entry(b).or_insert_with(|| cyclic(d));
+            if cyclic.contains(&blk) {
+                return 2;
+            }
+            if b == hb {
+                return times.min(2);
+            }
+            let (h2, site) = match (d.kind, d.parent) {
+                (BodyKind::Handled(h2), Some(site)) => (h2, site),
+                (BodyKind::Clause(h2, _), _) if depth < p.handlers.len() => {
+                    // The clause of handler `h2` runs once for each run of
+                    // it; its handle is in the handled body of `hb` or above.
+                    times = times.saturating_mul(self.count(h2, depth + 1));
+                    if times > 1 {
+                        return 2;
+                    }
+                    let Some(site) = p.handlers.get(h2.index()).map(|x| x.site) else {
+                        return 2;
+                    };
+                    (h2, site)
+                }
+                _ => return 2,
+            };
+            let Some(sb) = p.bodies.get(site.index()) else {
+                return 2;
+            };
+            let Some(i) = sb.blocks.iter().position(|x| {
+                !x.cleanup
+                    && matches!(x.term.kind, TermKind::Handle { handler, .. } if handler == h2)
+            }) else {
+                return 2;
+            };
+            b = site;
+            blk = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+        }
+        2
     }
 }

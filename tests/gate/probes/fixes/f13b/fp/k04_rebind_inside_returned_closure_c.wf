@@ -1,0 +1,25 @@
+// Review of stage F13, a false positive that F13-fix removes (s3/k04_rebind_inside_returned_closure_c.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Holder { f: fn() }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn mk(a: &World, b: &World, c: bool) -> fn() {
+    let r = &a.entities[0]
+    let w = mkw(3)
+    let f = || {
+        print(r.hp)
+        r = &b.entities[0]
+    }
+    f
+}
+fn main() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let f = mk(&a, &b, true)
+    f()
+    f()
+}

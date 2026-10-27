@@ -1,0 +1,12 @@
+// F14 self-attack (clean twin: the summary oracle checks the frame of the site at Post): scratchpad f14/att/v/a2_body_push_post_clear_c.wf
+effect Tick { fn tick() }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    handle Tick { fn tick() { resume(()); print(v.len()) } } in {
+        tick()
+        out.push(&v[0])
+    }
+    print(out[0])
+}

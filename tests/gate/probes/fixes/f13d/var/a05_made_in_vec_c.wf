@@ -1,0 +1,13 @@
+// Follow-up F13.2, class UR (a value that a body runs and that no caller gives): a made closure in a vector; the clean twin (scratchpad f13d/w/a05_made_in_vec_c.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn push1(x: &World) { print(x.entities.len()) }
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn call0(f: fn()) { f() }
+fn rp(world: &World) { let v: Vec<fn()> = Vec.new(); v.push(mk_call(push1, world)); let f = v[0]; f() }
+fn main() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let first = &w.entities[0]
+    rp(&w)
+    print(first.hp)
+}

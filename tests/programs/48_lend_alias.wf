@@ -16,13 +16,13 @@ fn give_two(f: fn(&World, &Entity), w: &World) {
 // run the closure as a task and change `world` while the task runs (W0405).
 fn give_closure(g: fn(fn(), &World), world: &World) {
     let r = &world.entities[0]
-    g(|| print(r.hp), world)   //~ W0312 W0301 W0405
+    g(|| print(r.hp), world)   //~ W0301 W0312 old: W0405
 }
 
 // A closure argument lends its parameter and reads a capture inside it.
 fn lend_and_read(f: fn(&World), w: &World) {
     let r = &w.entities[0]
-    apply(|x| { f(x); print(r.hp) }, w)   //~ W0312
+    apply(|x| { f(x); print(r.hp) }, w)   //~ W0312 ir: W0301
 }
 
 // Controls: places that do not overlap.

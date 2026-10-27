@@ -1,0 +1,16 @@
+// Third review of the ABC preview, clean twin of hole H7 (it failed the fact oracle) (h7/k12_ctl_maker_opt_from_param_ref.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mkw2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 2 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn f(w: &World, first: &Entity) {
+    let o = None
+    let mk = || || { o = Some(first) }
+    let g = mk()
+    g()
+    match o { Some(e) => { print(w.entities.len()); print(e.hp) }, None => {} }
+}
+fn main() { let w = mkw(); let w2 = mkw(); f(&w, &w2.entities[0]) }

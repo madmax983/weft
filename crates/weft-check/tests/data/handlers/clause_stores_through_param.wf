@@ -1,0 +1,40 @@
+// A clause stores the reference of one parameter through another parameter
+// into a local of the site (`h.0 = to`, `o.push(x)`): the local holds a
+// reference into the argument after the `handle`.
+effect Set { fn set(h: &(&u64, u64), to: &u64) }
+effect Keep { fn keep(out: &Vec<&u64>, x: &u64) }
+
+fn tuple_field() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(2)
+    let h = (&w[0], 5)
+    handle Set { fn set(h, to) { h.0 = to; resume(()) } } in set(&h, &v[0])
+    v.clear()
+    print(h.0) //~ W0301
+}
+
+fn vec_push() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(o, x) { o.push(x); resume(()) } } in keep(&out, &v[0])
+    v.clear()
+    print(out[0]) //~ W0301
+}
+
+fn clean() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let out: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(o, x) { o.push(x); resume(()) } } in keep(&out, &v[0])
+    print(out[0])
+    v.clear()
+}
+
+fn main() {
+    tuple_field()
+    vec_push()
+    clean()
+}

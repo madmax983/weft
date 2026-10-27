@@ -1,0 +1,15 @@
+// Third review of the ABC preview, false positive W0204 at a unit tail call (n1c/x05_ctl_made_reads_elem_inside.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn main() {
+    let w = mkw()
+    let mk = || { let first = &w.entities[0]; || print(first.hp) }
+    let mk2 = || mk()
+    let g = mk2()
+    print(w.entities.len())
+    g()
+}

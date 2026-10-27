@@ -1,0 +1,9 @@
+// F14 self-attack (a clause fails past its handler; a linear value of the site is live): scratchpad f14/att/v/g5_clause_fails_past_linear.wf
+linear struct Tok { id: u64 }
+effect Ask { fn ask() -> u64 }
+fn main() / fail {
+    let t = Tok { id: 1 }
+    let r = handle Ask { fn ask() { fail("x"); 0 } } in ask()
+    let Tok(i) = t
+    print(r + i)
+}

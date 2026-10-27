@@ -1,0 +1,16 @@
+// Third review of the ABC preview, hole H7: a made closure stores a reference into a captured variable (pi/i09_maker_set_opt_from_ref_var.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let o = None
+    let first = &w.entities[0]
+    let mk = || || { o = Some(first) }
+    let g = mk()
+    g()
+    match o { Some(e) => { w.entities.clear(); print(e.hp) }, None => {} }
+}

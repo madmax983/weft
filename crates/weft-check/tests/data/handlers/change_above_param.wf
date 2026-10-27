@@ -1,0 +1,35 @@
+// The handled body clears the vector that the parameter of the clause points
+// into, while the clause waits in `resume` (`s5/release3.wf`).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity) }
+
+fn big(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp) //~ W0301
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.clear()
+    }
+}
+
+fn keep(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&world.entities[0])
+        print(world.entities.len())
+    }
+}
+
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    keep(&w)
+}

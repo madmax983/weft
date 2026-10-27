@@ -1,0 +1,125 @@
+// The result of a call that runs a function value (third review of the ABC
+// preview). FP3: a run of code of a caller that a callee does (`give(m)`)
+// lends the places of a caller before the callee returns, so it does not
+// invalidate the result of the same call. W0204 at a unit tail: a `()` result
+// holds no reference, also when one of the values that the call can run gives
+// back a closure.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+// FP3 (fpx2/t_a, t_b, t_c, t_d, t_e, g2).
+fn g2a(m: fn() -> fn()) -> fn() { give(m) }
+fn g2b(m: fn() -> fn()) -> fn() { let g = give(m); g }
+fn g2c(m: fn() -> fn()) { let g = give(m); g() }
+fn g2d(m: fn() -> fn()) { run(give(m)) }
+fn g2e(f: fn()) -> fn() { let h = || f; give(h) }
+fn give2(m: fn() -> fn()) -> fn() { give(m) }
+fn t_all() {
+    let g = g2a(|| || print(1))
+    g()
+    let k = g2b(|| || print(2))
+    k()
+    g2c(|| || print(3))
+    g2d(|| || print(4))
+    let h = g2e(|| print(5))
+    h()
+    let j = give2(|| || print(6))
+    j()
+}
+// FP3 (n1/z14): a read of the world after the run.
+fn z14() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let g = give2(|| || print(w.entities.len()))
+    g()
+    print(first.hp)
+}
+// A made closure that changes the world still invalidates a reference
+// that lives across the call.
+fn z14_bad() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let g = give2(|| || w.entities.clear())
+    g()
+    print(first.hp) //~ W0301
+}
+fn go_bad() {
+    let w = mkw()
+    let first = &w.entities[0]
+    go(|| || w.entities.clear())
+    print(first.hp) //~ W0301
+}
+// W0204 at a unit tail (n1c/x01, fpx2/u_a, u_d, fpa/p19).
+fn x01() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || print(first.hp)
+    let mk2 = || mk()
+    let g = mk2()
+    print(w.entities.len())
+    g()
+}
+fn u_d() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let g = give(|| || print(first.hp))
+    g()
+}
+fn p19() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || print(first.hp)
+    let k = || mk()
+    let g = k()
+    g()
+}
+// A tuple of made closures (n1c/x10).
+fn x10() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let mk = || || print(first.hp)
+    let mk2 = || (mk(), 1)
+    let t = mk2()
+    print(w.entities.len())
+    let (g, a) = t
+    g()
+}
+// The made closure reads a reference that the maker took (n1c/c05): the
+// result of `mk2()` or `give(mk)` points into the referent, also when the
+// run of `g` is not the tail (before, only the W0204 of the tail call
+// caught it).
+fn c05_mk2() {
+    let w = mkw()
+    let mk = || { let first = &w.entities[0]; || print(first.hp) }
+    let mk2 = || mk()
+    let g = mk2()
+    w.entities.clear()
+    g() //~ W0301
+    print(1)
+}
+fn c05_give() {
+    let w = mkw()
+    let mk = || { let first = &w.entities[0]; || print(first.hp) }
+    let g = give(mk)
+    w.entities.clear()
+    g() //~ W0301
+}
+fn c05_mk2_block() {
+    let w = mkw()
+    let mk = || { let first = &w.entities[0]; || print(first.hp) }
+    let mk2 = || { let h = mk(); h }
+    let g = mk2()
+    w.entities.clear()
+    g() //~ W0301
+}
+fn c05_ok() {
+    let w = mkw()
+    let mk = || { let first = &w.entities[0]; || print(first.hp) }
+    let mk2 = || mk()
+    let g = mk2()
+    g()
+    w.entities.clear()
+}

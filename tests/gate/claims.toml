@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2"]
 
 
 # ----------------------------------------------------------------------
@@ -1577,7 +1577,7 @@ note = "A closure argument is not held while later arguments run"
 
 [[claim]]
 finding = "V017"
-kind = "unsound"
+kind = "sound"
 verdict = "construction"
 group = "AC"
 stage = "F13"
@@ -1585,7 +1585,7 @@ repro = [
     "tests/gate/probes/verify/review_core/Core_S1/rt1/esc_moved_capture.wf",
     "tests/gate/probes/verify/review_core/Core_S1/rt1/fp_moved_capture.wf",
 ]
-note = "Checker and interpreter disagree on moved captures (closure outlives the local)"
+note = "Checker and interpreter disagree on moved captures (closure outlives the local). The IR engine moves a `ByMove` capture into the closure, and a closure owns it (R3RT5): both repros run clean on the IR engine, and the ir pipeline accepts them (stage F13: the kind was `unsound`; the second review of the ABC preview signed the `lost-clean` rows, ledger)"
 
 [[claim]]
 finding = "V018"
@@ -2267,12 +2267,12 @@ finding = "OR4"
 kind = "fp"
 verdict = "construction"
 group = "AD"
-stage = "F15"
+stage = "F16"
 repro = [
     "tests/gate/probes/r2/oracle/repro/OR4_fp_outside_handle.wf",
     "tests/gate/probes/r3/oracle/r2probes/OR4_fp_outside_handle.wf",
 ]
-note = "W0602/W0503 for a linear value outside the `handle`"
+note = "W0602/W0503 for a linear value outside the `handle`; the repros handle a `multi` operation, which is in scope from stage F16 (moved from F15: `spared_at` for a handler with no `multi` operation is `fixes/f15/abort/f02_site_on_abort_spared_c.wf` and `crates/weft-check/tests/data/handlers/spared.wf`)"
 
 [[claim]]
 finding = "OR10"
@@ -3392,7 +3392,6 @@ note = "a new value of a part with an `H` variable replaces the places of the pa
 # V005: not a soundness finding
 # V064: not a soundness finding
 # V070: not a soundness finding
-# OL-1a: no repro among the hand probes
 # OL-1b: no repro among the hand probes
 # OL-1c: no repro among the hand probes
 # OL-1d: no repro among the hand probes
@@ -3401,7 +3400,6 @@ note = "a new value of a part with an `H` variable replaces the places of the pa
 # OL-3a: no repro among the hand probes
 # OL-3b: verdict stays (TYPE, outside the lowering)
 # OL-3c: no repro among the hand probes
-# OL-4a: no repro among the hand probes
 # OL-4b: no repro among the hand probes
 # OL-6a: no repro among the hand probes
 # OL-6b: no repro among the hand probes
@@ -3799,12 +3797,20 @@ kind = "unsound"
 verdict = "construction"
 group = "AC"
 stage = "F12"
-repro = [
-    "tests/gate/probes/r3/oracle/probes/se1_field_lin_never.wf",
-    "tests/gate/probes/r3/oracle/probes/se2_field_lin_twice.wf",
-]
+repro = ["tests/gate/probes/r3/oracle/probes/se1_field_lin_never.wf"]
 code = "W0601"
 note = "a linear closure in a field of a struct makes the struct a linear value (the function part of a type goes through its fields; preview of stage F12)"
+
+[[claim]]
+finding = "F12-R4"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/r3/oracle/probes/se2_field_lin_twice.wf"]
+code = "W0302"
+line = 11
+note = "the linear closure in the field is `once`: the second run (`run_h(&h)` again) uses the moved closure, W0302 at the second run (stage F13 split this repro from the W0601 claim: F12-fix2 gives W0302, the fault of the run)"
 
 [[claim]]
 finding = "F12-R5"
@@ -4076,3 +4082,1208 @@ stage = "F13"
 repro = ["tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf"]
 code = "W0302"
 note = "a callee whose result is a function value of a reference argument (`first(&fs) -> fn() { fs[0] }`) copies it out of the referent: a `once` closure moves there (`templates::once_copied_out`, the closure-copy rule), so a second copy is W0302 (old hole of the review of the ABC preview, 4.7)"
+
+[[claim]]
+finding = "F12R2-N1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/n1/c6_n04_mk2_chain.wf",
+    "tests/gate/probes/fixes/f12b/n1/v01_main_local_maker_to_go.wf",
+    "tests/gate/probes/fixes/f12b/n1/v04_main_local_maker_first_after.wf",
+    "tests/gate/probes/fixes/f12b/n1/v05_main_local_ref_maker_mk2_in_fn.wf",
+    "tests/gate/probes/fixes/f12b/n1/w01_param_maker_local_run.wf",
+    "tests/gate/probes/fixes/f12b/n1/w02_param_maker_vec_runall.wf",
+    "tests/gate/probes/fixes/f12b/n1/w05_param_maker_call_direct.wf",
+    "tests/gate/probes/fixes/f12b/n1/x01_main_mk2.wf",
+    "tests/gate/probes/fixes/f12b/n1/x02_main_mk2_block.wf",
+    "tests/gate/probes/fixes/f12b/n1/x05_mk2_run.wf",
+    "tests/gate/probes/fixes/f12b/n1/x06_closure_calls_returned.wf",
+    "tests/gate/probes/fixes/f12b/n1/x08_mk3_chain.wf",
+    "tests/gate/probes/fixes/f12b/n1/y03_closure_runs_mk_result_run.wf",
+    "tests/gate/probes/fixes/f12b/n1/y04_fn_body_param_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/y07_mk_then_ref_after_k.wf",
+    "tests/gate/probes/fixes/f12b/n1/y11_byref_dead_through_mk2.wf",
+    "tests/gate/probes/fixes/f12b/n1/z01_fn_body_run_param_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/z02_closure_calls_captured_fnitem_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/z04_closure_param_maker.wf",
+    "tests/gate/probes/fixes/f12b/n1/z05_closure_runs_run_of_captured_maker_called_in_fn.wf",
+    "tests/gate/probes/fixes/f12b/n1/z06_closure_maker_result_reaches_param.wf",
+]
+code = "W0301"
+note = "the result of a closure maker keeps the effects of the closure that it makes in a second closure (`|| mk()`, `|| run(mk())`) and in a callee (`fn go(m) { let g = m(); g() }`): a run of a capture applies the results of its values (`with_results`), a capture that a closure gives back carries the places of their environments (`capture_refs`), and a cell root in the environment of a `Made` closure or of code of a caller is the value of its variable too (`cell_values`) (hole N1 of the second review of the ABC preview)"
+
+[[claim]]
+finding = "F12R2-H5b"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/h5b/h5_05_nested_callee_maybe.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m01_three_levels.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m02_closure_wraps_maybe.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m03_outer_with_local_closure.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m05_outer_via_run.wf",
+    "tests/gate/probes/fixes/f12b/h5b/m09_struct_field_through_outer.wf",
+]
+code = "W0601"
+note = "a callee that gives a linear closure to a second callee that runs it on some paths only can drop it: a run that a callee gives is `maybe` at the run node when it is `maybe` in the callee or code of a caller gets it (`RunOf::maybe`, `summarize::runs_of`) (hole H5b of the second review of the ABC preview)"
+
+[[claim]]
+finding = "F12R2-H3b"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/h3b/p01_callee_drops_made_of_param.wf",
+    "tests/gate/probes/fixes/f12b/h3b/p04_callee_gets_param_result_returns.wf",
+]
+code = "W0601"
+note = "a callee that gets a closure maker whose result is linear can drop that result: the call is W0601 (`templates::gives_linear`, `dropped_fn_args`), as in the old pipeline (hole H3b of the second review of the ABC preview)"
+
+[[claim]]
+finding = "F12R2-OH2"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12b/oldholes/b14_09_runfirst_twice.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/b14_11_closure_copies_out.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q01_runfirst_then_direct.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q03_closure_runs_ref_twice.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q04_runfirst_loop.wf",
+    "tests/gate/probes/fixes/f12b/oldholes/q06_runfirst_ret_after.wf",
+]
+code = "W0302"
+note = "a callee or a closure that runs a `once` closure that it copies out of a referent moves the owners of the referent at the run (`emit_apps`, `once_vars`), and a closure that gives back such a copy moves them too (`once_copied_out` at a call of a closure): a second run is W0302 (old holes b14-run of the second review of the ABC preview)"
+
+# ----------------------------------------------------------------------
+# Stage F13: stored values (heap slots with function values, the parts
+# `puts` and `put_fns`, `rc` objects) and the repros that G7 did not have.
+
+[[claim]]
+finding = "OL-1a"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/ol1a_code_runs_stored.wf"]
+code = "W0301"
+line = 9
+note = "code of a caller runs each function value that its arguments reach, also a value in a heap slot (the form with no task; the task form, W0314 and W0405, is stage F19 with O3-5)"
+
+[[claim]]
+finding = "OL-4a"
+kind = "unsound"
+verdict = "one-rule"
+group = "A"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/ol4a_read_back.wf"]
+code = "W0301"
+line = 5
+note = "references stored behind a reference parameter: a read back gets the places of the heap slot (F10a), so a change of the referent first is W0301 at the read"
+
+[[claim]]
+finding = "F13-S1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/stored_behind_ref.wf"]
+code = "W0301"
+line = 69
+note = "a callee of a callee stores a closure of its own behind a reference of the caller; a later run applies its summary (heap slot function values, parts `puts` and `put_fns`; the old pipeline misses this line and line 60)"
+
+[[claim]]
+finding = "F13-S2"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/stored_containers.wf"]
+code = "W0301"
+line = 32
+note = "a callee pushes a closure of its own into a `Vec` behind a reference of the caller; a later run of the elements applies its summary (the old pipeline misses this line, and lines 60 and 76: a `Box`, an `Option` slot)"
+
+[[claim]]
+finding = "F13-S3"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13/stored_rc.wf",
+    "tests/gate/probes/fixes/f13/rc_closure_run.wf",
+]
+code = "W0301"
+note = "a closure in an `rc` object that a callee runs: the handle carries the values of `Rc.new`, a callee that reads the object runs the values of its handle parameter, and the heap slot of the group root holds what a body stores (stored_rc line 143: the old pipeline misses it; rc_closure_run: ABC accepted it before F13)"
+
+[[claim]]
+finding = "F13-K3"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13/kept_rebind_ret.wf"]
+code = "W0204"
+line = 14
+note = "a closure that leaves the body (a result, a heap slot) sees the value of a `Kept` variable at the return: a reference there into a local is W0204 (`factgen::kept_escapes`; class K3 of stage F12, the late stores of the old lowering)"
+
+[[claim]]
+finding = "F12R3-H7"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/h7/i01_maker_set_opt_clear_in_arm.wf",
+    "tests/gate/probes/fixes/f12c/h7/i03_go_set_opt_clear_in_arm.wf",
+    "tests/gate/probes/fixes/f12c/h7/i04_give_set_opt_clear_in_arm.wf",
+    "tests/gate/probes/fixes/f12c/h7/i05_maker_set_opt_copy_out_then_clear.wf",
+    "tests/gate/probes/fixes/f12c/h7/i09_maker_set_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/i10_go_set_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j01_maker_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j02_go_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j07_maker_opt_read_after_clear_outside.wf",
+    "tests/gate/probes/fixes/f12c/h7/j08_maker_tuple_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/j10_maker_in_fn_param_world.wf",
+    "tests/gate/probes/fixes/f12c/h7/j11_closure_param_maker_opt.wf",
+    "tests/gate/probes/fixes/f12c/h7/l05_maker_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/h7/l06_maker_opt_assign_in_loop.wf",
+    "tests/gate/probes/fixes/f12c/h7/m07_go_fault_clear.wf",
+    "tests/gate/probes/fixes/f12c/h7/m08_give_fault_clear.wf",
+    "tests/gate/probes/fixes/f12c/h7/m09_mk2_fault_clear_run.wf",
+    "tests/gate/probes/fixes/f12c/h7/m11_go_store_then_go_clear.wf",
+]
+code = "W0301"
+note = "a closure that a maker gives back (a made closure) stores a reference that it holds by value into a variable that it captures `Kept` or `ByRef`: σ maps the capture to the variable of the body (`apply::made_capture_source`), so the value that the caller takes out of the variable points into the referent, and a change of the referent then a use is W0301 at the line of the use (hole H7 of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-FP4"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/fp4/i08_ctl_maker_set_opt_read.wf",
+    "tests/gate/probes/fixes/f12c/fp4/j12_maker_opt_from_param_ref.wf",
+    "tests/gate/probes/fixes/f12c/fp4/k03_ctl_give_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m02_maker_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m03_give_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m04_go_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/m05_mk2_clean.wf",
+    "tests/gate/probes/fixes/f12c/fp4/q03_store_ref_option.wf",
+    "tests/gate/probes/fixes/f12c/fp4/q04_store_ref_in_vec_of_world2.wf",
+    "tests/gate/probes/fixes/f12c/fp4/s1_z1_ctl_store_then_read_no_change.wf",
+    "tests/gate/probes/fixes/f12c/h7/i14_ctl_maker_set_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k01_ctl_maker_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k02_ctl_go_opt_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k05_ctl_maker_rebinds_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k06_ctl_go_rebinds_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k07_ctl_maker_opt_read_after_clear_outside.wf",
+    "tests/gate/probes/fixes/f12c/h7/k08_ctl_maker_tuple_from_ref_var.wf",
+    "tests/gate/probes/fixes/f12c/h7/k10_ctl_maker_in_fn_param_world.wf",
+    "tests/gate/probes/fixes/f12c/h7/k11_ctl_closure_param_maker_opt.wf",
+    "tests/gate/probes/fixes/f12c/h7/k12_ctl_maker_opt_from_param_ref.wf",
+    "tests/gate/probes/fixes/f12c/h7/m05_ctl_maker_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/h7/m06_ctl_maker_opt_assign_in_loop.wf",
+]
+note = "a made closure changes each captured variable at its own place: a push into `rs` is no change of `w`, and a store into `o` is no change of `first` (false positive FP4 of the third review of the ABC preview: W0301 `w : &World in rs.entities[]`, W0703 `g mutates first`)"
+
+[[claim]]
+finding = "F12R3-FP3"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/fp3/g2.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_a.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_b.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_c.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_d.wf",
+    "tests/gate/probes/fixes/f12c/fp3/t_e.wf",
+    "tests/gate/probes/fixes/f12c/fp3/u03_ctl_give_back_chain_dropped.wf",
+    "tests/gate/probes/fixes/f12c/fp3/z14_ctl_give2_result.wf",
+]
+note = "a late run of code of a caller that a callee does (`give(m)`) lends the places of a caller at `Main`: it invalidates each reference that lives across the call, but not the result of the call (false positive FP3 of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-W0204"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/w0204/p19_tail_call_plain_closure.wf",
+    "tests/gate/probes/fixes/f12c/w0204/u_a.wf",
+    "tests/gate/probes/fixes/f12c/w0204/u_d.wf",
+    "tests/gate/probes/fixes/f12c/w0204/u_e.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x01_ctl_made_reads_ref_mk2.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x02_ctl_made_reads_ref_give.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x03_ctl_made_reads_ref_struct.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x04_ctl_made_reads_ref_vec.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x05_ctl_made_reads_elem_inside.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x06_ctl_made_reads_ref_three.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x07_ctl_made_reads_ref_opt.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x09_ctl_made_reads_ref_loop.wf",
+    "tests/gate/probes/fixes/f12c/w0204/x10_ctl_tuple_of_made.wf",
+]
+note = "the result of a run node whose type holds no reference and no function value gets none (`transfer::typed_result`): the `()` result of a tail call `g()` of a made closure does not point into its environment (W0204 class of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-N1c"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/w0204/c05_c_give.wf",
+    "tests/gate/probes/fixes/f12c/w0204/c05_e_mk2_notail.wf",
+    "tests/gate/probes/fixes/f12c/w0204/c05_made_reads_elem_inside.wf",
+]
+code = "W0301"
+note = "the result of a run of a closure maker through a closure or a callee (`|| mk()`, `give(mk)`) points into the environment of the closure that the maker makes (`transfer::result_refs`): a reference that the maker took before it made the closure (`n1c/c05` of the third review of the ABC preview; before F12-fix3 only the W0204 of a unit tail caught it)"
+
+[[claim]]
+finding = "F12R3-OH3"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/b14agg/g04_option_of_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/g06_tuple_holding_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/g17_ref_stored_in_local_struct_closure.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h01_vec_of_refs_by_value.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h03_tuple_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h04_option_tuple_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h06_tuple_param_returns_copy.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h08_option_ref_then_direct.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h09_option_ref_loop.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/h10_tuple_ref_closure_returns_copy.wf",
+]
+note = "a callee that copies a `once` closure out of a referent that an argument holds inside an `Option`, a tuple or a `Vec` (`ro(Some(&fs))` two times) moves the owners of the referents behind which a `once` closure can be (`templates::through_ref`, `once_vars`, `once_copied_out`): a second copy is W0302 (old holes b14-agg of the third review of the ABC preview)"
+
+[[claim]]
+finding = "F12R3-OH3"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/b14agg/s01_ctl_vec_of_refs_by_value.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s03_ctl_tuple_two_refs.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s04_ctl_option_tuple_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s06_ctl_tuple_param_returns_copy.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s08_ctl_option_ref_then_direct.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s09_ctl_option_ref_loop.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/s10_ctl_tuple_ref_closure_returns_copy.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/t04_ctl_option_of_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/t06_ctl_tuple_holding_ref.wf",
+    "tests/gate/probes/fixes/f12c/b14agg/t17_ctl_ref_stored_in_local_struct_closure.wf",
+]
+note = "the clean twins of the old holes b14-agg: the closure that a callee copies out through an aggregate argument is not `once`"
+
+[[claim]]
+finding = "F12R3-OH4"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/n1d/e01_maker_gives_struct.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e02_maker_gives_option.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e03_maker_gives_vec.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e04_maker_gives_tuple.wf",
+    "tests/gate/probes/fixes/f12c/n1d/e08_maker_gives_struct_param_world.wf",
+]
+code = "W0301"
+note = "a maker that gives back a closure inside a struct, an `Option`, a `Vec` or a tuple keeps the effects of the closure (F12-fix2 N1): W0301 at the use after the run (old holes N1-aggregate of the third review of the ABC preview, `n1d/e01`..`e04`, `e08`)"
+
+[[claim]]
+finding = "F12R3-H6"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/h6/h6_08_callee_adds.wf",
+    "tests/gate/probes/fixes/f12c/h6/h6_a_one_dropped.wf",
+    "tests/gate/probes/fixes/f12c/h6/h6_c_two_one_run.wf",
+]
+code = "W0601"
+note = "a callee that stores a closure with a linear capture into a place of the caller (part `put_fns`) makes the local of the place linear (`templates::put_linear`): W0601 if it can go out of scope with the closure (`ah6/h6_08`, a hole of stage F13 that the rerun of the review sets found)"
+
+[[claim]]
+finding = "F12R3-W0502"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12c/w0502/c04_once_maker_callee.wf",
+    "tests/gate/probes/fixes/f12c/w0502/o01_once_maker.wf",
+    "tests/gate/probes/fixes/f12c/w0502/o02_once_maker.wf",
+    "tests/gate/probes/fixes/f12c/w0502/o03_once_maker.wf",
+    "tests/gate/probes/fixes/f12c/w0502/p18_once_maker_through_go2.wf",
+]
+note = "the result of a run of a parameter is `FnVal::ParamResult`, and part `runs` keeps a run of the result apart from a run of the parameter (`Run::result`): a `once` maker that a callee runs one time, and whose result it runs one time, runs once (W0502 class of the third review of the ABC preview)"
+
+# ----------------------------------------------------------------------
+# F13-fix (scratchpad f13/review.md): the classes of the review of stage F13 part
+# 1. The classes of the default groups (A) are on at stage F13.1 (the release
+# blockers of the default pipeline); the classes of group C wait for F13.
+
+[[claim]]
+finding = "F13B-AB-RC2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc2/a10_vec_of_handles_local_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b01_struct_field_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b02_tuple_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b04_vec_handle_index_var_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b05_vec_handle_via_stash_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b06_vec_handle_param_vec_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b09_vec_handle_twice_b.wf",
+]
+code = "W0204"
+note = "a reference through a handle in a local `Vec`, struct or tuple, or in a by-value `Vec` parameter, goes into an `rc` object of the same type: the handle is no handle of the object, so the W0204 store check reports it (as the old pipeline; class AB-RC2 of the review of stage F13, a regression of F13 part 1)"
+
+[[claim]]
+finding = "F13B-AB-RC1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc1/a01_localrc_same_type_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/a04_param_handle_temp_object_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/a11_option_handle_local_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/b08_handle_by_value_param_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/b10_option_vec_handle_b.wf",
+]
+code = "W0204"
+note = "a reference through a whole local handle of another object (a new object, an `Option` payload, a second by-value handle parameter) goes into an `rc` object of the same type: W0204 (class AB-RC1 of the review of stage F13; the old pipeline misses it)"
+
+[[claim]]
+finding = "F13B-AB-RC1"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc1/a01_localrc_same_type_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/a11_option_handle_local_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/k01_clone_of_param.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/a10_vec_of_handles_local_c.wf",
+]
+note = "the clean twins of AB-RC1 and AB-RC2, and a copy of the handle of the store (`k01`: the old pipeline checks it)"
+
+[[claim]]
+finding = "F13B-AB-RC3"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc3/e01_change_by_callee_read_by_callee_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e02_change_through_other_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e03_vec_of_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e05_whole_field_reassign_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e06_change_in_loop_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e07_option_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e09_struct_with_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e11_direct_fill_callee_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e12_direct_fill_direct_change_callee_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e13_callee_fill_direct_change_callee_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e14_read_by_callee2_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e15_all_in_one_callee_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e18_two_objects_same_type_b.wf",
+]
+code = "W0301"
+note = "a callee reads the references of an `rc` object after a change of the group: the run node uses the variables of the heap slot (class AB-RC3 of the review of stage F13; the old pipeline misses it)"
+
+[[claim]]
+finding = "F13B-AB-RC3"
+kind = "sound"
+verdict = "construction"
+group = "AB"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc3/e05_whole_field_reassign_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e12_direct_fill_direct_change_callee_read_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e13_callee_fill_direct_change_callee_read_c.wf",
+]
+note = "the clean twins of AB-RC3 that change no referent before the read"
+
+[[claim]]
+finding = "F13B-HS1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hs1/c03_callee_stores_ro_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c04_made_ro_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c05_nested_store_ro_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_08_callee_maker_stores_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_09_nested_maker_stores_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_10_nested_param_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_02_item_maker_via_local_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_04_item_maker_keep_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_05_item_maker_readback_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_09_param_closure_stores_param_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_10_fn_stores_param_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_11_fn_stores_maker_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_12_ref_local_then_store_maker_b.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_14_closure_maker_b.wf",
+]
+code = "W0301"
+note = "a made closure (or a closure that captures a reference parameter) in a heap slot of a parameter runs, or is read back, after a change of its referent: the run node uses the variables of the slot (class H-S1 of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-HS1"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hs1/c03_callee_stores_ro_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c04_made_ro_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/c05_nested_store_ro_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_08_callee_maker_stores_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_09_nested_maker_stores_ref_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1b_10_nested_param_ref_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_02_item_maker_via_local_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_04_item_maker_keep_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_05_item_maker_readback_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_09_param_closure_stores_param_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_10_fn_stores_param_closure_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_11_fn_stores_maker_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_12_ref_local_then_store_maker_c.wf",
+    "tests/gate/probes/fixes/f13b/hs1/s1c_14_closure_maker_c.wf",
+]
+note = "the clean twins of H-S1"
+
+[[claim]]
+finding = "F13B-HRC1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hrc1/d04_callee_sets_fn_change_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g02_self_ref_closure_change_run_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g04_self_ref_readback_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g05_self_ref_two_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g06_self_ref_vec_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g07_self_ref_closure_in_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g08_self_ref_other_object_b.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g09_self_ref_drop_last_handle_b.wf",
+]
+code = "W0301"
+note = "a closure in an `rc` object keeps a reference into the group and runs (or is read back) after a change of the group or of the handle of its object (class H-RC1 of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-HRC1"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hrc1/d04_callee_sets_fn_change_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g02_self_ref_closure_change_run_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g04_self_ref_readback_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g05_self_ref_two_handles_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g06_self_ref_vec_handles_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g07_self_ref_closure_in_closure_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g09_self_ref_drop_last_handle_c.wf",
+    "tests/gate/probes/fixes/f13b/hrc1/g01_self_ref_closure_run.wf",
+]
+note = "the clean twins of H-RC1"
+
+[[claim]]
+finding = "F13B-K3MADE"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/k3made/k06_closure_returns_closure_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/k14_projection_source_byref_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m01_maker_with_param_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m02_made_into_slot_then_rebind_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m03_made_in_option_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m04_maker_in_loop_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m05_three_levels_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m06_made_into_vec_param_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m07_made_return_direct_call_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m10_made_rebind_some_path_b.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m01x_param_late_value_clear.wf",
+]
+note = "a closure that a closure makes leaves the body and sees the late value of a kept variable (class K3-Made of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-K3MADE"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/k3made/k06_closure_returns_closure_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/k14_projection_source_byref_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m01_maker_with_param_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m02_made_into_slot_then_rebind_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m03_made_in_option_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m04_maker_in_loop_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m05_three_levels_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m06_made_into_vec_param_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m07_made_return_direct_call_c.wf",
+    "tests/gate/probes/fixes/f13b/k3made/m10_made_rebind_some_path_c.wf",
+]
+note = "the clean twins of K3-Made"
+
+[[claim]]
+finding = "F13B-HLIN"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hlin/f6_01_linear_closure_into_slot_never_run.wf",
+    "tests/gate/probes/fixes/f13b/hlin/f6_03_linear_closure_slot_overwritten.wf",
+    "tests/gate/probes/fixes/f13b/hlin/f6_04_linear_callee_stores_one_path.wf",
+    "tests/gate/probes/fixes/f13b/hlin/f7_03_slot_linear_capture_fail.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l02_behind_ref_never_run_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l03_param_slot_store_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l04_vec_behind_ref_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l06_box_slot_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l07_rc_slot_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l08_overwrite_in_callee_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l11_loop_store_each_iter_b.wf",
+    "tests/gate/probes/fixes/f13b/hlin/l12_stored_in_closure_b.wf",
+]
+note = "a linear closure in a part of a local, behind a reference, in a `Box` or in an `rc` object is never run, is overwritten, or is live across an abort (class H-LIN of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-HLIN"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/hlin/l02_behind_ref_never_run_c.wf",
+]
+note = "the clean twin of H-LIN"
+
+[[claim]]
+finding = "F13B-FP-AB-RC"
+kind = "fp"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = ["tests/gate/probes/fixes/f13b/fp/k05_copy_ref_same_object.wf"]
+note = "a copy of a reference that an `rc` object holds goes into the object again: no W0312 and no W0301 (a `&u64` in `Cache.refs` points into `Cache.data..`, `Roots::group_targets`; false positive FP-AB-RC of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-FP-S2"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/fp/s1_07_readback_option_c.wf",
+    "tests/gate/probes/fixes/f13b/fp/s1_08_readback_vec_last_c.wf",
+    "tests/gate/probes/fixes/f13b/fp/s1_20_get_returns_slot_c.wf",
+    "tests/gate/probes/fixes/f13b/fp/s1b_06_nested_clear_capture_w_c.wf",
+]
+note = "a body stores a closure behind a parameter, reads the slot back and runs it: the value of the caller in the slot has no environment of the closure (false positive FP-S2 of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-FP-K4"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13b/fp/k04_rebind_inside_returned_closure_c.wf"]
+note = "a returned closure gives its `Kept` variable a new value: no change of the referent (false positive FP-K4 of the review of stage F13)"
+
+[[claim]]
+finding = "F12R3-BOTH"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/fp/both_once.wf",
+    "tests/gate/probes/fixes/f13b/fp/w09_ctl_outer_runs_after_maybe_other.wf",
+]
+note = "a callee runs two function values one time each, one a `once` closure or two linear closures: no W0502, no W0601 (finding (a) of stage F12-fix3; `Applied::order`; the lost-clean row w09_ctl of the F13-fix rerun)"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/o01_nested_closure_runs_param_twice_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/o02_nested_twice_callee_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/o11_capture_and_param_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/x01_linear_nested_twice_b.wf",
+]
+code = "W0502"
+note = "a body that runs two values (`both(f, g)`) gets a closure that runs a `once` value of the caller two times, or the same value as one argument and in a closure that is the other argument: the value runs two times (class H-ORD of the final check of group C; `transfer::apply_runs`, `Apps::reached`)"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/q01_second_param_closure_twice_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q03_nested_run_layer_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q04_nested_each_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q05_both_with_param_g_b.wf",
+    "tests/gate/probes/fixes/f13c/ord/q06_capture_param_and_closure_b.wf",
+]
+code = "W0502"
+note = "the H-ORD shapes of `final_variants/ord2` (the programs define `each` with a loop): a closure argument runs the value of the caller two times, through `run`, `each` or a parameter, or both arguments run it"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/o01_nested_closure_runs_param_twice_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/o02_nested_twice_callee_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/o11_capture_and_param_c.wf",
+]
+note = "the clean twins of H-ORD: each value of the caller runs one time"
+
+[[claim]]
+finding = "F13C-ORD"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13c/ord/q01_second_param_closure_twice_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/q03_nested_run_layer_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/q05_both_with_param_g_c.wf",
+    "tests/gate/probes/fixes/f13c/ord/q06_capture_param_and_closure_c.wf",
+]
+note = "the clean twins of H-ORD of `final_variants/ord2`"
+
+[[claim]]
+finding = "F13C-JOIN"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13c/w4/w01_join_of_refs_b.wf",
+    "tests/gate/probes/fixes/f13c/w4/j03_option_of_ref_b.wf",
+]
+code = "W0204"
+note = "a store through a reference that can reach the `rc` object of the caller and a local object puts a reference into the local object there (class AB-RC1-join of the final check of group C; `templates::rc_handles`)"
+
+[[claim]]
+finding = "F13C-JOIN"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F13.1"
+repro = ["tests/gate/probes/fixes/f13c/w4/j04_loop_ref_var_b.wf"]
+code = "W0204"
+note = "AB-RC1-join with a reference variable that a loop gives a new value"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h0_v06_ret_passthrough_caller_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h1_made_capture_closure_arg_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h2_made_capture_item_arg_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h3_made_to_callee_b.wf",
+    "tests/gate/probes/fixes/f13d/ur/h4_param_through_maker_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a01_local_closure_to_callee_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a03_made_nested_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a04_made_in_struct_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a05_made_in_vec_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a06_made_from_callee_result_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a07_made_two_levels_callee_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a11_made_rebind_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a12_held_twice_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a13_maker_closure_local_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a14_made_capture_closure_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a15_made_join_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a17_rc_made_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a18_made_option_b.wf",
+]
+code = "W0301"
+note = "a value that a body runs and that no caller gives (follow-up F13.2): a capture of a closure that a callee made (`let f = mk_call(push1, w); f()`, also through a callee, a field, a vector, an `Option`, an `rc` object, another maker, a join, a loop) or a local that a closure gives a new value (`let set = || { g = grow }; set(); g(w)`). The run changes the places that the body gives it; a caller that holds a reference across the call is W0301 (`transfer::made_held`, the rebind values from `put_fns`, `Inferred::lends`)"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h5_rebind_local_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a02_made_in_loop_b.wf",
+    "tests/gate/probes/fixes/f13d/var/a09_rebind_in_closure_loop_b.wf",
+]
+code = "W0301"
+note = "a value that a body runs and that no caller gives (follow-up F13.2): a capture of a closure that a callee made (`let f = mk_call(push1, w); f()`, also through a callee, a field, a vector, an `Option`, an `rc` object, another maker, a join, a loop) or a local that a closure gives a new value (`let set = || { g = grow }; set(); g(w)`). The run changes the places that the body gives it; a caller that holds a reference across the call is W0301 (`transfer::made_held`, the rebind values from `put_fns`, `Inferred::lends`)"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h0_v06_ret_passthrough_caller_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h1_made_capture_closure_arg_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h2_made_capture_item_arg_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h3_made_to_callee_c.wf",
+    "tests/gate/probes/fixes/f13d/ur/h4_param_through_maker_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a01_local_closure_to_callee_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a01_local_closure_to_callee_noref_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a03_made_nested_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a04_made_in_struct_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a05_made_in_vec_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a06_made_from_callee_result_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a07_made_two_levels_callee_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a11_made_rebind_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a12_held_twice_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a13_maker_closure_local_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a14_made_capture_closure_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a14_made_capture_closure_noref_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a15_made_join_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a17_rc_made_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a18_made_option_c.wf",
+]
+note = "the clean twins of F13D-UR: the value that the body runs only reads (the made closure runs the values that it holds, not code of a caller), and a closure of the body that a callee runs changes its own environment (no W0312: `Sigma::env`)"
+
+[[claim]]
+finding = "F13D-UR"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F13.2"
+repro = [
+    "tests/gate/probes/fixes/f13d/ur/h5_rebind_local_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a02_made_in_loop_c.wf",
+    "tests/gate/probes/fixes/f13d/var/a09_rebind_in_closure_loop_c.wf",
+]
+note = "the clean twins of F13D-UR: the value that the body runs only reads (the made closure runs the values that it holds, not code of a caller), and a closure of the body that a callee runs changes its own environment (no W0312: `Sigma::env`)"
+
+# ----------------------------------------------------------------------
+# Stage F14: handlers, the splice, `perform`, `Exit` and `Post` (group D,
+# part 1). The self-attack of the stage (scratchpad f14/att/v): each faulting
+# program has a clean twin (`_c`). Group D is off until stage F17.
+
+[[claim]]
+finding = "F14-OH"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/oh/a3_slot_resume_result.wf",
+    "tests/gate/probes/fixes/f14/oh/a5_param_vec_push.wf",
+    "tests/gate/probes/fixes/f14/oh/d3_clause_writes_through_param.wf",
+    "tests/gate/probes/fixes/f14/oh/g1_abort_value_param_local.wf",
+]
+code = "W0301"
+note = "old holes of the self-attack of stage F14: a clause stores a parameter into a place of the site through another parameter (`h.0 = to`, `o.push(x)`: `handlers::map_stored` gives the holder variable of the site the places of the argument), keeps the result of `resume` in a slot of the site, or gives a value with no `resume` that points into the argument (M3, the `AbortValue` node). A later change of the referent is W0301"
+
+[[claim]]
+finding = "F14-OH"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/oh/a3_slot_resume_result_c.wf",
+    "tests/gate/probes/fixes/f14/oh/a5_param_vec_push_c.wf",
+    "tests/gate/probes/fixes/f14/oh/d3_clause_writes_through_param_c.wf",
+    "tests/gate/probes/fixes/f14/oh/g1_abort_value_param_local_c.wf",
+]
+note = "the clean twins of F14-OH: the reads come before the change"
+
+[[claim]]
+finding = "F14-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/abort/g5_clause_fails_past_linear.wf",
+    "tests/gate/probes/fixes/f14/abort/g6_clause_fails_outer_linear.wf",
+]
+code = "W0602"
+note = "a clause that fails past its handler aborts at the node of the handled body that runs it (`Frames::clause_aborts`): a linear value of the site with no `on abort` is live there"
+
+[[claim]]
+finding = "F14-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/abort/g8_clause_stores_then_fails.wf"]
+code = "W0301"
+note = "a clause stores its parameter into a vector of the site and then fails to an outer handler: the vector holds the reference after the outer `handle`"
+
+[[claim]]
+finding = "F14-ABORT"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/abort/g5_clause_fails_past_linear_c.wf",
+    "tests/gate/probes/fixes/f14/abort/g6_clause_fails_outer_linear_c.wf",
+    "tests/gate/probes/fixes/f14/abort/g8_clause_stores_then_fails_c.wf",
+]
+note = "the clean twins of F14-ABORT"
+
+[[claim]]
+finding = "F14-POST"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/post/a2_body_push_post_clear.wf",
+    "tests/gate/probes/fixes/f14/post/a4_clause_push_body_clears.wf",
+    "tests/gate/probes/fixes/f14/post/n3_outer_post_clears.wf",
+]
+code = "W0301"
+note = "the code of a clause after `resume` runs at `Post` (the `post` part), and the rest of the handled body runs in the `resume`: a change there of a place that a kept reference points into is W0301"
+
+[[claim]]
+finding = "F14-POST"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/post/h3_loop_body_perform_post.wf"]
+code = "W0301"
+note = "F14-POST in a loop of the handled body"
+
+[[claim]]
+finding = "F14-POST"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/post/a2_body_push_post_clear_c.wf",
+    "tests/gate/probes/fixes/f14/post/a4_clause_push_body_clears_c.wf",
+    "tests/gate/probes/fixes/f14/post/n3_outer_post_clears_c.wf",
+]
+note = "the clean twins of F14-POST (the fact oracle and its summary oracle check the frames of the site and of the clause after `resume` with them)"
+
+[[claim]]
+finding = "F14-POST"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/post/h3_loop_body_perform_post_c.wf"]
+note = "the clean twin of F14-POST in a loop"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/made/k1_clause_runs_made.wf",
+    "tests/gate/probes/fixes/f14/made/k2_body_runs_made.wf",
+]
+code = "W0301"
+note = "a clause or a handled body runs a closure that a closure of the site made (`let g = mk(); g()`): the clause and the handled body run in the frame of the site, so the made closure is a closure of this function (`apply::other_maker`) and its change is a change of the place of the site. Found by the rerun of the F12 review sets (variants2 sw/f2_04) after commit 9a2522b"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/made/k6_clause_made_in_loop.wf"]
+code = "W0301"
+note = "F14-MADE with the perform in a loop"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "sound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/made/k1_clause_runs_made_c.wf",
+    "tests/gate/probes/fixes/f14/made/k2_body_runs_made_c.wf",
+]
+note = "the clean twins of F14-MADE"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "sound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/made/k6_clause_made_in_loop_c.wf"]
+note = "the clean twin of F14-MADE in a loop"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "unsound"
+verdict = "construction"
+group = "ABCD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/resume/c02_captured_r0_cleared.wf",
+    "tests/gate/probes/fixes/f15/resume/c06_ref_across_resuming_perform_landing.wf",
+    "tests/gate/probes/fixes/f15/resume/c07_loop_in_clause_no_resume.wf",
+    "tests/gate/probes/fixes/f15/resume/c08_handle_in_loop_landing.wf",
+    "tests/gate/probes/fixes/f15/resume/f03_loop_resumes_clears.wf",
+]
+code = "W0301"
+note = "a perform keeps its abort edge to the handler where the clause can end with no `resume` (on one path, after a loop, in a loop of the handled body), and a reference that the clause or the code after the `handle` invalidates is W0301"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/resume/c01_linear_leak_on_landing.wf"]
+code = "W0601"
+note = "a clause that ends with no `resume` on one path lands after the `handle`: a linear value that the handled body consumes after the perform is not consumed on that path"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/resume/f01_body_linear_unwound_by_landing.wf"]
+code = "W0602"
+note = "the abort to the handler unwinds a linear value of the handled body that has no `on abort`"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "sound"
+verdict = "construction"
+group = "ABCD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/resume/sf1_captured_after.wf",
+    "tests/gate/probes/fixes/f15/resume/c01_linear_leak_on_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c02_captured_r0_cleared_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c06_ref_across_resuming_perform_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c07_loop_in_clause_no_resume_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c08_handle_in_loop_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/f01_body_linear_unwound_by_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/f03_loop_resumes_clears_c.wf",
+]
+note = "a clause that resumes on each path gives the node that runs it no abort edge to the handler and no path to the `Landing` (D-NEWFP of the F14 preview: `sf1` is the minimal form of `scale400` and `scale_ops`); the clean twins of F15-RESUME"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/calls/b01_callee_local_kept_vec.wf",
+    "tests/gate/probes/fixes/f15/calls/b02_given_arg_cleared.wf",
+    "tests/gate/probes/fixes/f15/calls/b03_nested_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b05_clause_clears_given.wf",
+    "tests/gate/probes/fixes/f15/calls/b07_abort_value_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b09_loop_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b10_option_ref_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b11_struct_field_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b12_tuple_slot_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b13_abort_keeps_local_vec.wf",
+    "tests/gate/probes/fixes/f15/calls/b14_two_calls_one_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b16_eval_order_arg.wf",
+    "tests/gate/probes/fixes/f15/calls/f05_callee_handles_itself.wf",
+    "tests/gate/probes/fixes/f15/calls/f06_callee_clause_reperforms.wf",
+    "tests/gate/probes/fixes/f15/calls/b18_post_reads_given_body_clears.wf",
+    "tests/gate/probes/fixes/f15/calls/b19_post_reads_callee_local.wf",
+]
+code = "W0301"
+note = "a call runs a clause whose operation takes a reference: the parameter points into the frame of the callee (if its summary gives one, `gives_frame`) and into the places that the arguments reach (`clause::given`); the frame ends at the end of the call, also on the abort path"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/calls/b20_clause_rc_store.wf",
+    "tests/gate/probes/fixes/f15/calls/b22_clause_stores_behind_param.wf",
+]
+code = "W0204"
+note = "a clause that a call runs puts a reference into a local of the callee into an `rc` object or behind a reference parameter of the function: the local ends at the end of the call (the W0204 store check takes the callee frame root)"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/calls/b06_callee_holds_across.wf"]
+code = "W0312"
+note = "a change through a place that a call gives to a clause is a change through the parameter of the callee that reaches it (`call_mut` with its root): an argument that points into it is W0312"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/calls/b01_callee_local_kept_vec_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b02_given_arg_cleared_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b03_nested_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b05_clause_clears_given_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b06_callee_holds_across_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b07_abort_value_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b09_loop_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b10_option_ref_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b11_struct_field_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b12_tuple_slot_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b13_abort_keeps_local_vec_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b14_two_calls_one_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b16_eval_order_arg_c.wf",
+    "tests/gate/probes/fixes/f15/calls/f05_callee_handles_itself_c.wf",
+    "tests/gate/probes/fixes/f15/calls/f06_callee_clause_reperforms_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b18_post_reads_given_body_clears_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b19_post_reads_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b20_clause_rc_store_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b22_clause_stores_behind_param_c.wf",
+]
+note = "the clean twins of F15-CALL"
+
+[[claim]]
+finding = "F15-TWICE"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/twice/d01_post_moves_in_loop.wf",
+    "tests/gate/probes/fixes/f15/twice/d02_post_moves_two_calls.wf",
+    "tests/gate/probes/fixes/f15/twice/d03_post_moves_nested_inner_twice.wf",
+]
+code = "W0302"
+note = "a clause that can run more than once in one run of the handled body runs its code after `resume` once for each run (`PostAgain`): a move there is a second move"
+
+[[claim]]
+finding = "F15-TWICE"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/twice/d04_post_reads_after_body_clears.wf"]
+code = "W0301"
+note = "the code after `resume` of each run of a clause reads its parameter after the handled body changed the argument"
+
+[[claim]]
+finding = "F15-TWICE"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/twice/d01_post_moves_in_loop_c.wf",
+    "tests/gate/probes/fixes/f15/twice/d02_post_moves_two_calls_c.wf",
+    "tests/gate/probes/fixes/f15/twice/d03_post_moves_nested_inner_twice_c.wf",
+    "tests/gate/probes/fixes/f15/twice/d04_post_reads_after_body_clears_c.wf",
+]
+note = "the clean twins of F15-TWICE (a clause that runs once, also through the clause of an inner handler that runs once)"
+
+[[claim]]
+finding = "F15-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/abort/c03_inner_resumes_outer_aborts.wf",
+    "tests/gate/probes/fixes/f15/abort/c04_call_resumes_callee_fails.wf",
+    "tests/gate/probes/fixes/f15/abort/c05_clause_fails_some_path.wf",
+    "tests/gate/probes/fixes/f15/abort/e02_clause_moves_then_fails_outer.wf",
+    "tests/gate/probes/fixes/f15/abort/f02_site_on_abort_spared.wf",
+]
+code = "W0602"
+note = "a clause that resumes on each path can still abort past its handler (an outer clause with no `resume`, a failure of the callee or of the clause on one path): the node keeps those destinations (`Frames::runs`), and a linear value with no `on abort` is live there"
+
+[[claim]]
+finding = "F15-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/abort/f04_call_loop_lands.wf"]
+code = "W0301"
+note = "a call in a loop runs a clause that ends with no `resume` on one path: the abort lands after the `handle` with the old reference"
+
+[[claim]]
+finding = "F15-ABORT"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/abort/c03_inner_resumes_outer_aborts_c.wf",
+    "tests/gate/probes/fixes/f15/abort/c04_call_resumes_callee_fails_c.wf",
+    "tests/gate/probes/fixes/f15/abort/c05_clause_fails_some_path_c.wf",
+    "tests/gate/probes/fixes/f15/abort/e02_clause_moves_then_fails_outer_c.wf",
+    "tests/gate/probes/fixes/f15/abort/f02_site_on_abort_spared_c.wf",
+    "tests/gate/probes/fixes/f15/abort/f04_call_loop_lands_c.wf",
+]
+note = "the clean twins of F15-ABORT"
+
+[[claim]]
+finding = "F15-PART"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot.wf"]
+code = "W0301"
+note = "a clause puts its parameter into a part of a local of the site (`h.0 = r`): the parameter points into the places of the arguments in the facts of the clause too, so the version of the part is current after the perform (an old hole of F14, `oldmiss`)"
+
+[[claim]]
+finding = "F15-PART"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot_c.wf"]
+note = "the clean twin of F15-PART"

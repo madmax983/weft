@@ -1,0 +1,11 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b11_struct_field_local_c.wf
+struct P { a: u64, b: u64 }
+effect Keep { fn keep(r: &u64) }
+fn given(p: &P) / Keep { keep(&p.b) }
+fn main() {
+    let p = P { a: 1, b: 2 }
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in given(&p)
+    print(last)
+}

@@ -1,0 +1,16 @@
+// Third review of the ABC preview, clean twin of old hole b14-agg (b14s/s10_ctl_tuple_ref_closure_returns_copy.wf).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn run(f: fn()) { f() }
+struct K { f: fn() }
+fn main() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| print(b.items.len()))
+    let fst = |t: (&Vec<fn()>, u64)| { let (v, n) = t; v[0] }
+    let g = fst((&fs, 0))
+    g()
+    let h = fst((&fs, 0))
+    h()
+}

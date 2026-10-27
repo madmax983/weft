@@ -1,0 +1,17 @@
+// Third review of the ABC preview, clean twin of hole H7 (it failed the fact oracle) (h7/k06_ctl_go_rebinds_ref_var.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn mkw2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 2 }); w }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run(f: fn()) { f() }
+fn main() {
+    let w = mkw()
+    let w2 = mkw2()
+    let r = &w2.entities[0]
+    let first = &w.entities[0]
+    go(|| || { r = first })
+    print(w.entities.len())
+    print(r.hp)
+}

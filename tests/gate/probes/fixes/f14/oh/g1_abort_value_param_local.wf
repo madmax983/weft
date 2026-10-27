@@ -1,0 +1,10 @@
+// F14 self-attack (the value of a clause with no resume points into the argument (M3); old hole): scratchpad f14/att/v/g1_abort_value_param_local.wf
+effect Pick { fn pick(v: &Vec<u64>) -> &u64 }
+fn main() {
+    let r = handle Pick { fn pick(v) { &v[0] } } in {
+        let w = Vec.new()
+        w.push(3)
+        pick(&w)
+    }
+    print(r)
+}

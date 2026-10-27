@@ -1,0 +1,51 @@
+// Review of stage F13, class H-LIN: a linear closure in a heap slot or a part of a local is never run, overwritten, or live across an abort (sw4/f6_03_linear_closure_slot_overwritten.wf).
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+fn ent(id: u64) -> Entity { let e = Entity { hp: 1, id: id, kids: Vec.new() }; e.kids.push(Entity { hp: 2, id: 9, kids: Vec.new() }); e }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(ent(1)); w }
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct L { o: Option<&Entity>, n: u64 }
+    on abort = undo_l
+fn undo_l(l: L) { let L(o, n) = l; match o { Some(e) => print(e.hp), None => {} } }
+fn done_l(l: L) { let L(o, n) = l }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn risky(n: u64) / fail { if n > 0 { fail("no") } }
+fn run(f: fn()) { f() }
+fn run_r(f: fn() -> i32) -> i32 { f() }
+fn two(a: i32, b: i32) -> i32 { a + b }
+fn use2(f: fn(), r: &Entity) { print(r.hp); f() }
+fn clri(w: &World) -> i32 / mut(w.entities) { w.entities.clear(); 1 }
+enum Slot { Full(Entity), Empty }
+enum Act { Do(fn()), Skip }
+enum Two { A(u64, u64), B }
+effect Log { fn log(msg: String) }
+fn go(m: fn() -> fn()) { let g = m(); g() }
+fn give(m: fn() -> fn()) -> fn() { m() }
+fn run_ref(cb: &K) {
+    let g = cb.f
+    g()
+}
+struct Ki { f: fn() -> i32 }
+fn run_i(k: &Ki) -> i32 {
+    let g = k.f
+    g()
+}
+fn run_all(fs: &Vec<fn()>) {
+    let i = 0
+    while i < fs.len() {
+        let f = fs[i]
+        f()
+        i += 1
+    }
+}
+fn main() {
+    let t = begin(1)
+    let cb = K { f: || print(0) }
+    let c = &cb
+    c.f = || rollback(t)
+    c.f = || print(2)
+    run_ref(&cb)
+}

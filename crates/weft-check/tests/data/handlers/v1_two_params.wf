@@ -1,0 +1,11 @@
+// V035 v1: the clause changes its first parameter, and the second points
+// into it.
+effect Two { fn two(a: &Vec<u64>, b: &u64) }
+
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Two { fn two(a, b) { a.clear(); print(b); resume(()) } } in {
+        two(&v, &v[0]) //~ W0312
+    }
+}

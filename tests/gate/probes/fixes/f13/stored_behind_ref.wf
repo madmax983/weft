@@ -1,0 +1,115 @@
+// F13 (stored values): a copy of crates/weft-check/tests/data/stored/behind_ref.wf.
+// Function values behind a reference (plan stage F13, `docs/ir.md` 6.6, heap
+// slots): a later run applies the summary of each value that the slot holds.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+fn noop() { print(0) }
+fn run_ref(cb: &Cb) {
+    let g = cb.f
+    g()
+}
+// A store through the reference, then a run through a callee.
+fn store_then_run(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    cb.f = || world.entities.clear()
+    let first = &world.entities[0]
+    run_ref(cb)
+    print(first.hp)   //~ W0301
+}
+// Read back in the same body.
+fn read_back(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    cb.f = || world.entities.clear()
+    let first = &world.entities[0]
+    let g = cb.f
+    g()
+    print(first.hp)   //~ W0301
+}
+// In a loop: the store comes after the run in the text.
+fn stored_in_loop(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    let i = 0
+    while i < 2 {
+        let first = &world.entities[0]
+        run_ref(cb)
+        print(first.hp)   //~ W0301
+        cb.f = || world.entities.clear()
+        i += 1
+    }
+}
+// A callee stores its function parameter behind a reference of the caller.
+fn keep(f: fn(), cb: &Cb) / mut(cb.f) { cb.f = f }
+fn kept(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    keep(|| world.entities.clear(), cb)
+    let first = &world.entities[0]
+    run_ref(cb)
+    print(first.hp)   //~ W0301
+}
+// A callee stores a closure of its own: it captures a parameter.
+fn reg(cb: &Cb, w: &World) / mut(cb.f, w.entities) { cb.f = || w.entities.clear() }
+fn registered(world: &World) / mut(world.entities) {
+    let cb = Cb { f: noop }
+    let first = &world.entities[0]
+    reg(&cb, world)
+    run_ref(&cb)
+    print(first.hp)   //~ W0301
+}
+fn registered_behind(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    reg(cb, world)
+    let first = &world.entities[0]
+    let g = cb.f
+    g()
+    print(first.hp)   //~ W0301
+}
+// Two levels of callees.
+fn reg2(cb: &Cb, w: &World) / mut(cb.f, w.entities) { reg(cb, w) }
+fn registered2(world: &World) / mut(world.entities) {
+    let cb = Cb { f: noop }
+    reg2(&cb, world)
+    let first = &world.entities[0]
+    run_ref(&cb)
+    print(first.hp)   //~ W0301
+}
+// Code of a caller runs each function value that its arguments reach, also
+// a value in a heap slot.
+fn code_runs_slot(cb: &Cb, w: &World, k: fn(&Cb)) / mut(cb.f, w.entities) {
+    let first = &w.entities[0]
+    cb.f = || print(first.hp)
+    w.entities.clear()
+    k(cb)   //~ W0301
+}
+fn code_runs_slot_ok(cb: &Cb, w: &World, k: fn(&Cb)) / mut(cb.f) {
+    let first = &w.entities[0]
+    cb.f = || print(first.hp)
+    k(cb)
+}
+// Controls: a stored closure that does not change the world, a store with no
+// run, a store after the run.
+fn harmless(world: &World, cb: &Cb) / mut(cb.f) {
+    cb.f = || print(1)
+    let first = &world.entities[0]
+    run_ref(cb)
+    print(first.hp)
+}
+fn no_run(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    cb.f = || world.entities.clear()
+    let first = &world.entities[0]
+    print(first.hp)
+}
+fn keep_harmless(world: &World) {
+    let cb = Cb { f: noop }
+    let first = &world.entities[0]
+    keep(|| print(2), &cb)
+    run_ref(&cb)
+    print(first.hp)
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn main() {
+    let w = mkw()
+    let cb = Cb { f: noop }
+    harmless(&w, &cb)
+    no_run(&w, &cb)
+    keep_harmless(&w)
+}

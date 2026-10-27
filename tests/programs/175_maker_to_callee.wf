@@ -1,0 +1,32 @@
+// A closure maker whose result is a linear closure: a callee that gets the
+// maker does not know that the result is linear, so it can drop it. The
+// call is W0601.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn drops(m: fn() -> fn()) { let g = m() }
+fn gives_back(m: fn() -> fn()) -> fn() { m() }
+
+fn callee_drops() {
+    let t = begin(1)
+    drops(|| || rollback(t))   //~ W0601
+}
+
+fn callee_gives_back() {
+    let t = begin(2)
+    let g = gives_back(|| || rollback(t))   //~ W0601
+    print(1)
+}
+
+// A maker of a plain closure.
+fn plain() {
+    drops(|| || print(1))
+    let g = gives_back(|| || print(2))
+    g()
+}
+
+fn main() {
+    plain()
+}

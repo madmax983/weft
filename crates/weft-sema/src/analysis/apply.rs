@@ -113,6 +113,31 @@ pub struct Sigma {
     /// σ(`CaptureDeep(k)`) of a closure: what the references behind those
     /// point into at the run node.
     pub cap_deeps: Vec<Vec<PlaceId>>,
+    /// For a value that a closure runs through a capture
+    /// ([`RunKind::Run`]): what the environments of the closures on the way
+    /// point into. A change there is a change through the environment of
+    /// the value that the callee runs, not through a place that the callee
+    /// gives (W0312, follow-up F13.2).
+    pub env: Vec<PlaceId>,
+    /// A call of a function item whose effects of the row each go to a
+    /// local handler (plan stage F15): the node runs the clauses itself
+    /// (`clause::call_clauses`), so the operations lend no place; only the
+    /// part `code_lends` of the lends holds.
+    pub local_ops: bool,
+}
+
+/// True if fact place `p` is place `e` or a place below it. A wildcard
+/// place `e` stands for its base place.
+fn at_or_below(facts: &weft_facts::FnFacts, p: PlaceId, e: PlaceId) -> bool {
+    let e = facts.wild_base(e).unwrap_or(e);
+    let mut at = Some(p);
+    while let Some(q) = at {
+        if q == e {
+            return true;
+        }
+        at = facts.places.get(q.index()).and_then(|i| i.parent);
+    }
+    false
 }
 
 /// The type behind a reference type `t`.
@@ -469,25 +494,45 @@ pub fn made_sigma(
     };
     let (places, refs): (Vec<PlaceId>, Vec<PlaceId>) = match callee {
         Operand::Copy(q) | Operand::Move(q) => {
-            let a = transfer::alpha(cx, callee_body, st, q)?;
-            let v = transfer::operand(cx, callee_body, st, callee)?.flat();
-            // A value behind a reference argument (a run of `fs[i]` in a
-            // callee that gets `&fs`): the places of its environment.
-            let mut refs: Vec<PlaceId> = v.refs.into_iter().collect();
-            refs.extend(transfer::reach_refs(cx, callee_body, st, callee)?);
+            // A value that a run of the callee gives back (`with_results`:
+            // the run of a maker `mk` makes the closure) is not in the
+            // place of the callee: only its references are the environment.
+            let holds =
+                transfer::reach_fns(cx, callee_body, st, callee)?.contains(&super::FnVal::Made(c));
+            let a = if holds {
+                transfer::alpha(cx, callee_body, st, q)?
+            } else {
+                crate::factgen::alpha::Alpha::default()
+            };
+            // The places of the environment: the references of the value,
+            // or of a value behind a reference argument (a run of `fs[i]` in
+            // a callee that gets `&fs`). The places that the reference
+            // itself points into (`fs`) are no environment (the summary
+            // oracle found `fs.entities` in the review of stage F13, `so04`).
+            let mut refs: Vec<PlaceId> = transfer::reach_refs(cx, callee_body, st, callee)?
+                .into_iter()
+                .collect();
             refs.sort();
             refs.dedup();
             (a.places, refs)
         }
         Operand::Const(_) => (Vec::new(), Vec::new()),
     };
+    // The cell of a variable that the closure captures `ByRef` stands for
+    // the current value of the variable (hole N1 of the second review of the
+    // ABC preview: a closure that a maker in a closure or a callee made).
+    let (cells, cell_refs) = transfer::cell_values(cx, st, &refs)?;
+    let mut helds = refs.clone();
+    helds.extend(cell_refs);
+    helds.sort();
+    helds.dedup();
     let mut deep = Vec::new();
-    for &q in &refs {
+    for &q in &helds {
         deep.extend(transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None)?);
     }
     deep.sort();
     deep.dedup();
-    for cap in &decl.captures {
+    for (k, cap) in decl.captures.iter().enumerate() {
         if matches!(
             cap.mode,
             weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
@@ -496,25 +541,131 @@ pub fn made_sigma(
                 "a closure that captures a capability or a continuation (stage F14)",
             ));
         }
+        // A `Kept` or `ByRef` capture whose variable is a variable of this
+        // body (through the `Kept` and `ByRef` captures of the makers) is
+        // that variable, as for a closure of the component: the closure
+        // changes it and reads it, and no other capture (hole H7 and false
+        // positive FP4 of the third review of the ABC preview).
+        if let Some(src) = made_capture_source(p, c, k, body) {
+            let a = transfer::alpha(cx, body, st, &src)?;
+            let v = transfer::place_value(cx, body, st, &src)?.flat();
+            let refs: Vec<PlaceId> = v.refs.into_iter().collect();
+            let mut deeps = Vec::new();
+            for &q in &refs {
+                deeps.extend(transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None)?);
+            }
+            deeps.sort();
+            deeps.dedup();
+            s.cap_deeps.push(deeps);
+            s.captures.push(a.places);
+            s.cap_helds.push(refs);
+            continue;
+        }
         // A `ByRef` capture points into the place of its variable, and a
         // `Kept` capture names the variable: the closure value holds that
         // place as a reference (`transfer::closure_value`), so the capture
         // is also each place that the value points into (hole H2 of the
         // review of the ABC preview: a closure that a closure gives back).
+        // A closure that another function made keeps the cell of the
+        // variable with it (the frame of the maker is gone): a new value of
+        // the variable is a change of the closure value, not of what the
+        // variable points into (false positive FP-K4 of the review of stage
+        // F13: `r = &b.entities[0]` in a returned closure is no change of
+        // `b`).
         let mut at = places.clone();
         if matches!(
             cap.mode,
             weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
-        ) {
+        ) && !other_maker(p, decl.maker, body)
+        {
             at.extend(refs.iter().copied());
+            at.extend(cells.iter().copied());
             at.sort();
             at.dedup();
         }
         s.captures.push(at);
-        s.cap_helds.push(refs.clone());
+        s.cap_helds.push(helds.clone());
         s.cap_deeps.push(deep.clone());
     }
     Ok(s)
+}
+
+/// True if the function body that makes `maker` (the body itself, or the
+/// function of a closure body, of a handled body or of a clause) is not the
+/// function of body `body`: a closure
+/// that `maker` makes leaves a frame that is gone when `body` runs it.
+fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
+    // A handled body and a clause run in the frame of their site (plan
+    // stage F14): the function of the site.
+    let root = |mut b: BodyId| {
+        for _ in 0..=p.bodies.len() {
+            if let Some((_, d)) = p.closure_of(b) {
+                b = d.maker;
+                continue;
+            }
+            match p.bodies.get(b.index()) {
+                Some(x)
+                    if matches!(
+                        x.kind,
+                        weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Clause(..)
+                    ) =>
+                {
+                    b = x.parent?;
+                }
+                _ => return Some(b),
+            }
+        }
+        None
+    };
+    match (root(maker), root(body)) {
+        (Some(a), Some(b)) => a != b,
+        _ => false,
+    }
+}
+
+/// The place in body `body` that capture `k` of closure `c` names, if the
+/// capture is `Kept` or `ByRef` and its variable is a variable of `body`
+/// through the `Kept` and `ByRef` captures of the makers of `c` (`env.j`
+/// of a `Kept` capture, `(*env.j)` of a `ByRef` capture). A `ByMove` capture
+/// on the way is a value of a closure, not a variable: `None`.
+pub(crate) fn made_capture_source(
+    p: &weft_ir::Program,
+    c: weft_ir::ClosureId,
+    k: usize,
+    body: BodyId,
+) -> Option<weft_ir::Place> {
+    use weft_ir::{CaptureMode, DerefKind, Proj};
+    let decl = p.closures.get(c.index())?;
+    let cap = decl.captures.get(k)?;
+    if !matches!(cap.mode, CaptureMode::Kept | CaptureMode::ByRef) {
+        return None;
+    }
+    let (mut maker, mut src) = (decl.maker, cap.source.clone());
+    // A maker has a lower id than its closures, so the walk ends.
+    for _ in 0..=p.closures.len() {
+        if maker == body {
+            return Some(src);
+        }
+        let (c2, j, mode) = crate::factgen::alpha::env_capture(p, maker, &src)?;
+        let rest = match mode {
+            CaptureMode::Kept => src.proj.get(1..)?.to_vec(),
+            CaptureMode::ByRef => match src.proj.get(1) {
+                Some(Proj::Deref(DerefKind::Ref)) => src.proj.get(2..)?.to_vec(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let d2 = p.closures.get(c2.index())?;
+        let cap2 = d2.captures.get(j as usize)?;
+        let mut proj = cap2.source.proj.clone();
+        proj.extend(rest);
+        maker = d2.maker;
+        src = weft_ir::Place {
+            local: cap2.source.local,
+            proj,
+        };
+    }
+    None
 }
 
 /// The split id of the split at parameter `label` of run node `inst`: each
@@ -613,6 +764,19 @@ fn places(
 /// The errors of σ.
 pub fn iplaces(cx: &mut Cx<'_>, s: &Sigma, place: &IPlace) -> Result<Vec<PlaceId>, AlphaError> {
     places(cx, s, place, Base::Args)
+}
+
+/// σ of the interface place `place` as a value that flows.
+///
+/// The places of the value of an argument for a `Param` root, with the
+/// handle places on the way to it (a reference through a handle depends on
+/// it, ADR 0003).
+///
+/// # Errors
+///
+/// The errors of σ.
+pub fn vplaces(cx: &mut Cx<'_>, s: &Sigma, place: &IPlace) -> Result<Vec<PlaceId>, AlphaError> {
+    places(cx, s, place, Base::Values(false))
 }
 
 /// The handles that a place of an `rc` group in the result depends on: the
@@ -997,6 +1161,11 @@ pub fn main(
             _ => idx,
         }
     };
+    // A place of the environment of a closure on the way to the value: the
+    // root of the environment, as `cap_helds` (follow-up F13.2).
+    let in_env = |facts: &weft_facts::FnFacts, p: PlaceId| {
+        run && s.env.iter().any(|&e| at_or_below(facts, p, e))
+    };
     if run {
         for ps in &s.cap_helds {
             cx.facts
@@ -1008,20 +1177,33 @@ pub fn main(
         places.extend(s.others.iter().copied());
         places.sort();
         places.dedup();
-        cx.facts
-            .call_arg
-            .extend(places.into_iter().map(|p| (n, p, g)));
+        for p in places {
+            let root = if in_env(cx.facts, p) {
+                crate::body::roots::STORED
+            } else {
+                g
+            };
+            cx.facts.call_arg.push((n, p, root));
+        }
     }
     let changed = muts(cx, sum, s)?;
     for &(p, idx) in &changed {
         cx.facts.mutates_at.push((n, p));
         if item || run {
-            cx.facts.call_mut.push((n, p, as_given(idx)));
+            let root = if in_env(cx.facts, p) {
+                crate::body::roots::STORED
+            } else {
+                as_given(idx)
+            };
+            cx.facts.call_mut.push((n, p, root));
         }
     }
     for l in &sum.lends {
         // The root handlers do not change a place of a caller.
         if !acts && l.root == IRoot::Caller {
+            continue;
+        }
+        if s.local_ops && !sum.code_lends.contains(l) {
             continue;
         }
         let root = match l.root {
@@ -1038,7 +1220,12 @@ pub fn main(
             // A place of a caller is no argument of the call: no alias
             // check (W0312) compares it.
             if let (Some(root), true) = (root, item || run) {
-                cx.facts.call_mut.push((n, p, as_given(root)));
+                let root = if in_env(cx.facts, p) {
+                    crate::body::roots::STORED
+                } else {
+                    as_given(root)
+                };
+                cx.facts.call_mut.push((n, p, root));
             }
         }
     }
@@ -1071,7 +1258,13 @@ pub fn main(
 /// stated `in` place of its parameter (`param_in`, `arg_at`, W0203), and the
 /// argument of a `@ uniq` parameter must be `@ uniq` (`uniq_param`,
 /// `arg_aliased`, W0406).
-fn check_args(cx: &mut Cx<'_>, n: NodeId, sum: &Summary, s: &Sigma, site: &Site<'_>) -> R {
+pub(crate) fn check_args(
+    cx: &mut Cx<'_>,
+    n: NodeId,
+    sum: &Summary,
+    s: &Sigma,
+    site: &Site<'_>,
+) -> R {
     // A by-value argument is the base of the places inside it.
     let mut bases = s.clone();
     for (i, a) in bases.args.iter_mut().enumerate() {

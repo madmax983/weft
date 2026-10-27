@@ -1,0 +1,21 @@
+// Review of stage F13, class AB-RC1: a reference through a whole local handle of another object goes into an rc object (s7/a13_nested_rc_rc_b.wf).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+struct Store { xs: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn news() -> Rc<Store> { Rc.new(Store { xs: Vec.new() }) }
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) { c.refs.push(x) }
+fn read0(c: Rc<Cache>) {
+    let r = c.refs[0]
+    print(r + 0)
+}
+fn fill(c: Rc<Rc<Cache>>) / mut(Cache) {
+    let d = newc()
+    d.data.push(1)
+    c.refs.push(&d.data[0])
+}
+fn main() / mut(Cache) {
+    let c = Rc.new(newc())
+    fill(c.clone())
+    let r = c.refs[0]
+    print(r + 0)
+}
