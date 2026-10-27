@@ -1,0 +1,11 @@
+// F16-CLAUSE-CLOSURE: a closure that a clause makes starts from the states of the clause
+effect Tick { fn tick() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Tick { fn tick() { let x = resume(()); let g = || v.clear(); g(); x } } in {
+        tick()
+        &v[0]
+    }
+    print(r + 1)
+}

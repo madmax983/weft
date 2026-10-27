@@ -2772,11 +2772,32 @@ preview with `--groups ABCD` until stage F17):
   captures (`clause::captured_handlers`): its destinations and `clause_handlers` have
   the handler, and `clause::call_clauses` runs the clauses there, with the places that
   the arguments and the value reach and the frame root of the run node
-  (`clause::given_value`; the closure gives its frame, `Summary::gives_frame`). A run
+  (`clause::given_value`). The clauses also get the places that the summaries of
+  these closures read or change at the node (`clause::cap_given`: a capture by
+  reference gives a place of the variable), also at a call of a callee that runs the
+  closure. The closure gives its frame (`Summary::gives_frame`) only if a perform
+  through a captured capability gives a place that is not a place of its interface.
+  The summary of the closure has no `lends` of the arguments of such a perform: the
+  facts of the clause at the run node give its changes. A run
   of such a closure at a node that does not run the clauses of its handler (the
   capability left its handler, W0313) is not in scope until stage F17, and so is a
   closure that captures the capability and leaves the `handle` (in its value, in a
   local of the site or in a heap slot).
+- Closures that a clause makes. The clause bodies come before the closure bodies in
+  the facts of a component (`emit_parts`), and a closure that a clause makes starts
+  from the join of the states of the clause before its literals and terminators. A run
+  of such a closure at a node outside the clause (a closure that the clause gives to
+  the handled body through `resume` or a place of the site) is not in scope
+  (`clause::runs_with_maker`).
+- A function value that a perform gives to a local handler (O3-7). The parameter of
+  the clause holds the function values of the arguments of the performs
+  (`Info::params`, with the linear flag at the entry node of the clause), so a run
+  of it in the clause applies the closure there, and its changes reach the perform
+  (before `resume`) or `Post` (after it) with the code of the clause. A change at a
+  node of the clause that runs parameter `i` has the root of argument `i` of the
+  perform (`fn_arg`), and the places that the environment of the value reaches are
+  call arguments of the perform with that root: a change of the clause itself there
+  is W0312, as for a call; the closure does not conflict with itself.
 - The heap slot of a callee frame that a call gives to its clauses holds only while
   the clauses run: the records that outlive the runs of a clause (the seed of the
   facts of the clause, the states at its resume points for the code after them, its
@@ -2789,6 +2810,11 @@ preview with `--groups ABCD` until stage F17):
   an abort of a re-run of the handled body unwinds (`Frames::rerun_spares`): a
   `resume` in the clause code after the first one runs the handled body again
   (OR4).
+- The fact oracle does not follow a copied frame of a continuation (its frames have
+  `uid` 0). The summary oracle does not check the clause frame directly below the
+  copied frames (it resumes them again: the facts give the accesses of that run to
+  the re-entry nodes), and a clause that an op of a copied frame runs has no known
+  site.
 
 ### 6.6 The analysis
 

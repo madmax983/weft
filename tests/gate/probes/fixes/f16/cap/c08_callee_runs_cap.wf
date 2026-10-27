@@ -1,0 +1,12 @@
+// F16-CAP: the clause gets the places that the closure reads (a capture by reference), and a callee runs the closure
+effect Keep { fn keep(r: &i64) }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let o: Option<&i64> = None
+    handle Keep { fn keep(r) { o = Some(r); resume(()) } } in {
+        twice(|| { let x = 3; keep(&x) })
+    }
+    match o { Some(x) => print(x + 1), None => {} }
+}

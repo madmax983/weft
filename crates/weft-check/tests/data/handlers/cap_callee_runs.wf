@@ -1,0 +1,11 @@
+// A callee runs the closure: the clause keeps a reference into a local of the
+// closure, which ends with the run.
+effect Keep { fn keep(r: &i64) }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let o: Option<&i64> = None
+    handle Keep { fn keep(r) { o = Some(r); resume(()) } } in {
+        twice(|| { let x = 3; keep(&x) })
+    }
+    match o { Some(x) => print(x + 1), None => {} } //~ W0301
+}

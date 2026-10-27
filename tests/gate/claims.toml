@@ -5334,6 +5334,7 @@ repro = [
     "tests/gate/probes/fixes/f16/multi/m03_linear_across_c.wf",
     "tests/gate/probes/fixes/f16/multi/m04_clause_holds_result_c.wf",
     "tests/gate/probes/fixes/f16/multi/m05_j4_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m06_abort_in_rerun_c.wf",
 ]
 note = "the clean twins of F16-MULTI: the `Copy` node rebinds the variables whose places are all in the copied frames"
 
@@ -5386,6 +5387,7 @@ repro = [
     "tests/gate/probes/fixes/f16/cap/c02_apply.wf",
     "tests/gate/probes/fixes/f16/cap/c03_stored.wf",
     "tests/gate/probes/fixes/f16/cap/c05_keeps_closure_local.wf",
+    "tests/gate/probes/fixes/f16/cap/c08_callee_runs_cap.wf",
 ]
 code = "W0301"
 note = "a closure performs through a captured capability of a local handler: the node that runs the closure (a call of the value, or a call of a callee that runs it) runs the clause, with the frame root of the run node and the places that the closure reaches given to the parameters of the clause"
@@ -5422,5 +5424,108 @@ repro = [
     "tests/gate/probes/fixes/f16/cap/c03_stored_c.wf",
     "tests/gate/probes/fixes/f16/cap/c05_keeps_closure_local_c.wf",
     "tests/gate/probes/fixes/f16/cap/c06_multi_linear_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c08_callee_runs_cap_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c09_stored_byref_c.wf",
 ]
 note = "the clean twins of F16-CAP"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ABCD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c07_byref_given.wf"]
+code = "W0301"
+note = "the clause keeps the reference that a closure with a captured capability gives in a loop: the clause gets the places that the closure reads (a capture by reference gives a place of the variable)"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "sound"
+verdict = "construction"
+group = "ABCD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c07_byref_given_c.wf"]
+note = "the clean twin of c07: the clause only reads the reference"
+[[claim]]
+finding = "F16-CLAUSE-CLOSURE"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/cl02_closure_clears_site.wf",
+    "tests/gate/probes/fixes/f16/closure/cl03_closure_after_resume.wf",
+]
+code = "W0301"
+note = "a closure that a clause makes starts from the states of the clause, before or after `resume` (the clauses come before the closures in the facts); an old hole for the run after `resume`"
+
+[[claim]]
+finding = "F16-CLAUSE-CLOSURE"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/closure/cl04_linear_in_clause_closure.wf"]
+code = "W0601"
+note = "a linear closure that a clause makes and drops"
+
+[[claim]]
+finding = "F16-CLAUSE-CLOSURE"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/cl02_closure_clears_site_c.wf",
+    "tests/gate/probes/fixes/f16/closure/cl03_closure_after_resume_c.wf",
+    "tests/gate/probes/fixes/f16/closure/cl04_linear_in_clause_closure_c.wf",
+]
+note = "the clean twins of F16-CLAUSE-CLOSURE"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/o1_pre_clear.wf",
+    "tests/gate/probes/fixes/f16/closure/o2_post_clear.wf",
+]
+code = "W0301"
+note = "O3-7: a function value that a perform gives to a local handler runs in the clause, before or after `resume` (the parameter of the clause holds it, `Info::params`)"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/closure/o4_once_twice.wf"]
+code = "W0502"
+note = "a `once` closure that a clause runs twice"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/closure/o5_linear_dropped.wf"]
+code = "W0601"
+note = "a linear closure that a clause drops"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/o1_pre_clear_c.wf",
+    "tests/gate/probes/fixes/f16/closure/o2_post_clear_c.wf",
+    "tests/gate/probes/fixes/f16/closure/o4_once_twice_c.wf",
+    "tests/gate/probes/fixes/f16/closure/o5_linear_dropped_c.wf",
+]
+note = "the clean twins of F16-OPFN (the old pipeline rejects the last two: W0502, W0601)"

@@ -237,6 +237,7 @@ impl super::Machine<'_, '_> {
             // oracle does not check its op either.
             if let Some(fo) = self.facts.as_mut() {
                 fo.report.summary_skipped += 1;
+                fo.untracked_op();
             }
             return self.exec(op);
         }
@@ -349,8 +350,15 @@ impl super::Machine<'_, '_> {
             .skip(1)
             .take(crate::oracle::facts::SUMMARY_DEPTH);
         fo.begin_summary(uid);
+        // A frame directly below the copied frames of a continuation is the
+        // clause that resumes it again (a `multi` operation). The facts give
+        // the accesses of that run to the re-entry nodes after the perform,
+        // not to the node of the clause (plan stage F16). The oracle does not
+        // check that frame.
+        let mut copied = false;
         for c in below {
-            if c.uid == 0 || c.chain.is_some() {
+            if c.uid == 0 || c.chain.is_some() || copied {
+                copied = c.uid == 0;
                 fo.report.summary_skipped += 1;
                 fo.break_summary();
                 continue;

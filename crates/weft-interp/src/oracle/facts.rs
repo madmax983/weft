@@ -872,6 +872,13 @@ impl FactOracle {
         }
     }
 
+    /// An op of a frame that the oracle does not follow (a copied frame of
+    /// a continuation, plan stage F16) runs. A clause that the op runs has
+    /// no known site.
+    pub const fn untracked_op(&mut self) {
+        self.last = None;
+    }
+
     /// The summary oracle (A3) checks the frames below the frame `uid` of
     /// an op: the frame of the op is the first frame above them.
     pub fn begin_summary(&mut self, uid: u64) {

@@ -1987,3 +1987,10 @@ files = [
 finding = "F16-MULTI"
 reason = "old holes of stage F16 (claims F16-MULTI, OL-R2a): a clause keeps the result of a first `resume` across a second `resume` whose run invalidates it, and a function holds a reference into a place of a parameter across a `multi` operation of a handler of a caller that clears the place after it. The old pipeline checks the programs while group D is off and accepts them; the run reads a freed cell. The `ir` pipeline with group D rejects them (W0301). Drop this entry when group D is on (stage F17)"
 stage = "F16"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f16/closure/cl03_closure_after_resume.wf"]
+finding = "F16-CLAUSE-CLOSURE"
+reason = "an old hole of stage F16 (claim F16-CLAUSE-CLOSURE): the code of a clause after `resume` runs a closure that changes the place that the value of the handled body points into. The old pipeline checks the program while group D is off and accepts it; the run reads a freed cell. The `ir` pipeline with group D rejects it (W0301). Drop this entry when group D is on (stage F17)"
+stage = "F16"

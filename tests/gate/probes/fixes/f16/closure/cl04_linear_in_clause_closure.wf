@@ -1,0 +1,9 @@
+// F16-CLAUSE-CLOSURE: a closure that a clause makes starts from the states of the clause
+effect Tick { fn tick() }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+fn main() {
+    handle Tick { fn tick() { let t = Tx { id: 1 }; let g = || commit(t); resume(()) } } in {
+        tick()
+    }
+}

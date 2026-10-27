@@ -3732,7 +3732,7 @@ fn linear_fn_captures(em: &mut Em<'_>, st: &State, c: weft_ir::ClosureId, ops: &
 /// local whose type has a function part holds a linear value by its value,
 /// not by its type, so its variable `S` gets the flags `linear` and
 /// `has_on_abort` (W0601 at its end, W0602 across an abort).
-fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
+pub(crate) fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
     mark_fn_linear_in(em, k, v, false);
 }
 

@@ -394,3 +394,47 @@ fn a_closure_with_a_captured_capability_gives_its_frame_and_resumes_twice() {
     check("cap_multi_linear.wf");
     check("cap_multi_linear_ok.wf");
 }
+
+/// The clause gets the places that the closure reads (a capture by
+/// reference gives a place of the variable), also when a callee runs the
+/// closure. The lend of an argument of the perform is no change at the run
+/// node: the facts of the clause there give its changes.
+#[test]
+fn a_clause_gets_the_places_that_a_closure_with_a_captured_capability_reads() {
+    check("cap_byref_given.wf");
+    check("cap_byref_given_ok.wf");
+    check("cap_callee_runs.wf");
+    check("cap_callee_runs_ok.wf");
+}
+
+/// A closure that a clause makes starts from the states of the clause
+/// (plan stage F16): its run in the clause changes the places of the site,
+/// before or after `resume`, and a linear capture must be consumed.
+#[test]
+fn a_closure_that_a_clause_makes_runs_with_the_states_of_the_clause() {
+    check("clause_closure_clears_site.wf");
+    check("clause_closure_pushes_site.wf");
+    check("clause_closure_after_resume.wf");
+    check("clause_closure_after_resume_ok.wf");
+    check("clause_closure_linear.wf");
+    check("clause_closure_linear_ok.wf");
+}
+
+/// O3-7: a function value that a perform gives to a local handler. The
+/// parameter of the clause holds it, so a run of it in the clause (before or
+/// after `resume`, once or twice) changes the places of its environment;
+/// a change from the run has the root of the argument (no W0312 against
+/// the argument itself), and a linear closure that the clause drops is
+/// W0601.
+#[test]
+fn a_function_value_that_a_perform_gives_runs_in_the_clause() {
+    check("o37_op_closure.wf");
+    check("op_closure_pre.wf");
+    check("op_closure_pre_ok.wf");
+    check("op_closure_post.wf");
+    check("op_closure_post_ok.wf");
+    check("op_closure_twice.wf");
+    check("op_closure_once.wf");
+    check("op_closure_dropped.wf");
+    check("op_closure_run.wf");
+}

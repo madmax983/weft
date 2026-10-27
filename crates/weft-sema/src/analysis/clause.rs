@@ -547,7 +547,7 @@ pub fn resumes_twice(p: &Program, cb: BodyId) -> bool {
 
 /// True if body `b` is body `root`, a body inside it, or a closure that a
 /// body inside it makes (through the parents and the makers).
-fn inside_or_made(p: &Program, b: BodyId, root: BodyId) -> bool {
+pub fn inside_or_made(p: &Program, b: BodyId, root: BodyId) -> bool {
     let mut at = Some(b);
     for _ in 0..=p.bodies.len() {
         let Some(x) = at else {
@@ -562,6 +562,35 @@ fn inside_or_made(p: &Program, b: BodyId, root: BodyId) -> bool {
         });
     }
     false
+}
+
+/// The clause body that body `b` is in: `b` itself, or the clause that its
+/// parents (or the makers of the closures on the way) reach first.
+pub fn enclosing_clause(p: &Program, b: BodyId) -> Option<BodyId> {
+    let mut at = Some(b);
+    for _ in 0..=p.bodies.len() {
+        let x = at?;
+        let d = p.body(x)?;
+        if matches!(d.kind, BodyKind::Clause(..)) {
+            return Some(x);
+        }
+        at = match d.kind {
+            BodyKind::Closure(c) => p.closures.get(c.index()).map(|cd| cd.maker),
+            _ => d.parent,
+        };
+    }
+    None
+}
+
+/// True if a closure that body `maker` makes can run at a node of body
+/// `body` with the states of the analysis there (plan stage F16).
+///
+/// `maker` is in no clause, or `body` is in the same clause (the locals of
+/// the clause have their values there). A closure that a clause gives to the
+/// handled body (through `resume`, or a place of the site) runs where the
+/// locals of the clause have no value in the states: not in scope.
+pub fn runs_with_maker(p: &Program, maker: BodyId, body: BodyId) -> bool {
+    enclosing_clause(p, maker).is_none_or(|c| inside_or_made(p, body, c))
 }
 
 /// True if a clause of handler `h` can resume more than once.
@@ -1496,7 +1525,11 @@ pub fn given(
     let s = super::apply::sigma(cx, body, st, decl, targs, args, inst)?;
     // The callee frame root, if the callee can give a place of its frame
     // to an operation (`Summary::gives_frame`).
-    let gives = cx.sums.get(*f).map_or(true, |x| x.gives_frame);
+    // A function value that the callee runs and that performs through a
+    // captured capability gives the places that it reads, and a place of
+    // its frame (plan stage F16).
+    let (app_gives, app_places) = cap_given(cx, (body, block), st)?;
+    let gives = app_gives || cx.sums.get(*f).map_or(true, |x| x.gives_frame);
     let frame = gives.then(|| cx.roots.frame(cx.facts, inst, &decl.name));
     // The `rc` objects that the arguments reach: a place in one is a place
     // of the group root of its type, not a place below the argument.
@@ -1528,6 +1561,9 @@ pub fn given(
         {
             roots.push((cx.facts.wildcard(q), root));
         }
+    }
+    for &q in &app_places {
+        roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
     }
     roots.sort();
     roots.dedup();
@@ -1582,6 +1618,9 @@ fn given_value(
     for q in transfer::reach_refs(cx, body, st, f)? {
         roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
     }
+    for q in cap_given(cx, (body, block), st)?.1 {
+        roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
+    }
     roots.sort();
     roots.dedup();
     let frame = cx.roots.frame(cx.facts, inst, "the closure");
@@ -1596,6 +1635,61 @@ fn given_value(
         roots,
         frame: Some(frame),
     })
+}
+
+/// What the function values that the run node of block `block` applies
+/// give to the clauses of the handlers of their captured capabilities (plan
+/// stage F16): true if one can give a place of its frame, and the places
+/// that they read or change (a perform gives a place that it reads).
+fn cap_given(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    st: &State,
+) -> Result<(bool, Vec<weft_facts::PlaceId>), AlphaError> {
+    let Some(t) =
+        cx.p.body(body)
+            .and_then(|b| b.blocks.get(block.index()))
+            .map(|b| b.term.kind.clone())
+    else {
+        return Ok((false, Vec::new()));
+    };
+    let apps = match &t {
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(f),
+            args,
+            dest,
+            ..
+        } => transfer::value_out(cx, body, block, st, f, args, dest)?.apps,
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, targs),
+            args,
+            dest,
+            ..
+        } => transfer::call_out(cx, body, block, st, *f, targs, args, dest)?.apps,
+        _ => return Ok((false, Vec::new())),
+    };
+    let mut gives = false;
+    let mut out = Vec::new();
+    for a in &apps {
+        let cap = a
+            .summary
+            .performs
+            .iter()
+            .any(|pf| matches!(pf.cap, super::summary::CapIface::Cap(_)));
+        if !cap {
+            continue;
+        }
+        gives |= a.summary.gives_frame;
+        for r in a.summary.reads.iter().chain(&a.summary.lends) {
+            out.extend(super::apply::iplaces(cx, &a.sigma, r)?);
+        }
+        for m in &a.summary.muts {
+            out.extend(super::apply::iplaces(cx, &a.sigma, &m.0)?);
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok((gives, out))
 }
 
 /// The places that a call gives to the clauses that it runs ([`given`]).

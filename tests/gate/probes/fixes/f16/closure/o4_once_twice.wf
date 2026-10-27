@@ -1,0 +1,10 @@
+// F16-OPFN (O3-7): a function value that a perform gives to a local handler runs in the clause
+effect Run { fn run(f: fn()) }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(f) { f(); f(); resume(()) } } in {
+        run(|| eat(v))
+    }
+}

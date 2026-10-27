@@ -294,25 +294,6 @@ fn unsupported(e: &alpha::AlphaError) -> Unsupported {
     }
 }
 
-/// True if body `b` is a clause body or a body inside one (through the
-/// parents).
-fn in_clause(p: &weft_ir::Program, b: weft_ir::BodyId) -> bool {
-    let mut at = Some(b);
-    for _ in 0..=p.bodies.len() {
-        let Some(x) = at.and_then(|x| p.bodies.get(x.index())) else {
-            return false;
-        };
-        if matches!(x.kind, weft_ir::BodyKind::Clause(..)) {
-            return true;
-        }
-        at = match x.kind {
-            weft_ir::BodyKind::Closure(c) => p.closures.get(c.index()).map(|d| d.maker),
-            _ => x.parent,
-        };
-    }
-    false
-}
-
 /// True if body `b` is inside a closure body: a parent (or the maker of a
 /// closure on the way) is a closure body.
 fn in_closure(p: &weft_ir::Program, b: weft_ir::BodyId) -> bool {
@@ -352,16 +333,9 @@ fn check_supported(
         };
         match b.kind {
             // A closure body is a component of its own in the facts of its
-            // function (stage F11).
-            BodyKind::Fn(_) | BodyKind::Test(_) => {}
-            BodyKind::Closure(_) => {
-                // A closure that a clause makes (or a handled body inside a
-                // clause): its seed is the state of the clause (later).
-                let maker = p.closure_of(bid).map(|(_, d)| d.maker);
-                if maker.is_some_and(|m| in_clause(p, m)) {
-                    return no(Group::D, "a closure in a clause of a handler (stage F16)");
-                }
-            }
+            // function (stage F11). A closure that a clause makes starts from
+            // the states of the clause (plan stage F16).
+            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Closure(_) => {}
             BodyKind::Clause(..) | BodyKind::Handled(_) => {
                 // A handler in a closure body: its clauses run where the
                 // closure runs (later).
@@ -748,41 +722,12 @@ pub fn emit_parts(
     }
     let mut closure_entries = Vec::new();
     let mut closure_runs: Vec<crate::analysis::clause::ClauseRun> = Vec::new();
-    for &cb in &closures {
-        let (n, st) = emit_closure(
-            &ClosureCx {
-                a,
-                p,
-                sums,
-                cycles: &cycles,
-                seed: p
-                    .closure_of(cb)
-                    .and_then(|(_, d)| unions.get(&handlers::splice_root(p, d.maker)))
-                    .cloned()
-                    .unwrap_or_default(),
-            },
-            &mut ClosureOut {
-                tys: &mut tys,
-                facts,
-                roots: &mut roots,
-                vars: &vars,
-                holders: &mut holders,
-                uniq: &mut uniq,
-                table: &mut table,
-                stored: &mut stored,
-                runs: &mut closure_runs,
-            },
-            cb,
-        )
-        .map_err(|e| unsupported(&e))?;
-        closure_entries.push((cb, n));
-        unions.insert(cb, st);
-    }
-    hx.runs.append(&mut closure_runs);
     // The facts of each clause body (plan stage F14): a component of the
     // function, from the join of the states at the performs that run it. A
     // clause has a lower id than the clauses inside it, so the performs
-    // that run an inner clause are in the facts before it.
+    // that run an inner clause are in the facts before it. The clauses come
+    // before the closures: a closure that a clause makes starts from the
+    // states of the clause.
     let mut clause_entries = Vec::new();
     let mut clause_stored: Vec<(weft_ir::BodyId, templates::Stored)> = Vec::new();
     let mut clause_bodies: Vec<weft_ir::BodyId> = comp
@@ -820,7 +765,41 @@ pub fn emit_parts(
         .map_err(|e| unsupported(&e))?;
         clause_entries.push((cb, n.0));
         clause_stored.extend(n.1.into_iter().map(|x| (cb, x)));
+        // A closure that the clause makes starts from the states of the
+        // clause (plan stage F16).
+        unions.insert(cb, n.2);
     }
+    for &cb in &closures {
+        let (n, st) = emit_closure(
+            &ClosureCx {
+                a,
+                p,
+                sums,
+                cycles: &cycles,
+                seed: p
+                    .closure_of(cb)
+                    .and_then(|(_, d)| unions.get(&handlers::splice_root(p, d.maker)))
+                    .cloned()
+                    .unwrap_or_default(),
+            },
+            &mut ClosureOut {
+                tys: &mut tys,
+                facts,
+                roots: &mut roots,
+                vars: &vars,
+                holders: &mut holders,
+                uniq: &mut uniq,
+                table: &mut table,
+                stored: &mut stored,
+                runs: &mut closure_runs,
+            },
+            cb,
+        )
+        .map_err(|e| unsupported(&e))?;
+        closure_entries.push((cb, n));
+        unions.insert(cb, st);
+    }
+    hx.runs.append(&mut closure_runs);
     handlers::project(
         &handlers::Tables {
             p,
@@ -1420,7 +1399,14 @@ fn emit_clause(
         &[weft_ir::BodyId],
     ),
     cb: weft_ir::BodyId,
-) -> Result<(weft_facts::NodeId, Vec<templates::Stored>), alpha::AlphaError> {
+) -> Result<
+    (
+        weft_facts::NodeId,
+        Vec<templates::Stored>,
+        crate::analysis::State,
+    ),
+    alpha::AlphaError,
+> {
     let p = cx.p;
     let body = p
         .bodies
@@ -1447,6 +1433,7 @@ fn emit_clause(
         out.facts.cfg_edge.push((en, first));
     }
     let params = decls::clause_params(p, out.tys, out.facts, out.roots, cb)?;
+    let mut entry = params.entry.clone();
     let states = {
         let seed = hx
             .info(h)
@@ -1475,9 +1462,23 @@ fn emit_clause(
         for (i, (l, v)) in params.entry.iter().enumerate() {
             let mut v = v.clone();
             if let Some(g) = given.get(i) {
-                v.join(&crate::analysis::Tree::leaf(crate::analysis::AbsVal::refs(
-                    g.flat().refs,
-                )));
+                // The places of the arguments, and the function values that
+                // a perform gives (O3-7, plan stage F16).
+                let gv = g.flat();
+                let mut a = crate::analysis::AbsVal::refs(gv.refs);
+                a.fns = gv.fns;
+                a.linear = gv.linear;
+                a.empty = gv.empty;
+                v.join(&crate::analysis::Tree::leaf(a));
+                // The entry node: a linear function value of a perform is a
+                // linear value of the parameter (W0601 at its end).
+                if let Some((_, ev)) = entry.get_mut(i) {
+                    let mut lin = crate::analysis::AbsVal::plain();
+                    lin.linear = gv.linear;
+                    lin.empty = gv.empty;
+                    lin.fns = g.flat().fns;
+                    ev.join(&crate::analysis::Tree::leaf(lin));
+                }
             }
             init.write(crate::analysis::transfer::key(p, cb, *l)?, &[], v);
         }
@@ -1514,16 +1515,17 @@ fn emit_clause(
         own_lends: Vec::new(),
         last: None,
         aborts: std::collections::BTreeSet::new(),
-        union: None,
+        union: Some(crate::analysis::State::new()),
         hx,
     };
-    handlers::clause_entry(&mut em, en, &params.entry)?;
+    handlers::clause_entry(&mut em, en, &entry)?;
     emit_blocks(&mut em, out.table, frames, &states, body)?;
     // The stores of the clause name the places of its parameters: they map
     // onto the places of the arguments after the projection
     // (`handlers::map_stored`).
     let stored = std::mem::take(&mut em.stored);
-    Ok((en, stored))
+    let union = em.union.take().unwrap_or_default();
+    Ok((en, stored, union))
 }
 
 /// The facts of one component and the tables that map its IR to them

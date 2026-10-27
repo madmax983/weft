@@ -1135,10 +1135,14 @@ pub fn closure(
     // that it gives there (part `runs`; follow-up F13.2 for a closure that a
     // callee made, which runs the values that it holds). The lends of
     // another summary at such a node stay (`Em::own_lends`).
+    // A perform through a captured capability lends its arguments to the
+    // clause, and the clause runs at the node that runs the closure: the
+    // facts of the clause there give its changes (plan stage F16).
     let mut lends: Vec<IPlace> = facts
         .lends_mut
         .iter()
         .filter(|x| !fv.run_nodes.contains(&x.0) || fv.lends.contains(x))
+        .filter(|x| !fv.cap_performs.iter().any(|(n, _, _)| *n == x.0))
         .filter_map(|&(_, r)| place(r).map(|x| x.0))
         .collect();
     lends.sort();
@@ -1167,7 +1171,16 @@ pub fn closure(
     // A closure that performs through the capability of a caller (or a
     // captured capability) can give a place of its frame to an operation
     // (plan stages F15, F16).
-    out.gives_frame = !facts.escapes_at.is_empty() || !fv.cap_performs.is_empty();
+    // A perform through a captured capability gives a place of the frame
+    // if a place that it gives is not a place of the interface (a local of
+    // the closure).
+    let cap_gives = fv.cap_performs.iter().any(|&(n, _, _)| {
+        facts
+            .call_arg
+            .iter()
+            .any(|&(m, q, _)| m == n && place(q).is_none())
+    });
+    out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can. A perform
     // through a captured capability is a `multi` point of the node that

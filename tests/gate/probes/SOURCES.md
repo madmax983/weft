@@ -444,8 +444,16 @@ stage F17: the old pipeline checks them by default.
 - `fixes/f16/multi/m*.wf`: class F16-MULTI, a `multi` resume runs the rest of the
   handled body again (the re-entry edge from `Post` to the `Copy` node of the
   perform). Ledger `open-old` for the old hole `m04_clause_holds_result.wf`.
+  `m06_abort_in_rerun_c.wf` has no faulting twin: the clause of an outer handler
+  aborts in the second run of the handled body (fact oracle).
 - `fixes/f16/multi/olr2a*.wf`: class OL-R2a, a function waits at a `multi` operation
   of a handler of a caller (the re-entry edge from its `Return`). Ledger `open-old`
   for the old hole `olr2a.wf`.
 - `fixes/f16/cap/*.wf`: class F16-CAP, a closure performs through a capability that it
-  captures: the node that runs the closure runs the clause of the handler.
+  captures: the node that runs the closure runs the clause of the handler. The clause
+  gets the places that the closure reads (`c07`, `c09`), also when a callee runs the
+  closure (`c08`).
+- `fixes/f16/closure/cl*.wf`: class F16-CLAUSE-CLOSURE, a closure that a clause makes
+  (ledger `open-old` for the old hole `cl03_closure_after_resume.wf`).
+- `fixes/f16/closure/o*.wf`: class F16-OPFN (O3-7), a function value that a perform
+  gives to a local handler runs in the clause.

@@ -1,0 +1,13 @@
+// F16-MULTI: a clause of an outer handler that does not resume runs in the second run of the handled body (fact oracle)
+effect Pick { multi fn pick() -> bool }
+effect Fail { fn fail() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Fail { fn fail() { v.clear() } } in {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            let b = pick()
+            if b { print(v[0] + 1) } else { fail() }
+        }
+    }
+}

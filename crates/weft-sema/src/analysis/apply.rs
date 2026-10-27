@@ -392,6 +392,11 @@ pub fn closure_sigma(
         .closures
         .get(c.index())
         .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
+    if !super::clause::runs_with_maker(p, decl.maker, body) {
+        return Err(AlphaError::Later(
+            "a closure that a clause gives to the handled body (stage F16)",
+        ));
+    }
     let cb = p
         .bodies
         .get(decl.body.index())

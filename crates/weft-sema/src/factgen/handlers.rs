@@ -331,13 +331,11 @@ pub fn perform_local(
         ));
     };
     let body = em.body;
-    for a in args {
-        if !transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
-            return Err(AlphaError::Later(
-                "a function value that an operation gives to a local handler (stage F16)",
-            ));
-        }
-    }
+    // A function value that the perform gives to the clause (O3-7, plan
+    // stage F16): the parameter of the clause holds it in the facts of the
+    // clause (`Info::params`), so a run of it in the clause changes the
+    // places of its environment there, and the changes reach the perform
+    // with the code of the clause.
     let out = clause::perform_run(&mut em.cx(), body, st, cap, *op, args)?;
     let n = nodes.main;
     // The perform reads the capability.
@@ -379,6 +377,27 @@ pub fn perform_local(
         }
     }
     check_in_places(em, (n, out.clause), &s, args, &places)?;
+    // A function value that the perform gives to the clause: the places of
+    // its environment are an argument (O3-7, plan stage F16; a change of the
+    // clause there is W0312, as for a call).
+    for (i, a) in args.iter().enumerate() {
+        if transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
+            continue;
+        }
+        let root = crate::body::roots::fn_arg(i);
+        let mut refs: Vec<PlaceId> = transfer::operand(&mut em.cx(), body, st, a)?
+            .flat()
+            .refs
+            .into_iter()
+            .collect();
+        refs.extend(transfer::reach_refs(&mut em.cx(), body, st, a)?);
+        refs.sort();
+        refs.dedup();
+        for q in refs {
+            em.facts.reads_at.push((n, q));
+            em.facts.call_arg.push((n, q, root));
+        }
+    }
     let (_, cap_id) = ids(em, out.handler);
     em.facts.performs_at.push((n, cap_id));
     if nodes.may_abort {
@@ -1058,6 +1077,12 @@ fn in_clause_or_closure(p: &Program, b: BodyId, hb: BodyId) -> bool {
 /// The errors of `super::templates::entry`.
 pub fn clause_entry(em: &mut Em<'_>, n: NodeId, params: &[(weft_ir::LocalId, Tree)]) -> R {
     super::templates::entry(em, n, params)?;
+    // A parameter that holds a linear closure of a perform (O3-7, plan stage
+    // F16): the clause must run it or give it on (W0601 at its end).
+    for (l, v) in params {
+        let k = em.key(*l)?;
+        super::templates::mark_fn_linear(em, k, &v.flat());
+    }
     let kont = em.p.body(em.body).and_then(|b| b.kont).map(|(k, _)| k);
     if let Some(k) = kont {
         let key = em.key(k)?;
@@ -1291,6 +1316,11 @@ struct Mapper<'a> {
     roots: &'a Roots,
     /// The clause body.
     clause: BodyId,
+    /// The nodes of the clause that run a function value of a parameter of
+    /// the clause, with the index of the parameter (O3-7, plan stage F16):
+    /// a change there is a change of the run of that argument of the
+    /// perform, with its root.
+    param_runs: &'a HashMap<NodeId, u32>,
 }
 
 impl Mapper<'_> {
@@ -1415,6 +1445,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .entry(r.clause)
             .or_insert_with(|| clause_nodes(p, &ix, r.clause));
     }
+    let param_runs = param_run_nodes(p, t.table, regions.keys().copied());
     let mut owned: HashMap<BodyId, HashSet<VarId>> = HashMap::new();
     // The rows of the facts at the nodes of each clause: each run of the
     // clause reads these, and a run node in a clause adds its rows to the
@@ -1478,6 +1509,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             locals: &locals,
             roots: t.roots,
             clause: r.clause,
+            param_runs: &param_runs,
         };
         let empty = FnFacts::default();
         let part = parts.get(&r.clause).unwrap_or(&empty);
@@ -1520,6 +1552,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             locals: &locals,
             roots: t.roots,
             clause: c,
+            param_runs: &param_runs,
         };
         let rows: Vec<(VarId, PlaceId)> = rows_of
             .get(&c)
@@ -1552,6 +1585,51 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .clause_performs
             .extend(escapes.into_iter().map(|e| (hid, e)));
     }
+}
+
+/// The nodes of the clauses `clauses` that call a function value of a
+/// parameter of the clause, with the index of the parameter (O3-7).
+fn param_run_nodes(
+    p: &Program,
+    table: &NodeTable,
+    clauses: impl Iterator<Item = BodyId>,
+) -> HashMap<NodeId, u32> {
+    let mut out = HashMap::new();
+    for c in clauses {
+        let Some(b) = p.body(c) else {
+            continue;
+        };
+        for (bi, blk) in b.blocks.iter().enumerate() {
+            let TermKind::Call {
+                callee:
+                    weft_ir::Callee::Value(weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q)),
+                ..
+            } = &blk.term.kind
+            else {
+                continue;
+            };
+            let Some(i) = b.params.iter().position(|&l| l == q.local) else {
+                continue;
+            };
+            if !q.proj.is_empty() {
+                continue;
+            }
+            let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+            for phase in [Phase::Main, Phase::Ret] {
+                let key = NodeKey {
+                    body: c,
+                    block,
+                    at: TERM,
+                    phase,
+                    dest: NORMAL,
+                };
+                if let Some(n) = table.get(key) {
+                    out.insert(n, u32::try_from(i).unwrap_or(u32::MAX));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The rows of `facts` at the nodes of each clause (`clause_of`), of the
@@ -1710,7 +1788,13 @@ fn copy_part(
                     ps,
                 )
             }
-            Mapped::Same(q) => (Some(clause_root), vec![q]),
+            Mapped::Same(q) => {
+                let root = m
+                    .param_runs
+                    .get(&x)
+                    .map_or(clause_root, |&i| crate::body::roots::fn_arg(i as usize));
+                (Some(root), vec![q])
+            }
             Mapped::Own => continue,
         };
         for x in ps {
@@ -1824,6 +1908,7 @@ pub fn map_stored(
             locals: &HashSet::new(),
             roots: t.roots,
             clause: c,
+            param_runs: &HashMap::new(),
         };
         let mut refs = Vec::new();
         for &r in &st.refs {
