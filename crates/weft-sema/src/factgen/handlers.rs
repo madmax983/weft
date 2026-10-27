@@ -35,9 +35,13 @@
 //!   (`clause::given`), and a change through it has the callee root of the
 //!   argument that reaches it ([`call_clauses`]).
 //! - A clause that can run more than once runs its `post` part at `Post`
-//!   and again at `PostAgain` ([`handle_post`]); an abort to a local
-//!   handler binds the captured locals that no path assigned
-//!   ([`unbound_at_aborts`], plan stage F15).
+//!   once for each run (`Post` is in a cycle through a `Copy` node); an
+//!   abort to a local handler binds the captured locals that no path
+//!   assigned ([`unbound_at_aborts`], plan stage F15).
+//! - A `multi` resume runs the code after each node that runs its clause
+//!   again: an edge from `Post` to the `Copy` node of the node, where the
+//!   locals of the copied frames get new values ([`copy_node`], plan stage
+//!   F16).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -188,6 +192,12 @@ pub fn handle_main(em: &mut Em<'_>, n: NodeId, h: HandlerId) -> R {
             .get(h.index())
             .map(|d| d.handled)
             .ok_or_else(|| AlphaError::BadPlace(format!("no handler h{}", h.0)))?;
+    // A clause that can resume a `multi` continuation more than once: each
+    // node that runs it is a `multi` point (`multi_at`, W0503).
+    if clause::multi_twice(em.p, h) {
+        let (_, cap) = ids(em, h);
+        em.facts.clause_multi.push(cap);
+    }
     let caps: Vec<_> =
         em.p.body(hb)
             .map(|b| b.caps.iter().map(|(_, l)| *l).collect())
@@ -227,6 +237,12 @@ pub fn handle_exit(
         let k = transfer::key(em.p, hb, ret)?;
         if let Some(s) = em.s_var(k) {
             em.facts.uses.push((s, n));
+            // The value leaves the handled body (to a `resume` of a clause,
+            // or to the destination): a linear value of `_0` ends there, so
+            // a re-run of a `multi` handler gives `_0` a new one.
+            if em.facts.var(s).linear {
+                em.facts.moved_at.push((s, n));
+            }
         }
         let vars = em.vars;
         em.facts.uses.extend(
@@ -242,9 +258,15 @@ pub fn handle_exit(
 /// `Handle` `Post` (`docs/ir.md` 6.4).
 ///
 /// The code of each clause after its resume points runs at each node of
-/// `posts` ([`project`]): `Post`, and `PostAgain` if a clause can run more
-/// than once (plan stage F15). The frames of the clauses end at each one.
-pub fn handle_post(em: &mut Em<'_>, exit: Option<NodeId>, posts: &[NodeId], h: HandlerId) {
+/// `posts` ([`project`]): `Post` (in a cycle if a clause can run more than
+/// once, plan stages F15 and F16). The frames of the clauses end at each
+/// one.
+pub fn handle_post(
+    em: &mut Em<'_>,
+    exit: Option<NodeId>,
+    posts: &[NodeId],
+    (h, spares): (HandlerId, Option<Vec<BodyId>>),
+) {
     let clauses: Vec<BodyId> =
         em.p.handlers
             .get(h.index())
@@ -261,7 +283,7 @@ pub fn handle_post(em: &mut Em<'_>, exit: Option<NodeId>, posts: &[NodeId], h: H
                 helds: Vec::new(),
                 deps: Vec::new(),
                 at: em.body,
-                spares: None,
+                spares: spares.clone(),
                 ins: Vec::new(),
                 given: None,
             });
@@ -384,7 +406,13 @@ pub fn perform_local(
         given: None,
     });
     if let Some(r) = nodes.ret {
-        bind_dest(em, r, &out.after, dest, &out.value)?;
+        // A `multi` resume gives the perform the values of the later
+        // `resume`s too (plan stage F16).
+        let mut value = out.value.clone();
+        if let Some((_, v)) = em.hx.reentry.get(&(body, block)) {
+            value.join(v);
+        }
+        bind_dest(em, r, &out.after, dest, &value)?;
     }
     Ok(())
 }
@@ -778,6 +806,190 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
         bind_dest(em, r, st, dest, &resumed)?;
     }
     Ok(())
+}
+
+/// The `Copy` node `c` of a node of a handled body that runs a clause that
+/// can resume more than once (`docs/ir.md` 6.5, plan stage F16).
+///
+/// A later `resume` runs the code after the node again, from a copy of the
+/// frames of the handled body (`copy_frames` of the machine). Each
+/// variable of a local of the copied frames whose value at the node points
+/// only into the copied frames gets `rebound_at` and `empty_at`: the copy
+/// is a new value. A variable that points outside them (a place of the
+/// site, a parameter) keeps its state, so a reference that the first run
+/// invalidates stays invalid in the second run (J4). A linear variable
+/// gets no `empty_at`: the copy holds a copy of the linear value (W0503 at
+/// the node). The node is terminator `t` of block `block` of the body of
+/// `em` (a perform, or a call that runs the clause, or a node that waits
+/// at a `multi` operation of a caller), and `st` is the state before it:
+/// the frames are copied while the node waits. For a call, the
+/// callee frame is a copied frame too, and the callee runs its code after
+/// the perform again: the changes and the frees of the call apply again at
+/// `c`.
+pub fn copy_node(
+    em: &mut Em<'_>,
+    (c, main): (NodeId, NodeId),
+    (block, root): (BlockId, BodyId),
+    st: &State,
+    t: &TermKind,
+) {
+    let p = em.p;
+    let body = em.body;
+    // The copied frames: the frames of body `root` (the handled body of a
+    // local handler, or the body of a function or of a closure for a
+    // handler of a caller), and of the bodies that splice into it.
+    let hb = root;
+    let frame = matches!(t, TermKind::Call { .. }).then(|| transfer::run_inst(body, block));
+    let roots = &*em.roots;
+    let facts = &*em.facts;
+    let copied = |q: PlaceId| match roots.role(facts.place(q).root) {
+        Some(Role::Local(k) | Role::Cell(k)) => {
+            inside(p, k.0, hb) && !in_clause_or_closure(p, k.0, hb)
+        }
+        Some(Role::Frame(i)) => Some(i) == frame,
+        _ => false,
+    };
+    // The locals whose value at the node points outside the copied frames
+    // (or holds a task, which a copy cannot hold), and the locals that hold
+    // a linear value. A closure value points into the places of its
+    // captures.
+    let mut outside: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
+    let mut held_linear: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
+    for (k, tree) in st.trees() {
+        if !inside(p, k.0, hb) || in_clause_or_closure(p, k.0, hb) {
+            continue;
+        }
+        let v = tree.flat();
+        if !(v.tasks.is_empty()
+            && v.refs.iter().all(|&q| copied(q))
+            && v.caps.iter().all(|&q| copied(q)))
+        {
+            outside.insert(*k);
+        }
+        if v.linear {
+            held_linear.insert(*k);
+        }
+    }
+    let fresh = |k: &(BodyId, weft_ir::LocalId)| {
+        inside(p, k.0, hb) && !in_clause_or_closure(p, k.0, hb) && !outside.contains(k)
+    };
+    let mut vars: Vec<VarId> = Vec::new();
+    let mut linear: HashSet<VarId> = HashSet::new();
+    for key in em.vars.keys() {
+        let local = match key {
+            VarKey::S(b, l) | VarKey::C(b, l) => Some((*b, *l)),
+            VarKey::H(b, q) | VarKey::U(b, q) | VarKey::W(b, q, _) => Some((*b, q.local)),
+            _ => None,
+        };
+        let Some((b, l)) = local else {
+            continue;
+        };
+        let Ok(k) = super::alpha::owner_local(p, b, l) else {
+            continue;
+        };
+        if fresh(&k) {
+            if let Some(v) = em.vars.get(key) {
+                vars.push(v);
+                if held_linear.contains(&k) {
+                    linear.insert(v);
+                }
+            }
+        }
+    }
+    // The callee frame of a call: the frame root of the call.
+    // The value of the `handle` of a local handler: the value of the first
+    // run went to the `resume` of the clause, not to the destination of the
+    // `handle`, so a linear value there ends before the next run binds it.
+    if let Some(BodyKind::Handled(h)) = p.body(hb).map(|b| b.kind) {
+        if let Some(v) = handle_dest_var(em, h) {
+            if em.facts.var(v).linear {
+                em.facts.moved_at.push((v, c));
+            }
+        }
+    }
+    if let Some(i) = frame {
+        for &(q, v) in &em.facts.owner {
+            if matches!(roots.role(em.facts.place(q).root), Some(Role::Frame(j)) if j == i) {
+                vars.push(v);
+            }
+        }
+        // The callee runs its code after the perform again.
+        let again: Vec<(NodeId, PlaceId)> = em
+            .facts
+            .mutates_at
+            .iter()
+            .filter(|(n, _)| *n == main)
+            .map(|&(_, q)| (c, q))
+            .collect();
+        let lends: Vec<(NodeId, PlaceId)> = em
+            .facts
+            .lends_mut
+            .iter()
+            .filter(|(n, _)| *n == main)
+            .map(|&(_, q)| (c, q))
+            .collect();
+        let frees: Vec<(NodeId, PlaceId)> = em
+            .facts
+            .releases_at
+            .iter()
+            .filter(|(n, _)| *n == main)
+            .map(|&(_, q)| (c, q))
+            .collect();
+        em.facts.lends_mut.extend(again);
+        em.facts.lends_mut.extend(lends);
+        em.facts.releases_at.extend(frees);
+    }
+    vars.sort();
+    vars.dedup();
+    for v in vars {
+        em.facts.rebound_at.push((v, c));
+        if !linear.contains(&v) {
+            em.facts.empty_at.push((v, c));
+        }
+    }
+}
+
+/// The `S` variable of the destination of the `handle` of handler `h`, if
+/// it is a whole local.
+fn handle_dest_var(em: &Em<'_>, h: HandlerId) -> Option<VarId> {
+    let site = em.p.handlers.get(h.index())?.site;
+    let dest =
+        em.p.body(site)?
+            .blocks
+            .iter()
+            .find_map(|blk| match &blk.term.kind {
+                TermKind::Handle { handler, dest, .. } if *handler == h && !blk.cleanup => {
+                    Some(dest.clone())
+                }
+                _ => None,
+            })?;
+    if !dest.proj.is_empty() {
+        return None;
+    }
+    let k = super::alpha::owner_local(em.p, site, dest.local).ok()?;
+    em.vars.get(&VarKey::S(k.0, k.1))
+}
+
+/// True if body `b` (inside handled body `hb`) is in a clause body or a
+/// closure body inside `hb`: its frames are not frames of the handled body.
+fn in_clause_or_closure(p: &Program, b: BodyId, hb: BodyId) -> bool {
+    let mut at = Some(b);
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = at else {
+            return false;
+        };
+        if x == hb {
+            return false;
+        }
+        let Some(d) = p.body(x) else {
+            return false;
+        };
+        if matches!(d.kind, BodyKind::Clause(..) | BodyKind::Closure(_)) {
+            return true;
+        }
+        at = d.parent;
+    }
+    false
 }
 
 /// The entry node `n` of a clause body: its parameters bind as the

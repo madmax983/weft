@@ -1977,3 +1977,13 @@ files = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot.wf"]
 finding = "F15-PART"
 reason = "an old hole of the self-attack of stage F15 (claim F15-PART): a clause puts its parameter into a part of a local of the site (`h.0 = r`). The old pipeline (and the `ir` pipeline of stage F14) accepts it; the run reads a freed cell. The `ir` pipeline with group D rejects it (W0301). Drop this entry when group D is on (stage F17)"
 stage = "F15"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f16/multi/m04_clause_holds_result.wf",
+    "tests/gate/probes/fixes/f16/multi/olr2a.wf",
+]
+finding = "F16-MULTI"
+reason = "old holes of stage F16 (claims F16-MULTI, OL-R2a): a clause keeps the result of a first `resume` across a second `resume` whose run invalidates it, and a function holds a reference into a place of a parameter across a `multi` operation of a handler of a caller that clears the place after it. The old pipeline checks the programs while group D is off and accepts them; the run reads a freed cell. The `ir` pipeline with group D rejects them (W0301). Drop this entry when group D is on (stage F17)"
+stage = "F16"

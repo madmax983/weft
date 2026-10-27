@@ -99,6 +99,9 @@ pub fn edges(
     let before = term.unwind().map(|u| (u, st.clone()));
     cx.hx.abort_edge = None;
     transfer::term(cx, body, blk_id, &mut st, term)?;
+    // A node that runs a clause that can resume more than once: a later
+    // `resume` runs the code after it again (plan stage F16).
+    clause::note_reentry(cx, body, blk_id, term, &st);
     // A terminator that runs a clause: the abort edge gets the state of the
     // clause where it aborts (plan stage F15, `clause::AbortEdge`).
     let hook = cx.hx.abort_edge.take();
@@ -203,7 +206,25 @@ pub struct Mode {
     pub stop_at_resume: bool,
 }
 
+/// The number of runs of a body that the analysis does to find the states
+/// of the re-runs after a `multi` operation of a caller (OL-R2a, plan stage
+/// F16).
+const ROW_ROUNDS: usize = 8;
+
 /// [`run`], with `all`: keep the state of each block.
+///
+/// A node of the body that can wait at a `multi` operation of a handler of
+/// a caller (`crate::factgen::frames::row_multi`, OL-R2a) runs the code
+/// after it again for each later `resume`, from a copy of the frames of the
+/// body: the run goes on from the block after the node with the state of
+/// the node and the heap slots at the `Return`s of the body, until these
+/// states do not change. The state of each re-entry goes to
+/// `clause::Handlers::reentry` (the `Copy` node of the facts).
+///
+/// # Errors
+///
+/// The errors of [`run_from`], and [`AlphaError::Later`] for such a node in
+/// a handled body or a clause (not in scope).
 fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<States, AlphaError> {
     let p = cx.p;
     let b = p
@@ -214,7 +235,89 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
         all,
         stop_at_resume: false,
     };
-    run_from(cx, body, vec![(b.entry, init)], mode).map(|(s, _)| s)
+    let saved = std::mem::take(&mut cx.hx.rows);
+    let r = run_rows(cx, (body, b), &[(b.entry, init)], mode);
+    cx.hx.rows = saved;
+    r
+}
+
+/// The runs of [`run_with`].
+fn run_rows(
+    cx: &mut Cx<'_>,
+    (body, b): (BodyId, &weft_ir::Body),
+    first: &[(BlockId, State)],
+    mode: Mode,
+) -> Result<States, AlphaError> {
+    let p = cx.p;
+    let mut again: std::collections::BTreeMap<BlockId, State> = std::collections::BTreeMap::new();
+    for round in 0..=ROW_ROUNDS {
+        let mut seeds = first.to_vec();
+        seeds.extend(again.iter().map(|(x, s)| (*x, s.clone())));
+        let (states, ends) = run_from(cx, body, seeds, mode)?;
+        let rows = std::mem::take(&mut cx.hx.rows);
+        if rows.is_empty() {
+            return Ok(states);
+        }
+        let root = matches!(
+            b.kind,
+            weft_ir::BodyKind::Fn(_) | weft_ir::BodyKind::Test(_) | weft_ir::BodyKind::Closure(_)
+        );
+        // A node of a handled body that splices into the body: the
+        // `handle` adds its re-entry state to the seeds of the handled body
+        // (`clause::Handlers::extra`). A node of a clause: not in scope.
+        if !root
+            || rows
+                .iter()
+                .any(|r| crate::factgen::handlers::splice_root(p, r.0) != body)
+        {
+            return Err(AlphaError::Later(
+                "a `multi` operation of a handler of a caller in a clause (stage F16)",
+            ));
+        }
+        let mut ret: Option<State> = None;
+        for s in ends.returns.values() {
+            match &mut ret {
+                Some(r) => {
+                    r.join(s);
+                }
+                None => ret = Some(s.clone()),
+            }
+        }
+        let mut changed = false;
+        for (rb, block, next, st) in rows {
+            let mut s = st;
+            if let Some(r) = &ret {
+                s.join_heap(r);
+            }
+            match cx.hx.reentry.get_mut(&(rb, block)) {
+                Some((have, _)) => {
+                    have.join(&s);
+                }
+                None => {
+                    cx.hx.reentry.insert((rb, block), (s.clone(), Tree::none()));
+                }
+            }
+            if rb == body {
+                if let Some(have) = again.get_mut(&next) {
+                    changed |= have.join(&s);
+                } else {
+                    again.insert(next, s);
+                    changed = true;
+                }
+            } else {
+                let seeds = cx.hx.extra.entry(rb).or_default();
+                changed |= clause::join_seed_list(seeds, next, &s);
+            }
+        }
+        if !changed {
+            return Ok(states);
+        }
+        let _ = round;
+    }
+    let _ = p;
+    Err(AlphaError::Later(
+        "a body whose re-runs after a `multi` operation do not end (stage F16)",
+    ))
 }
 
 /// Runs the analysis of body `body` from the states `seeds` at some blocks.

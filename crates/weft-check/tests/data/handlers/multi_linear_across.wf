@@ -1,0 +1,13 @@
+// A linear value of the handled body is live across a `multi` perform:
+// W0503 (the copy would hold it twice), and W0602 (the perform can abort).
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let t = Tx { id: 1 }
+        let b = pick() //~ W0503 W0602
+        commit(t)
+    }
+}

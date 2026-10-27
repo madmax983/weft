@@ -433,3 +433,17 @@ pipeline checks them by default.
   the handled body.
 - `fixes/f15/part/*.wf`: class F15-PART, a clause puts its parameter into a part of a
   local of the site (an old hole of F14 and of the old pipeline; ledger `open-old`).
+
+## Stage F16: `resume`, continuations, `multi` (group D, part 3)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class, and
+each faulting program has a clean twin (`_c`). They use group D, which is off until
+stage F17: the old pipeline checks them by default.
+
+- `fixes/f16/multi/m*.wf`: class F16-MULTI, a `multi` resume runs the rest of the
+  handled body again (the re-entry edge from `Post` to the `Copy` node of the
+  perform). Ledger `open-old` for the old hole `m04_clause_holds_result.wf`.
+- `fixes/f16/multi/olr2a*.wf`: class OL-R2a, a function waits at a `multi` operation
+  of a handler of a caller (the re-entry edge from its `Return`). Ledger `open-old`
+  for the old hole `olr2a.wf`.

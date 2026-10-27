@@ -1,0 +1,13 @@
+// A local of the handled body is in the frames that a `multi` resume
+// copies: each run moves its own copy (no W0302).
+effect Pick { multi fn pick() -> bool }
+fn mk() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+fn main() {
+    let w = handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = mk()
+        let b = pick()
+        v
+    }
+    print(w.len())
+}

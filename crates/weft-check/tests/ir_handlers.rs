@@ -85,15 +85,6 @@ fn check(name: &str) {
     assert_eq!(abcd_codes(name, &src), markers(&src), "{name}");
 }
 
-/// The reason why the `ir` pipeline does not check program `name` with the
-/// groups A to D, if it does not.
-fn fallback(name: &str) -> Option<String> {
-    let src = program(name);
-    let a = analyze_source(&src, abcd(&src))
-        .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
-    a.ir_scope.as_ref().and_then(|s| s.fallback.clone())
-}
-
 /// M1: the clause changes a place after `resume`, and the value of the
 /// handled body points into it (`Post` applies the `post` part). The clause
 /// reads the resume result after the change too.
@@ -152,15 +143,52 @@ fn a_reference_of_a_clause_across_resume_sees_the_changes_of_the_body() {
     check("v8_across_resume.wf");
 }
 
-/// A handler of an effect with a `multi` operation is stage F16: the
-/// program is not in scope.
+/// A handler of an effect with a `multi` operation (plan stage F16): the
+/// clause resumes twice, and each run of the handled body binds its own
+/// locals.
 #[test]
-fn a_multi_handler_is_not_in_scope_until_stage_f16() {
-    let why = fallback("m9_resume_twice_tail.wf");
-    assert!(
-        why.as_deref().is_some_and(|w| w.contains("multi")),
-        "{why:?}"
-    );
+fn a_multi_handler_whose_clause_resumes_twice_is_accepted() {
+    check("m9_resume_twice_tail.wf");
+}
+
+/// O3-14: a `multi` resume runs the rest of the handled body again (the
+/// re-entry edge from `Post` to the perform). A tail move of a local of the
+/// site moves it once for each run; a local of the handled body is copied.
+#[test]
+fn a_multi_resume_moves_a_local_of_the_site_again() {
+    check("multi_tail_site_move.wf");
+    check("multi_tail_body_local.wf");
+}
+
+/// J4: the `Copy` node rebinds only the variables whose places are in the
+/// copied frames. A reference into a place of the site keeps its state.
+#[test]
+fn a_multi_resume_keeps_a_reference_into_the_site_invalid() {
+    check("multi_j4.wf");
+    check("multi_j4_body_local.wf");
+}
+
+/// The clause code between two `resume`s runs at `Post`, before the
+/// re-entry: a change there invalidates what the first run kept.
+#[test]
+fn the_clause_code_between_two_resumes_runs_before_the_second_run() {
+    check("multi_site_ref_cleared.wf");
+    check("multi_site_ref_kept.wf");
+}
+
+/// W0503: a linear value of the handled body live across a `multi` perform.
+#[test]
+fn a_linear_value_across_a_multi_perform_is_w0503() {
+    check("multi_linear_across.wf");
+    check("multi_linear_after.wf");
+}
+
+/// The second `resume` runs the rest of the handled body, which changes the
+/// place that the result of the first `resume` points into.
+#[test]
+fn a_second_resume_invalidates_the_result_of_the_first() {
+    check("multi_clause_holds_result.wf");
+    check("multi_clause_reads_result.wf");
 }
 
 /// A clause that performs the operation of an outer local handler: the

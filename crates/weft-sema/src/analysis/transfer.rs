@@ -1399,9 +1399,24 @@ fn call(
         st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
     }
     apply_apps(cx, st, &out.apps, fns);
+    note_multi_apps(cx, (body, block), &out.apps);
     changed.extend(out.apps.iter().flat_map(|a| a.muts.iter().map(|(q, _)| *q)));
     store_fns(cx, body, st, args, &changed)?;
     bind_result(cx, body, st, args, dest, out.ret)
+}
+
+/// Notes a run node whose function values can resume more than once (a
+/// `multi` operation of a handler of a caller, OL-R2a, plan stage F16): an
+/// applied summary is `multi`. The node gets re-entry edges
+/// (`super::clause::Handlers::dyn_rows`). Only in a program that declares a
+/// `multi` operation and a handler.
+fn note_multi_apps(cx: &mut Cx<'_>, (body, block): (BodyId, weft_ir::BlockId), apps: &[Applied]) {
+    if cx.p.handlers.is_empty() || !crate::factgen::frames::has_multi_ops(cx.tys) {
+        return;
+    }
+    if apps.iter().any(|a| a.summary.multi) {
+        cx.hx.dyn_rows.insert((body, block));
+    }
 }
 
 /// The most levels of values that a run node applies through the runs of
@@ -3350,6 +3365,7 @@ fn call_value(
     let fns = args_linear(cx, body, st, args)?;
     let out = value_out(cx, body, block, st, callee, args, dest)?;
     apply_apps(cx, st, &out.apps, fns);
+    note_multi_apps(cx, (body, block), &out.apps);
     let changed: Vec<PlaceId> = out
         .apps
         .iter()

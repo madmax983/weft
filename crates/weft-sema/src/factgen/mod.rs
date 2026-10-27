@@ -362,13 +362,7 @@ fn check_supported(
                     return no(Group::D, "a closure in a clause of a handler (stage F16)");
                 }
             }
-            BodyKind::Clause(h, _) | BodyKind::Handled(h) => {
-                if p.handlers.get(h.index()).is_some_and(|d| d.multi) {
-                    return no(
-                        Group::D,
-                        "a handler of an effect with a `multi` operation (stage F16)",
-                    );
-                }
+            BodyKind::Clause(..) | BodyKind::Handled(_) => {
                 // A handler in a closure body: its clauses run where the
                 // closure runs (later).
                 if in_closure(p, bid) {
@@ -631,7 +625,7 @@ pub fn emit_parts(
         table.add_body(p, &tys, b, facts, &frames);
     }
     for &b in &spliced {
-        table.splice(p, facts, b);
+        table.splice(p, facts, b, &frames);
     }
     if let Some(first) = table.first(entry, body.entry, nodes::NORMAL) {
         facts.cfg_edge.push((entry_node, first));
@@ -654,18 +648,44 @@ pub fn emit_parts(
     };
     decls::tasks(p, &comp, facts);
     let init = decls::entry_state(p, entry, &params).map_err(|e| unsupported(&e))?;
-    let cycles = crate::analysis::widen::Cycles::of(p, &comp);
-    let states = {
-        let mut cx = crate::analysis::Cx {
-            p,
-            tys: &mut tys,
-            facts,
-            roots: &mut roots,
-            sums,
-            cycles: &cycles,
-            hx: &mut hx,
+    let mut cycles = crate::analysis::widen::Cycles::of(p, &comp);
+    cycles.add_handlers(p, &comp, &frames);
+    cycles.add_rows(p, &tys, sums, &comp);
+    // The re-entry edges after a node that can wait at a `multi` operation
+    // of a handler of a caller (OL-R2a, plan stage F16).
+    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
+        handlers::spliced(p, &comp, entry)
+            .into_iter()
+            .flat_map(|b| {
+                frames::row_multi_nodes(p, &tys, sums, b)
+                    .into_iter()
+                    .map(move |x| (b, x))
+            })
+            .collect();
+    table.row_reentry_edges(p, facts, entry, &known.iter().copied().collect::<Vec<_>>());
+    let states = loop {
+        let st = {
+            let mut cx = crate::analysis::Cx {
+                p,
+                tys: &mut tys,
+                facts,
+                roots: &mut roots,
+                sums,
+                cycles: &cycles,
+                hx: &mut hx,
+            };
+            crate::analysis::run(&mut cx, entry, init.clone()).map_err(|e| unsupported(&e))?
         };
-        crate::analysis::run(&mut cx, entry, init).map_err(|e| unsupported(&e))?
+        // Run nodes whose function values can resume more than once, that
+        // the analysis found: they get re-entry edges, and the analysis runs
+        // again with their cycles (plan stage F16).
+        let new = new_rows(&hx, &mut known);
+        if new.is_empty() {
+            break st;
+        }
+        cycles.add_rows_at(p, &comp, &new);
+        table.row_reentry_edges(p, facts, entry, &new);
+        hx = fresh_handlers(&mut hx);
     };
     let mut uniq: BTreeMap<weft_facts::VarId, bool> = BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
@@ -884,6 +904,31 @@ pub fn emit_parts(
     })
 }
 
+/// The run nodes that the analysis found whose function values can resume
+/// more than once (`clause::Handlers::dyn_rows`, plan stage F16) and that
+/// are not in `known`. They go into `known`.
+fn new_rows(
+    hx: &crate::analysis::clause::Handlers,
+    known: &mut std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)>,
+) -> Vec<(weft_ir::BodyId, weft_ir::BlockId)> {
+    let new: Vec<(weft_ir::BodyId, weft_ir::BlockId)> = hx
+        .dyn_rows
+        .iter()
+        .filter(|k| !known.contains(k))
+        .copied()
+        .collect();
+    known.extend(new.iter().copied());
+    new
+}
+
+/// New tables of the handlers for a new run of the analysis: they keep the
+/// run nodes that a run found ([`new_rows`]).
+fn fresh_handlers(hx: &mut crate::analysis::clause::Handlers) -> crate::analysis::clause::Handlers {
+    let mut out = crate::analysis::clause::Handlers::default();
+    out.dyn_rows = std::mem::take(&mut hx.dyn_rows);
+    out
+}
+
 /// The `Main` node of the `handle` of each handled body of the component
 /// `comp` in the node table `table`.
 fn handled_entries(
@@ -1075,25 +1120,46 @@ fn closure_summary(
     }
     let params = decls::closure_params(p, &mut tys, &mut facts, &mut roots, cb)
         .map_err(|e| unsupported(&e))?;
-    let cycles = crate::analysis::widen::Cycles::of(p, &comp);
+    let mut cycles = crate::analysis::widen::Cycles::of(p, &comp);
+    cycles.add_rows(p, &tys, sums, &comp);
+    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
+        frames::row_multi_nodes(p, &tys, sums, cb)
+            .into_iter()
+            .map(|x| (cb, x))
+            .collect();
+    table.row_reentry_edges(
+        p,
+        &mut facts,
+        cb,
+        &known.iter().copied().collect::<Vec<_>>(),
+    );
     let mut hx = crate::analysis::clause::Handlers::default();
-    let (env, states) = {
-        let mut cx = crate::analysis::Cx {
-            p,
-            tys: &mut tys,
-            facts: &mut facts,
-            roots: &mut roots,
-            sums,
-            cycles: &cycles,
-            hx: &mut hx,
+    let (env, states) = loop {
+        let r = {
+            let mut cx = crate::analysis::Cx {
+                p,
+                tys: &mut tys,
+                facts: &mut facts,
+                roots: &mut roots,
+                sums,
+                cycles: &cycles,
+                hx: &mut hx,
+            };
+            let env = env_value(&mut cx, cb, None).map_err(|e| unsupported(&e))?;
+            let mut init = decls::entry_state(p, cb, &params.entry).map_err(|e| unsupported(&e))?;
+            if let Some(&e) = body.params.first() {
+                init.write((cb, e), &[], env.clone());
+            }
+            let states = crate::analysis::run(&mut cx, cb, init).map_err(|e| unsupported(&e))?;
+            (env, states)
         };
-        let env = env_value(&mut cx, cb, None).map_err(|e| unsupported(&e))?;
-        let mut init = decls::entry_state(p, cb, &params.entry).map_err(|e| unsupported(&e))?;
-        if let Some(&e) = body.params.first() {
-            init.write((cb, e), &[], env.clone());
+        let new = new_rows(&hx, &mut known);
+        if new.is_empty() {
+            break r;
         }
-        let states = crate::analysis::run(&mut cx, cb, init).map_err(|e| unsupported(&e))?;
-        (env, states)
+        cycles.add_rows_at(p, &comp, &new);
+        table.row_reentry_edges(p, &mut facts, cb, &new);
+        hx = fresh_handlers(&mut hx);
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
@@ -1246,28 +1312,45 @@ fn emit_closure(
     if let Some(first) = out.table.first(cb, body.entry, nodes::NORMAL) {
         out.facts.cfg_edge.push((en, first));
     }
+    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
+        frames::row_multi_nodes(p, out.tys, cx.sums, cb)
+            .into_iter()
+            .map(|x| (cb, x))
+            .collect();
+    out.table
+        .row_reentry_edges(p, out.facts, cb, &known.iter().copied().collect::<Vec<_>>());
     let params = decls::closure_params(p, out.tys, out.facts, out.roots, cb)?;
     let mut hx = crate::analysis::clause::Handlers::default();
-    let (env, states) = {
-        let mut acx = crate::analysis::Cx {
-            p,
-            tys: out.tys,
-            facts: out.facts,
-            roots: out.roots,
-            sums: cx.sums,
-            cycles: cx.cycles,
-            hx: &mut hx,
+    let mut cycles = cx.cycles.clone();
+    let (env, states) = loop {
+        let r = {
+            let mut acx = crate::analysis::Cx {
+                p,
+                tys: out.tys,
+                facts: out.facts,
+                roots: out.roots,
+                sums: cx.sums,
+                cycles: &cycles,
+                hx: &mut hx,
+            };
+            let env = env_value(&mut acx, cb, Some(&cx.seed))?;
+            let mut init = cx.seed.clone();
+            for (l, v) in &params.entry {
+                init.write(crate::analysis::transfer::key(p, cb, *l)?, &[], v.clone());
+            }
+            if let Some(&e) = body.params.first() {
+                init.write((cb, e), &[], env.clone());
+            }
+            let states = crate::analysis::run(&mut acx, cb, init)?;
+            (env, states)
         };
-        let env = env_value(&mut acx, cb, Some(&cx.seed))?;
-        let mut init = cx.seed.clone();
-        for (l, v) in &params.entry {
-            init.write(crate::analysis::transfer::key(p, cb, *l)?, &[], v.clone());
+        let new = new_rows(&hx, &mut known);
+        if new.is_empty() {
+            break r;
         }
-        if let Some(&e) = body.params.first() {
-            init.write((cb, e), &[], env.clone());
-        }
-        let states = crate::analysis::run(&mut acx, cb, init)?;
-        (env, states)
+        cycles.add_rows_at(p, &[cb], &new);
+        out.table.row_reentry_edges(p, out.facts, cb, &new);
+        hx = fresh_handlers(&mut hx);
     };
     let mut em = templates::Em {
         p,
@@ -1283,7 +1366,7 @@ fn emit_closure(
         uniq: out.uniq,
         skip_s: None,
         sums: cx.sums,
-        cycles: cx.cycles,
+        cycles: &cycles,
         stored: Vec::new(),
         at: (weft_ir::BlockId(0), 0),
         returns: Vec::new(),
@@ -1337,7 +1420,7 @@ fn emit_clause(
         out.table.add_body(p, out.tys, b, out.facts, frames);
     }
     for &b in &spliced {
-        out.table.splice(p, out.facts, b);
+        out.table.splice(p, out.facts, b, frames);
     }
     let sp = weft_facts::Span {
         lo: body.origin.span.lo,
@@ -2016,14 +2099,32 @@ fn emit_block(
         })
         .collect();
     handlers::unbound_at_aborts(em, block, &values);
-    let phases = [Phase::Main, Phase::Ret, Phase::FrameEnd];
-    for m in phases
+    // A node that a `multi` resume runs again (plan stage F16): its `Copy`
+    // node, and its `Ret` and `FrameEnd` see the state of the re-run too.
+    let copy = (dest == NORMAL)
+        .then(|| table.get(at(Phase::Copy, NORMAL)))
+        .flatten();
+    let rerun = copy.and_then(|_| em.hx.reentry.get(&(bid, block)).map(|(s, _)| s.clone()));
+    let joined = rerun.as_ref().map(|r| {
+        let mut j = st.clone();
+        j.join(r);
+        j
+    });
+    for (ph, m) in [Phase::Main, Phase::Ret, Phase::FrameEnd]
         .iter()
-        .filter_map(|&ph| table.get(at(ph, dest)))
-        .chain(aborts.iter().copied())
-        .chain(values.iter().map(|(_, n)| *n))
+        .filter_map(|&ph| table.get(at(ph, dest)).map(|m| (ph, m)))
     {
+        let s = match (&joined, ph) {
+            (Some(j), Phase::Ret | Phase::FrameEnd) => j,
+            _ => &st,
+        };
+        em.holders.before(m, s, em.facts);
+    }
+    for m in aborts.iter().copied().chain(values.iter().map(|(_, n)| *n)) {
         em.holders.before(m, &st, em.facts);
+    }
+    if let (Some(c), Some(r)) = (copy, &rerun) {
+        em.holders.before(c, r, em.facts);
     }
     em.at = (block, TERM);
     match &blk.term.kind {
@@ -2070,6 +2171,18 @@ fn emit_block(
         }
         _ => templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?,
     }
+    if let (Some(c), Some(_)) = (copy, &rerun) {
+        // The copied frames: up to the local handler, or up to the `Return`
+        // of the function for a handler of a caller.
+        let row = frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind)
+            || em.hx.dyn_rows.contains(&(bid, block));
+        let root = if row {
+            handlers::splice_root(em.p, bid)
+        } else {
+            frames.reentry_root(em.p, bid, block).unwrap_or(bid)
+        };
+        handlers::copy_node(em, (c, n), (block, root), &st, &blk.term.kind);
+    }
     Ok(st)
 }
 
@@ -2101,6 +2214,19 @@ fn emit_handle(
     let hbody = p
         .body(hb)
         .ok_or_else(|| alpha::AlphaError::BadPlace(format!("no body b{}", hb.0)))?;
+    // The re-entries of a `multi` handler (plan stage F16): the `Copy` node
+    // of each node that runs its clause sees the state of the re-run.
+    for (b, blk, s, v) in &out.reentries {
+        match em.hx.reentry.get_mut(&(*b, *blk)) {
+            Some((have, hv)) => {
+                have.join(s);
+                hv.join(v);
+            }
+            None => {
+                em.hx.reentry.insert((*b, *blk), (s.clone(), v.clone()));
+            }
+        }
+    }
     let saved = (em.ret_places.take(), em.cleanup, em.skip_s);
     em.body = hb;
     let r = emit_blocks(em, table, frames, &out.states, hbody);
@@ -2124,14 +2250,18 @@ fn emit_handle(
     if let Some(post) = table.get(at(Phase::Post)) {
         em.holders.before(post, &out.after, em.facts);
         // A clause that can run more than once runs its code after
-        // `resume` once for each run: again at `PostAgain` (plan stage
-        // F15).
-        let again = table.get(at(Phase::PostAgain));
-        if let Some(a) = again {
-            em.holders.before(a, &out.after, em.facts);
+        // `resume` once for each run: `Post` is in a cycle through the
+        // `Copy` node of the `handle` (plan stages F15, F16).
+        if let Some(c) = table.get(at(Phase::Copy)) {
+            em.holders.before(c, &out.after, em.facts);
         }
-        let posts: Vec<weft_facts::NodeId> = std::iter::once(post).chain(again).collect();
-        handlers::handle_post(em, exit, &posts, h);
+        // A later `resume` of a `multi` clause runs the rest of the handled
+        // body again at `Post`: its aborts unwind the handled bodies up to
+        // their local handlers (plan stage F16).
+        let spares = crate::analysis::clause::multi_twice(p, h)
+            .then(|| frames.rerun_spares(p, h))
+            .flatten();
+        handlers::handle_post(em, exit, &[post], (h, spares));
     }
     if let Some(landing) = table.get(at(Phase::Landing)) {
         em.holders.before(

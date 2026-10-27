@@ -37,8 +37,11 @@
 //! and a `resume` there gives back the value of the handled body and the
 //! state at its end ([`resume`]).
 //!
-//! Not yet: a handler of an effect with a `multi` operation (re-entry
-//! edges, stage F16).
+//! A clause of a `multi` operation that can resume more than once runs the
+//! rest of the handled body again from the node that ran it (plan stage
+//! F16): the run of the handled body goes on from the block after each such
+//! node, with the locals of the handled body as at the node (their copies)
+//! and the locals of the site as at the later `resume` ([`handle_run`]).
 
 use std::collections::BTreeMap;
 
@@ -86,6 +89,25 @@ pub struct Handlers {
     /// terminator of each block can assign (one bit set for each block;
     /// `crate::factgen::handlers::unassigned`).
     pub assigned: BTreeMap<BodyId, Vec<Vec<u64>>>,
+    /// The state at the re-entry of each node of a handled body that runs a
+    /// clause of a `multi` handler (plan stage F16): the state before its
+    /// `Copy` node, by body and block, with the values that the later
+    /// `resume`s give to a perform.
+    pub reentry: BTreeMap<(BodyId, BlockId), (State, Tree)>,
+    /// The re-entry seeds of the handled bodies inside other bodies: a
+    /// node of such a body that a later `resume` runs again (plan stage
+    /// F16). The `handle` of the body adds them to the seeds of its run
+    /// ([`handle_run`]).
+    pub extra: BTreeMap<BodyId, Vec<(BlockId, State)>>,
+    /// The nodes that can wait at a `multi` operation of a handler of a
+    /// caller (`crate::factgen::frames::row_multi`, OL-R2a) that the run of
+    /// a body passed: the body, the block, the block after the node and the
+    /// state on its normal edge (`super::run`).
+    pub rows: Vec<(BodyId, BlockId, BlockId, State)>,
+    /// The run nodes whose function values can resume more than once (the
+    /// analysis finds them: an applied summary is `multi`, plan stage F16).
+    /// They are nodes of `crate::factgen::frames::row_multi` too.
+    pub dyn_rows: std::collections::BTreeSet<(BodyId, BlockId)>,
 }
 
 /// The state of the abort edge of a terminator that runs a clause.
@@ -156,7 +178,40 @@ struct Open {
     landing: Option<State>,
     /// The join of the values of the clauses that ended with no `resume`.
     landing_value: Tree,
+    /// The nodes of the handled body that run a clause of a `multi`
+    /// handler that can resume more than once ([`multi_twice`]), with the
+    /// state on their normal edge (plan stage F16): a later `resume` runs
+    /// the code after them again.
+    reentries: Vec<Reentry>,
+    /// A node in a body inside the handled body runs such a clause (not
+    /// in scope).
+    nested: bool,
+    /// The value and the state (before the `resume`) of each `resume` that
+    /// the code of a clause after its first resume point runs: a second
+    /// `resume` of a `multi` continuation (plan stage F16).
+    again: Vec<(Tree, State)>,
 }
+
+/// A node of the handled body that runs a clause that can resume more than
+/// once (plan stage F16).
+#[derive(Clone, Debug)]
+struct Reentry {
+    /// The body of the node.
+    body: BodyId,
+    /// The block of the node.
+    block: BlockId,
+    /// The block after the node.
+    next: BlockId,
+    /// The destination of a perform: it gets the values of the later
+    /// `resume`s too. None for a call (the callee gives its result).
+    dest: Option<Place>,
+    /// The state on the normal edge of the node.
+    state: State,
+}
+
+/// The number of runs of a handled body that the analysis does to find the
+/// states of the re-runs of a `multi` handler (plan stage F16).
+const MULTI_ROUNDS: usize = 8;
 
 /// What the runs of one handler found.
 #[derive(Clone, Debug, Default)]
@@ -188,6 +243,26 @@ impl Handlers {
     fn open_mut(&mut self, h: HandlerId) -> Option<&mut Open> {
         self.open.iter_mut().rev().find(|o| o.handler == h)
     }
+}
+
+/// True if body `b` is handled body `hb`, or a handled body whose nodes
+/// splice into `hb` (through the handled bodies on the way): its frames
+/// are frames of a run of `hb`.
+pub fn spliced_into(p: &Program, b: BodyId, hb: BodyId) -> bool {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        if at == hb {
+            return true;
+        }
+        let Some(x) = p.bodies.get(at.index()) else {
+            return false;
+        };
+        match (x.kind, x.parent) {
+            (BodyKind::Handled(_), Some(site)) => at = site,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// True if body `b` is body `root` or a body inside it: the parent chain of
@@ -301,16 +376,97 @@ pub fn handler_lands(p: &Program, h: HandlerId, op: Option<weft_ir::OpIdx>) -> b
 /// The handler `h`, or [`AlphaError::Later`] for a handler of a later
 /// stage.
 fn handler(p: &Program, h: HandlerId) -> Result<&weft_ir::HandlerDecl, AlphaError> {
-    let hd = p
-        .handlers
+    p.handlers
         .get(h.index())
-        .ok_or_else(|| AlphaError::BadPlace(format!("no handler h{}", h.0)))?;
-    if hd.multi {
-        return Err(AlphaError::Later(
-            "a handler of an effect with a `multi` operation (stage F16)",
-        ));
+        .ok_or_else(|| AlphaError::BadPlace(format!("no handler h{}", h.0)))
+}
+
+/// True if clause body `cb` can resume its continuation more than once.
+///
+/// The continuation is `multi`, and a path from the entry passes two
+/// `Resume`s (also one `Resume` in a cycle), or a body inside the clause can
+/// resume it (plan stage F16).
+pub fn resumes_twice(p: &Program, cb: BodyId) -> bool {
+    let Some(b) = p.body(cb) else {
+        return false;
+    };
+    if !b.kont.is_some_and(|(_, multi)| multi) {
+        return false;
     }
-    Ok(hd)
+    // A body inside the clause (a closure, a handled body) can resume the
+    // continuation of the clause: count it as twice.
+    let inner = p.bodies.iter().enumerate().any(|(i, x)| {
+        let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        id != cb
+            && inside_or_made(p, id, cb)
+            && x.blocks
+                .iter()
+                .any(|blk| !blk.cleanup && matches!(blk.term.kind, TermKind::Resume { .. }))
+    });
+    if inner {
+        return true;
+    }
+    // A walk over (block, resumes passed, capped at 2).
+    let mut seen = vec![[false; 3]; b.blocks.len()];
+    let mut work = vec![(b.entry, 0usize)];
+    while let Some((at, n)) = work.pop() {
+        if n >= 2 {
+            return true;
+        }
+        match seen.get_mut(at.index()).and_then(|s| s.get_mut(n)) {
+            Some(s) if !*s => *s = true,
+            _ => continue,
+        }
+        let Some(blk) = b.blocks.get(at.index()) else {
+            continue;
+        };
+        if blk.cleanup {
+            continue;
+        }
+        let n = if matches!(blk.term.kind, TermKind::Resume { .. }) {
+            n + 1
+        } else {
+            n
+        };
+        work.extend(
+            blk.term
+                .kind
+                .normal_successors()
+                .into_iter()
+                .map(|x| (x, n)),
+        );
+    }
+    false
+}
+
+/// True if body `b` is body `root`, a body inside it, or a closure that a
+/// body inside it makes (through the parents and the makers).
+fn inside_or_made(p: &Program, b: BodyId, root: BodyId) -> bool {
+    let mut at = Some(b);
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = at else {
+            return false;
+        };
+        if x == root {
+            return true;
+        }
+        at = p.bodies.get(x.index()).and_then(|d| match d.kind {
+            BodyKind::Closure(c) => p.closures.get(c.index()).map(|cd| cd.maker),
+            _ => d.parent,
+        });
+    }
+    false
+}
+
+/// True if a clause of handler `h` can resume more than once.
+///
+/// The clause is of a `multi` operation ([`resumes_twice`]): a node that
+/// runs the clause runs the code after it again (the re-entry edges, plan
+/// stage F16).
+pub fn multi_twice(p: &Program, h: HandlerId) -> bool {
+    p.handlers
+        .get(h.index())
+        .is_some_and(|d| d.multi && d.clauses.iter().any(|&(_, c)| resumes_twice(p, c)))
 }
 
 /// The body `b`.
@@ -359,6 +515,12 @@ pub struct HandleOut {
     /// The join of the states where a clause ended with no `resume` (the
     /// state at the `Landing` node), with no local of a clause.
     pub landing: Option<State>,
+    /// The re-entries of a `multi` handler (plan stage F16): the body and
+    /// the block of each node of the handled body (or of a handled body
+    /// inside it) that runs a clause that can resume more than once, the
+    /// state before its `Copy` node, and the values that the later
+    /// `resume`s give to a perform.
+    pub reentries: Vec<(BodyId, BlockId, State, Tree)>,
 }
 
 /// The run of a `handle` of handler `h` in body `body`, from the state `st`
@@ -370,7 +532,7 @@ pub struct HandleOut {
 /// handler of a later stage.
 pub fn handle_run(
     cx: &mut Cx<'_>,
-    body: BodyId,
+    _body: BodyId,
     st: &State,
     h: HandlerId,
 ) -> Result<HandleOut, AlphaError> {
@@ -379,16 +541,147 @@ pub fn handle_run(
     let hb = hd.handled;
     let hbody = body_of(p, hb)?;
     let init = handled_entry(cx, st, h)?;
-    cx.hx.open.push(Open {
-        handler: h,
-        resumes: Vec::new(),
-        landing: None,
-        landing_value: Tree::none(),
-    });
-    let run = run_from(cx, hb, vec![(hbody.entry, init)], Mode::default());
+    let clauses: Vec<BodyId> = hd.clauses.iter().map(|(_, c)| *c).collect();
+    let multi = multi_twice(p, h);
+    // A `multi` resume runs the code after a node that runs a clause again,
+    // from the copy of the frames of the handled body at that node (plan
+    // stage F16): the runs of the handled body go on until the states at
+    // these re-entries do not change. A node in a handled body inside `hb`
+    // gets its re-entry state through `Handlers::extra` (the `handle` of
+    // that body adds it to its seeds).
+    let mut again: BTreeMap<BlockId, State> = BTreeMap::new();
+    let mut round = 0usize;
+    loop {
+        let mut seeds = vec![(hbody.entry, init.clone())];
+        seeds.extend(again.iter().map(|(b, s)| (*b, s.clone())));
+        seeds.extend(cx.hx.extra.get(&hb).into_iter().flatten().cloned());
+        let r = run_handled(cx, (h, hb, &clauses), st, seeds)?;
+        if !multi || r.again.is_empty() {
+            return Ok(finish_handle(cx, h, hb, r, Vec::new()));
+        }
+        if r.nested {
+            return Err(AlphaError::Later(
+                "a `multi` resume of a node in a clause or a closure inside the handled body (stage F16)",
+            ));
+        }
+        // The state where a later `resume` starts the rest of the handled
+        // body: the locals of the site as at that `resume`, the locals of
+        // the handled body as at the node (their copies).
+        let mut back: Option<State> = None;
+        let mut values = Tree::none();
+        for (v, s) in &r.again {
+            values.join(v);
+            let mut s = s.clone();
+            s.remove_bodies(&|b| clauses.iter().any(|&c| inside(p, b, c)));
+            match &mut back {
+                Some(x) => {
+                    x.join(&s);
+                }
+                None => back = Some(s),
+            }
+        }
+        let back = back.unwrap_or_default();
+        let mut changed = false;
+        let mut out: Vec<(BodyId, BlockId, State, Tree)> = Vec::new();
+        for re in &r.reentries {
+            let mut s = back.with_bodies_of(&re.state, &|b| inside(p, b, hb));
+            s.join_heap(&re.state);
+            if let Some(dest) = &re.dest {
+                if let Some((k, path)) = transfer::move_path(p, re.body, dest)? {
+                    let mut v = s.value(k, &path);
+                    v.join(&values);
+                    transfer::bind_result(cx, re.body, &mut s, &[], dest, v)?;
+                }
+            }
+            out.push((re.body, re.block, s.clone(), values.clone()));
+            if re.body == hb {
+                changed |= join_seed(&mut again, re.next, &s);
+            } else {
+                let seeds = cx.hx.extra.entry(re.body).or_default();
+                changed |= join_seed_list(seeds, re.next, &s);
+            }
+        }
+        if !changed {
+            return Ok(finish_handle(cx, h, hb, r, out));
+        }
+        round += 1;
+        if round > MULTI_ROUNDS {
+            return Err(AlphaError::Later(
+                "a `multi` handled body whose re-runs do not end (stage F16)",
+            ));
+        }
+    }
+}
+
+/// Joins the state `s` into the seed of block `b` in `seeds`. Returns true
+/// if the seed changed.
+fn join_seed(seeds: &mut BTreeMap<BlockId, State>, b: BlockId, s: &State) -> bool {
+    if let Some(have) = seeds.get_mut(&b) {
+        return have.join(s);
+    }
+    seeds.insert(b, s.clone());
+    true
+}
+
+/// Joins the state `s` into the seed of block `b` in the list `seeds`.
+/// Returns true if the seed changed.
+pub fn join_seed_list(seeds: &mut Vec<(BlockId, State)>, b: BlockId, s: &State) -> bool {
+    if let Some((_, have)) = seeds.iter_mut().find(|(x, _)| *x == b) {
+        return have.join(s);
+    }
+    seeds.push((b, s.clone()));
+    true
+}
+
+/// What one run of a handled body and of the code of its clauses after
+/// their resume points gives ([`run_handled`]).
+struct HandledRun {
+    /// The states of the handled body.
+    states: States,
+    /// The state at the `Exit` node.
+    exit: Option<State>,
+    /// The state after the `handle` (see [`HandleOut::after`]), with the
+    /// locals of the handled body and of the clauses.
+    after: State,
+    /// The value of the handled body.
+    body_value: Tree,
+    /// What a `resume` gives back.
+    resumed: Tree,
+    /// The values of the clauses after a `resume`.
+    clause_values: Tree,
+    /// The record of the run of the handled body.
+    open: Open,
+    /// The `resume`s of the code of the clauses after their first resume
+    /// point: their values and the states before them.
+    again: Vec<(Tree, State)>,
+    /// The nodes of the handled body that run a clause that can resume
+    /// more than once.
+    reentries: Vec<Reentry>,
+    /// Such a node is in a body inside the handled body.
+    nested: bool,
+}
+
+/// One run of the handled body `hb` of handler `h` from the states `seeds`
+/// (the entry, and the re-entries of a `multi` handler), then the code of
+/// each clause after its resume points. `st` is the state before the
+/// `handle`.
+///
+/// # Errors
+///
+/// The errors of the transfer functions.
+fn run_handled(
+    cx: &mut Cx<'_>,
+    (h, hb, clauses): (HandlerId, BodyId, &[BodyId]),
+    st: &State,
+    seeds: Vec<(BlockId, State)>,
+) -> Result<HandledRun, AlphaError> {
+    let p = cx.p;
+    let hbody = body_of(p, hb)?;
+    cx.hx.open.push(Open::new(h));
+    let run = run_from(cx, hb, seeds, Mode::default());
     let open = cx.hx.open.pop();
     let (states, ends) = run?;
-    let open = open.ok_or_else(|| AlphaError::BadPlace("no open handler".to_string()))?;
+    let mut open = open.ok_or_else(|| AlphaError::BadPlace("no open handler".to_string()))?;
     let mut exit: Option<State> = None;
     for s in ends.returns.values() {
         match &mut exit {
@@ -403,22 +696,32 @@ pub fn handle_run(
         .map_or_else(Tree::none, |e| e.value((hb, hbody.ret), &[]));
     // The code of each clause after its resume points: a `resume` gives back
     // the value of the handled body, or the value of a clause that resumed
-    // (a nested run of a clause).
+    // (a nested run of a clause). A later `resume` there (a `multi`
+    // continuation) goes to the record of the handler.
     let mut resumed = body_value.clone();
     let mut post: Vec<State> = Vec::new();
     let mut clause_values = Tree::none();
+    let mut again: Vec<(Tree, State)> = Vec::new();
     if let Some(ex) = &exit {
         for _ in 0..POST_ROUNDS {
             post.clear();
             let mut vals = Tree::none();
-            for (cb, seeds) in post_seeds(cx, &open.resumes, ex, &resumed)? {
-                let ret = body_of(p, cb)?.ret;
-                let (_, ends) = run_from(cx, cb, seeds, Mode::default())?;
-                for s in ends.returns.into_values() {
-                    vals.join(&s.value((cb, ret), &[]));
-                    post.push(s);
+            cx.hx.open.push(Open::new(h));
+            let mut run = || -> Result<(), AlphaError> {
+                for (cb, seeds) in post_seeds(cx, &open.resumes, ex, &resumed)? {
+                    let ret = body_of(p, cb)?.ret;
+                    let (_, ends) = run_from(cx, cb, seeds, Mode::default())?;
+                    for s in ends.returns.into_values() {
+                        vals.join(&s.value((cb, ret), &[]));
+                        post.push(s);
+                    }
                 }
-            }
+                Ok(())
+            };
+            let r = run();
+            let rec = cx.hx.open.pop();
+            r?;
+            again = rec.map(|o| o.again).unwrap_or_default();
             let mut all = body_value.clone();
             all.join(&vals);
             clause_values = vals;
@@ -428,7 +731,6 @@ pub fn handle_run(
             resumed = all;
         }
     }
-    let landing = open.landing.clone();
     let mut after: Option<State> = exit.clone();
     for s in post.iter().chain(open.landing.iter()) {
         match &mut after {
@@ -438,8 +740,44 @@ pub fn handle_run(
             None => after = Some(s.clone()),
         }
     }
-    let mut after = after.unwrap_or_else(|| st.clone());
-    let clauses: Vec<BodyId> = hd.clauses.iter().map(|(_, c)| *c).collect();
+    let after = after.unwrap_or_else(|| st.clone());
+    let _ = clauses;
+    let reentries = std::mem::take(&mut open.reentries);
+    let nested = open.nested;
+    Ok(HandledRun {
+        states,
+        exit,
+        after,
+        body_value,
+        resumed,
+        clause_values,
+        open,
+        again,
+        reentries,
+        nested,
+    })
+}
+
+/// The end of the run of a `handle` of handler `h` with handled body `hb`
+/// ([`handle_run`]): the state after it, its value, and what the handler
+/// keeps ([`Info`]). `reentries` are the re-entries of a `multi` handler:
+/// the body and the block of each node, the state before its `Copy` node
+/// and the values of the later `resume`s.
+fn finish_handle(
+    cx: &mut Cx<'_>,
+    h: HandlerId,
+    hb: BodyId,
+    r: HandledRun,
+    reentries: Vec<(BodyId, BlockId, State, Tree)>,
+) -> HandleOut {
+    let p = cx.p;
+    let clauses: Vec<BodyId> = p
+        .handlers
+        .get(h.index())
+        .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
+        .unwrap_or_default();
+    let landing = r.open.landing.clone();
+    let mut after = r.after;
     // A closure that the handled body makes keeps the values of the locals
     // that it captures (`Kept`, `ByRef`): it can run after the `handle`.
     let captured: Vec<(super::Key, Tree)> = captured_locals(p, hb)
@@ -450,11 +788,11 @@ pub fn handle_run(
     for (k, t) in captured {
         after.keep_value(k, t);
     }
-    let mut value = body_value;
-    value.join(&clause_values);
-    value.join(&open.landing_value);
+    let mut value = r.body_value;
+    value.join(&r.clause_values);
+    value.join(&r.open.landing_value);
     let info = cx.hx.info.entry(h).or_default();
-    if let Some(ex) = &exit {
+    if let Some(ex) = &r.exit {
         match &mut info.exit {
             Some(e) => {
                 e.join(ex);
@@ -462,15 +800,89 @@ pub fn handle_run(
             None => info.exit = Some(ex.clone()),
         }
     }
-    info.resumed.join(&resumed);
-    let _ = body;
-    Ok(HandleOut {
-        states,
-        exit,
+    info.resumed.join(&r.resumed);
+    HandleOut {
+        states: r.states,
+        exit: r.exit,
         after,
         value,
         landing,
-    })
+        reentries,
+    }
+}
+
+impl Open {
+    /// The record of a run of the handled body of handler `h`.
+    const fn new(h: HandlerId) -> Self {
+        Self {
+            handler: h,
+            resumes: Vec::new(),
+            landing: None,
+            landing_value: Tree::none(),
+            reentries: Vec::new(),
+            nested: false,
+            again: Vec::new(),
+        }
+    }
+}
+
+/// Notes a node that a later `resume` can run again (plan stage F16).
+///
+/// Terminator `t` of block `block` of body `body` runs a clause of a
+/// `multi` handler that can resume more than once, with the state `st` on
+/// its normal edge: the run of the handled body of the handler gets it
+/// ([`handle_run`]). A node that can wait at a `multi` operation of a
+/// caller goes to `Handlers::rows` (`super::run`).
+pub fn note_reentry(cx: &mut Cx<'_>, body: BodyId, block: BlockId, t: &TermKind, st: &State) {
+    let p = cx.p;
+    // A node that can wait at a `multi` operation of a caller (OL-R2a).
+    if crate::factgen::frames::row_multi(p, cx.tys, cx.sums, body, t)
+        || cx.hx.dyn_rows.contains(&(body, block))
+    {
+        if let Some(next) = t.normal_successors().first() {
+            cx.hx.rows.push((body, block, *next, st.clone()));
+        }
+    }
+    let (hs, dest, next): (Vec<HandlerId>, Option<Place>, Option<BlockId>) = match t {
+        TermKind::Perform {
+            cap: weft_ir::CapOperand::Local(cap),
+            dest,
+            next,
+            ..
+        } => (
+            cap_handler(p, body, cap).into_iter().collect(),
+            Some(dest.clone()),
+            Some(*next),
+        ),
+        TermKind::Call { next, .. } => (call_handlers(cx, body, t), None, *next),
+        _ => return,
+    };
+    let Some(next) = next else {
+        return;
+    };
+    for h in hs {
+        if !multi_twice(p, h) {
+            continue;
+        }
+        let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+            continue;
+        };
+        let spliced = spliced_into(p, body, hb);
+        let Some(o) = cx.hx.open_mut(h) else {
+            continue;
+        };
+        if !spliced {
+            o.nested = true;
+            continue;
+        }
+        o.reentries.push(Reentry {
+            body,
+            block,
+            next,
+            dest: dest.clone(),
+            state: st.clone(),
+        });
+    }
 }
 
 /// The locals of handled body `hb` (and of the bodies inside it) that a
@@ -1210,6 +1622,15 @@ pub fn resume(
     let (h, _, _) = kont_handler(p, body, kont)
         .ok_or(AlphaError::Later("a continuation in a closure (stage F16)"))?;
     handler(p, h)?;
+    // A `resume` in the code of a clause after its first resume point,
+    // while the handled body runs: a `multi` continuation runs the rest of
+    // the handled body again (plan stage F16).
+    if cx.hx.open.iter().any(|o| o.handler == h) {
+        let v = transfer::operand(cx, body, st, arg)?;
+        if let Some(o) = cx.hx.open_mut(h) {
+            o.again.push((v, st.clone()));
+        }
+    }
     let info = cx.hx.info(h).cloned().unwrap_or_default();
     resume_with(
         cx,

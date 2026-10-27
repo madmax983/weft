@@ -94,6 +94,120 @@ impl Dest {
     }
 }
 
+/// True if the program declares an operation that is `multi`.
+pub fn has_multi_ops(tys: &TyTable) -> bool {
+    tys.effects().iter().any(|e| e.ops.iter().any(|o| o.multi))
+}
+
+/// True if terminator `t` of body `body` can wait at a `multi` operation of
+/// a handler of a caller (OL-R2a, plan stage F16).
+///
+/// The handler can resume it more than once: then the code after it runs
+/// again, up to the `Return` of the body, from a copy of the frames of the
+/// body (the re-entry edges of `docs/ir.md` 6.5).
+///
+/// It is a `perform` of a `multi` operation through the row; a call of a
+/// function whose summary performs a `multi` operation through the row that
+/// no local handler handles, or that can resume more than once for another
+/// reason; a call of a function value whose type states a row with a
+/// `multi` operation. The analysis adds the run nodes whose function values
+/// can resume more than once (`clause::Handlers::dyn_rows`).
+/// Only in a program that declares a `multi` operation and a handler (a
+/// program with no handler, group D off, has no `resume`).
+pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKind) -> bool {
+    // A program with no handler cannot resume a continuation more than once.
+    if p.handlers.is_empty() || !has_multi_ops(tys) {
+        return false;
+    }
+    let multi_effect = |id: &str| {
+        tys.effects()
+            .iter()
+            .any(|e| e.identity == id && e.ops.iter().any(|o| o.multi))
+    };
+    match t {
+        TermKind::Perform {
+            cap: CapOperand::Row(e),
+            op,
+            ..
+        } => tys
+            .effects()
+            .get(e.index())
+            .and_then(|d| d.ops.get(op.index()))
+            .is_some_and(|o| o.multi),
+        TermKind::Call {
+            callee: Callee::Fn(f, _),
+            caps,
+            ..
+        } => {
+            let env = match caps {
+                CapArgs::Lexical(e) => Some(*e),
+                CapArgs::Root => None,
+            };
+            let past =
+                |effect: &str| env.is_none_or(|e| resolve(p, tys, e, effect, true) == Dest::Past);
+            match sums.get(*f) {
+                Ok(s) => {
+                    let mut multi_ops = s
+                        .performs
+                        .iter()
+                        .filter(|pf| multi_effect(&pf.effect))
+                        .peekable();
+                    let explained = multi_ops.peek().is_some();
+                    let by_row = s.performs.iter().any(|pf| {
+                        matches!(pf.cap, CapIface::Row)
+                            && multi_effect(&pf.effect)
+                            && past(&pf.effect)
+                    });
+                    by_row || (s.multi && !explained)
+                }
+                Err(_) => true,
+            }
+        }
+        TermKind::Call {
+            callee: Callee::Value(f),
+            ..
+        } => {
+            let ty = p.body(body).and_then(|b| match f {
+                weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) if q.proj.is_empty() => {
+                    b.local(q.local).map(|d| d.ty)
+                }
+                _ => None,
+            });
+            // A value with no stated row, or that runs a function value of
+            // its own: the analysis finds the summaries that it applies
+            // (`clause::Handlers::dyn_rows`).
+            match ty.and_then(|t| tys.try_get(t)) {
+                Some(weft_ir::Ty::Fn(fty)) => fty.row.as_ref().is_some_and(|row| {
+                    row.iter().any(|e| {
+                        tys.effects()
+                            .get(e.index())
+                            .is_some_and(|d| d.ops.iter().any(|o| o.multi))
+                    })
+                }),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The blocks of body `body` whose terminator can wait at a `multi`
+/// operation of a handler of a caller ([`row_multi`]).
+pub fn row_multi_nodes(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId) -> Vec<BlockId> {
+    let Some(b) = p.body(body) else {
+        return Vec::new();
+    };
+    if p.handlers.is_empty() || !has_multi_ops(tys) {
+        return Vec::new();
+    }
+    b.blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, blk)| !blk.cleanup && row_multi(p, tys, sums, body, &blk.term.kind))
+        .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect()
+}
+
 /// The identity of effect `e`.
 fn identity(tys: &TyTable, e: weft_ir::EffectId) -> Option<&str> {
     tys.effects().get(e.index()).map(|d| d.identity.as_str())
@@ -340,6 +454,9 @@ pub struct Frames {
     /// The handlers whose clauses can run more than once in one run of the
     /// handled body ([`Frames::runs_twice`]).
     twice: std::collections::BTreeSet<HandlerId>,
+    /// The nodes of the handled body of each `multi` handler that run a
+    /// clause that can resume more than once ([`Frames::reentries`]).
+    reentry: BTreeMap<HandlerId, Vec<(BodyId, BlockId)>>,
 }
 
 impl Frames {
@@ -398,13 +515,44 @@ impl Frames {
         }
         f.clause_aborts(p, &order);
         f.twice = f.twice_of(p);
+        for (&(body, block), hs) in &f.runs {
+            for &h in hs {
+                let hb = p.handlers.get(h.index()).map(|d| d.handled);
+                if hb.is_some_and(|hb| crate::analysis::clause::spliced_into(p, body, hb))
+                    && crate::analysis::clause::multi_twice(p, h)
+                {
+                    f.reentry.entry(h).or_default().push((body, block));
+                }
+            }
+        }
         f
+    }
+
+    /// The nodes of the handled body of handler `h` that run a clause that
+    /// can resume more than once (a `multi` operation, plan stage F16): a
+    /// later `resume` runs the code after each of them again. The fact
+    /// generator links `Post` of the `handle` to the `Copy` node of each
+    /// (the re-entry edges, `docs/ir.md` 6.5).
+    pub fn reentries(&self, h: HandlerId) -> &[(BodyId, BlockId)] {
+        self.reentry.get(&h).map_or(&[], Vec::as_slice)
+    }
+
+    /// The handled body of the outermost local handler whose later `resume`
+    /// runs the terminator of block `block` of body `body` again
+    /// ([`Self::reentries`]): the frames up to it are copied.
+    pub fn reentry_root(&self, p: &Program, body: BodyId, block: BlockId) -> Option<BodyId> {
+        self.reentry
+            .iter()
+            .filter(|(_, v)| v.contains(&(body, block)))
+            .filter_map(|(h, _)| p.handlers.get(h.index()).map(|d| d.handled))
+            .min()
     }
 
     /// True if a clause of handler `h` can run more than once in one run
     /// of its handled body: the code of each run after its `resume` runs at
-    /// the end of the handled body, so `Post` runs that code twice
-    /// (`Phase::PostAgain`, plan stage F15).
+    /// the end of the handled body, so `Post` runs that code once for each
+    /// run (a cycle through a `Copy` node of the `handle`, plan stages F15
+    /// and F16).
     pub fn runs_twice(&self, h: HandlerId) -> bool {
         self.twice.contains(&h)
     }
@@ -506,6 +654,26 @@ impl Frames {
             }
         }
         out
+    }
+
+    /// The handled bodies that an abort of a re-run of the handled body of
+    /// handler `h` unwinds (plan stage F16): a `resume` of a clause of `h`
+    /// after the first one runs the rest of the handled body again, so the
+    /// `Post` node of the `handle` can abort where the handled body can. An
+    /// abort to `h` unwinds the handled body of `h`, an abort to an outer
+    /// local handler the handled bodies up to it. None if an abort can go
+    /// past the function (no variable is spared).
+    pub fn rerun_spares(&self, p: &Program, h: HandlerId) -> Option<Vec<BodyId>> {
+        let mut out = vec![p.handlers.get(h.index())?.handled];
+        for d in self.past_handler(p, h) {
+            match d {
+                Dest::Past => return None,
+                Dest::Handler { handler, .. } => out.push(p.handlers.get(handler.index())?.handled),
+            }
+        }
+        out.sort();
+        out.dedup();
+        Some(out)
     }
 
     /// The destinations of the aborts of the handled body of handler `h`

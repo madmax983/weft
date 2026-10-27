@@ -1,0 +1,17 @@
+// The first run puts a reference into a local of the site; the clause
+// clears its place before the second `resume`; the second run reads the
+// local: W0301 (the re-entry edge goes from `Post` to the perform).
+effect Pick { multi fn pick() -> bool }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let keep = &w[0]
+    handle Pick { fn pick() { resume(true); v.clear(); resume(false) } } in {
+        let b = pick()
+        print(keep + 1) //~ W0301
+        keep = &v[0]
+    }
+}

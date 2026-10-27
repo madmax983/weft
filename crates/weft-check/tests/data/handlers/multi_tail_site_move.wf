@@ -1,0 +1,14 @@
+// O3-14: the handled body of a `multi` handler ends with a local of the
+// site. Each `resume` runs the rest of the body again (a re-entry edge), so
+// the tail moves `v` once for each run: the second move is W0302.
+effect Pick { multi fn pick() -> bool }
+fn mk() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+fn main() {
+    let v = mk()
+    let w = handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let b = pick()
+        v //~ W0302
+    }
+    print(w.len())
+}

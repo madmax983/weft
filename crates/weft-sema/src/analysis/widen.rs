@@ -128,6 +128,107 @@ impl Cycles {
         out
     }
 
+    /// Adds the cycles of the re-entry edges of the facts (`docs/ir.md` 6.5,
+    /// plan stage F16): each block of the handled body of a handler whose
+    /// clause a `multi` resume can run more than once, and of the bodies that
+    /// splice into it, and each block of the clauses of a handler whose
+    /// clauses can run more than once (their code after `resume` runs at
+    /// `Post`, in a cycle). One-place instances are off there (V097).
+    pub fn add_handlers(
+        &mut self,
+        p: &Program,
+        comp: &[BodyId],
+        frames: &crate::factgen::frames::Frames,
+    ) {
+        for (i, hd) in p.handlers.iter().enumerate() {
+            let h = weft_ir::HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
+            if !comp.contains(&hd.handled) {
+                continue;
+            }
+            let multi = !frames.reentries(h).is_empty();
+            let twice = multi || frames.runs_twice(h);
+            if !twice {
+                continue;
+            }
+            let roots: Vec<BodyId> = hd
+                .clauses
+                .iter()
+                .map(|(_, c)| *c)
+                .chain(multi.then_some(hd.handled))
+                .collect();
+            for &bid in comp {
+                if !roots
+                    .iter()
+                    .any(|&r| crate::analysis::clause::inside(p, bid, r))
+                {
+                    continue;
+                }
+                if let Some(b) = p.bodies.get(bid.index()) {
+                    for i in 0..b.blocks.len() {
+                        self.blocks
+                            .insert((bid, BlockId(u32::try_from(i).unwrap_or(u32::MAX))));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Adds the cycles of the re-entry edges after a node that can wait at a
+    /// `multi` operation of a handler of a caller (OL-R2a, plan stage F16):
+    /// each block of a body of `comp` that such a node of the body reaches,
+    /// and each block of the handled bodies that splice into the body.
+    pub fn add_rows(
+        &mut self,
+        p: &Program,
+        tys: &weft_ir::TyTable,
+        sums: &super::Summaries,
+        comp: &[BodyId],
+    ) {
+        let rows: Vec<(BodyId, BlockId)> = comp
+            .iter()
+            .flat_map(|&bid| {
+                crate::factgen::frames::row_multi_nodes(p, tys, sums, bid)
+                    .into_iter()
+                    .map(move |x| (bid, x))
+            })
+            .collect();
+        self.add_rows_at(p, comp, &rows);
+    }
+
+    /// [`Self::add_rows`] for the nodes `rows` (a body and a block).
+    pub fn add_rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)]) {
+        let bodies: BTreeSet<BodyId> = rows.iter().map(|r| r.0).collect();
+        for bid in bodies {
+            let rows: Vec<BlockId> = rows.iter().filter(|r| r.0 == bid).map(|r| r.1).collect();
+            let Some(b) = p.bodies.get(bid.index()) else {
+                continue;
+            };
+            let mut seen = vec![false; b.blocks.len()];
+            let mut work = rows;
+            while let Some(x) = work.pop() {
+                match seen.get_mut(x.index()) {
+                    Some(s) if !*s => *s = true,
+                    _ => continue,
+                }
+                self.blocks.insert((bid, x));
+                if let Some(blk) = b.blocks.get(x.index()) {
+                    work.extend(blk.term.kind.unwind());
+                    work.extend(blk.term.kind.normal_successors());
+                }
+            }
+            for &other in comp {
+                if other != bid && crate::factgen::handlers::splice_root(p, other) == bid {
+                    if let Some(ob) = p.bodies.get(other.index()) {
+                        for i in 0..ob.blocks.len() {
+                            self.blocks
+                                .insert((other, BlockId(u32::try_from(i).unwrap_or(u32::MAX))));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// True if block `block` of body `body` is in a cycle.
     pub fn has(&self, body: BodyId, block: BlockId) -> bool {
         self.blocks.contains(&(body, block))

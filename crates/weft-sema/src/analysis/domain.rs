@@ -639,6 +639,11 @@ impl State {
                 .any(|p| is_prefix(p, path) || is_prefix(path, p))
     }
 
+    /// Each local that has a value, with its value.
+    pub fn trees(&self) -> impl Iterator<Item = (&Key, &Tree)> {
+        self.vals.iter().map(|(k, t)| (k, &**t))
+    }
+
     /// The places of the value of each local: the places of each part of
     /// its tree (for the widening at a loop head, `super::widen`).
     pub fn places(&self) -> BTreeMap<Key, BTreeSet<PlaceId>> {
@@ -770,6 +775,23 @@ impl State {
         changed |= self.may.union(&o.may);
         changed |= self.must.intersect(&o.must);
         changed |= self.holes.union(&o.holes);
+        if !Rc::ptr_eq(&self.behind, &o.behind) {
+            for (q, refs) in o.behind.iter() {
+                changed |= self.store_behind(*q, refs.iter().copied());
+            }
+        }
+        if !Rc::ptr_eq(&self.behind_fns, &o.behind_fns) {
+            for (q, fns) in o.behind_fns.iter() {
+                changed |= self.store_fns_behind(*q, fns.iter().cloned());
+            }
+        }
+        changed
+    }
+
+    /// Joins the heap slots of `o` (`behind`, `behind_fns`) into `self`; the
+    /// values of the locals stay. Returns true if `self` changed.
+    pub fn join_heap(&mut self, o: &Self) -> bool {
+        let mut changed = false;
         if !Rc::ptr_eq(&self.behind, &o.behind) {
             for (q, refs) in o.behind.iter() {
                 changed |= self.store_behind(*q, refs.iter().copied());

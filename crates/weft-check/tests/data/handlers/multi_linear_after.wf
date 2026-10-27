@@ -1,0 +1,13 @@
+// The twin of `multi_linear_across.wf`: the linear value starts after the
+// perform, in each run.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let b = pick()
+        let t = Tx { id: 1 }
+        commit(t)
+    }
+}

@@ -1203,13 +1203,22 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         "{}",
         checked.stderr
     );
-    // A program that is not in scope (a `multi` handler, stage F16): the
-    // oracle checks nothing.
+    // A `multi` handler (plan stage F16): the oracle checks the program.
     let multi = format!("{INTERP}/multi_choose.wf");
     let looped = cmd(&["run", "--fact-oracle", &multi]);
+    assert_eq!(looped.code, 0, "{}", looped.stderr);
     assert!(
-        looped.stderr.contains("the oracle checks nothing"),
+        looped.stderr.contains("note: --fact-oracle: 7 frame(s)"),
         "{}",
         looped.stderr
+    );
+    // A program that is not in scope (a task, stage F18): the oracle checks
+    // nothing.
+    let task = format!("{INTERP}/fork.wf");
+    let out = cmd(&["run", "--fact-oracle", &task]);
+    assert!(
+        out.stderr.contains("the oracle checks nothing"),
+        "{}",
+        out.stderr
     );
 }

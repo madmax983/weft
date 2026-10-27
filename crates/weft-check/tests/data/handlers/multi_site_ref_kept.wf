@@ -1,0 +1,16 @@
+// The twin of `multi_site_ref_cleared.wf`: the clause does not change the
+// place between the two runs.
+effect Pick { multi fn pick() -> bool }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let keep = &w[0]
+    handle Pick { fn pick() { resume(true); v.push(3); resume(false) } } in {
+        let b = pick()
+        print(keep + 1)
+        keep = &w[0]
+    }
+}

@@ -1164,8 +1164,9 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
 }
 
 /// The relations that the code of a clause gives to a node that runs it
-/// (plan stage F14, `factgen::handlers::project`).
-const CLAUSE_PART: [&str; 15] = [
+/// (plan stage F14, `factgen::handlers::project`), and `spared_at` (`Post`
+/// of a `multi` handler, plan stage F16).
+const CLAUSE_PART: [&str; 16] = [
     "cfg_edge",
     "uses",
     "moved_at",
@@ -1181,6 +1182,7 @@ const CLAUSE_PART: [&str; 15] = [
     "performs_at",
     "may_abort",
     "multi_at",
+    "spared_at",
 ];
 
 /// The relations that the template of each node label can emit
@@ -1198,7 +1200,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // `Live` of the temporary that the value of an assignment starts
         // with binds the `N` variables of the variant steps of the target
         // (stage F8d, `docs/ir.md` 6.3).
-        "live" => (&["cfg_edge", "rebound_at"], &[]),
+        // The `Copy` node of a `handle` whose clauses can run more than once
+        // (plan stages F15, F16): `Post` runs again after it.
+        "live" | "handle copy" => (&["cfg_edge", "rebound_at"], &[]),
         "unwind continuation" | "goto" | "unreachable" | "resume frame end" => (&["cfg_edge"], &[]),
         // The end of an abort to a local handler: the frames of the clauses
         // end (plan stage F14).
@@ -1400,10 +1404,25 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // `Post`: the code of the clauses after their resume points
-        // (`factgen::handlers::project`); the frames of the clauses end.
-        // `PostAgain`: the code of a clause that can run more than once runs
-        // again (plan stage F15).
-        "handle post" | "handle post again" => (&CLAUSE_PART, &[]),
+        // (`factgen::handlers::project`); the frames of the clauses end. A
+        // later `resume` of a `multi` clause runs the handled body again
+        // there: the values outside it are spared (plan stage F16).
+        "handle post" => (&CLAUSE_PART, &[]),
+        // The `Copy` node of a node that a `multi` resume runs again (plan
+        // stage F16): the locals of the copied frames get new values, a call
+        // runs the code of its callee after the perform again, and the
+        // linear value of the `handle` of the first run ends.
+        "perform copy" | "call copy" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "lends_mut",
+                "releases_at",
+                "moved_at",
+            ],
+            &[],
+        ),
         "resume frame end (abort)" => (&["cfg_edge", "unwound_at"], &[]),
         // A `resume`: its operand, the continuation, and the rest of the
         // handled body (`factgen::handlers::continuations`).
@@ -2852,13 +2871,17 @@ fn a_perform_aborts_to_its_handler_only_if_the_clause_can_end_with_no_resume() {
         "{some:?}"
     );
     // The clause of `twice` runs at two performs: its code after `resume`
-    // runs at `Post` and again at `PostAgain`.
+    // runs at `Post` once for each run, in a cycle through the `Copy` node
+    // of the `handle` (plan stage F16).
     let f = ir_facts_with(RESUMES, abcd(), "twice");
     check_templates(&f, "twice");
-    assert_eq!(nodes_labelled(&f, "handle post").len(), 1);
-    assert_eq!(nodes_labelled(&f, "handle post again").len(), 1);
+    let post = nodes_labelled(&f, "handle post");
+    let copy = nodes_labelled(&f, "handle copy");
+    assert_eq!((post.len(), copy.len()), (1, 1));
+    assert!(f.cfg_edge.contains(&(post[0], copy[0])));
+    assert!(f.cfg_edge.contains(&(copy[0], post[0])));
     let g = ir_facts_with(RESUMES, abcd(), "each");
-    assert!(nodes_labelled(&g, "handle post again").is_empty());
+    assert!(nodes_labelled(&g, "handle copy").is_empty());
     assert!(nodes_labelled(&g, "handle landing").len() <= 1);
     assert!(nodes_labelled(&g, "perform abort value (abort)").is_empty());
 }
@@ -3110,4 +3133,65 @@ fn a_closure_that_runs_a_capture_applies_the_value_of_the_capture() {
         .find(|&n| f.node(n).span == span)
         .unwrap_or_else(|| panic!("no `Ret` of the call of `f`"));
     assert!(f.uses.contains(&(r, ret)), "{:?}", f.uses);
+}
+
+/// Programs with `multi` handlers (plan stage F16): a local handler whose
+/// clause resumes twice, and a function that performs a `multi` operation
+/// of a handler of a caller (OL-R2a).
+const MULTI: &str = "effect Pick { multi fn pick() -> bool }
+fn local(o: &Vec<u64>) / mut(o) {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let w = Vec.new()
+        w.push(1)
+        let r = &o[0]
+        let q = &w[0]
+        let b = pick()
+        print(r + q)
+    }
+}
+fn row(o: &Vec<u64>) / Pick {
+    let w = Vec.new()
+    w.push(1)
+    let r = &o[0]
+    let b = pick()
+    print(w[0] + r)
+}
+fn main() {}
+";
+
+#[test]
+fn a_multi_resume_runs_the_code_after_the_perform_again_from_copied_frames() {
+    // A local handler: `Post` goes to the `Copy` node of the perform, then
+    // to its `Ret`. The copy rebinds `q` (it points into a local of the
+    // handled body), not `r` (it points into a place of the parameter).
+    let f = ir_facts_with(MULTI, abcd(), "local");
+    check_templates(&f, "local");
+    let post = nodes_labelled(&f, "handle post");
+    let copy = nodes_labelled(&f, "perform copy");
+    let ret = nodes_labelled(&f, "perform ret");
+    assert_eq!((post.len(), copy.len(), ret.len()), (1, 1, 1));
+    assert!(f.cfg_edge.contains(&(post[0], copy[0])));
+    assert!(f.cfg_edge.contains(&(copy[0], ret[0])));
+    let (q, r) = (var_named(&f, "q"), var_named(&f, "r"));
+    assert!(f.rebound_at.contains(&(q, copy[0])));
+    assert!(!f.rebound_at.contains(&(r, copy[0])));
+    // The clause resumes twice: each perform of its operation is a `multi`
+    // point (W0503).
+    assert_eq!(f.clause_multi.len(), 1);
+    // A handler of a caller (OL-R2a): each `Return` of the function goes to
+    // the `Copy` node of the perform.
+    let g = ir_facts_with(MULTI, abcd(), "row");
+    check_templates(&g, "row");
+    let copy = nodes_labelled(&g, "perform copy");
+    let ret = nodes_labelled(&g, "perform ret");
+    let returns = nodes_labelled(&g, "return");
+    assert_eq!((copy.len(), ret.len()), (1, 1));
+    assert!(!returns.is_empty());
+    for x in returns {
+        assert!(g.cfg_edge.contains(&(x, copy[0])));
+    }
+    assert!(g.cfg_edge.contains(&(copy[0], ret[0])));
+    let (w, r) = (var_named(&g, "w"), var_named(&g, "r"));
+    assert!(g.rebound_at.contains(&(w, copy[0])));
+    assert!(!g.rebound_at.contains(&(r, copy[0])));
 }

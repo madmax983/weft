@@ -1,0 +1,14 @@
+// The twin of J4: the reference points into a local of the handled body,
+// which the `multi` resume copies (the `Copy` node rebinds `r`).
+effect Pick { multi fn pick() -> bool }
+
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let o = Vec.new()
+        o.push(1)
+        let r = &o[0]
+        let b = pick()
+        print(r + 1)
+        o.clear()
+    }
+}

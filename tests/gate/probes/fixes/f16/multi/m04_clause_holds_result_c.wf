@@ -1,0 +1,19 @@
+// F16-MULTI: a `multi` resume runs the rest of the handled body again (re-entry from `Post`)
+effect Pick { multi fn pick() -> bool }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let n = handle Pick {
+        fn pick() {
+            let a = resume(true)
+            print(a + 1)
+            let c = resume(false)
+            c
+        }
+    } in {
+        let b = pick()
+        if !b { v.push(9); v.push(9); v.push(9); v.push(9) }
+        &v[0]
+    }
+    print(n + 1)
+}

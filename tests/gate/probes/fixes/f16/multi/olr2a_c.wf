@@ -1,0 +1,18 @@
+// F16-OLR2A: a function waits at a `multi` operation of a handler of a caller (re-entry from its `Return`)
+effect Choice { multi fn choose() -> bool }
+
+fn f(v: &Vec<u64>) / Choice, mut(v) {
+    let b = choose()
+    let r = &v[0]
+    print(r + 1)
+    v.clear()
+    v.push(2)
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        f(&v)
+    }
+}

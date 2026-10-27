@@ -1870,7 +1870,7 @@ pub struct NodeKey {
 | `Call`, `Resume` | `Main` → `Ret` → `FrameEnd` → next | `Main` → [`AbortValue(d)` if `d` is a local handler whose clause gives a value] → `FrameEnd(d)` → the cleanup copy for `d` |
 | `Perform` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)`] → the cleanup copy for `d` |
 | `Join`, `Fork` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler: a child failure, 6.5] → the cleanup copy for `d` |
-| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → [`PostAgain` if a clause can run more than once] → next | the end of an abort to this handler: `Landing` → next |
+| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → next; [`Post` → `Copy` → `Post` if a clause can run more than once] | the end of an abort to this handler: `Landing` → next |
 | `Scope` | `Main` → (the spliced scope body) → `Exit` → `FrameEnd` → next | through the chain of the scope body to the cleanup copy of the `Scope` |
 | `ScopeWait` | `Main` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler] → the cleanup copy for `d` |
 | `Assert` | `Main` → next | `Main` → the cleanup copy past the function (a failed `assert` ends the task, `abort_task`) |
@@ -2688,6 +2688,7 @@ As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
   another handler that can run more than once: `Frames::runs_twice`) runs its code
   after `resume` once for each run: `Post` and `PostAgain` both get the `post` part,
   and the frames of the clauses end at each (F15-TWICE: a move there is a second move).
+  Stage F16 replaces `PostAgain` with a cycle `Post` → `Copy` → `Post`.
 - An abort to a local handler: each local of the body of the terminator that a closure
   captures (`Kept`, `ByRef`), that can hold a reference, and that no path from the entry
   to the terminator assigns binds at the `AbortValue` node (`rebound_at`, `empty_at`;
@@ -2706,6 +2707,62 @@ As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
   (`crates/weft-check/tests/ir_handlers.rs`), but a version of a part or of a heap slot
   binds at each node where it is not current, also at a node that invalidates it (also
   in the default pipeline: `h.0 = &v[0]; h.0 = &w[0]; v.clear()`).
+
+As built (plan stage F16, `analysis/clause.rs`, `analysis/mod.rs`,
+`factgen/frames.rs`, `factgen/nodes.rs`, `factgen/handlers.rs`; group D stays a
+preview with `--groups ABCD` until stage F17):
+
+- `multi` handlers. A clause *resumes twice* if its continuation is `multi` and a
+  path from its entry passes two `Resume`s (or one in a cycle), or a body inside the
+  clause can resume (`clause::resumes_twice`); a handler of such a clause is
+  `clause::multi_twice`. `Handle` `Main` gives `clause_multi` of its capability, so
+  each node that runs the clause is a `multi` point (W0503 by the rule of the spec).
+- Re-entry edges of a local handler. The nodes of the handled body (and of the
+  handled bodies that splice into it) that run such a clause
+  (`Frames::reentries`) get a `Copy` node: `Post` → `P.Copy` → `P.Ret`. The clause
+  code between two `resume`s runs at `Post` (the `post` part), then the rest of the
+  handled body runs again. A node in a clause or a closure inside the handled body
+  is not in scope.
+- Re-entry edges of a handler of a caller (OL-R2a). A node that can wait at a
+  `multi` operation of a caller (`frames::row_multi`: a perform of a `multi`
+  operation through the row; a call whose summary performs one through the row that
+  no local handler handles, or runs a function value, or is `multi` for another
+  reason; a call of a function value that can perform the effects of the caller)
+  gets a `Copy` node with an edge from each `Return` of the function (or closure)
+  body: `Return` → `P.Copy` → `P.Ret`. Only in a program that declares a `multi`
+  operation and a handler: with no handler (group D off) the facts do not change.
+  A node in a clause is not in scope.
+- The `Copy` rule (`handlers::copy_node`). The copied frames are the frames of the
+  handled body (local handler) or of the function (handler of a caller), with the
+  handled bodies that splice into them, and the callee frame of a call. Each variable
+  of a local of these frames whose value before the node points only into them
+  (or that has no value there) gets `rebound_at` and `empty_at` at `Copy`; a linear
+  value gets no `empty_at` (its copy is linear, W0503 at the node). A variable that
+  points outside keeps its state (J4). At the `Copy` node of a call the changes and
+  the frees of the call apply again (the callee runs its code after the perform
+  again), and the linear value that the first run gave to the destination of the
+  `handle` ends (`moved_at`): it went to the `resume` of the clause. `Exit` moves a
+  linear `_0` of the handled body.
+- A clause that runs more than once in one run of the handled body (F15-TWICE) runs
+  its code after `resume` at `Post` once for each run: a cycle `Post` → `Copy` (of
+  the `handle`) → `Post`, in place of the two-run node `PostAgain`.
+- The analysis runs the handled body again from the block after each such node
+  (`clause::handle_run`): the locals of the handled body get their values at the
+  node, the locals of the site the values at a later `resume` of the clause code
+  after its first resume point, and the destination of a perform the values of the
+  later `resume`s too; the runs go on until these states do not change
+  (`MULTI_ROUNDS`; a node in a handled body inside the handled body gets its seed
+  through `Handlers::extra`). The analysis of a function or closure body runs the
+  code after a node of `row_multi` again from the state of the node and the heap
+  slots of the `Return`s (`analysis::run`). The state of each re-entry goes to the
+  `Copy` node, and to `Ret` and `FrameEnd` of the node (joined with the state of
+  the first run), for the versions of the part holders.
+- One-place instances are off on the cycles of the re-entry edges
+  (`Cycles::add_handlers`, `Cycles::add_rows`; V097).
+- `Post` of a `multi` handler spares the variables outside the handled bodies that
+  an abort of a re-run of the handled body unwinds (`Frames::rerun_spares`): a
+  `resume` in the clause code after the first one runs the handled body again
+  (OR4).
 
 ### 6.6 The analysis
 

@@ -5287,3 +5287,90 @@ group = "AD"
 stage = "F15"
 repro = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot_c.wf"]
 note = "the clean twin of F15-PART"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/m01_tail_site_move.wf"]
+code = "W0302"
+note = "a `multi` resume runs the rest of the handled body again (the re-entry edge from `Post` to the `Copy` node of the perform): a tail move of a local of the site moves it again (O3-14 class)"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/multi/m02_site_ref_cleared_post.wf",
+    "tests/gate/probes/fixes/f16/multi/m04_clause_holds_result.wf",
+    "tests/gate/probes/fixes/f16/multi/m05_j4.wf",
+]
+code = "W0301"
+note = "the clause code between two `resume`s runs at `Post`, and the `Copy` node keeps the state of a variable that points outside the copied frames (J4 class); the second `resume` runs the rest of the handled body, which invalidates the result of the first `resume` that the clause keeps (an old hole)"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/m03_linear_across.wf"]
+code = "W0503"
+note = "a linear value of the handled body live across a perform whose clause resumes twice (`clause_multi`)"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/multi/m01_tail_site_move_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m02_site_ref_cleared_post_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m03_linear_across_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m04_clause_holds_result_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m05_j4_c.wf",
+]
+note = "the clean twins of F16-MULTI: the `Copy` node rebinds the variables whose places are all in the copied frames"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a.wf"]
+code = "W0301"
+note = "a function waits at a `multi` operation of a handler of a caller: each `Return` of the function goes to the `Copy` node of the perform, and a reference into a place of a parameter keeps its state (re-entry edges for handlers of a caller, an old hole)"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a_move.wf"]
+code = "W0502"
+note = "a callee runs a `once` closure after a `multi` operation of a caller: the run is on the cycle of the re-entry edge, so the closure runs twice"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a_c.wf"]
+note = "the clean twin of OL-R2a"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a_move_c.wf"]
+note = "the clean twin of OL-R2a (a closure that moves nothing)"
