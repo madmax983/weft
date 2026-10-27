@@ -258,6 +258,7 @@ pub fn summarize(
     out.named.extend(made_named);
     out.raises |= applied.contains(&Abort::Raises);
     out.assert |= applied.contains(&Abort::Assert);
+    out.gives_frame |= gives_frame(ir, tys, sums, (facts, roots), comp, nodes);
     for &b in comp.iter().filter(|&&b| ir.closure_of(b).is_none()) {
         let Some(body) = ir.bodies.get(b.index()) else {
             continue;
@@ -288,6 +289,74 @@ pub fn summarize(
         }
     }
     out
+}
+
+/// True if a body can give a place of its own frame to an operation of a
+/// caller (`Summary::gives_frame`, plan stage F15).
+///
+/// An effect leaves the body (`escapes_at` at a node of the function
+/// component, the first `nodes` nodes), and a node that lets an effect
+/// leave (also in a clause) gives the code there a place of a local (`call_arg`: an argument of a perform through the capability
+/// of a caller, or of a call); or a call in the body runs a callee that
+/// gives its frame and performs an effect that leaves the body (no local
+/// handler of the body handles it), or runs a function value.
+fn gives_frame(
+    ir: &weft_ir::Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    (facts, roots): (&FnFacts, &Roots),
+    comp: &[BodyId],
+    nodes: usize,
+) -> bool {
+    // The effects that leave the body: at the nodes of the function
+    // component (the code of the clauses there too, `handlers::project`).
+    if !facts.escapes_at.iter().any(|(n, _)| n.index() < nodes) {
+        return false;
+    }
+    // The nodes where code gets places: also the nodes of the clauses of the
+    // body, whose performs through the capability of a caller give the
+    // places of their parameters (a local of a callee, `clause::given`).
+    let escapes: std::collections::HashSet<weft_facts::NodeId> =
+        facts.escapes_at.iter().map(|(n, _)| *n).collect();
+    let local = |q: PlaceId| {
+        let root = facts.place(q).root;
+        matches!(
+            roots.role(root),
+            Some(Role::Local(_) | Role::Frame(_) | Role::Cell(_))
+        )
+    };
+    if facts
+        .call_arg
+        .iter()
+        .any(|&(n, q, _)| escapes.contains(&n) && local(q))
+    {
+        return true;
+    }
+    comp.iter()
+        .filter(|&&b| ir.closure_of(b).is_none())
+        .filter_map(|&b| ir.body(b))
+        .flat_map(|b| &b.blocks)
+        .any(|blk| match &blk.term.kind {
+            TermKind::Call {
+                callee: Callee::Fn(f, _),
+                caps,
+                ..
+            } => sums.get(*f).is_ok_and(|s| {
+                s.gives_frame
+                    && s.performs.iter().any(|pf| match (&pf.cap, caps) {
+                        (super::summary::CapIface::Row, weft_ir::CapArgs::Lexical(env)) => {
+                            crate::factgen::frames::resolve(ir, tys, *env, &pf.effect, true)
+                                == crate::factgen::frames::Dest::Past
+                        }
+                        _ => true,
+                    })
+            }),
+            TermKind::Call {
+                callee: Callee::Value(_),
+                ..
+            } => true,
+            _ => false,
+        })
 }
 
 /// What the fact generation of a body gives for its function values (stage
@@ -1079,6 +1148,9 @@ pub fn closure(
         out.performs.insert(pf);
     }
     out.aborts.extend(aborts.iter().cloned());
+    // A closure that performs through the capability of a caller can give
+    // a place of its frame to an operation (plan stage F15).
+    out.gives_frame = !facts.escapes_at.is_empty();
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can.
     out.multi = !facts.multi_at.is_empty();

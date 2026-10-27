@@ -201,6 +201,9 @@ pub fn code_of_caller(
         s.ret.places.push(IPlace::wild(IRoot::Caller));
     }
     s.aborts.insert(Abort::Raises);
+    // The code can give a place that it gets to an operation (plan stage
+    // F15).
+    s.gives_frame = true;
     // A stated row: the code performs its effects (with no row the effects
     // of the value pass through, ADR 0005).
     for e in row.unwrap_or(&[]) {

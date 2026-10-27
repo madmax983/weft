@@ -1401,7 +1401,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         ),
         // `Post`: the code of the clauses after their resume points
         // (`factgen::handlers::project`); the frames of the clauses end.
-        "handle post" => (&CLAUSE_PART, &[]),
+        // `PostAgain`: the code of a clause that can run more than once runs
+        // again (plan stage F15).
+        "handle post" | "handle post again" => (&CLAUSE_PART, &[]),
         "resume frame end (abort)" => (&["cfg_edge", "unwound_at"], &[]),
         // A `resume`: its operand, the continuation, and the rest of the
         // handled body (`factgen::handlers::continuations`).
@@ -2771,6 +2773,120 @@ fn a_child_failure_aborts_to_the_local_fail_handler_and_a_cancel_past_the_functi
             "and one past the function"
         );
     }
+}
+
+/// Clauses that resume on each path, and on some paths (plan stage F15).
+const RESUMES: &str = "effect Op { fn op(n: u64) }
+effect Keep { fn keep(r: &u64) }
+fn each(v: &Vec<u64>) / mut(v) {
+    handle Op { fn op(n) { v.clear(); if n > 0 { resume(()) } else { resume(()) } } } in op(1)
+}
+fn some(v: &Vec<u64>) / mut(v) {
+    handle Op { fn op(n) { v.clear(); if n > 0 { resume(()) } } } in op(1)
+}
+fn twice() {
+    let t = 0
+    handle Op { fn op(n) { resume(()); print(t) } } in {
+        op(1)
+        op(2)
+    }
+}
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn given(g: &Vec<u64>) / Keep {
+    keep(&g[0])
+}
+fn keeps() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in deep()
+    print(last)
+}
+fn main() {}
+";
+
+/// The options of the `ir` pipeline with the groups A to D on.
+fn abcd() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("ABCD").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::default()
+    }
+}
+
+#[test]
+fn a_perform_aborts_to_its_handler_only_if_the_clause_can_end_with_no_resume() {
+    use weft_sema::factgen::frames::{self, Dest};
+    let (a, b) = built(RESUMES);
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let p = &b.program;
+    let performs = |f: &str| -> Vec<(Vec<Dest>, Vec<HandlerId>)> {
+        let site = body_of(&b, f);
+        let hb = p
+            .handlers
+            .iter()
+            .find(|h| h.site == site)
+            .unwrap_or_else(|| panic!("no handle in `{f}`"))
+            .handled;
+        p.bodies[hb.index()]
+            .blocks
+            .iter()
+            .filter(|blk| matches!(blk.term.kind, TermKind::Perform { .. }))
+            .map(|blk| {
+                (
+                    frames::destinations(p, &b.tys, &sums, hb, &blk.term.kind),
+                    frames::clause_handlers(p, &b.tys, &sums, hb, &blk.term.kind),
+                )
+            })
+            .collect()
+    };
+    let each = performs("each");
+    assert_eq!(each.len(), 1, "{each:?}");
+    assert!(each[0].0.is_empty(), "no abort edge: {each:?}");
+    assert_eq!(each[0].1.len(), 1, "the perform runs the clause");
+    let some = performs("some");
+    assert!(
+        matches!(some[0].0.as_slice(), [Dest::Handler { value: true, .. }]),
+        "{some:?}"
+    );
+    // The clause of `twice` runs at two performs: its code after `resume`
+    // runs at `Post` and again at `PostAgain`.
+    let f = ir_facts_with(RESUMES, abcd(), "twice");
+    check_templates(&f, "twice");
+    assert_eq!(nodes_labelled(&f, "handle post").len(), 1);
+    assert_eq!(nodes_labelled(&f, "handle post again").len(), 1);
+    let g = ir_facts_with(RESUMES, abcd(), "each");
+    assert!(nodes_labelled(&g, "handle post again").is_empty());
+    assert!(nodes_labelled(&g, "handle landing").len() <= 1);
+    assert!(nodes_labelled(&g, "perform abort value (abort)").is_empty());
+}
+
+#[test]
+fn a_call_gives_a_clause_the_places_of_the_callee_frame_and_of_its_arguments() {
+    let (a, b) = built(RESUMES);
+    // `deep` gives a local of its frame to the operation, `given` a place
+    // of its argument.
+    assert!(summary_named(&a, &b, "deep").gives_frame);
+    assert!(!summary_named(&a, &b, "given").gives_frame);
+    let f = ir_facts_with(RESUMES, abcd(), "keeps");
+    check_templates(&f, "keeps");
+    let last = var_named(&f, "last");
+    assert!(
+        points(&f, last).contains("a local of deep.."),
+        "{:?}",
+        points(&f, last)
+    );
+    // The frame of `deep` ends at the end of the call.
+    let frame = var_named(&f, "a local of `deep`");
+    let ends: Vec<&str> = f
+        .scope_end
+        .iter()
+        .filter(|(v, _)| *v == frame)
+        .map(|(_, n)| f.nodes[n.index()].kind.as_str())
+        .collect();
+    assert!(ends.contains(&"call frame end"), "{ends:?}");
 }
 
 // ------------------------------------------------------- the fact oracle

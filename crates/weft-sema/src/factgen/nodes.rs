@@ -46,6 +46,11 @@ pub enum Phase {
     /// After `Exit` of a `handle`: the code of each clause after its `resume`
     /// runs; then the capability and the frames of the clauses end.
     Post,
+    /// After `Post` of a `handle` whose clauses can run more than once in
+    /// one run of the handled body: the code of each clause after its
+    /// `resume` runs again (once for each run of the clause, plan stage
+    /// F15).
+    PostAgain,
     /// The unwinding of a handled body ended at its `handle`: the capability
     /// and the frames of the clauses end.
     Landing,
@@ -64,6 +69,7 @@ impl Phase {
             Self::AbortValue => "abort value",
             Self::Exit => "exit",
             Self::Post => "post",
+            Self::PostAgain => "post again",
             Self::Landing => "landing",
             Self::Copy => "copy",
         }
@@ -402,8 +408,9 @@ impl NodeTable {
         // The nodes of each copy of each block, and the edges inside it.
         for (bi, blk) in b.blocks.iter().enumerate() {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+            let twice = matches!(blk.term.kind, TermKind::Handle { handler, .. } if frames.runs_twice(handler));
             for dest in copies_of(block, blk.cleanup) {
-                self.block_nodes(body, b, block, dest, names.get(&block), facts);
+                self.block_nodes(body, b, (block, twice), dest, names.get(&block), facts);
             }
         }
         // The edges between blocks.
@@ -418,12 +425,13 @@ impl NodeTable {
 
     /// Adds the nodes of copy `dest` of block `block` and the edges between them.
     /// `callee` is the name of the callee of the terminator: the label of
-    /// each of its nodes.
+    /// each of its nodes. With `twice`, a `handle` gets a `PostAgain` node
+    /// after its `Post` node (its clauses can run more than once).
     fn block_nodes(
         &mut self,
         body: BodyId,
         b: &Body,
-        block: BlockId,
+        (block, twice): (BlockId, bool),
         dest: u32,
         callee: Option<&String>,
         facts: &mut FnFacts,
@@ -460,7 +468,11 @@ impl NodeTable {
         // The handled body runs between `Main` and `Exit` of a `handle`
         // (the splice, [`NodeTable::splice`]): no edge from `Main` to `Exit`.
         let handle = matches!(blk.term.kind, TermKind::Handle { .. });
-        for phase in normal_phases(&blk.term.kind) {
+        let mut phases = normal_phases(&blk.term.kind);
+        if handle && twice {
+            phases.push(Phase::PostAgain);
+        }
+        for phase in phases {
             if handle && phase == Phase::Exit {
                 last = None;
             }
@@ -556,9 +568,11 @@ impl NodeTable {
             phase,
             dest,
         };
-        let last = normal_phases(kind)
-            .last()
-            .and_then(|ph| self.get(at(*ph, dest)));
+        let last = self.get(at(Phase::PostAgain, dest)).or_else(|| {
+            normal_phases(kind)
+                .last()
+                .and_then(|ph| self.get(at(*ph, dest)))
+        });
         // The `Landing` of a `handle` goes on with the next block too.
         let landing = self.get(at(Phase::Landing, dest));
         for from in last.into_iter().chain(landing) {

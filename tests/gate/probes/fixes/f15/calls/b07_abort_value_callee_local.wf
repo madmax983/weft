@@ -1,0 +1,14 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b07_abort_value_callee_local.wf
+effect Pick { fn pick(v: &Vec<u64>) -> &u64 }
+fn body(g: &Vec<u64>) -> &u64 in g[] / Pick {
+    let w = Vec.new()
+    w.push(3)
+    let x = pick(&w)
+    &g[0]
+}
+fn main() {
+    let g = Vec.new()
+    g.push(1)
+    let r = handle Pick { fn pick(v) { &v[0] } } in body(&g)
+    print(r)
+}

@@ -260,3 +260,85 @@ fn an_in_place_on_a_parameter_of_an_operation_is_checked_as_for_a_function() {
 fn a_made_closure_that_a_clause_runs_changes_the_place_of_the_site() {
     check("made_closure_in_clause.wf");
 }
+
+/// A clause that resumes on each path never aborts to its handler: a
+/// perform of its operation, or a call that runs it, has no abort edge to
+/// the handler and no path to the `Landing` of the `handle` (plan stage
+/// F15; the D-NEWFP rows `scale400` and `scale_ops` of the F14 preview).
+/// A clause that ends with no `resume` on one path keeps the edge.
+#[test]
+fn a_clause_that_resumes_on_each_path_does_not_abort_to_its_handler() {
+    check("resumes_each_path.wf");
+}
+
+/// A call that runs a clause whose operation takes a reference (plan stage
+/// F15; F3-2, M4): the parameters of the clause point into the frame of
+/// the callee and into the places that the arguments of the call reach. The
+/// frame of the callee ends at the end of the call, also on the abort path
+/// to the handler.
+#[test]
+fn a_call_gives_a_clause_the_places_of_its_frame_and_of_its_arguments() {
+    check("call_clause_refs.wf");
+}
+
+/// The lints of `proofs/link/lints/gen_kill.dl` on the facts of each body
+/// of `src` with the groups A to D: each node that both invalidates and
+/// rebinds a variable.
+fn gen_kill(name: &str, src: &str) -> Vec<String> {
+    use weft_datalog::{evaluate, parse_program_named, EvalOptions};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let lint_src = fs::read_to_string(root.join("proofs/link/lints/gen_kill.dl"))
+        .unwrap_or_else(|e| panic!("gen_kill.dl: {e}"));
+    let mut program = weft_check::bridge::spec().clone();
+    program
+        .extend(parse_program_named("gen_kill.dl", &lint_src).unwrap_or_else(|e| panic!("{e:?}")));
+    let a = analyze_source(src, abcd(src))
+        .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
+    assert!(
+        a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
+        "{name}: {:?}",
+        a.ir_scope.as_ref().and_then(|s| s.fallback.clone())
+    );
+    let mut out = Vec::new();
+    for b in &a.bodies {
+        let db = weft_check::bridge::database(&b.facts);
+        let ev = evaluate(&program, db, EvalOptions { provenance: false })
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        for t in ev.tuples("lint") {
+            let shown: Vec<String> = t.iter().map(|v| ev.display_value(*v)).collect();
+            out.push(format!(
+                "{name}: `{}`: {}",
+                b.facts.name,
+                shown.join(" at ")
+            ));
+        }
+    }
+    out
+}
+
+/// No node both binds and invalidates one variable (the hypothesis
+/// `no_gen_kill` of the proof link, plan stage F15) on the facts of M3 (the
+/// value of a clause with no `resume` binds at `AbortValue`, before the
+/// frames unwind) and of F3-2 (a call gives a clause a local of its frame,
+/// which ends at `FrameEnd`); the programs keep their W0301.
+#[test]
+fn the_abort_paths_of_local_handlers_bind_before_they_free() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut lints = Vec::new();
+    for rel in [
+        "tests/gate/probes/ir/work/machine/m8_abort_value_into_body.wf",
+        "tests/gate/probes/ir/work/machine/m10_abort_value_callee_local.wf",
+        "tests/gate/probes/r3/fidelity/repro/F3-2_clause_keeps_callee_ref.wf",
+        "tests/gate/probes/r3/fidelity/repro/F3-2_clause_keeps_callee_ref_abort.wf",
+        "tests/gate/probes/r3/fidelity/repro/F3-2_clause_stores_callee_ref.wf",
+    ] {
+        let src = fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        lints.extend(gen_kill(rel, &src));
+        let codes = abcd_codes(rel, &src);
+        assert!(codes.iter().any(|(c, _)| c == "W0301"), "{rel}: {codes:?}");
+    }
+    for name in ["landing.wf", "call_clause_refs.wf", "resumes_each_path.wf"] {
+        lints.extend(gen_kill(name, &program(name)));
+    }
+    assert!(lints.is_empty(), "{lints:#?}");
+}

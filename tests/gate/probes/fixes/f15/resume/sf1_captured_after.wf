@@ -1,0 +1,13 @@
+// F15 self-attack (the minimal form of the D-NEWFP rows of the F14 preview, with a clause that resumes on each path; clean): scratchpad f14/dbg/sf1.wf
+effect Pick { fn pick() -> &u64 }
+fn many() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(0)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r0 = pick()
+        f = || print(r0)
+    }
+    f()
+}
+fn main() { many() }

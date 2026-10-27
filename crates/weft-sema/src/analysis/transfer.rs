@@ -1060,8 +1060,9 @@ pub fn term(
             dest,
             ..
         } => {
+            let before = super::clause::runs_clauses(cx, body, t).then(|| st.clone());
             call(cx, body, block, st, *f, targs, args, dest)?;
-            super::clause::call_clauses(cx, body, st, t)
+            super::clause::call_clauses(cx, (body, block), before.as_ref(), st, t)
         }
         TermKind::Call {
             callee: weft_ir::Callee::Value(f),
@@ -1070,7 +1071,7 @@ pub fn term(
             ..
         } => {
             call_value(cx, body, block, st, f, args, dest)?;
-            super::clause::call_clauses(cx, body, st, t)
+            super::clause::call_clauses(cx, (body, block), None, st, t)
         }
         TermKind::Perform {
             cap: weft_ir::CapOperand::Row(e),
@@ -1186,9 +1187,23 @@ pub fn call_out(
     let inst = run_inst(body, block);
     let mut sigma = super::apply::sigma(cx, body, st, decl, targs, args, inst)?;
     sigma.cyclic = cx.cycles.has(body, block);
-    if summary.ret_in_frame() {
+    // A clause that the call runs can get a reference into a local of the
+    // callee (plan stage F15, `clause::given`).
+    let gives = summary.gives_frame
+        && p.body(body)
+            .and_then(|b| b.blocks.get(block.index()))
+            .is_some_and(|blk| {
+                super::clause::call_handlers(cx, body, &blk.term.kind)
+                    .iter()
+                    .any(|&h| super::clause::gives_refs(p, cx.tys, h))
+            });
+    if summary.ret_in_frame() || gives {
         sigma.frame = Some(cx.roots.frame(cx.facts, inst, &decl.name));
     }
+    sigma.local_ops = p
+        .body(body)
+        .and_then(|b| b.blocks.get(block.index()))
+        .is_some_and(|blk| crate::factgen::frames::row_local(p, cx.tys, sums, &blk.term.kind));
     let ret_ty = place_ty(cx, body, dest)?;
     let ret = super::apply::ret_value(cx, &summary, &sigma, ret_ty)?;
     let muts = super::apply::muts(cx, &summary, &sigma)?;
@@ -1594,7 +1609,7 @@ fn fns_of_role(cx: &Cx<'_>, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
 /// hold or reach: through its parts, its references and the type arguments
 /// of its containers (stage F13). A function value in an `rc` object that a
 /// callee reads is a value that a handle of an argument reaches.
-fn rc_inners(tys: &mut TyTable, t: TyId) -> Vec<TyId> {
+pub(crate) fn rc_inners(tys: &mut TyTable, t: TyId) -> Vec<TyId> {
     use weft_ir::ty::AdtKind;
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();

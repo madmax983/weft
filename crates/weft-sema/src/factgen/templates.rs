@@ -141,6 +141,11 @@ pub struct Stored {
     /// (`let d = c.clone()`): the fact generator cannot tell if the object
     /// is the same. The old pipeline checks the program.
     pub maybe_same: Vec<PlaceId>,
+    /// A store of a clause, with the places of its parameters mapped onto
+    /// the places of the arguments (`handlers::map_stored`): a reference
+    /// into the callee frame root of a call that runs the clause is a
+    /// reference into a local of the callee (plan stage F15).
+    pub clause: bool,
 }
 
 /// The span of the facts for an IR span.
@@ -1423,6 +1428,7 @@ fn store(
                 span,
                 same,
                 maybe_same,
+                clause: false,
             });
         }
         return;

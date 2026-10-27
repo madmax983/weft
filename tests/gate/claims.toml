@@ -2267,12 +2267,12 @@ finding = "OR4"
 kind = "fp"
 verdict = "construction"
 group = "AD"
-stage = "F15"
+stage = "F16"
 repro = [
     "tests/gate/probes/r2/oracle/repro/OR4_fp_outside_handle.wf",
     "tests/gate/probes/r3/oracle/r2probes/OR4_fp_outside_handle.wf",
 ]
-note = "W0602/W0503 for a linear value outside the `handle`"
+note = "W0602/W0503 for a linear value outside the `handle`; the repros handle a `multi` operation, which is in scope from stage F16 (moved from F15: `spared_at` for a handler with no `multi` operation is `fixes/f15/abort/f02_site_on_abort_spared_c.wf` and `crates/weft-check/tests/data/handlers/spared.wf`)"
 
 [[claim]]
 finding = "OR10"
@@ -5055,3 +5055,235 @@ group = "ABCD"
 stage = "F14"
 repro = ["tests/gate/probes/fixes/f14/made/k6_clause_made_in_loop_c.wf"]
 note = "the clean twin of F14-MADE in a loop"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "unsound"
+verdict = "construction"
+group = "ABCD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/resume/c02_captured_r0_cleared.wf",
+    "tests/gate/probes/fixes/f15/resume/c06_ref_across_resuming_perform_landing.wf",
+    "tests/gate/probes/fixes/f15/resume/c07_loop_in_clause_no_resume.wf",
+    "tests/gate/probes/fixes/f15/resume/c08_handle_in_loop_landing.wf",
+    "tests/gate/probes/fixes/f15/resume/f03_loop_resumes_clears.wf",
+]
+code = "W0301"
+note = "a perform keeps its abort edge to the handler where the clause can end with no `resume` (on one path, after a loop, in a loop of the handled body), and a reference that the clause or the code after the `handle` invalidates is W0301"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/resume/c01_linear_leak_on_landing.wf"]
+code = "W0601"
+note = "a clause that ends with no `resume` on one path lands after the `handle`: a linear value that the handled body consumes after the perform is not consumed on that path"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/resume/f01_body_linear_unwound_by_landing.wf"]
+code = "W0602"
+note = "the abort to the handler unwinds a linear value of the handled body that has no `on abort`"
+
+[[claim]]
+finding = "F15-RESUME"
+kind = "sound"
+verdict = "construction"
+group = "ABCD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/resume/sf1_captured_after.wf",
+    "tests/gate/probes/fixes/f15/resume/c01_linear_leak_on_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c02_captured_r0_cleared_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c06_ref_across_resuming_perform_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c07_loop_in_clause_no_resume_c.wf",
+    "tests/gate/probes/fixes/f15/resume/c08_handle_in_loop_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/f01_body_linear_unwound_by_landing_c.wf",
+    "tests/gate/probes/fixes/f15/resume/f03_loop_resumes_clears_c.wf",
+]
+note = "a clause that resumes on each path gives the node that runs it no abort edge to the handler and no path to the `Landing` (D-NEWFP of the F14 preview: `sf1` is the minimal form of `scale400` and `scale_ops`); the clean twins of F15-RESUME"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/calls/b01_callee_local_kept_vec.wf",
+    "tests/gate/probes/fixes/f15/calls/b02_given_arg_cleared.wf",
+    "tests/gate/probes/fixes/f15/calls/b03_nested_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b05_clause_clears_given.wf",
+    "tests/gate/probes/fixes/f15/calls/b07_abort_value_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b09_loop_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b10_option_ref_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b11_struct_field_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b12_tuple_slot_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b13_abort_keeps_local_vec.wf",
+    "tests/gate/probes/fixes/f15/calls/b14_two_calls_one_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b16_eval_order_arg.wf",
+    "tests/gate/probes/fixes/f15/calls/f05_callee_handles_itself.wf",
+    "tests/gate/probes/fixes/f15/calls/f06_callee_clause_reperforms.wf",
+    "tests/gate/probes/fixes/f15/calls/b18_post_reads_given_body_clears.wf",
+    "tests/gate/probes/fixes/f15/calls/b19_post_reads_callee_local.wf",
+]
+code = "W0301"
+note = "a call runs a clause whose operation takes a reference: the parameter points into the frame of the callee (if its summary gives one, `gives_frame`) and into the places that the arguments reach (`clause::given`); the frame ends at the end of the call, also on the abort path"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/calls/b20_clause_rc_store.wf",
+    "tests/gate/probes/fixes/f15/calls/b22_clause_stores_behind_param.wf",
+]
+code = "W0204"
+note = "a clause that a call runs puts a reference into a local of the callee into an `rc` object or behind a reference parameter of the function: the local ends at the end of the call (the W0204 store check takes the callee frame root)"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/calls/b06_callee_holds_across.wf"]
+code = "W0312"
+note = "a change through a place that a call gives to a clause is a change through the parameter of the callee that reaches it (`call_mut` with its root): an argument that points into it is W0312"
+
+[[claim]]
+finding = "F15-CALL"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/calls/b01_callee_local_kept_vec_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b02_given_arg_cleared_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b03_nested_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b05_clause_clears_given_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b06_callee_holds_across_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b07_abort_value_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b09_loop_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b10_option_ref_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b11_struct_field_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b12_tuple_slot_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b13_abort_keeps_local_vec_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b14_two_calls_one_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b16_eval_order_arg_c.wf",
+    "tests/gate/probes/fixes/f15/calls/f05_callee_handles_itself_c.wf",
+    "tests/gate/probes/fixes/f15/calls/f06_callee_clause_reperforms_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b18_post_reads_given_body_clears_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b19_post_reads_callee_local_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b20_clause_rc_store_c.wf",
+    "tests/gate/probes/fixes/f15/calls/b22_clause_stores_behind_param_c.wf",
+]
+note = "the clean twins of F15-CALL"
+
+[[claim]]
+finding = "F15-TWICE"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/twice/d01_post_moves_in_loop.wf",
+    "tests/gate/probes/fixes/f15/twice/d02_post_moves_two_calls.wf",
+    "tests/gate/probes/fixes/f15/twice/d03_post_moves_nested_inner_twice.wf",
+]
+code = "W0302"
+note = "a clause that can run more than once in one run of the handled body runs its code after `resume` once for each run (`PostAgain`): a move there is a second move"
+
+[[claim]]
+finding = "F15-TWICE"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/twice/d04_post_reads_after_body_clears.wf"]
+code = "W0301"
+note = "the code after `resume` of each run of a clause reads its parameter after the handled body changed the argument"
+
+[[claim]]
+finding = "F15-TWICE"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/twice/d01_post_moves_in_loop_c.wf",
+    "tests/gate/probes/fixes/f15/twice/d02_post_moves_two_calls_c.wf",
+    "tests/gate/probes/fixes/f15/twice/d03_post_moves_nested_inner_twice_c.wf",
+    "tests/gate/probes/fixes/f15/twice/d04_post_reads_after_body_clears_c.wf",
+]
+note = "the clean twins of F15-TWICE (a clause that runs once, also through the clause of an inner handler that runs once)"
+
+[[claim]]
+finding = "F15-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/abort/c03_inner_resumes_outer_aborts.wf",
+    "tests/gate/probes/fixes/f15/abort/c04_call_resumes_callee_fails.wf",
+    "tests/gate/probes/fixes/f15/abort/c05_clause_fails_some_path.wf",
+    "tests/gate/probes/fixes/f15/abort/e02_clause_moves_then_fails_outer.wf",
+    "tests/gate/probes/fixes/f15/abort/f02_site_on_abort_spared.wf",
+]
+code = "W0602"
+note = "a clause that resumes on each path can still abort past its handler (an outer clause with no `resume`, a failure of the callee or of the clause on one path): the node keeps those destinations (`Frames::runs`), and a linear value with no `on abort` is live there"
+
+[[claim]]
+finding = "F15-ABORT"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/abort/f04_call_loop_lands.wf"]
+code = "W0301"
+note = "a call in a loop runs a clause that ends with no `resume` on one path: the abort lands after the `handle` with the old reference"
+
+[[claim]]
+finding = "F15-ABORT"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/fixes/f15/abort/c03_inner_resumes_outer_aborts_c.wf",
+    "tests/gate/probes/fixes/f15/abort/c04_call_resumes_callee_fails_c.wf",
+    "tests/gate/probes/fixes/f15/abort/c05_clause_fails_some_path_c.wf",
+    "tests/gate/probes/fixes/f15/abort/e02_clause_moves_then_fails_outer_c.wf",
+    "tests/gate/probes/fixes/f15/abort/f02_site_on_abort_spared_c.wf",
+    "tests/gate/probes/fixes/f15/abort/f04_call_loop_lands_c.wf",
+]
+note = "the clean twins of F15-ABORT"
+
+[[claim]]
+finding = "F15-PART"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot.wf"]
+code = "W0301"
+note = "a clause puts its parameter into a part of a local of the site (`h.0 = r`): the parameter points into the places of the arguments in the facts of the clause too, so the version of the part is current after the perform (an old hole of F14, `oldmiss`)"
+
+[[claim]]
+finding = "F15-PART"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot_c.wf"]
+note = "the clean twin of F15-PART"

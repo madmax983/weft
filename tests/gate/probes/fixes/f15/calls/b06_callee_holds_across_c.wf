@@ -1,0 +1,8 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b06_callee_holds_across_c.wf
+effect Bump { fn bump(v: &Vec<u64>) }
+fn hold(v: &Vec<u64>, e: &u64) / Bump { bump(v); print(e) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { print(x.len()); resume(()) } } in hold(&v, &v[0])
+}

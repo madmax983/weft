@@ -562,6 +562,14 @@ impl State {
         self.vals.get(key).map(Rc::as_ref)
     }
 
+    /// Gives local `key` the value `v` and no may part, must part or holes:
+    /// the local ended, but a closure that captured it keeps the value that
+    /// it had (a `Kept` or a `ByRef` capture of a local of a handled body
+    /// that runs after the `handle`, plan stage F15).
+    pub fn keep_value(&mut self, key: Key, v: Tree) {
+        *self.vals.entry(key, || Rc::new(Tree::none())) = Rc::new(v);
+    }
+
     /// Gives the move path `path` of local `key` the value `v` (a strong
     /// update): it can and must hold a value now, and its parts get the
     /// parts of `v`.

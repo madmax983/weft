@@ -1,0 +1,11 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b18_post_reads_given_body_clears.wf
+effect Peek { fn peek(e: &u64) }
+fn give(v: &Vec<u64>) / Peek { peek(&v[0]) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(e) { resume(()); print(e) } } in {
+        give(&v)
+        v.clear()
+    }
+}

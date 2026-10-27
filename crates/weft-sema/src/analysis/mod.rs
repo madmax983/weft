@@ -80,7 +80,10 @@ impl States {
 ///
 /// `st` is the state after the statements of block `blk_id` of body `body`:
 /// an `unwind` edge gets the state before the terminator `term`, a normal
-/// edge the state after it.
+/// edge the state after it. A terminator that runs a clause gives its
+/// `unwind` edge the state of the clause where it aborts (plan stage F15):
+/// a `perform` through a local capability the states of the clause alone,
+/// a call that runs clauses the join of both.
 ///
 /// # Errors
 ///
@@ -93,10 +96,22 @@ pub fn edges(
     mut st: State,
 ) -> Result<Vec<(BlockId, State)>, AlphaError> {
     let mut out: Vec<(BlockId, State)> = Vec::new();
-    if let Some(u) = term.unwind() {
-        out.push((u, st.clone()));
-    }
+    let before = term.unwind().map(|u| (u, st.clone()));
+    cx.hx.abort_edge = None;
     transfer::term(cx, body, blk_id, &mut st, term)?;
+    // A terminator that runs a clause: the abort edge gets the state of the
+    // clause where it aborts (plan stage F15, `clause::AbortEdge`).
+    let hook = cx.hx.abort_edge.take();
+    if let Some((u, mut s)) = before {
+        match hook {
+            Some(clause::AbortEdge::Replace(a)) => s = a,
+            Some(clause::AbortEdge::Join(a)) => {
+                s.join(&a);
+            }
+            None => {}
+        }
+        out.push((u, s));
+    }
     for s in term.normal_successors() {
         out.push((s, st.clone()));
     }
@@ -172,6 +187,9 @@ pub struct Ends {
     /// The state after the statements of each `Return` block of the normal
     /// path (before its terminator).
     pub returns: std::collections::BTreeMap<BlockId, State>,
+    /// The state after the statements of each `UnwindExit` block: an abort
+    /// that leaves the body (plan stage F15).
+    pub unwinds: std::collections::BTreeMap<BlockId, State>,
 }
 
 /// How [`run_from`] runs.
@@ -269,6 +287,16 @@ pub fn run_from(
         };
         for s in &blk.stmts {
             transfer::stmt(cx, body, &mut st, &s.kind)?;
+        }
+        if matches!(blk.term.kind, weft_ir::TermKind::UnwindExit) {
+            match ends.unwinds.get_mut(&blk_id) {
+                Some(have) => {
+                    have.join(&st);
+                }
+                None => {
+                    ends.unwinds.insert(blk_id, st.clone());
+                }
+            }
         }
         if !blk.cleanup {
             match blk.term.kind {

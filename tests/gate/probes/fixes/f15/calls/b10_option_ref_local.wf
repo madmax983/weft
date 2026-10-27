@@ -1,0 +1,12 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b10_option_ref_local.wf
+effect Keep { fn keep(o: Option<&u64>) }
+fn deep() / Keep {
+    let x = 5
+    keep(Some(&x))
+}
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(o) { match o { Some(r) => { last = r }, None => {} }; resume(()) } } in deep()
+    print(last)
+}

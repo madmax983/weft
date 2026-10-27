@@ -1944,3 +1944,36 @@ files = [
 finding = "F14-OH"
 reason = "old holes of the self-attack of stage F14 (claim F14-OH): a clause stores a parameter into a place of the site through another parameter, keeps the result of `resume` in a slot of the site, or gives a value with no `resume` that points into the argument (M3). The old pipeline checks the programs while group D is off and accepts them; the run reads a freed cell. The `ir` pipeline with group D rejects them (W0301). Drop this entry when group D is on (stage F17)"
 stage = "F14"
+
+# ----------------------------------------------------------------------
+# Stage F15: abort destinations of local handlers (group D, part 2; group D
+# is off until stage F17).
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f15/calls/b01_callee_local_kept_vec.wf",
+    "tests/gate/probes/fixes/f15/calls/b02_given_arg_cleared.wf",
+    "tests/gate/probes/fixes/f15/calls/b03_nested_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b07_abort_value_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b09_loop_callee_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b10_option_ref_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b11_struct_field_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b12_tuple_slot_local.wf",
+    "tests/gate/probes/fixes/f15/calls/b13_abort_keeps_local_vec.wf",
+    "tests/gate/probes/fixes/f15/calls/b14_two_calls_one_local.wf",
+    "tests/gate/probes/fixes/f15/calls/f05_callee_handles_itself.wf",
+    "tests/gate/probes/fixes/f15/calls/f06_callee_clause_reperforms.wf",
+    "tests/gate/probes/fixes/f15/calls/b20_clause_rc_store.wf",
+    "tests/gate/probes/fixes/f15/calls/b22_clause_stores_behind_param.wf",
+]
+finding = "F15-CALL"
+reason = "old holes of the self-attack of stage F15 (claim F15-CALL, the class of F3-2 and M4): a call gives a clause a reference into a local of the callee, or into its argument, and the clause keeps it in a place of the site or gives it as the value of the `handle`, or puts it into an `rc` object or behind a reference parameter (W0204). The old pipeline checks the programs while group D is off and accepts them; the run reads a freed cell. The `ir` pipeline with group D rejects them (W0301, W0204). Drop this entry when group D is on (stage F17)"
+stage = "F15"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot.wf"]
+finding = "F15-PART"
+reason = "an old hole of the self-attack of stage F15 (claim F15-PART): a clause puts its parameter into a part of a local of the site (`h.0 = r`). The old pipeline (and the `ir` pipeline of stage F14) accepts it; the run reads a freed cell. The `ir` pipeline with group D rejects it (W0301). Drop this entry when group D is on (stage F17)"
+stage = "F15"

@@ -1,0 +1,11 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b17_direct_tuple_slot_c.wf
+effect Keep { fn keep(r: &u64) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let y = 1
+    let h = (&y, 5)
+    handle Keep { fn keep(r) { h.0 = r; resume(()) } } in keep(&v[0])
+    print(h.0)
+    v.clear()
+}

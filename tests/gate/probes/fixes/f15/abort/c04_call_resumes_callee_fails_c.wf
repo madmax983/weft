@@ -1,0 +1,14 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/c04_call_resumes_callee_fails_c.wf
+linear struct Tok { id: u64 }
+    on abort = drop_tok
+fn drop_tok(t: Tok) { let Tok(i) = t }
+effect Op { fn op() }
+fn work(n: u64) / Op { op() }
+fn main() {
+    handle Fail { fn fail(m) { print("caught", m) } } in {
+        let t = Tok { id: 1 }
+        handle Op { fn op() { resume(()) } } in work(1)
+        let Tok(i) = t
+        print(i)
+    }
+}

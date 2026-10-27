@@ -1,0 +1,15 @@
+// F15 self-attack (a clause that resumes on some paths only, or on each path): scratchpad f15/att/v/f03_loop_resumes_clears.wf
+effect Op { fn op() }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let i = 0
+    handle Op { fn op() { v.clear(); v.push(2); resume(()) } } in {
+        while i < 3 {
+            op()
+            i = i + 1
+        }
+    }
+    print(r)
+}

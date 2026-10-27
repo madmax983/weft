@@ -1,0 +1,19 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/f04_call_loop_lands_c.wf
+effect Op { fn op(n: u64) }
+fn work(n: u64) / Op { op(n) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(2)
+    let r = &v[0]
+    let i = 0
+    handle Op { fn op(n) { if n > 0 { print(n) } else { resume(()) } } } in {
+        while i < 3 {
+            work(i)
+            i = i + 1
+        }
+        r = &w[0]
+    }
+    print(r)
+}

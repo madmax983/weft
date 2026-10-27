@@ -570,6 +570,16 @@ impl Comp {
         )
     }
 
+    /// True if place `q` is below a parameter of the body of the component
+    /// (a clause: the terms of its interface).
+    fn in_params(&self, q: PlaceId) -> bool {
+        let root = self.facts.place(q).root;
+        matches!(
+            self.roots.role(root),
+            Some(alpha::Role::Param(b, _) | alpha::Role::Held(b, _)) if b == self.body
+        )
+    }
+
     /// The nodes of the location of the nodes `cur`: the nodes `cur` and
     /// the nodes that their edges reach at the same location (the later
     /// phases of a terminator).
@@ -1401,10 +1411,25 @@ impl FactOracle {
             if kind == "read" && self.is_array(fr.comp, ty) {
                 continue;
             }
-            self.report.summary += 1;
             let Some(comp) = self.comps.get(fr.comp) else {
                 return Ok(());
             };
+            // A clause frame that waits at a `resume` checks with the nodes
+            // of the frame above it, in the terms of the site. A place below
+            // a parameter of the clause is in the terms of the clause: the
+            // facts map it at the node that runs the clause, with the
+            // places of the arguments (plan stages F14, F15), and the oracle
+            // does not know them there. Such a name does not count.
+            let names: Vec<PlaceId> = if waits && comp.clause {
+                names.into_iter().filter(|&q| !comp.in_params(q)).collect()
+            } else {
+                names
+            };
+            if names.is_empty() {
+                self.report.summary_unnamed += 1;
+                continue;
+            }
+            self.report.summary += 1;
             let at = |rel: &Vec<Vec<PlaceId>>| -> Vec<PlaceId> {
                 group
                     .iter()

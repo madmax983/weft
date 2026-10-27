@@ -294,6 +294,9 @@ pub struct Inferred {
     /// follow-up F13.2): code of a caller of a value that the body does not
     /// know, the captures of a closure that a callee made.
     pub lends: BTreeSet<IPlace>,
+    /// The body can give a place of its own frame to an operation of a
+    /// caller (`Summary::gives_frame`, plan stage F15).
+    pub gives_frame: bool,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -354,6 +357,10 @@ impl Inferred {
         }
         if o.multi && !self.multi {
             self.multi = true;
+            grew = true;
+        }
+        if o.gives_frame && !self.gives_frame {
+            self.gives_frame = true;
             grew = true;
         }
         for r in &o.runs {
@@ -500,6 +507,9 @@ pub fn from_signature(
     let mut inf = Inferred::of_signature(sig, decl, tys);
     if !body {
         foreign_fn_parts(decl, tys, &mut inf);
+        // A function with no body that performs can give a place of its
+        // frame to an operation (plan stage F15).
+        inf.gives_frame = !inf.named.is_empty();
     }
     // A foreign function that changes an `rc` object can put each argument
     // there (stage F13, as `Lower::group_stores_of`).
@@ -620,6 +630,7 @@ pub fn build(
         }
     }
     put_parts(&mut s, inf);
+    s.gives_frame = inf.gives_frame;
     s.only_self = inf.named.is_empty()
         && inf.runs.is_empty()
         && !inf.multi
@@ -663,6 +674,7 @@ pub fn put_parts(s: &mut Summary, inf: &Inferred) {
             s.lends.push(l.clone());
         }
     }
+    s.code_lends = inf.lends.iter().cloned().collect();
 }
 
 /// The `EffectSig` of a summary (`docs/ir.md` 6.8).

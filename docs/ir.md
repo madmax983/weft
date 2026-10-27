@@ -1870,7 +1870,7 @@ pub struct NodeKey {
 | `Call`, `Resume` | `Main` → `Ret` → `FrameEnd` → next | `Main` → [`AbortValue(d)` if `d` is a local handler whose clause gives a value] → `FrameEnd(d)` → the cleanup copy for `d` |
 | `Perform` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)`] → the cleanup copy for `d` |
 | `Join`, `Fork` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler: a child failure, 6.5] → the cleanup copy for `d` |
-| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → next | the end of an abort to this handler: `Landing` → next |
+| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → [`PostAgain` if a clause can run more than once] → next | the end of an abort to this handler: `Landing` → next |
 | `Scope` | `Main` → (the spliced scope body) → `Exit` → `FrameEnd` → next | through the chain of the scope body to the cleanup copy of the `Scope` |
 | `ScopeWait` | `Main` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler] → the cleanup copy for `d` |
 | `Assert` | `Main` → next | `Main` → the cleanup copy past the function (a failed `assert` ends the task, `abort_task`) |
@@ -2630,6 +2630,82 @@ puts it in the default set):
   a handler in a closure body, a closure that a clause makes, a function value that
   an operation gives to a local handler, a call that runs a clause whose operation
   has a reference.
+
+As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
+`factgen/handlers.rs`; group D stays a preview with `--groups ABCD` until stage F17):
+
+- Abort destinations. A clause *lands* if a path from its entry reaches a `Return`
+  with no `Resume` on the way (`clause::lands`). A `perform` through a local
+  capability aborts to its handler only if the clause of its operation lands; a call
+  (or a child failure) only if a clause of the handler lands
+  (`frames::destinations`). The handlers whose clauses a node runs are a separate
+  list (`frames::clause_handlers`, `Frames::runs`): the clauses run there also when no
+  abort goes to the handler, and their aborts past the handler go to the node
+  (`clause_aborts`). So a clause that resumes on each path gives no `AbortValue`, no
+  cleanup copy for the handler and no path to `Landing`. The node still has
+  `may_abort` from the clause (its `resume`): each named effect can abort (ADR 0005),
+  so W0602 holds there for the values of the handled body, and the values outside
+  it are spared (`handlers::spares` takes the handled bodies of `clause_handlers`).
+- The state of an abort edge. The analysis gives the `unwind` edge of a terminator
+  that runs a clause the state of the clause where it aborts (`clause::AbortEdge`,
+  taken in `analysis::edges`): the states at the ends of the clause with no `resume`
+  and at its `UnwindExit` (`Ends::unwinds`), with no local of the clause. A `perform`
+  through a local capability takes them alone; a call joins them with the state
+  before it (the callee can abort too).
+- Calls that run clauses whose operations take references (F3-2, M4). A parameter of
+  the clause that can hold a reference points into the places that the call gives
+  (`clause::given`): the wildcard places of the arguments (their places, the places
+  that their references point into, the places behind those, the `rc` groups that
+  their types reach) and the callee frame root `F(n)` if the summary of the callee
+  says that it can give a place of its frame to an operation of a caller
+  (`Summary::gives_frame`: a node that lets an effect leave the body gives a code of a
+  caller a local, or a callee that gives its frame performs an effect that leaves the
+  body, or the body runs a function value). The frame root then ends at `FrameEnd`
+  and at each `FrameEnd(d)`. The frame root has a heap slot with the given places
+  while the clauses run (a reference that the callee keeps in a local); the states
+  that leave the runs do not have it. A change through a parameter of such a clause
+  has, in `call_mut`, the callee root of the argument whose given place it is below
+  (none for the frame or a group; W0312 as for a call). A call whose effects of the
+  row all go to local handlers runs the clauses itself, so the operations lend no
+  place there (`Sigma::local_ops`): only the lends of code of a caller other than an
+  operation stay (`Summary::code_lends`, the inferred `lends`). At a `resume` of such a
+  clause, a change or a free of a place at or below the base of a given wildcard place
+  frees the parameter (the argument can be below the changed place,
+  `handlers::through_param`). A store of such a clause of a reference into the callee
+  frame root behind a reference parameter or into an `rc` object is W0204 (the local of
+  the callee ends at the end of the call; `Stored::clause`). Not in scope (stage
+  F16, `clause::GIVES_BACK`): an operation with a function value or a value of a type
+  parameter, and a result with a reference whose clause can resume (the continuation
+  summary).
+- The parameters of a clause in its own facts point into their roots and into the
+  places of the arguments of the nodes that run it (`Info::params`). So a version of a
+  part of a local of the site that the clause writes (`h.0 = r`) is current after the
+  perform (F15-PART, an old hole of F14). A row of a change at a place of an argument
+  at a node that also changes the root of that parameter is the same change: the row
+  of the parameter maps it (no W0312 of the clause against its own argument).
+- A clause that can run more than once in one run of the handled body (two nodes run
+  it, one node in a cycle, also through the `handle`s on the way, or in a clause of
+  another handler that can run more than once: `Frames::runs_twice`) runs its code
+  after `resume` once for each run: `Post` and `PostAgain` both get the `post` part,
+  and the frames of the clauses end at each (F15-TWICE: a move there is a second move).
+- An abort to a local handler: each local of the body of the terminator that a closure
+  captures (`Kept`, `ByRef`), that can hold a reference, and that no path from the entry
+  to the terminator assigns binds at the `AbortValue` node (`rebound_at`, `empty_at`;
+  `handlers::unbound_at_aborts`). The analysis joins the values of a closure local of
+  the site over the paths, so after the `Landing` a run of a closure that the handled
+  body made later used a local that the path never bound (D-NEWFP of the F14 preview:
+  `s5r/p/scale400.wf`, `S5a/x/p/scale_ops.wf`). The same class with no handler (a
+  closure made in a branch or a loop, run after it: `let f = ..; while .. { let r = &v[0];
+  f = || print(r) }; f()`) is a false positive of group C in the default pipeline too;
+  stage F15 does not change it.
+- A closure that the handled body makes keeps the values of the locals of the handled
+  body that it captures after the `handle` (`clause::captured_locals`,
+  `State::keep_value`): a run of it after the `handle` reads their places (the summary
+  oracle failed on `sf1`).
+- Not yet: the `gen_kill` lint holds on the M3 and F3-2 facts
+  (`crates/weft-check/tests/ir_handlers.rs`), but a version of a part or of a heap slot
+  binds at each node where it is not current, also at a node that invalidates it (also
+  in the default pipeline: `h.0 = &v[0]; h.0 = &w[0]; v.clear()`).
 
 ### 6.6 The analysis
 
@@ -4244,7 +4320,11 @@ stage F13 found that A3 did not check the parts `puts` and `put_fns` (a missing
   named; the references in its value are), a place of another body of the component, and the
   frames that it
   does not follow: a frame below that unwinds or that is a copied frame of a continuation
-  (`uid` 0, group D), and each op of such a frame.
+  (`uid` 0, group D), and each op of such a frame. A clause frame that waits at a `resume`
+  checks with the nodes of the frame above it, in the terms of the site: a name of the
+  frame below a parameter of the clause (an anchor of the clause) is in the terms of the
+  clause, so it does not count (plan stage F15; before, a run of the rest of the handled
+  body that read the argument of the clause failed A3 with "a read of `r`").
 - Limits that stay: at most `SUMMARY_DEPTH` = 16 frames below the callee (a write 18
   frames down is not checked); the frees and the pointers of the result are not compared
   (C4 and C1 of the frame check them at its own nodes); a fresh write is checked for the

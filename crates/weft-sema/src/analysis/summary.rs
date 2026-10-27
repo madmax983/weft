@@ -328,6 +328,16 @@ pub struct Summary {
     /// The interface of each parameter: its name, its callee root index
     /// (`call_arg`), and its stated `in` place (`param_in`).
     pub params: Vec<ParamIface>,
+    /// The body can give a place of its own frame (a local of the body or
+    /// of a callee) to an operation of a caller, also through a callee
+    /// (plan stage F15): a local clause that a call runs can get a
+    /// reference into the callee frame (`clause::given`).
+    pub gives_frame: bool,
+    /// The places of `lends` that code of a caller other than an operation
+    /// of the row gets (the inferred part `lends`, follow-up F13.2). A call
+    /// that runs a local clause for each effect of the row lends only these
+    /// (plan stage F15): it runs the clauses itself.
+    pub code_lends: Vec<IPlace>,
 }
 
 /// The interface of one parameter.

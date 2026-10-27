@@ -1,0 +1,15 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b20_clause_rc_store.wf
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+effect Keep { fn keep(r: &u64) }
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn clause_rc(c: Rc<Cache>) / mut(Cache) {
+    handle Keep { fn keep(r) { c.refs.push(r); resume(()) } } in deep()
+}
+fn main() / mut(Cache) {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    clause_rc(c.clone())
+    print(c.refs[0])
+}

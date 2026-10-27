@@ -13,8 +13,15 @@
 //! ([`perform_run`]). The state after the perform is the join of the states
 //! at the resume points of the clause, and the result of the perform is the
 //! join of the values that the clause gives to `resume`. A clause that ends
-//! with no `resume` aborts to its handler (stage F15 makes the edges of the
-//! abort; the state of such an end joins the state after the `handle`).
+//! with no `resume` aborts to its handler: the state of such an end joins the
+//! state after the `handle`, and the abort edge of the perform gets it
+//! ([`AbortEdge`], plan stage F15). A clause that resumes on each path never
+//! aborts to its handler ([`lands`]).
+//!
+//! A call that runs a clause gives each parameter of the clause the places
+//! that the callee can give it ([`given`], plan stage F15): the places that
+//! the arguments reach, and the callee frame if the callee can give a place
+//! of its frame.
 //!
 //! When the handled body returns, a `resume` of each clause that ran gives
 //! back the value of the handled body, and the code of the clause after its
@@ -72,6 +79,28 @@ pub struct Handlers {
     pub ends: Vec<(HandlerId, weft_facts::NodeId, weft_facts::NodeId)>,
     /// The `Landing` node of each `handle` in the facts.
     pub landings: Vec<(HandlerId, weft_facts::NodeId)>,
+    /// The state of the abort edge of the terminator that the analysis ran
+    /// last, if it ran a clause (`super::edges` takes it).
+    pub abort_edge: Option<AbortEdge>,
+    /// For each body: the locals that a path from the entry to the
+    /// terminator of each block can assign (one bit set for each block;
+    /// `crate::factgen::handlers::unassigned`).
+    pub assigned: BTreeMap<BodyId, Vec<Vec<u64>>>,
+}
+
+/// The state of the abort edge of a terminator that runs a clause.
+///
+/// It is the state of the clause where it aborts (plan stage F15), to its
+/// handler (it ends with no `resume`) or past it, with no local of the
+/// clause.
+#[derive(Clone, Debug)]
+pub enum AbortEdge {
+    /// A `perform` through a local capability: it aborts only where the
+    /// clause aborts.
+    Replace(State),
+    /// A call: the callee can abort too, so the state before the call
+    /// joins.
+    Join(State),
 }
 
 /// A node where the code of a clause runs (plan stage F14).
@@ -107,6 +136,11 @@ pub struct ClauseRun {
     /// `call_mut`: a parameter of the operation with an `in` place has the
     /// root of the parameter of its place (R3RT7). Empty: its own root.
     pub ins: Vec<usize>,
+    /// The node is a call: σ of each parameter is the places that the call
+    /// gives (`given`, plan stage F15), not an argument of the node. Each
+    /// given place of an argument has the callee root of its parameter: a
+    /// change below it has that root in `call_mut`.
+    pub given: Option<Vec<(weft_facts::PlaceId, u32)>>,
 }
 
 /// A handler whose handled body runs now.
@@ -136,6 +170,12 @@ pub struct Info {
     /// What a `resume` gives back: the value of the handled body, and the
     /// value of each clause after a `resume`.
     pub resumed: Tree,
+    /// For each clause body: the join of the values of its parameters at
+    /// the nodes that run it (the places of the arguments). The facts of
+    /// the clause give each parameter these places besides its own root,
+    /// so a value of the clause in a place of the site has places of the
+    /// site (plan stage F15).
+    pub params: BTreeMap<BodyId, Vec<Tree>>,
 }
 
 impl Handlers {
@@ -208,6 +248,54 @@ pub fn clause_of(p: &Program, h: HandlerId, op: weft_ir::OpIdx) -> Option<BodyId
         .iter()
         .find(|(o, _)| *o == op)
         .map(|(_, b)| *b)
+}
+
+/// True if clause body `cb` can end with no resume point: a path from its
+/// entry reaches a `Return` with no `Resume` on the way (plan stage F15).
+///
+/// Such an end aborts to the handler of the clause: its value binds to the
+/// destination of the `handle`, and the frames of the handled body unwind.
+/// A clause that resumes on each path to its `Return` never aborts to its
+/// handler, so a perform of its operation has no abort edge to the handler.
+/// The test is on the blocks of the clause body: a `resume` in a body
+/// inside the clause is not a resume point here (stage F16), so the clause
+/// counts as one that can end with no resume point.
+pub fn lands(p: &Program, cb: BodyId) -> bool {
+    let Some(b) = p.body(cb) else {
+        return true;
+    };
+    let mut seen = vec![false; b.blocks.len()];
+    let mut work = vec![b.entry];
+    while let Some(at) = work.pop() {
+        match seen.get_mut(at.index()) {
+            Some(s) if !*s => *s = true,
+            _ => continue,
+        }
+        let Some(blk) = b.blocks.get(at.index()) else {
+            continue;
+        };
+        if blk.cleanup {
+            continue;
+        }
+        match blk.term.kind {
+            TermKind::Return => return true,
+            TermKind::Resume { .. } => {}
+            ref t => work.extend(t.normal_successors()),
+        }
+    }
+    false
+}
+
+/// True if a clause of handler `h` can end with no resume point
+/// ([`lands`]). With `op`, only the clause of that operation.
+pub fn handler_lands(p: &Program, h: HandlerId, op: Option<weft_ir::OpIdx>) -> bool {
+    let Some(hd) = p.handlers.get(h.index()) else {
+        return true;
+    };
+    hd.clauses
+        .iter()
+        .filter(|(o, _)| op.is_none_or(|x| x == *o))
+        .any(|&(_, c)| lands(p, c))
 }
 
 /// The handler `h`, or [`AlphaError::Later`] for a handler of a later
@@ -352,7 +440,16 @@ pub fn handle_run(
     }
     let mut after = after.unwrap_or_else(|| st.clone());
     let clauses: Vec<BodyId> = hd.clauses.iter().map(|(_, c)| *c).collect();
+    // A closure that the handled body makes keeps the values of the locals
+    // that it captures (`Kept`, `ByRef`): it can run after the `handle`.
+    let captured: Vec<(super::Key, Tree)> = captured_locals(p, hb)
+        .into_iter()
+        .filter_map(|k| after.tree(k).map(|t| (k, t.clone())))
+        .collect();
     after.remove_bodies(&|b| inside(p, b, hb) || clauses.iter().any(|&c| inside(p, b, c)));
+    for (k, t) in captured {
+        after.keep_value(k, t);
+    }
     let mut value = body_value;
     value.join(&clause_values);
     value.join(&open.landing_value);
@@ -374,6 +471,33 @@ pub fn handle_run(
         value,
         landing,
     })
+}
+
+/// The locals of handled body `hb` (and of the bodies inside it) that a
+/// closure made inside it captures `Kept` or `ByRef`.
+pub(crate) fn captured_locals(p: &Program, hb: BodyId) -> Vec<super::Key> {
+    let mut out = Vec::new();
+    for c in &p.closures {
+        if !inside(p, c.maker, hb) {
+            continue;
+        }
+        for cap in &c.captures {
+            if !matches!(
+                cap.mode,
+                weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef
+            ) {
+                continue;
+            }
+            if let Ok(k) = crate::factgen::alpha::owner_local(p, c.maker, cap.source.local) {
+                if inside(p, k.0, hb) {
+                    out.push(k);
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The seeds of the runs of the clauses after their resume points: for each
@@ -483,6 +607,8 @@ pub struct PerformOut {
     /// The value of the clause where it ends with no `resume`: the value of
     /// the `handle` after the abort to the handler.
     pub landing: Tree,
+    /// The state of the clause where it aborts (`AbortEdge`).
+    pub abort: Option<State>,
 }
 
 /// The run of a clause at a perform of body `body` (see the module text).
@@ -517,28 +643,45 @@ pub fn perform_run(
     }
     let mut s0 = st.clone();
     transfer::moves(p, body, &mut s0, args)?;
-    let (after, value, landing) = run_clause(cx, h, cb, &s0, &vals)?;
+    let run = run_clause(cx, h, cb, (&s0, None), &vals)?;
     // A clause with no resume point: the code after the perform does not
     // run, and any state is right there.
-    let after = after.unwrap_or(s0);
+    let after = run.after.unwrap_or(s0);
     Ok(PerformOut {
         handler: h,
         clause: cb,
         args: vals,
         after,
-        value,
-        landing,
+        value: run.value,
+        landing: run.landing,
+        abort: run.abort,
     })
 }
 
 /// The run of clause body `cb` of handler `h` from the state `s0`, with the
 /// values `vals` of its parameters, up to its resume points.
 ///
-/// Returns the join of the states at the resume points with no local of the
-/// clause (none if the clause has no resume point), and the join of the
-/// values that the clause gives to `resume`. The state `s0` joins the seed
-/// of the facts of the clause; the open run of the handler gets the states
-/// at the resume points and at each end with no `resume`.
+/// What the run of a clause up to its resume points gives ([`run_clause`]).
+#[derive(Clone, Debug)]
+struct ClauseOut {
+    /// The join of the states at the resume points with no local of the
+    /// clause (none if the clause has no resume point).
+    after: Option<State>,
+    /// The join of the values that the clause gives to `resume`.
+    value: Tree,
+    /// The join of the values of the clause where it ends with no `resume`.
+    landing: Tree,
+    /// The join of the states where the clause aborts: where it ends with no
+    /// `resume`, and where an abort leaves it (its `UnwindExit`), with no
+    /// local of the clause (plan stage F15).
+    abort: Option<State>,
+}
+
+/// The run of clause body `cb` of handler `h` from the state `s0`, with the
+/// values `vals` of its parameters, up to its resume points
+/// ([`ClauseOut`]). The state `s0` joins the seed of the facts of the
+/// clause; the open run of the handler gets the states at the resume
+/// points and at each end with no `resume`.
 ///
 /// # Errors
 ///
@@ -547,19 +690,44 @@ fn run_clause(
     cx: &mut Cx<'_>,
     h: HandlerId,
     cb: BodyId,
-    s0: &State,
+    (s0, frame): (&State, Option<weft_facts::PlaceId>),
     vals: &[Tree],
-) -> Result<(Option<State>, Tree, Tree), AlphaError> {
+) -> Result<ClauseOut, AlphaError> {
     let p = cx.p;
     let cbody = body_of(p, cb)?;
+    // The heap slot of the callee frame (`Given::state`) holds only while
+    // the clause runs: the states that leave the run do not have it.
+    let clean = |st: &State| -> State {
+        let mut st = st.clone();
+        if let Some(f) = frame {
+            st.map_behind(&mut |q, refs| {
+                let hit = q == f && !refs.is_empty();
+                if hit {
+                    refs.clear();
+                }
+                hit
+            });
+        }
+        st
+    };
     {
+        let s0 = clean(s0);
         let info = cx.hx.info.entry(h).or_default();
         match info.seeds.get_mut(&cb) {
             Some(s) => {
-                s.join(s0);
+                s.join(&s0);
             }
             None => {
-                info.seeds.insert(cb, s0.clone());
+                info.seeds.insert(cb, s0);
+            }
+        }
+        let ps = info.params.entry(cb).or_default();
+        for (i, v) in vals.iter().enumerate() {
+            match ps.get_mut(i) {
+                Some(have) => {
+                    have.join(v);
+                }
+                None => ps.push(v.clone()),
             }
         }
     }
@@ -585,6 +753,7 @@ fn run_clause(
         {
             value.join(&transfer::operand(cx, cb, sr, arg)?);
         }
+        let sr = clean(sr);
         let mut s = sr.clone();
         s.remove_bodies(&mine);
         match &mut after {
@@ -594,16 +763,24 @@ fn run_clause(
             None => after = Some(s),
         }
         if let Some(o) = cx.hx.open_mut(h) {
-            o.resumes.push((cb, *rb, sr.clone()));
+            o.resumes.push((cb, *rb, sr));
         }
     }
     // A clause that ends with no `resume` aborts to its handler.
     let mut landing = Tree::none();
+    let mut abort: Option<State> = None;
+    let mut add = |s: &State| match &mut abort {
+        Some(a) => {
+            a.join(s);
+        }
+        None => abort = Some(s.clone()),
+    };
     for sret in ends.returns.values() {
         let v = sret.value((cb, cbody.ret), &[]);
         landing.join(&v);
-        let mut s = sret.clone();
+        let mut s = clean(sret);
         s.remove_bodies(&mine);
+        add(&s);
         if let Some(o) = cx.hx.open_mut(h) {
             o.landing_value.join(&v);
             match &mut o.landing {
@@ -614,51 +791,269 @@ fn run_clause(
             }
         }
     }
-    Ok((after, value, landing))
+    // An abort that leaves the clause (past its handler).
+    for su in ends.unwinds.values() {
+        let mut s = clean(su);
+        s.remove_bodies(&mine);
+        add(&s);
+    }
+    Ok(ClauseOut {
+        after,
+        value,
+        landing,
+        abort,
+    })
 }
 
 /// The local handlers whose clauses a call can run.
 ///
-/// They are the handlers of the destinations of the aborts of call `t` of
-/// body `body` (an effect of the row of the callee, or a failure, that
-/// resolves to a handler of the
-/// component, `crate::factgen::frames`).
+/// They are the handlers that call `t` of body `body` performs through or
+/// fails to (an effect of the row of the callee, or a failure, that
+/// resolves to a handler of the component,
+/// `crate::factgen::frames::clause_handlers`), also if their clauses resume
+/// on each path.
 pub fn call_handlers(cx: &Cx<'_>, body: BodyId, t: &TermKind) -> Vec<HandlerId> {
-    let mut out: Vec<HandlerId> =
-        crate::factgen::frames::destinations(cx.p, cx.tys, cx.sums, body, t)
-            .into_iter()
-            .filter_map(|d| match d {
-                crate::factgen::frames::Dest::Handler { handler, .. } => Some(handler),
-                crate::factgen::frames::Dest::Past => None,
-            })
-            .collect();
-    out.sort();
-    out.dedup();
-    out
+    crate::factgen::frames::clause_handlers(cx.p, cx.tys, cx.sums, body, t)
 }
 
-/// True if the operations of the clauses of handler `h` hold no reference.
+/// True if clause body `cb` has a resume point (a `Resume` of its own
+/// blocks).
+fn has_resume(p: &Program, cb: BodyId) -> bool {
+    p.body(cb).is_some_and(|b| {
+        b.blocks
+            .iter()
+            .any(|blk| !blk.cleanup && matches!(blk.term.kind, TermKind::Resume { .. }))
+    })
+}
+
+/// True if a call can run the clauses of handler `h` (plan stage F15).
 ///
 /// No parameter and no result of an operation of a clause of the handler
-/// can hold a reference, a function value or a value of a type parameter: a
-/// call that runs the clause does not need the places of the arguments that
-/// the callee gives (plan stage F14).
-pub fn plain_ops(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> bool {
+/// holds a function value or a value of a type parameter, and a result
+/// holds no reference if the clause can resume: the values that a clause
+/// gives back to the callee hold no place of the site. A parameter can
+/// hold a reference: it points into the places that the callee gives
+/// ([`given`]).
+pub fn given_ops(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> bool {
     let Some(hd) = p.handlers.get(h.index()) else {
         return false;
     };
     let Some(e) = tys.effects().get(hd.effect.index()) else {
         return false;
     };
-    let plain = |t: weft_ir::TyId| {
+    let no_fns = |t: weft_ir::TyId| {
         let pr = crate::props::ir_props(tys, t);
-        !pr.holds_refs && !pr.generic && !pr.callable && !crate::props::ir_has_fns(tys, t)
+        !pr.generic && !pr.callable && !crate::props::ir_has_fns(tys, t)
     };
-    hd.clauses.iter().all(|(op, _)| {
-        e.ops
-            .get(op.index())
-            .is_some_and(|o| o.params.iter().all(|&t| plain(t)) && plain(o.ret))
+    hd.clauses.iter().all(|&(op, c)| {
+        e.ops.get(op.index()).is_some_and(|o| {
+            o.params.iter().all(|&t| no_fns(t))
+                && no_fns(o.ret)
+                && (!crate::props::ir_props(tys, o.ret).holds_refs || !has_resume(p, c))
+        })
     })
+}
+
+/// True if a parameter of an operation of a clause of handler `h` can hold
+/// a reference: a call that runs the clause gives it places ([`given`]).
+pub fn gives_refs(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> bool {
+    let Some(hd) = p.handlers.get(h.index()) else {
+        return false;
+    };
+    let Some(e) = tys.effects().get(hd.effect.index()) else {
+        return false;
+    };
+    hd.clauses.iter().any(|(op, _)| {
+        e.ops.get(op.index()).is_some_and(|o| {
+            o.params
+                .iter()
+                .any(|&t| crate::props::ir_props(tys, t).holds_refs)
+        })
+    })
+}
+
+/// The places that a call gives to the parameters of the clauses that it
+/// runs (plan stage F15).
+///
+/// The callee performs through the capability of a caller, so the arguments
+/// of the operation are places that it can name: a local of its frame (the
+/// callee frame root of the call, `docs/ir.md` 6.3, which ends at the
+/// `FrameEnd` of the call and on each abort path; only if the summary of
+/// the callee says that it can give one, `Summary::gives_frame`), and the
+/// places that the
+/// arguments of the call reach (the places of each argument, the places
+/// that its references point into, the places that the references behind
+/// them point into, and the `rc` groups that they reach). Each one is a
+/// wildcard place: the callee can
+/// give a place below it. `st` is the state before call `t` of block
+/// `block` of body `body`. Empty for a call of a function value (it runs
+/// no local clause).
+///
+/// # Errors
+///
+/// The errors of σ.
+pub fn given(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    block: BlockId,
+    st: &State,
+    t: &TermKind,
+) -> Result<Given, AlphaError> {
+    let TermKind::Call {
+        callee: weft_ir::Callee::Fn(f, targs),
+        args,
+        ..
+    } = t
+    else {
+        return Ok(Given::default());
+    };
+    let p = cx.p;
+    let decl = p
+        .fns
+        .get(f.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no function f{}", f.0)))?;
+    let inst = transfer::run_inst(body, block);
+    let s = super::apply::sigma(cx, body, st, decl, targs, args, inst)?;
+    // The callee frame root, if the callee can give a place of its frame
+    // to an operation (`Summary::gives_frame`).
+    let gives = cx.sums.get(*f).map_or(true, |x| x.gives_frame);
+    let frame = gives.then(|| cx.roots.frame(cx.facts, inst, &decl.name));
+    // The `rc` objects that the arguments reach: a place in one is a place
+    // of the group root of its type, not a place below the argument.
+    let mut groups = Vec::new();
+    for &t in &s.tys {
+        for inner in transfer::rc_inners(cx.tys, t) {
+            groups.push(cx.roots.group(cx.tys, cx.facts, inner));
+        }
+    }
+    // The places of each argument, with the callee root of its parameter
+    // (`call_arg`): a change through a place that the callee gives is a
+    // change through that parameter (W0312, as for a call).
+    let sum_roots: Vec<u32> = cx
+        .sums
+        .get(*f)
+        .map(|x| x.params.iter().map(|q| q.root).collect())
+        .unwrap_or_default();
+    let mut roots: Vec<(weft_facts::PlaceId, u32)> = Vec::new();
+    for i in 0..args.len() {
+        let root = sum_roots
+            .get(i)
+            .copied()
+            .unwrap_or_else(|| crate::body::roots::param(i));
+        let of = |v: &Vec<Vec<weft_facts::PlaceId>>| v.get(i).cloned().unwrap_or_default();
+        for q in of(&s.args)
+            .into_iter()
+            .chain(of(&s.values))
+            .chain(of(&s.helds))
+        {
+            roots.push((cx.facts.wildcard(q), root));
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    let mut places: Vec<weft_facts::PlaceId> = roots
+        .iter()
+        .map(|&(q, _)| q)
+        .chain(
+            groups
+                .into_iter()
+                .chain(frame)
+                .map(|q| cx.facts.wildcard(q)),
+        )
+        .collect();
+    places.sort();
+    places.dedup();
+    let mut deps: Vec<weft_facts::PlaceId> = s.deps.into_iter().flatten().collect();
+    deps.sort();
+    deps.dedup();
+    let frame = frame.map(|q| cx.facts.wildcard(q));
+    Ok(Given {
+        places,
+        deps,
+        roots,
+        frame,
+    })
+}
+
+/// The places that a call gives to the clauses that it runs ([`given`]).
+#[derive(Clone, Debug, Default)]
+pub struct Given {
+    /// The wildcard places that a parameter of a clause can point into.
+    pub places: Vec<weft_facts::PlaceId>,
+    /// The handle places `h.*` of the `Rc` handles on the way to the
+    /// arguments of the call.
+    pub deps: Vec<weft_facts::PlaceId>,
+    /// The given places of the arguments, each with the callee root of its
+    /// parameter.
+    pub roots: Vec<(weft_facts::PlaceId, u32)>,
+    /// The wildcard place of the callee frame root, if the callee can give
+    /// a place of its frame.
+    pub frame: Option<weft_facts::PlaceId>,
+}
+
+impl Given {
+    /// The state `st` where the clauses run: a reference that the callee
+    /// keeps in its frame can point into each given place (a parameter of
+    /// a clause can point into a local of the callee that holds one).
+    pub fn state(&self, st: &State) -> State {
+        let mut out = st.clone();
+        if let Some(f) = self.frame {
+            out.store_behind(f, self.places.iter().copied());
+        }
+        out
+    }
+
+    /// The value of each parameter of clause body `cb`: a parameter whose
+    /// type can hold a reference points into the given places.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlphaError::BadPlace`] for a clause body that does not
+    /// exist.
+    pub fn values(&self, cx: &Cx<'_>, cb: BodyId) -> Result<Vec<Tree>, AlphaError> {
+        let b = body_of(cx.p, cb)?;
+        Ok(b.params
+            .iter()
+            .map(|&l| {
+                let refs = b
+                    .local(l)
+                    .is_some_and(|d| crate::props::ir_props(cx.tys, d.ty).holds_refs);
+                if refs {
+                    Tree::leaf(AbsVal::refs(self.places.iter().copied()))
+                } else {
+                    Tree::leaf(AbsVal::plain())
+                }
+            })
+            .collect())
+    }
+
+    /// σ of each parameter of clause body `cb` in the facts: the given
+    /// places for a parameter whose type can hold a reference (its places
+    /// and what the references behind it point into), else none.
+    pub fn sigma(
+        &self,
+        p: &Program,
+        tys: &weft_ir::TyTable,
+        cb: BodyId,
+    ) -> (Vec<Vec<weft_facts::PlaceId>>, Vec<Vec<weft_facts::PlaceId>>) {
+        let Some(b) = p.body(cb) else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut args = Vec::new();
+        let mut deps = Vec::new();
+        for &l in &b.params {
+            let refs = b
+                .local(l)
+                .is_some_and(|d| crate::props::ir_props(tys, d.ty).holds_refs);
+            args.push(if refs {
+                self.places.clone()
+            } else {
+                Vec::new()
+            });
+            deps.push(if refs { self.deps.clone() } else { Vec::new() });
+        }
+        (args, deps)
+    }
 }
 
 /// The values of the clauses of the local handlers that a call aborts to.
@@ -672,13 +1067,18 @@ pub fn plain_ops(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> bool {
 /// The errors of the transfer functions.
 pub fn call_landings(
     cx: &mut Cx<'_>,
-    body: BodyId,
+    (body, block): (BodyId, BlockId),
     st: &State,
     t: &TermKind,
 ) -> Result<Vec<(HandlerId, Tree)>, AlphaError> {
     let p = cx.p;
     let mut out = Vec::new();
-    for h in call_handlers(cx, body, t) {
+    let hs = call_handlers(cx, body, t);
+    if hs.is_empty() {
+        return Ok(out);
+    }
+    let gv = given(cx, body, block, st, t)?;
+    for h in hs {
         handler(p, h)?;
         let clauses: Vec<BodyId> = p
             .handlers
@@ -686,59 +1086,84 @@ pub fn call_landings(
             .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
             .unwrap_or_default();
         let mut v = Tree::none();
+        let s0 = gv.state(st);
         for cb in clauses {
-            let n = body_of(p, cb)?.params.len();
-            let vals = vec![Tree::leaf(AbsVal::plain()); n];
-            let (_, _, landing) = run_clause(cx, h, cb, st, &vals)?;
-            v.join(&landing);
+            let vals = gv.values(cx, cb)?;
+            v.join(&run_clause(cx, h, cb, (&s0, gv.frame), &vals)?.landing);
         }
         out.push((h, v));
     }
     Ok(out)
 }
 
-/// The clauses that a call runs (plan stage F14).
+/// The clauses that a call runs (plan stages F14, F15).
 ///
-/// After the transfer of call `t` of body `body`, each clause of each local
-/// handler that the
-/// callee can perform through (or fail to) runs up to its resume points
-/// from the state `st` after the call, with parameters that hold no
-/// reference. The state after the call is the join of `st` and the states
-/// at the resume points.
+/// After the transfer of call `t` of block `block` of body `body`, each
+/// clause of each local handler that the callee can perform through (or
+/// fail to) runs up to its resume points from the state `st` after the
+/// call. A parameter that can hold a reference points into the places that
+/// the call gives ([`given`], from the state `before` the call). The state
+/// after the call is the join of `st` and the states at the resume points.
 ///
 /// # Errors
 ///
 /// The errors of the transfer functions, and [`AlphaError::Later`] for a
-/// clause whose operation has a parameter or a result with a reference.
-pub fn call_clauses(cx: &mut Cx<'_>, body: BodyId, st: &mut State, t: &TermKind) -> R {
+/// clause whose operation gives a function value or a reference back to
+/// the callee ([`given_ops`]).
+pub fn call_clauses(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    before: Option<&State>,
+    st: &mut State,
+    t: &TermKind,
+) -> R {
     let p = cx.p;
     let hs = call_handlers(cx, body, t);
     if hs.is_empty() {
         return Ok(());
     }
     let start = st.clone();
+    let gv = given(cx, body, block, before.unwrap_or(&start), t)?;
+    let mut abort: Option<State> = None;
     for h in hs {
         handler(p, h)?;
-        if !plain_ops(p, cx.tys, h) {
-            return Err(AlphaError::Later(
-                "a call that runs a clause of a local handler whose operation has a reference (stage F15)",
-            ));
+        if !given_ops(p, cx.tys, h) {
+            return Err(AlphaError::Later(GIVES_BACK));
         }
         let clauses: Vec<BodyId> = p
             .handlers
             .get(h.index())
             .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
             .unwrap_or_default();
+        let s0 = gv.state(&start);
         for cb in clauses {
-            let n = body_of(p, cb)?.params.len();
-            let vals = vec![Tree::leaf(AbsVal::plain()); n];
-            let (after, _, _) = run_clause(cx, h, cb, &start, &vals)?;
-            if let Some(a) = after {
+            let vals = gv.values(cx, cb)?;
+            let run = run_clause(cx, h, cb, (&s0, gv.frame), &vals)?;
+            if let Some(a) = run.after {
                 st.join(&a);
+            }
+            if let Some(x) = run.abort {
+                match &mut abort {
+                    Some(a) => {
+                        a.join(&x);
+                    }
+                    None => abort = Some(x),
+                }
             }
         }
     }
+    // The abort edge of the call: the state before it, and the states of
+    // the clauses where they abort.
+    cx.hx.abort_edge = abort.map(AbortEdge::Join);
     Ok(())
+}
+
+/// Why a call that runs a clause is not in scope ([`given_ops`]).
+pub const GIVES_BACK: &str = "a call that runs a clause of a local handler whose operation gives a function value or a reference back to the callee (stage F16)";
+
+/// True if call `t` of body `body` runs a clause of a local handler.
+pub fn runs_clauses(cx: &Cx<'_>, body: BodyId, t: &TermKind) -> bool {
+    matches!(t, TermKind::Call { .. }) && !call_handlers(cx, body, t).is_empty()
 }
 
 /// The transfer of a perform through the capability `cap` of a local
@@ -756,8 +1181,13 @@ pub fn perform_local(
     dest: &Place,
 ) -> Result<(), AlphaError> {
     let out = perform_run(cx, body, st, cap, op, args)?;
+    let abort = out.abort.map(AbortEdge::Replace);
     *st = out.after;
-    transfer::bind_result(cx, body, st, &[], dest, out.value)
+    transfer::bind_result(cx, body, st, &[], dest, out.value)?;
+    // The abort edge of the perform: the states of the clause where it
+    // aborts (`super::edges` takes it).
+    cx.hx.abort_edge = abort;
+    Ok(())
 }
 
 /// The transfer of a `Resume` in the facts of a clause body (its component).

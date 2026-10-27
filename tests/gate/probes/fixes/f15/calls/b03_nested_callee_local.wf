@@ -1,0 +1,13 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b03_nested_callee_local.wf
+effect Keep { fn keep(r: &u64) }
+fn inner() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn outer() / Keep { inner() }
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in outer()
+    print(last)
+}

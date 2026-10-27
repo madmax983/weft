@@ -1,0 +1,19 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/c07_loop_in_clause_no_resume_c.wf
+effect Op { fn op(n: u64) }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(2)
+    let r = &v[0]
+    handle Op { fn op(n) {
+        let i = 0
+        while i < n { i = i + 1 }
+        v.clear()
+        resume(())
+    } } in {
+        op(2)
+        r = &w[0]
+    }
+    print(r)
+}

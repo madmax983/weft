@@ -1,0 +1,87 @@
+// A call in the handled body runs a clause whose operation takes a reference
+// (plan stage F15; F3-2, M4). The callee gives the clause places of its own
+// frame (`a local of f`, which ends when the call ends, also on the abort
+// path) and places that its arguments reach.
+effect Keep { fn keep(r: &u64) }
+effect Pick { fn pick(v: &Vec<u64>) -> &u64 }
+
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+
+fn given(g: &Vec<u64>) / Keep {
+    keep(&g[0])
+}
+
+// F3-2: the clause keeps the reference in a local of the site; the local of
+// the callee ends before the call returns.
+fn keeps() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in deep()
+    print(last) //~ W0301
+}
+
+// F3-2: the same with no `resume`: the abort unwinds `deep`.
+fn keeps_abort() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r } } in deep()
+    print(last) //~ W0301
+}
+
+// F3-2: the clause stores the reference into a vector of the site.
+fn stores() {
+    let store: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in deep()
+    print(store[0]) //~ W0301
+}
+
+// M4: the value of a clause with no `resume` points into a local of the
+// callee, which unwinds.
+fn body(g: &Vec<u64>) -> &u64 in g[] / Pick {
+    let w = Vec.new()
+    w.push(3)
+    let x = pick(&w)
+    &g[0]
+}
+
+fn abort_value() {
+    let g = Vec.new()
+    g.push(1)
+    let r = handle Pick { fn pick(v) { &v[0] } } in body(&g)
+    print(r) //~ W0301
+}
+
+// The callee gives a place of its argument: the clause keeps it, and the
+// site changes the argument after the `handle`.
+fn given_changed() {
+    let g = Vec.new()
+    g.push(1)
+    let store: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in given(&g)
+    g.clear()
+    print(store[0]) //~ W0301
+}
+
+// Correct programs: the clause reads its parameter, or keeps a place of the
+// argument that stays.
+fn reads() {
+    let n = 0
+    handle Keep { fn keep(r) { print(r); resume(()) } } in deep()
+    print(n)
+}
+
+fn given_kept() {
+    let g = Vec.new()
+    g.push(1)
+    let store: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in given(&g)
+    print(store[0])
+}
+
+fn main() {
+    reads()
+    given_kept()
+}

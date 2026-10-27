@@ -1,0 +1,9 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/f02_site_on_abort_spared_c.wf
+linear struct Tok { id: u64 }
+fn eat(t: Tok) { let Tok(i) = t; print(i) }
+effect Op { fn op(n: u64) }
+fn main() / fail {
+    let t = Tok { id: 1 }
+    handle Op { fn op(n) { if n > 5 { resume(()) } } } in op(1)
+    eat(t)
+}

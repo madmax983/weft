@@ -392,22 +392,14 @@ fn check_supported(
             }
             // A call that can perform through a local handler or fail to a
             // local `Fail` handler runs a clause there: the fact generator
-            // supports it when the operations of the handler have no
-            // reference (plan stage F14).
+            // supports it when the clauses give no function value and no
+            // reference back to the callee (plan stages F14, F15).
             if matches!(blk.term.kind, TermKind::Call { .. })
-                && frames::destinations(p, tys, sums, bid, &blk.term.kind)
+                && frames::clause_handlers(p, tys, sums, bid, &blk.term.kind)
                     .iter()
-                    .any(|d| match d {
-                        frames::Dest::Handler { handler, .. } => {
-                            !crate::analysis::clause::plain_ops(p, tys, *handler)
-                        }
-                        frames::Dest::Past => false,
-                    })
+                    .any(|h| !crate::analysis::clause::given_ops(p, tys, *h))
             {
-                return no(
-                    Group::D,
-                    "a call that runs a clause of a local handler whose operation has a reference (stage F15)",
-                );
+                return no(Group::D, crate::analysis::clause::GIVES_BACK);
             }
             match &blk.term.kind {
                 // A `handle` (stage F14).
@@ -1364,6 +1356,15 @@ fn emit_clause(
             .and_then(|i| i.seeds.get(&cb))
             .cloned()
             .unwrap_or_default();
+        // Each parameter points into its own root and into the places of
+        // the arguments of the nodes that run the clause (plan stage F15):
+        // a value that the clause puts into a place of the site has places
+        // of the site there.
+        let given = hx
+            .info(h)
+            .and_then(|i| i.params.get(&cb))
+            .cloned()
+            .unwrap_or_default();
         let mut acx = crate::analysis::Cx {
             p,
             tys: out.tys,
@@ -1374,8 +1375,14 @@ fn emit_clause(
             hx: &mut *hx,
         };
         let mut init = seed;
-        for (l, v) in &params.entry {
-            init.write(crate::analysis::transfer::key(p, cb, *l)?, &[], v.clone());
+        for (i, (l, v)) in params.entry.iter().enumerate() {
+            let mut v = v.clone();
+            if let Some(g) = given.get(i) {
+                v.join(&crate::analysis::Tree::leaf(crate::analysis::AbsVal::refs(
+                    g.flat().refs,
+                )));
+            }
+            init.write(crate::analysis::transfer::key(p, cb, *l)?, &[], v);
         }
         if let Some((k, _)) = body.kont {
             init.write(
@@ -1544,6 +1551,28 @@ fn stored_behind(
             let (key, cell) = match roots.role(root) {
                 Some(alpha::Role::Local(key)) => (key, false),
                 Some(alpha::Role::Cell(key)) => (key, true),
+                // A reference into a local of a callee that a call gives a
+                // clause (plan stage F15, `clause::given`): the local ends at
+                // the end of the call.
+                Some(alpha::Role::Frame(_)) if st.clause => {
+                    if seen.contains(&(into.clone(), root)) {
+                        continue;
+                    }
+                    seen.push((into.clone(), root));
+                    let msg = format!(
+                        "`{}` puts a reference into `{}` {into}: a local of a callee goes out of scope at the end of the call",
+                        facts.name,
+                        facts.place(r).display
+                    );
+                    let span = weft_syntax::ast::Span {
+                        lo: st.span.lo,
+                        hi: st.span.hi,
+                    };
+                    let mut diag = Diagnostic::error(Code::W0204, msg, span);
+                    diag.unit = body.origin.span.unit as usize;
+                    out.push(diag);
+                    continue;
+                }
                 _ => continue,
             };
             if seen.contains(&(into.clone(), root)) {
@@ -1986,6 +2015,7 @@ fn emit_block(
                 .map(|n| (d.id(), n))
         })
         .collect();
+    handlers::unbound_at_aborts(em, block, &values);
     let phases = [Phase::Main, Phase::Ret, Phase::FrameEnd];
     for m in phases
         .iter()
@@ -2093,7 +2123,15 @@ fn emit_handle(
     }
     if let Some(post) = table.get(at(Phase::Post)) {
         em.holders.before(post, &out.after, em.facts);
-        handlers::handle_post(em, exit, post, h);
+        // A clause that can run more than once runs its code after
+        // `resume` once for each run: again at `PostAgain` (plan stage
+        // F15).
+        let again = table.get(at(Phase::PostAgain));
+        if let Some(a) = again {
+            em.holders.before(a, &out.after, em.facts);
+        }
+        let posts: Vec<weft_facts::NodeId> = std::iter::once(post).chain(again).collect();
+        handlers::handle_post(em, exit, &posts, h);
     }
     if let Some(landing) = table.get(at(Phase::Landing)) {
         em.holders.before(

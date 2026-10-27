@@ -119,6 +119,11 @@ pub struct Sigma {
     /// the value that the callee runs, not through a place that the callee
     /// gives (W0312, follow-up F13.2).
     pub env: Vec<PlaceId>,
+    /// A call of a function item whose effects of the row each go to a
+    /// local handler (plan stage F15): the node runs the clauses itself
+    /// (`clause::call_clauses`), so the operations lend no place; only the
+    /// part `code_lends` of the lends holds.
+    pub local_ops: bool,
 }
 
 /// True if fact place `p` is place `e` or a place below it. A wildcard
@@ -1196,6 +1201,9 @@ pub fn main(
     for l in &sum.lends {
         // The root handlers do not change a place of a caller.
         if !acts && l.root == IRoot::Caller {
+            continue;
+        }
+        if s.local_ops && !sum.code_lends.contains(l) {
             continue;
         }
         let root = match l.root {

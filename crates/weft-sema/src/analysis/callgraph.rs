@@ -196,6 +196,7 @@ fn stated(
     out.reads.clone_from(&body.reads);
     out.put_fns.clone_from(&body.put_fns);
     out.lends.clone_from(&body.lends);
+    out.gives_frame = body.gives_frame;
     out
 }
 
@@ -237,6 +238,7 @@ fn summary_of(
                 }
             }
             sig::put_parts(&mut sum, inf);
+            sum.gives_frame = inf.gives_frame;
             sum.only_self &= inf.runs.is_empty()
                 && inf
                     .lends

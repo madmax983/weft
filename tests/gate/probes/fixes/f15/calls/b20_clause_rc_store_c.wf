@@ -1,0 +1,15 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b20_clause_rc_store_c.wf
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+effect Keep { fn keep(r: &u64) }
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn clause_rc(c: Rc<Cache>) / mut(Cache) {
+    handle Keep { fn keep(r) { c.data.push(r + 0); resume(()) } } in deep()
+}
+fn main() / mut(Cache) {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    clause_rc(c.clone())
+    print(c.data[0])
+}

@@ -30,6 +30,14 @@
 //!   rest of the handled body runs: the `Resume` node lends each place that
 //!   the handled body changes after a perform of the clause, and frees each
 //!   place that it frees there, also through the parameters of the clause.
+//! - A call that runs a clause (plan stages F14, F15) is a run node of the
+//!   clause too: σ of a parameter is the places that the call gives
+//!   (`clause::given`), and a change through it has the callee root of the
+//!   argument that reaches it ([`call_clauses`]).
+//! - A clause that can run more than once runs its `post` part at `Post`
+//!   and again at `PostAgain` ([`handle_post`]); an abort to a local
+//!   handler binds the captured locals that no path assigned
+//!   ([`unbound_at_aborts`], plan stage F15).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -231,29 +239,39 @@ pub fn handle_exit(
     bind_dest(em, n, st, dest, value)
 }
 
-/// `Handle` `Post` (`docs/ir.md` 6.4): the code of each clause after its
-/// resume points runs here ([`project`]).
-pub fn handle_post(em: &mut Em<'_>, exit: Option<NodeId>, n: NodeId, h: HandlerId) {
+/// `Handle` `Post` (`docs/ir.md` 6.4).
+///
+/// The code of each clause after its resume points runs at each node of
+/// `posts` ([`project`]): `Post`, and `PostAgain` if a clause can run more
+/// than once (plan stage F15). The frames of the clauses end at each one.
+pub fn handle_post(em: &mut Em<'_>, exit: Option<NodeId>, posts: &[NodeId], h: HandlerId) {
     let clauses: Vec<BodyId> =
         em.p.handlers
             .get(h.index())
             .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
             .unwrap_or_default();
-    for clause in clauses {
-        em.hx.runs.push(ClauseRun {
-            node: n,
-            handler: h,
-            clause,
-            post: true,
-            args: Vec::new(),
-            helds: Vec::new(),
-            deps: Vec::new(),
-            at: em.body,
-            spares: None,
-            ins: Vec::new(),
-        });
+    for &n in posts {
+        for &clause in &clauses {
+            em.hx.runs.push(ClauseRun {
+                node: n,
+                handler: h,
+                clause,
+                post: true,
+                args: Vec::new(),
+                helds: Vec::new(),
+                deps: Vec::new(),
+                at: em.body,
+                spares: None,
+                ins: Vec::new(),
+                given: None,
+            });
+        }
     }
-    em.hx.ends.push((h, exit.unwrap_or(n), n));
+    if let Some(&first) = posts.first() {
+        for &n in posts {
+            em.hx.ends.push((h, exit.unwrap_or(first), n));
+        }
+    }
 }
 
 /// A `Perform` through the capability of a local handler (`docs/ir.md` 6.4,
@@ -363,6 +381,7 @@ pub fn perform_local(
         at: body,
         spares: spared,
         ins,
+        given: None,
     });
     if let Some(r) = nodes.ret {
         bind_dest(em, r, &out.after, dest, &out.value)?;
@@ -468,21 +487,34 @@ fn spares(em: &Em<'_>, body: BodyId, t: &TermKind) -> Option<Vec<BodyId>> {
             super::frames::Dest::Past => return None,
         }
     }
+    // The handler of a clause that resumes on each path is no destination
+    // (plan stage F15), but the node still suspends the handled body: the
+    // values inside it are not spared (ADR 0005).
+    for h in super::frames::clause_handlers(em.p, em.tys, em.sums, body, t) {
+        out.push(em.p.handlers.get(h.index())?.handled);
+    }
+    out.sort();
+    out.dedup();
     Some(out)
 }
 
-/// A call that runs clauses of local handlers (plan stage F14).
+/// A call that runs clauses of local handlers (plan stages F14, F15).
 ///
 /// Its `Main` node performs through the capability of each handler
 /// (no `escapes_at` of the effect of the handler), and the code of each
-/// clause before its resume points runs there ([`project`]). The operations
-/// have no reference (`clause::plain_ops`), so σ is empty.
+/// clause before its resume points runs there ([`project`]). σ of a
+/// parameter of a clause that can hold a reference is the places that the
+/// call gives (`clause::given`: the callee frame root and what the
+/// arguments reach); a change through it is no change of an argument of
+/// the call (no `call_mut`: the callee gives the place, as it lends a place
+/// to an operation of a caller).
 pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
     let n = nodes.main;
     let body = em.body;
+    let block = em.at.0;
     // The value of the `handle` binds at the `AbortValue` node of an abort
     // to its handler.
-    let landings = clause::call_landings(&mut em.cx(), body, st, t)?;
+    let landings = clause::call_landings(&mut em.cx(), (body, block), st, t)?;
     for (h, v) in landings {
         if let Some((_, av)) = nodes
             .values
@@ -493,6 +525,11 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
         }
     }
     let hs = clause::call_handlers(&em.cx(), body, t);
+    let gv = if hs.is_empty() {
+        clause::Given::default()
+    } else {
+        clause::given(&mut em.cx(), body, block, st, t)?
+    };
     for h in hs {
         let (_, cap) = ids(em, h);
         em.facts.performs_at.push((n, cap));
@@ -513,21 +550,147 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                 .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
                 .unwrap_or_default();
         for clause in clauses {
+            let (args, deps) = gv.sigma(em.p, em.tys, clause);
             em.hx.runs.push(ClauseRun {
                 node: n,
                 handler: h,
                 clause,
                 post: false,
-                args: Vec::new(),
-                helds: Vec::new(),
-                deps: Vec::new(),
+                helds: args.clone(),
+                args,
+                deps,
                 at: body,
                 spares: None,
                 ins: Vec::new(),
+                given: Some(gv.roots.clone()),
             });
         }
     }
     Ok(())
+}
+
+/// The locals of body `body` that no path from its entry to the terminator
+/// of block `block` assigns (plan stage F15). The sets are computed once
+/// for each body (`Handlers::assigned`).
+fn unassigned(
+    p: &Program,
+    hx: &mut Handlers,
+    body: BodyId,
+    block: BlockId,
+) -> Vec<weft_ir::LocalId> {
+    let Some(b) = p.body(body) else {
+        return Vec::new();
+    };
+    let words = b.locals.len().div_ceil(64);
+    let sets = hx.assigned.entry(body).or_insert_with(|| {
+        let set = |v: &mut [u64], l: weft_ir::LocalId| {
+            if let Some(w) = v.get_mut(l.index() / 64) {
+                *w |= 1u64 << (l.index() % 64);
+            }
+        };
+        // The locals that each block assigns before its terminator, and
+        // what its terminator gives to its normal successors.
+        let mut own: Vec<Vec<u64>> = vec![vec![0; words]; b.blocks.len()];
+        let mut out_term: Vec<Vec<u64>> = vec![vec![0; words]; b.blocks.len()];
+        for (i, blk) in b.blocks.iter().enumerate() {
+            for st in &blk.stmts {
+                if let weft_ir::StmtKind::Assign(q, _) = &st.kind {
+                    if let Some(v) = own.get_mut(i) {
+                        set(v, q.local);
+                    }
+                }
+            }
+            let dest = match &blk.term.kind {
+                TermKind::Call { dest, .. }
+                | TermKind::Perform { dest, .. }
+                | TermKind::Resume { dest, .. }
+                | TermKind::Handle { dest, .. }
+                | TermKind::IterNext { dest, .. } => Some(dest.local),
+                _ => None,
+            };
+            if let (Some(l), Some(v)) = (dest, out_term.get_mut(i)) {
+                set(v, l);
+            }
+        }
+        // A forward may analysis: the set at the terminator of a block is
+        // the join of the sets of its predecessors and its own statements.
+        let mut at: Vec<Vec<u64>> = own.clone();
+        let mut work: Vec<usize> = (0..b.blocks.len()).collect();
+        while let Some(i) = work.pop() {
+            let Some(blk) = b.blocks.get(i) else {
+                continue;
+            };
+            let mut give = at.get(i).cloned().unwrap_or_default();
+            for (g, t) in give.iter_mut().zip(out_term.get(i).into_iter().flatten()) {
+                *g |= *t;
+            }
+            for s in blk.term.kind.successors() {
+                let Some(dst) = at.get_mut(s.index()) else {
+                    continue;
+                };
+                let mut grew = false;
+                for (d, g) in dst.iter_mut().zip(&give) {
+                    let n = *d | *g;
+                    grew |= n != *d;
+                    *d = n;
+                }
+                if grew {
+                    work.push(s.index());
+                }
+            }
+        }
+        at
+    });
+    let Some(set) = sets.get(block.index()) else {
+        return Vec::new();
+    };
+    (0..b.locals.len())
+        .filter(|&i| set.get(i / 64).is_some_and(|w| w & (1u64 << (i % 64)) == 0))
+        .map(|i| weft_ir::LocalId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect()
+}
+
+/// The locals that bind at the `AbortValue` nodes of an abort.
+///
+/// `values` are the `AbortValue` nodes of the terminator of block `block` of
+/// the body of `em` (an abort to a local handler, plan stage F15): each local
+/// of the body that no path to the terminator assigns holds no reference
+/// on the abort path, so it binds there (`rebound_at`). A closure that
+/// the handled body made on another path can run after the `Landing`, and
+/// the analysis joins its value with the values of the other paths
+/// (`s5r/p/scale400.wf`): its use of a captured local is no use of an old
+/// reference. Only a local that a closure captures (`Kept`, `ByRef`) and
+/// that can hold a reference.
+pub fn unbound_at_aborts(em: &mut Em<'_>, block: BlockId, values: &[(u32, NodeId)]) {
+    if values.is_empty() {
+        return;
+    }
+    let body = em.body;
+    let p = em.p;
+    let captured: HashSet<weft_ir::LocalId> = clause::captured_locals(p, body)
+        .into_iter()
+        .filter(|k| k.0 == body)
+        .map(|k| k.1)
+        .collect();
+    if captured.is_empty() {
+        return;
+    }
+    let ls = unassigned(p, em.hx, body, block);
+    for l in ls.into_iter().filter(|l| captured.contains(l)) {
+        // Only a local that can hold a reference: it gets no linear part
+        // there (`empty_at`).
+        let refs = p
+            .body(body)
+            .and_then(|b| b.local(l))
+            .is_some_and(|d| d.props.holds_refs || crate::props::ir_has_fns(em.tys, d.ty));
+        let Some(v) = em.vars.get(&VarKey::S(body, l)).filter(|_| refs) else {
+            continue;
+        };
+        for &(_, n) in values {
+            em.facts.rebound_at.push((v, n));
+            em.facts.empty_at.push((v, n));
+        }
+    }
 }
 
 /// The value `v` of the `handle` of handler `h` binds to its destination at
@@ -879,6 +1042,14 @@ impl Mapper<'_> {
         }
     }
 
+    /// The parameter of the clause that place `q` is below, if any.
+    fn param_of(&self, facts: &FnFacts, q: PlaceId) -> Option<u32> {
+        match self.roots.role(facts.place(q).root) {
+            Some(Role::Param(b, i) | Role::Held(b, i)) if b == self.clause => Some(i),
+            _ => None,
+        }
+    }
+
     /// The places of place `q` at a run node with σ `s`.
     fn places(&self, facts: &mut FnFacts, s: &Sigma, q: PlaceId) -> Vec<PlaceId> {
         match self.map(facts, s, q) {
@@ -1041,7 +1212,14 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         };
         let empty = FnFacts::default();
         let part = parts.get(&r.clause).unwrap_or(&empty);
-        let new = copy_part(facts, part, &m, (nodes, own), (&s, &r.ins), (r.node, cap));
+        let new = copy_part(
+            facts,
+            part,
+            &m,
+            (nodes, own),
+            (&s, &r.ins, r.given.as_deref()),
+            (r.node, cap),
+        );
         let abort = part
             .may_abort
             .iter()
@@ -1176,13 +1354,16 @@ fn joined_sigma(hx: &Handlers) -> BTreeMap<BodyId, Sigma> {
 /// runs it, with σ `s`: the variables that are not in `own` and the places
 /// that the clause can see. A change of a place gets a `call_mut` with the
 /// root of the parameter, or the root of the clauses of the capability
-/// `cap` for a place of the site.
+/// `cap` for a place of the site. With `given` (a call that runs the
+/// clause), a change through a parameter has the callee root of the
+/// argument whose given place it is below (none for a place of the callee
+/// frame or of an `rc` group).
 fn copy_part(
     facts: &mut FnFacts,
     part: &FnFacts,
     m: &Mapper<'_>,
     (nodes, own): (&HashSet<NodeId>, &HashSet<VarId>),
-    (s, ins): (&Sigma, &[usize]),
+    (s, ins, given): (&Sigma, &[usize], Option<&GivenRoots>),
     (n, cap): (NodeId, Option<CapId>),
 ) -> FnFacts {
     let mut new = FnFacts::default();
@@ -1218,20 +1399,49 @@ fn copy_part(
             .collect()
     };
     let clause_root = cap.map_or(crate::body::roots::STORED, crate::body::roots::clause);
-    for (q, lends) in places(&part.mutates_at)
-        .into_iter()
-        .map(|q| (q, false))
-        .chain(places(&part.lends_mut).into_iter().map(|q| (q, true)))
-    {
+    // A parameter of the clause points into its own root and into the places
+    // of the arguments (plan stage F15): a change through it has a row for
+    // each. The row of the place of an argument at a node that has a row
+    // below the root of that parameter is the same change: the row of the
+    // parameter maps it.
+    let rows: Vec<(NodeId, PlaceId, bool)> = part
+        .mutates_at
+        .iter()
+        .map(|&(x, q)| (x, q, false))
+        .chain(part.lends_mut.iter().map(|&(x, q)| (x, q, true)))
+        .filter(|(x, _, _)| at(x))
+        .collect();
+    let mut through: HashSet<(NodeId, u32)> = HashSet::new();
+    for &(x, q, _) in &rows {
+        if let Some(i) = m.param_of(facts, q) {
+            through.insert((x, i));
+        }
+    }
+    for (x, q, lends) in rows {
+        let same = through.iter().any(|&(y, i)| {
+            y == x && {
+                let i = i as usize;
+                s.args
+                    .get(i)
+                    .into_iter()
+                    .chain(s.helds.get(i))
+                    .flatten()
+                    .any(|&b| at_or_below(facts, q, b))
+            }
+        });
+        if same && m.param_of(facts, q).is_none() {
+            continue;
+        }
         let (root, ps) = match m.map(facts, s, q) {
+            Mapped::Param(_, ps) if given.is_some() => (None, ps),
             Mapped::Param(i, ps) => {
                 let i = i as usize;
                 (
-                    crate::body::roots::param(ins.get(i).copied().unwrap_or(i)),
+                    Some(crate::body::roots::param(ins.get(i).copied().unwrap_or(i))),
                     ps,
                 )
             }
-            Mapped::Same(q) => (clause_root, vec![q]),
+            Mapped::Same(q) => (Some(clause_root), vec![q]),
             Mapped::Own => continue,
         };
         for x in ps {
@@ -1240,7 +1450,15 @@ fn copy_part(
             } else {
                 new.mutates_at.push((n, x));
             }
-            new.call_mut.push((n, x, root));
+            match (root, given) {
+                (Some(root), _) => new.call_mut.push((n, x, root)),
+                (None, Some(g)) => {
+                    for r in given_roots(facts, g, x) {
+                        new.call_mut.push((n, x, r));
+                    }
+                }
+                (None, None) => {}
+            }
         }
     }
     for q in places(&part.reads_at) {
@@ -1273,6 +1491,10 @@ fn copy_part(
         .filter(|(x, _)| at(x))
         .map(|(_, e)| (n, e.clone()))
         .collect();
+    // A node that runs a clause is a suspension point: it can abort if a
+    // node of the clause can, a `resume` too (ADR 0005: each named effect
+    // can abort, W0602), also when the clause resumes on each path and the
+    // node has no abort edge to the handler (plan stage F15).
     if part.may_abort.iter().any(at) {
         new.may_abort.push(n);
     }
@@ -1280,6 +1502,37 @@ fn copy_part(
         new.multi_at.push(n);
     }
     new
+}
+
+/// True if place `q` is place `b` or a place below it; a wildcard place `b`
+/// stands for each place below its base.
+fn at_or_below(facts: &FnFacts, q: PlaceId, b: PlaceId) -> bool {
+    let b = facts.wild_base(b).unwrap_or(b);
+    let mut at = Some(q);
+    while let Some(x) = at {
+        if x == b {
+            return true;
+        }
+        at = facts.place(x).parent;
+    }
+    false
+}
+
+/// The given places of the arguments of a call that runs a clause, each
+/// with the callee root of its parameter (`ClauseRun::given`).
+type GivenRoots = [(PlaceId, u32)];
+
+/// The callee roots of the given places `given` at or above place `x`.
+fn given_roots(facts: &FnFacts, given: &[(PlaceId, u32)], x: PlaceId) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut at = Some(x);
+    while let Some(q) = at {
+        out.extend(given.iter().filter(|(b, _)| *b == q).map(|(_, r)| *r));
+        at = facts.place(q).parent;
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// The references that the clauses put behind a reference parameter of the
@@ -1346,6 +1599,7 @@ pub fn map_stored(
             }
             let mut x = st.clone();
             x.into = i;
+            x.clause = true;
             out.push(x);
         }
     }
@@ -1569,6 +1823,20 @@ enum Through {
 /// - `q` is below `a`: a change (a free) of the place below the root of the
 ///   parameter with the steps of `q` after `a`.
 fn through_param(facts: &mut FnFacts, pr: PlaceId, a: PlaceId, q: PlaceId, free: bool) -> Through {
+    // A wildcard argument place (the places that a call gives, plan stage
+    // F15) stands for each place at or below its base: the argument can be
+    // below a changed place there, also through an unstable step, so a
+    // change at or below the base frees the root of the parameter; a change
+    // above the base is a change above the parameter.
+    if let Some(b) = facts.wild_base(a).filter(|&b| b != a) {
+        if at_or_below(facts, q, b) {
+            return Through::Free(pr);
+        }
+        return match through_param(facts, pr, b, q, free) {
+            Through::Free(_) => Through::Free(pr),
+            _ => Through::None,
+        };
+    }
     let pa = facts.place(a).clone();
     let pq = facts.place(q).clone();
     if pa.root != pq.root {

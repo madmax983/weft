@@ -1,0 +1,11 @@
+// F15 self-attack (clean twin): scratchpad f15/att/v/b10_option_ref_local_c.wf
+effect Keep { fn keep(o: Option<&u64>) }
+fn given(g: &Vec<u64>) / Keep { keep(Some(&g[0])) }
+fn main() {
+    let g: Vec<u64> = Vec.new()
+    g.push(4)
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(o) { match o { Some(r) => { last = r }, None => {} }; resume(()) } } in given(&g)
+    print(last)
+}

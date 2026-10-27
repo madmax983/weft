@@ -1,0 +1,13 @@
+// F15 self-attack (a call runs a clause whose operation takes a reference): scratchpad f15/att/v/b11_struct_field_local.wf
+struct P { a: u64, b: u64 }
+effect Keep { fn keep(r: &u64) }
+fn deep() / Keep {
+    let p = P { a: 1, b: 2 }
+    keep(&p.b)
+}
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in deep()
+    print(last)
+}
