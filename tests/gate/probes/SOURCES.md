@@ -404,3 +404,7 @@ pipeline checks them by default.
 - `fixes/f14/post/*.wf`: class F14-POST, the code of a clause after `resume` and the
   rest of the handled body in the `resume`. The clean twins are the shapes that the
   fact oracle and its summary oracle check at `Post`.
+- `fixes/f14/made/*.wf`: class F14-MADE, a clause or a handled body runs a closure
+  that a closure of the site made. The `ir` pipeline with group D missed it before
+  `apply::other_maker` took a clause and a handled body as the function of their site
+  (the old pipeline checks it).

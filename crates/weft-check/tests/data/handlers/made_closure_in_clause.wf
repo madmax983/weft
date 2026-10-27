@@ -1,0 +1,40 @@
+// A clause or a handled body runs a closure that a closure of the site made
+// (`let g = mk(); g()`): the closure changes a place of the site through the
+// captures of its maker. The clause and the handled body run in the frame
+// of the site, so the made closure is a closure of this function
+// (`apply::other_maker`): its change is a change of `w.entities`.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Log { fn log(n: u64) }
+
+fn in_clause() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let mk = || || w.entities.clear()
+    let first = &w.entities[0]
+    handle Log { fn log(n) { let g = mk(); g(); resume(()) } } in log(1)
+    print(first.hp) //~ W0301
+}
+
+fn in_body() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let mk = || || w.entities.clear()
+    let first = &w.entities[0]
+    handle Log { fn log(n) { resume(()) } } in { let g = mk(); log(1); g() }
+    print(first.hp) //~ W0301
+}
+
+fn clean() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let mk = || || w.entities.clear()
+    handle Log { fn log(n) { let g = mk(); g(); resume(()) } } in log(1)
+    print(w.entities.len())
+}
+
+fn main() {
+    clean()
+    in_body()
+    in_clause()
+}

@@ -5011,3 +5011,47 @@ group = "ABD"
 stage = "F14"
 repro = ["tests/gate/probes/fixes/f14/post/h3_loop_body_perform_post_c.wf"]
 note = "the clean twin of F14-POST in a loop"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/made/k1_clause_runs_made.wf",
+    "tests/gate/probes/fixes/f14/made/k2_body_runs_made.wf",
+]
+code = "W0301"
+note = "a clause or a handled body runs a closure that a closure of the site made (`let g = mk(); g()`): the clause and the handled body run in the frame of the site, so the made closure is a closure of this function (`apply::other_maker`) and its change is a change of the place of the site. Found by the rerun of the F12 review sets (variants2 sw/f2_04) after commit 9a2522b"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/made/k6_clause_made_in_loop.wf"]
+code = "W0301"
+note = "F14-MADE with the perform in a loop"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "sound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/fixes/f14/made/k1_clause_runs_made_c.wf",
+    "tests/gate/probes/fixes/f14/made/k2_body_runs_made_c.wf",
+]
+note = "the clean twins of F14-MADE"
+
+[[claim]]
+finding = "F14-MADE"
+kind = "sound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "F14"
+repro = ["tests/gate/probes/fixes/f14/made/k6_clause_made_in_loop_c.wf"]
+note = "the clean twin of F14-MADE in a loop"

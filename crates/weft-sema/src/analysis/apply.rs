@@ -586,14 +586,28 @@ pub fn made_sigma(
 }
 
 /// True if the function body that makes `maker` (the body itself, or the
-/// function of a closure body) is not the function of body `body`: a closure
+/// function of a closure body, of a handled body or of a clause) is not the
+/// function of body `body`: a closure
 /// that `maker` makes leaves a frame that is gone when `body` runs it.
 fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
+    // A handled body and a clause run in the frame of their site (plan
+    // stage F14): the function of the site.
     let root = |mut b: BodyId| {
-        for _ in 0..=p.closures.len() {
-            match p.closure_of(b) {
-                Some((_, d)) => b = d.maker,
-                None => return Some(b),
+        for _ in 0..=p.bodies.len() {
+            if let Some((_, d)) = p.closure_of(b) {
+                b = d.maker;
+                continue;
+            }
+            match p.bodies.get(b.index()) {
+                Some(x)
+                    if matches!(
+                        x.kind,
+                        weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Clause(..)
+                    ) =>
+                {
+                    b = x.parent?;
+                }
+                _ => return Some(b),
             }
         }
         None

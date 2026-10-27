@@ -252,3 +252,11 @@ fn a_clause_that_fails_past_its_handler_aborts_where_it_runs() {
 fn an_in_place_on_a_parameter_of_an_operation_is_checked_as_for_a_function() {
     check("op_in_place.wf");
 }
+
+/// A clause or a handled body runs a closure that a closure of the site
+/// made: the change through the captures of the maker is a change of the
+/// place of the site (the clause runs in the frame of the site).
+#[test]
+fn a_made_closure_that_a_clause_runs_changes_the_place_of_the_site() {
+    check("made_closure_in_clause.wf");
+}
