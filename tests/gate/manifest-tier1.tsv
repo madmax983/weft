@@ -211,6 +211,7 @@ adf65505ea848adf19b6232f0be3e59dc9f9d11b90d012b4d4838cb444cd36f1	crates/weft-int
 76106795ecdaf9cbaf639a2915b98545335d06c23e46aea3ceeefa8ae3de7ce9	crates/weft-interp/tests/programs/timeout_continuation.wf	interp	file	1	0	
 6dc4f7fe707fd8a58ee1abb9f98ca461d972d5609b90bd65dca61f017c3c2a1b	crates/weft-interp/tests/programs/timeout_same_deadline.wf	interp	file	1	0	
 cd9ad51833c5ef016d087b0242922d0384f836c8f1db7a73bbfe38925d30b987	crates/weft-interp/tests/programs/values.wf	interp	file	1	0	
+ea22880ea3e4c041f2dcc5fe55ba061b5d5f2016a1f0f446e503f22bc8c08af6	examples/ecs/ecs.wf	examples	file	1	1	
 a4428a35758ae70b9daf07d93e155aaa02e59000c57b8ef393b3809735a2ce64	examples/gc-lib	examples	package	0	0	
 383cf85e88c77166cd58d79fcebec948c901d0cbd25794ceae4d7d58a3c2273a	examples/package	examples	package	1	0	
 323f1883204e64b13c06335fa143aab2dc15ca7ca59a013aee926d3eae09b403	tests/packages/hidden	packages	package	1	0	

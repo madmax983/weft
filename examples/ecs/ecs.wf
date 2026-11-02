@@ -1,0 +1,531 @@
+// A typed archetype ECS for Weft Phase 1.
+// Moving: Position, Velocity, Health. Still: Position, Health.
+// Entity handles belong to one world. All numbers in the simulation are integers.
+
+struct Entity { index: usize, generation: u32 }
+struct Position { x: i64, y: i64 }
+struct Velocity { x: i64, y: i64 }
+struct Health { hp: i64 }
+struct Slot { generation: u32, alive: bool, moving: bool, row: usize }
+
+struct MovingTable {
+    entities: Vec<usize>, positions: Vec<Position>
+    velocities: Vec<Velocity>, health: Vec<Health>
+}
+struct StillTable {
+    entities: Vec<usize>, positions: Vec<Position>, health: Vec<Health>
+}
+struct World {
+    slots: Vec<Slot>, free: Vec<usize>
+    moving: MovingTable, still: StillTable
+}
+
+enum Command {
+    Spawn(Position, Option<Velocity>, i64)
+    Despawn(Entity)
+    SetVelocity(Entity, Option<Velocity>)
+}
+
+fn world_new() -> World {
+    World {
+        slots: Vec.new(), free: Vec.new()
+        moving: MovingTable {
+            entities: Vec.new(), positions: Vec.new()
+            velocities: Vec.new(), health: Vec.new()
+        }
+        still: StillTable {
+            entities: Vec.new(), positions: Vec.new(), health: Vec.new()
+        }
+    }
+}
+
+fn count(w: &World) -> usize {
+    w.moving.entities.len() + w.still.entities.len()
+}
+
+fn contains(w: &World, e: Entity) -> bool {
+    if e.index >= w.slots.len() { return false }
+    w.slots[e.index].alive && w.slots[e.index].generation == e.generation
+}
+
+// Reserve a handle for a row that the caller is about to append.
+fn reserve(w: &World, moving: bool, row: usize) -> Entity / mut(w.slots, w.free) {
+    match w.free.pop() {
+        Some(i) => {
+            w.slots[i].alive = true
+            w.slots[i].moving = moving
+            w.slots[i].row = row
+            Entity(i, w.slots[i].generation)
+        }
+        None => {
+            let i = w.slots.len()
+            w.slots.push(Slot(0, true, moving, row))
+            Entity(i, 0)
+        }
+    }
+}
+
+fn spawn(w: &World, p: Position, v: Option<Velocity>, hp: i64) -> Entity / mut(w.slots, w.free, w.moving, w.still) {
+    match v {
+        Some(vel) => {
+            let e = reserve(w, true, w.moving.entities.len())
+            w.moving.entities.push(e.index)
+            w.moving.positions.push(p)
+            w.moving.velocities.push(vel)
+            w.moving.health.push(Health(hp))
+            e
+        }
+        None => {
+            let e = reserve(w, false, w.still.entities.len())
+            w.still.entities.push(e.index)
+            w.still.positions.push(p)
+            w.still.health.push(Health(hp))
+            e
+        }
+    }
+}
+
+// Swap the last row into the hole. Repair its entity-to-row mapping.
+fn remove_moving(w: &World, row: usize) / mut(w.moving, w.slots[]) {
+    let last = w.moving.entities.len() - 1
+    if row != last {
+        let moved = w.moving.entities[last]
+        w.moving.entities[row] = moved
+        w.moving.positions[row] = w.moving.positions[last]
+        w.moving.velocities[row] = w.moving.velocities[last]
+        w.moving.health[row] = w.moving.health[last]
+        w.slots[moved].row = row
+    }
+    w.moving.entities.pop()
+    w.moving.positions.pop()
+    w.moving.velocities.pop()
+    w.moving.health.pop()
+}
+
+fn remove_still(w: &World, row: usize) / mut(w.still, w.slots[]) {
+    let last = w.still.entities.len() - 1
+    if row != last {
+        let moved = w.still.entities[last]
+        w.still.entities[row] = moved
+        w.still.positions[row] = w.still.positions[last]
+        w.still.health[row] = w.still.health[last]
+        w.slots[moved].row = row
+    }
+    w.still.entities.pop()
+    w.still.positions.pop()
+    w.still.health.pop()
+}
+
+fn despawn(w: &World, e: Entity) -> bool / mut(w.slots[], w.free, w.moving, w.still) {
+    if !contains(w, e) { return false }
+    let s = w.slots[e.index]
+    if s.moving { remove_moving(w, s.row) }
+    else { remove_still(w, s.row) }
+    w.slots[e.index].alive = false
+    // Retire an exhausted slot. Never wrap a generation back to an old handle.
+    if s.generation < 4294967295 {
+        w.slots[e.index].generation = s.generation + 1
+        w.free.push(e.index)
+    }
+    true
+}
+
+fn position(w: &World, e: Entity) -> Option<Position> {
+    if !contains(w, e) { return None }
+    let s = w.slots[e.index]
+    if s.moving { Some(w.moving.positions[s.row]) }
+    else { Some(w.still.positions[s.row]) }
+}
+
+// Inserting or removing Velocity migrates a row. The entity handle stays the same.
+fn set_velocity(w: &World, e: Entity, v: Option<Velocity>) -> bool / mut(w.slots[], w.moving, w.still) {
+    if !contains(w, e) { return false }
+    let s = w.slots[e.index]
+    match v {
+        Some(vel) => {
+            if s.moving { w.moving.velocities[s.row] = vel }
+            else {
+                let p = w.still.positions[s.row]
+                let h = w.still.health[s.row]
+                remove_still(w, s.row)
+                let row = w.moving.entities.len()
+                w.moving.entities.push(e.index)
+                w.moving.positions.push(p)
+                w.moving.velocities.push(vel)
+                w.moving.health.push(h)
+                w.slots[e.index].moving = true
+                w.slots[e.index].row = row
+            }
+        }
+        None => {
+            if s.moving {
+                let p = w.moving.positions[s.row]
+                let h = w.moving.health[s.row]
+                remove_moving(w, s.row)
+                let row = w.still.entities.len()
+                w.still.entities.push(e.index)
+                w.still.positions.push(p)
+                w.still.health.push(h)
+                w.slots[e.index].moving = false
+                w.slots[e.index].row = row
+            }
+        }
+    }
+    true
+}
+
+// Query: Position + Velocity. Only the element place is mutated.
+fn integrate(w: &World) / mut(w.moving.positions[]) {
+    let i: usize = 0
+    while i < w.moving.positions.len() {
+        let p = &w.moving.positions[i]
+        let v = w.moving.velocities[i]
+        p.x += v.x
+        p.y += v.y
+        i += 1
+    }
+}
+
+// Query: Health, across both archetypes.
+fn damage(w: &World, amount: i64) / mut(w.moving.health[], w.still.health[]) {
+    assert amount >= 0
+    for h in w.moving.health[] { h.hp -= amount }
+    for h in w.still.health[] { h.hp -= amount }
+}
+
+fn heal_chunk(health: &[Health] @ uniq) / mut(health[]) {
+    for h in health[] { h.hp += 1 }
+}
+
+fn heal_moving(w: &World) / mut(w.moving.health[]), par {
+    let mid = w.moving.health.len() / 2
+    let (left, right) = w.moving.health.split_mut(mid)
+    fork(|| heal_chunk(left), || heal_chunk(right))
+}
+
+// Read component storage and write a separate queue. No row moves here.
+fn collect_dead(w: &World, q: &Vec<Command>) / mut(q) {
+    let i: usize = 0
+    while i < w.moving.entities.len() {
+        if w.moving.health[i].hp <= 0 {
+            let slot = w.moving.entities[i]
+            q.push(Despawn(Entity(slot, w.slots[slot].generation)))
+        }
+        i += 1
+    }
+    i = 0
+    while i < w.still.entities.len() {
+        if w.still.health[i].hp <= 0 {
+            let slot = w.still.entities[i]
+            q.push(Despawn(Entity(slot, w.slots[slot].generation)))
+        }
+        i += 1
+    }
+}
+
+// Structural barrier. Returns the number of successful commands.
+// Stale entity commands are skipped. Spawn does not reserve a handle in advance.
+fn apply_commands(w: &World, q: &Vec<Command>) -> usize / mut(w.slots, w.free, w.moving, w.still, q) {
+    let applied: usize = 0
+    for c in q[] {
+        match c {
+            Spawn(p, v, hp) => { spawn(w, p, v, hp); applied += 1 }
+            Despawn(e) => { if despawn(w, e) { applied += 1 } }
+            SetVelocity(e, v) => { if set_velocity(w, e, v) { applied += 1 } }
+        }
+    }
+    q.clear()
+    applied
+}
+
+// Invariants for tests and debugging. This is not part of the hot loop.
+fn valid(w: &World) -> bool {
+    let m = w.moving.entities.len()
+    let n = w.still.entities.len()
+    if w.moving.positions.len() != m || w.moving.velocities.len() != m || w.moving.health.len() != m { return false }
+    if w.still.positions.len() != n || w.still.health.len() != n { return false }
+    let row: usize = 0
+    while row < m {
+        let i = w.moving.entities[row]
+        if i >= w.slots.len() { return false }
+        let s = w.slots[i]
+        if !s.alive || !s.moving || s.row != row { return false }
+        row += 1
+    }
+    row = 0
+    while row < n {
+        let i = w.still.entities[row]
+        if i >= w.slots.len() { return false }
+        let s = w.slots[i]
+        if !s.alive || s.moving || s.row != row { return false }
+        row += 1
+    }
+    let live: usize = 0
+    let i: usize = 0
+    while i < w.slots.len() {
+        let s = w.slots[i]
+        let occurrences: usize = 0
+        for f in w.free[] { if f == i { occurrences += 1 } }
+        if s.alive {
+            live += 1
+            if occurrences != 0 { return false }
+            if s.moving {
+                if s.row >= m { return false }
+                if w.moving.entities[s.row] != i { return false }
+            } else {
+                if s.row >= n { return false }
+                if w.still.entities[s.row] != i { return false }
+            }
+        } else {
+            if s.generation == 4294967295 {
+                // The maximum generation can be free once, or permanently retired.
+                if occurrences > 1 { return false }
+            } else { if occurrences != 1 { return false } }
+        }
+        i += 1
+    }
+    for f in w.free[] { if f >= w.slots.len() { return false } }
+    live == m + n
+}
+
+fn populate(w: &World, n: usize) / mut(w.slots, w.free, w.moving, w.still) {
+    let i: usize = 0
+    let x: i64 = 0
+    while i < n {
+        let v = if i % 2 == 0 { Some(Velocity(2, 1)) } else { None }
+        spawn(w, Position(x, 2 * x), v, 100)
+        i += 1
+        x += 1
+    }
+}
+
+fn checksum(w: &World) -> i64 {
+    let sum: i64 = 0
+    let i: usize = 0
+    while i < w.moving.positions.len() {
+        sum += w.moving.positions[i].x + w.moving.positions[i].y + w.moving.health[i].hp
+        i += 1
+    }
+    i = 0
+    while i < w.still.positions.len() {
+        sum += w.still.positions[i].x + w.still.positions[i].y + w.still.health[i].hp
+        i += 1
+    }
+    sum
+}
+
+fn main() {
+    let w = world_new()
+    populate(&w, 64)
+    let tick = 0
+    while tick < 10 { integrate(&w); damage(&w, 1); tick += 1 }
+    let result = checksum(&w)
+    print("entities=64 ticks=10 checksum={result}")
+}
+
+test "empty world" {
+    let w = world_new()
+    assert count(&w) == 0
+    assert valid(&w)
+}
+
+test "movement visits only moving entities" {
+    let w = world_new()
+    let a = spawn(&w, Position(1, 2), Some(Velocity(3, -1)), 100)
+    let b = spawn(&w, Position(20, 30), None, 50)
+    integrate(&w)
+    assert position(&w, a) == Some(Position(4, 1))
+    assert position(&w, b) == Some(Position(20, 30))
+    assert count(&w) == 2
+    assert valid(&w)
+}
+
+test "despawn repairs a swapped row and rejects stale handles" {
+    let w = world_new()
+    let a = spawn(&w, Position(1, 0), Some(Velocity(1, 0)), 10)
+    let b = spawn(&w, Position(2, 0), Some(Velocity(2, 0)), 20)
+    let c = spawn(&w, Position(3, 0), Some(Velocity(3, 0)), 30)
+    assert despawn(&w, b)
+    assert !despawn(&w, b)
+    assert position(&w, c) == Some(Position(3, 0))
+    let d = spawn(&w, Position(4, 0), None, 40)
+    assert d.index == b.index
+    assert d.generation != b.generation
+    assert !contains(&w, b)
+    assert position(&w, b) == None
+    assert contains(&w, a)
+    assert contains(&w, d)
+    assert valid(&w)
+}
+
+test "static table removal repairs its swapped row" {
+    let w = world_new()
+    let a = spawn(&w, Position(1, 0), None, 10)
+    let b = spawn(&w, Position(2, 0), None, 20)
+    assert despawn(&w, a)
+    assert position(&w, b) == Some(Position(2, 0))
+    assert despawn(&w, b)
+    assert count(&w) == 0
+    assert valid(&w)
+}
+
+test "component changes migrate entities without changing handles" {
+    let w = world_new()
+    let a = spawn(&w, Position(5, 6), None, 10)
+    let b = spawn(&w, Position(7, 8), None, 20)
+    assert set_velocity(&w, a, Some(Velocity(2, 3)))
+    assert set_velocity(&w, a, Some(Velocity(4, 5)))
+    integrate(&w)
+    assert position(&w, a) == Some(Position(9, 11))
+    assert position(&w, b) == Some(Position(7, 8))
+    assert set_velocity(&w, a, None)
+    assert set_velocity(&w, a, None)
+    integrate(&w)
+    assert position(&w, a) == Some(Position(9, 11))
+    assert contains(&w, a)
+    assert valid(&w)
+}
+
+test "migration repairs the source row in both directions" {
+    let w = world_new()
+    let a = spawn(&w, Position(1, 0), Some(Velocity(1, 0)), 10)
+    let b = spawn(&w, Position(2, 0), Some(Velocity(1, 0)), 20)
+    assert set_velocity(&w, a, None)
+    assert position(&w, b) == Some(Position(2, 0))
+    assert set_velocity(&w, b, None)
+    assert set_velocity(&w, a, Some(Velocity(1, 0)))
+    assert position(&w, b) == Some(Position(2, 0))
+    assert valid(&w)
+}
+
+test "commands are deferred and applied in FIFO order" {
+    let w = world_new()
+    let q = Vec.new()
+    let a = spawn(&w, Position(1, 2), None, 10)
+    q.push(SetVelocity(a, Some(Velocity(2, 3))))
+    q.push(SetVelocity(a, None))
+    q.push(Spawn(Position(8, 9), Some(Velocity(1, 1)), 20))
+    assert count(&w) == 1
+    assert w.moving.entities.len() == 0
+    assert apply_commands(&w, &q) == 3
+    assert q.len() == 0
+    assert count(&w) == 2
+    assert w.moving.entities.len() == 1
+    integrate(&w)
+    assert position(&w, a) == Some(Position(1, 2))
+    assert valid(&w)
+}
+
+test "stale commands cannot touch a reused entity slot" {
+    let w = world_new()
+    let q = Vec.new()
+    let a = spawn(&w, Position(1, 0), None, 10)
+    q.push(Despawn(a))
+    q.push(Spawn(Position(9, 0), None, 90))
+    q.push(SetVelocity(a, Some(Velocity(100, 0))))
+    q.push(Despawn(a))
+    assert apply_commands(&w, &q) == 2
+    assert count(&w) == 1
+    assert w.still.positions[0].x == 9
+    assert w.still.health[0].hp == 90
+    assert valid(&w)
+}
+
+test "dead entities are collected then removed at the barrier" {
+    let w = world_new()
+    let q = Vec.new()
+    let a = spawn(&w, Position(1, 0), Some(Velocity(1, 0)), 1)
+    let b = spawn(&w, Position(2, 0), None, 2)
+    damage(&w, 1)
+    collect_dead(&w, &q)
+    assert contains(&w, a)
+    assert q.len() == 1
+    assert apply_commands(&w, &q) == 1
+    assert !contains(&w, a)
+    assert contains(&w, b)
+    assert valid(&w)
+}
+
+test "out of range handles return no entity" {
+    let w = world_new()
+    let bad = Entity(999, 0)
+    assert !contains(&w, bad)
+    assert !despawn(&w, bad)
+    assert !set_velocity(&w, bad, None)
+    assert position(&w, bad) == None
+}
+
+test "element references survive a system and command enqueue" {
+    let w = world_new()
+    let q = Vec.new()
+    let a = spawn(&w, Position(2, 3), Some(Velocity(4, 5)), 10)
+    let p = &w.moving.positions[0]
+    q.push(Despawn(a))
+    integrate(&w)
+    assert p.x == 6
+    assert p.y == 8
+    assert apply_commands(&w, &q) == 1
+}
+
+test "deterministic workload checksum" {
+    let w = world_new()
+    populate(&w, 64)
+    let tick = 0
+    while tick < 10 {
+        integrate(&w)
+        damage(&w, 1)
+        tick += 1
+    }
+    assert checksum(&w) == 12768
+    assert valid(&w)
+}
+
+test "exhausted generations retire instead of wrapping" {
+    let w = world_new()
+    let a = spawn(&w, Position(1, 0), None, 10)
+    w.slots[a.index].generation = 4294967295
+    let last = Entity(a.index, 4294967295)
+    assert despawn(&w, last)
+    let b = spawn(&w, Position(2, 0), None, 20)
+    assert b.index != a.index
+    assert !contains(&w, a)
+    assert !contains(&w, last)
+    assert valid(&w)
+}
+
+test "disjoint chunks can be updated by fork" {
+    let w = world_new()
+    // Includes empty chunks and an odd number of moving entities.
+    heal_moving(&w)
+    populate(&w, 5)
+    let before = checksum(&w)
+    heal_moving(&w)
+    assert checksum(&w) == before + 3
+    assert valid(&w)
+}
+
+test "repeated migrations preserve every entity and its data" {
+    let w = world_new()
+    let ids = Vec.new()
+    let i: usize = 0
+    let x: i64 = 0
+    while i < 17 {
+        ids.push(spawn(&w, Position(x, -x), None, 100))
+        i += 1
+        x += 1
+    }
+    let round = 0
+    while round < 4 {
+        for id in ids[] { assert set_velocity(&w, id, Some(Velocity(2, 1))) }
+        assert valid(&w)
+        integrate(&w)
+        for id in ids[] { assert set_velocity(&w, id, None) }
+        assert valid(&w)
+        round += 1
+    }
+    x = 0
+    for id in ids[] {
+        assert position(&w, id) == Some(Position(x + 8, -x + 4))
+        x += 1
+    }
+}

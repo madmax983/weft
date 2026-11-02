@@ -78,6 +78,7 @@ win over the markers and the manifest.
 | `tests/ir_targets` | Acceptance targets of the core IR. Each file has bad cases that the checker accepts today and that fault at run time, controls that the checker finds today, and clean cases in test blocks (`docs/traceability.md`). |
 | `tests/packages` | Packages for the tests of `weft deps`. |
 | `examples/` | A package with dependencies, a library, and a lint rule file. |
+| `examples/ecs/` | A typed archetype ECS, reference-validity tests, and optional Rust/Bevy comparison controls. See its [README](examples/ecs/README.md). |
 | `docs/` | The design, the plan, ADRs, the grammar, the architecture and the traceability matrix. `docs/ir.md` and `docs/plan/core-ir.md` specify and plan the core IR (ADR 0012, proposed). |
 
 ## Status
