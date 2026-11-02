@@ -1,0 +1,54 @@
+// Class C-RR with group D: a clause runs a function value that a perform
+// gives (O3-7), a closure that a clause makes, and a closure of the site
+// that a clause runs. Each closure reads through a reference to a container
+// of references, and the clause changes `v` before the run (W0301).
+effect Run { fn run(f: fn()) }
+effect Go { fn go() }
+fn show(ks: &Vec<&i64>) { print(ks[0] + 1) }
+fn mk_v() -> Vec<i64> { let v = Vec.new(); v.push(1); v }
+fn op_fn() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    handle Run { fn run(f) { v.clear(); f(); resume(()) } } in { //~ W0301
+        run(|| show(kr))
+    }
+}
+fn clause_closure() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    handle Go { fn go() { v.clear(); let g = || print(kr[0] + 1); g(); resume(()) } } in { //~ W0301
+        go()
+    }
+}
+fn site_closure() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let g = || print(kr[0] + 1)
+    handle Go { fn go() { v.clear(); resume(()) } } in {
+        go()
+        g() //~ W0301
+    }
+}
+// Clean: the runs come before the change.
+fn runs_first() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    handle Run { fn run(f) { f(); resume(()) } } in {
+        run(|| show(kr))
+    }
+    handle Go { fn go() { let g = || print(kr[0] + 1); g(); resume(()) } } in {
+        go()
+    }
+    v.clear()
+}
+fn main() {
+    runs_first()
+}

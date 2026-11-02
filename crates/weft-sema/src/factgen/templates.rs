@@ -424,7 +424,7 @@ impl Em<'_> {
         // local.
         let mut vars = self.vars_of(place)?;
         for &q in &a.ptrs {
-            vars.extend(self.owner_vars(q, k));
+            vars.extend(self.owner_vars(q, Some(k)));
         }
         vars.extend(self.tests_of(place)?);
         vars.sort();
@@ -443,11 +443,11 @@ impl Em<'_> {
     /// `H` and `U` variables at, above or below the path. A place that no
     /// local owns gives the variables of the heap slots that overlap it
     /// (`super::holders`, stage F10.1).
-    fn owner_vars(&self, q: PlaceId, base: Key) -> Vec<VarId> {
+    fn owner_vars(&self, q: PlaceId, base: Option<Key>) -> Vec<VarId> {
         let Some((k, path)) = self.roots.path_of(self.facts, q) else {
             return self.holders.slot_vars(self.facts, q);
         };
-        if k == base {
+        if Some(k) == base {
             return Vec::new();
         }
         let mut out: Vec<VarId> = if self.skip_s == Some(k) {
@@ -804,7 +804,7 @@ fn copied_refs(em: &mut Em<'_>, q: &Place, al: &Alpha, a: &mut Access) -> R {
     }
     let base = em.key(q.local)?;
     for &p in &al.places {
-        a.vars.extend(em.owner_vars(p, base));
+        a.vars.extend(em.owner_vars(p, Some(base)));
     }
     a.vars.sort();
     a.vars.dedup();
@@ -1868,6 +1868,22 @@ pub(super) fn deep_uses(
         return Ok(());
     }
     let base = em.key(q.local)?;
+    deep_chain(em, n, st, refs, Some(base))
+}
+
+/// The walk of [`deep_uses`] from the places `refs` at node `n`: `uses` of
+/// the variables of the owners of the places on the chain that hold
+/// references (but not of `base`, the local of the operand), and
+/// `reads_at` of each place on the chain.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::Later`] for a chain of more than
+/// [`DEEP_LIMIT`] places.
+fn deep_chain(em: &mut Em<'_>, n: NodeId, st: &State, refs: &[PlaceId], base: Option<Key>) -> R {
+    if refs.is_empty() {
+        return Ok(());
+    }
     let mut seen: std::collections::BTreeSet<PlaceId> = std::collections::BTreeSet::new();
     let mut work: Vec<PlaceId> = refs.to_vec();
     let mut uses = Vec::new();
@@ -1911,12 +1927,41 @@ pub(super) fn deep_uses(
 
 /// True if a value of type `t` can hold a reference to a value that holds
 /// a reference: a reference whose pointee holds references, also in a
-/// tuple, an array, a slice or a type argument.
-fn refs_to_refs(tys: &TyTable, t: TyId) -> bool {
-    match tys.try_get(t) {
-        Some(Ty::Ref(p)) => ir_props(tys, *p).holds_refs || refs_to_refs(tys, *p),
-        Some(Ty::Tuple(xs) | Ty::Adt(_, xs)) => xs.iter().any(|&x| refs_to_refs(tys, x)),
-        Some(Ty::Array(x, _) | Ty::Slice(x)) => refs_to_refs(tys, *x),
+/// tuple, an array, a slice, a type argument, or a field or a payload of a
+/// struct or an enum (class C-RR: `enum E { A(&Vec<&i64>) }`).
+pub(crate) fn refs_to_refs(tys: &mut TyTable, t: TyId) -> bool {
+    refs_to_refs_in(tys, t, &mut Vec::new())
+}
+
+/// [`refs_to_refs`]; `seen` holds the definitions on the way, so a type that
+/// holds itself ends the walk.
+fn refs_to_refs_in(tys: &mut TyTable, t: TyId, seen: &mut Vec<weft_ir::AdtId>) -> bool {
+    match tys.try_get(t).cloned() {
+        Some(Ty::Ref(p)) => ir_props(tys, p).holds_refs || refs_to_refs_in(tys, p, seen),
+        Some(Ty::Tuple(xs)) => xs.iter().any(|&x| refs_to_refs_in(tys, x, seen)),
+        Some(Ty::Array(x, _) | Ty::Slice(x)) => refs_to_refs_in(tys, x, seen),
+        Some(Ty::Adt(a, xs)) => {
+            if xs.iter().any(|&x| refs_to_refs_in(tys, x, seen)) {
+                return true;
+            }
+            if seen.contains(&a) {
+                return false;
+            }
+            let parts: Vec<TyId> = match tys.adts().get(a.index()).map(|d| &d.kind) {
+                Some(AdtKind::Struct(fs)) => fs.iter().map(|f| f.ty).collect(),
+                Some(AdtKind::Enum(vs)) => {
+                    vs.iter().flat_map(|v| v.fields.iter().copied()).collect()
+                }
+                _ => Vec::new(),
+            };
+            seen.push(a);
+            let out = parts.into_iter().any(|f| {
+                let f = subst(tys, f, &xs);
+                refs_to_refs_in(tys, f, seen)
+            });
+            seen.pop();
+            out
+        }
         _ => false,
     }
 }
@@ -2942,6 +2987,10 @@ fn emit_apps(
                 vs.extend(read_fields(em, &app.summary, *k, *mb, src)?);
                 em.facts.uses.extend(vs.into_iter().map(|v| (v, n)));
             }
+            // A capture that holds a reference to a value that holds
+            // references: the run can read through the chain, as a callee
+            // can read through an argument (class C-RR).
+            deep_chain(em, n, st, &app.deep, None)?;
             for (mb, src) in &app.once {
                 if let Some(v) = em.base_var(*mb, src)? {
                     em.facts.moved_at.push((v, n));
@@ -3236,7 +3285,7 @@ fn once_vars(
         if holds && !once_behind(em, st, r) {
             continue;
         }
-        out.extend(em.owner_vars(r, base));
+        out.extend(em.owner_vars(r, Some(base)));
     }
     out.sort();
     out.dedup();

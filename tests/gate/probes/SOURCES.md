@@ -457,3 +457,21 @@ stage F17: the old pipeline checks them by default.
   (ledger `open-old` for the old hole `cl03_closure_after_resume.wf`).
 - `fixes/f16/closure/o*.wf`: class F16-OPFN (O3-7), a function value that a perform
   gives to a local handler runs in the clause.
+
+## Follow-up F16.4: class C-RR (a run of a closure reads through a reference to references)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class, and
+each faulting program has a clean twin (`_c`). The self-attack of stage F16 found the
+class (scratchpad `f16/open/crr_*.wf`).
+
+- `fixes/crr/crr0[1-8]*.wf`: a closure captures a reference to a container of
+  references (`kr: &Vec<&i64>`, also in an enum payload) and reads through it. The
+  node that runs the closure (directly, in a callee, from a vector, as a closure that
+  a function returns, in a loop) uses the variables of the references on the chain,
+  so a run after `v.clear()` is W0301. `crr03_opfn.wf` uses group D (a clause runs
+  the function value of a perform): ledger `open-old`, because the old pipeline
+  checks it while group D is off and misses it.
+- `fixes/crr/crr09*.wf`: a call argument of a user enum whose payload is a reference
+  to a container of references. The read through a call argument now also looks
+  into the fields and payloads of a struct or an enum.

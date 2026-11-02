@@ -438,3 +438,13 @@ fn a_function_value_that_a_perform_gives_runs_in_the_clause() {
     check("op_closure_dropped.wf");
     check("op_closure_run.wf");
 }
+
+/// Class C-RR (self-attack of stage F16) with group D: a closure that reads
+/// through a captured reference to a container of references runs in a
+/// clause (a function value of a perform, a closure that the clause makes)
+/// or in the handled body after a clause changes the referent. The node
+/// that runs it uses the variables of the references on the chain (W0301).
+#[test]
+fn a_closure_run_in_a_clause_reads_through_a_captured_reference_to_references() {
+    check("crr_op_closure.wf");
+}

@@ -1,0 +1,13 @@
+// C-RR: a call argument of a user enum holds a reference to a container of references
+enum E { A(&Vec<&i64>), B }
+fn showe(e: E) { match e { A(k) => print(k[0] + 1), B => {} } }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let e = A(kr)
+    v.clear()
+    showe(e)
+}

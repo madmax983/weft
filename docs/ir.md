@@ -3837,6 +3837,18 @@ only, and only at `print` and at call arguments. Both pipelines accepted the pro
   scalar operand holds no reference and gives nothing). A call argument and a `perform`
   argument get `deep_uses` (the callee or the handler can read through them).
 
+As built (follow-up F16.4, class C-RR of the self-attack of stage F16): a run of a
+closure can read through a capture too. `transfer::Applied::deep` holds σ(`CaptureHeld(k)`)
+of each capture whose value can hold a reference to a value that holds a reference
+(`kr: &Vec<&i64>`). The run node (`templates::emit_apps`: a direct call, a run in a
+callee, a stored or a made closure, a run in a clause) follows the chain from these
+places as `deep_uses` does (`templates::deep_chain`). So
+`keep.push(&v[0]); let kr = &keep; let g = || print(kr[0] + 1); v.clear(); g()` is
+W0301 at the run (before, both pipelines accepted the shape through a callee or a
+returned closure, and the `ir` pipeline accepted the direct run). The type test
+(`templates::refs_to_refs`) also looks into the fields of a struct and the payloads of
+an enum (`enum E { A(&Vec<&i64>) }`), for a call argument too.
+
 The entry node of a component is node `n0`, as in the old lowering: the hypothesis
 `bound_before_use` of the proof link starts there.
 

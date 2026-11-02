@@ -274,3 +274,13 @@ fn linear_closures_that_a_loop_pushes_into_a_vector_are_w0601() {
     // gave no `overwrites` and the vector never got a live linear value.
     check("linear_closures_in_loops.wf");
 }
+
+#[test]
+fn a_run_of_a_closure_reads_through_a_captured_reference_to_references() {
+    // Class C-RR (self-attack of stage F16): the closure holds a reference
+    // to a container of references and reads through it. The node that
+    // runs the closure (directly, in a callee, from a container, as a made
+    // closure) uses the variables of the references on the chain, so a run
+    // after a change that ends them is W0301.
+    check("crr_ref_to_ref_container.wf");
+}

@@ -1,0 +1,14 @@
+// C-RR: a closure reads through a captured reference to a container of references
+effect Run { fn run(f: fn()) }
+fn show(ks: &Vec<&i64>) { print(ks[0] + 1) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    handle Run { fn run(f) { f(); resume(()) } } in {
+        run(|| show(kr))
+    }
+    v.clear()
+}

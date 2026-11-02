@@ -1607,6 +1607,45 @@ pub struct Applied {
     /// groups that their types reach (`reads_at` at the node; the summary
     /// oracle found them, `docs/ir.md` 8.5).
     pub reads: Vec<PlaceId>,
+    /// The places that the references of a capture point into, for each
+    /// capture of a closure that can hold a reference to a value that holds
+    /// a reference. The run can read through the chain, so the node uses
+    /// the variables of the references on it, as for a call argument
+    /// (`factgen::templates::deep_uses`, class C-RR of the self-attack of
+    /// stage F16).
+    pub deep: Vec<PlaceId>,
+}
+
+/// The places that the references of the captures of closure `decl` point
+/// into at the run node (σ(`CaptureHeld(k)`)), for each capture whose value
+/// can hold a reference to a value that holds a reference (`kr:
+/// &Vec<&i64>`). The run can read through the chain (class C-RR of the
+/// self-attack of stage F16): see [`Applied::deep`].
+fn capture_chains(
+    cx: &mut Cx<'_>,
+    decl: &weft_ir::ClosureDecl,
+    sigma: &super::apply::Sigma,
+) -> Vec<PlaceId> {
+    let mut out = Vec::new();
+    for (k, cap) in decl.captures.iter().enumerate() {
+        if matches!(
+            cap.mode,
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
+        ) {
+            continue;
+        }
+        let deep = alpha::place_ty(cx.p, cx.tys, decl.maker, &cap.source)
+            .is_some_and(|t| crate::factgen::templates::refs_to_refs(cx.tys, t));
+        if !deep {
+            continue;
+        }
+        if let Some(hs) = sigma.cap_helds.get(k) {
+            out.extend(hs.iter().copied());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// What a `Call` of a function value gives: the summaries that it applies
@@ -2699,6 +2738,7 @@ fn apply_value(
                 lends: env,
                 put_fns: Vec::new(),
                 reads: caller_reads(cx, body)?,
+                deep: Vec::new(),
             });
             let places = match given {
                 Given::Args(args) => {
@@ -2819,6 +2859,7 @@ fn apply_value(
                 lends: Vec::new(),
                 put_fns,
                 reads: Vec::new(),
+                deep: Vec::new(),
             });
             apply_runs(
                 cx,
@@ -2991,6 +3032,7 @@ fn apply_value(
                 }
             }
             let runs = summary.runs.clone();
+            let deep = capture_chains(cx, decl, &sigma);
             let first = apps.out.len();
             apps.out.push(Applied {
                 kind: super::apply::RunKind::Closure,
@@ -3012,6 +3054,7 @@ fn apply_value(
                 lends: Vec::new(),
                 put_fns,
                 reads: Vec::new(),
+                deep,
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: a run of a capture runs each value of the callee

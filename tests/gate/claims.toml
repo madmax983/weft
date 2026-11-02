@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F16.4"]
 
 
 # ----------------------------------------------------------------------
@@ -5529,3 +5529,81 @@ repro = [
     "tests/gate/probes/fixes/f16/closure/o5_linear_dropped_c.wf",
 ]
 note = "the clean twins of F16-OPFN (the old pipeline rejects the last two: W0502, W0601)"
+
+# ----------------------------------------------------------------------
+# Follow-up F16.4: class C-RR (self-attack of stage F16). A run of a closure
+# that holds a reference to a container of references uses the variables of
+# the references on the chain, as a call argument does.
+
+[[claim]]
+finding = "C-RR"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F16.4"
+repro = [
+    "tests/gate/probes/fixes/crr/crr01_direct.wf",
+    "tests/gate/probes/fixes/crr/crr02_closure_calls_callee.wf",
+    "tests/gate/probes/fixes/crr/crr04_callee_runs.wf",
+    "tests/gate/probes/fixes/crr/crr05_stored.wf",
+    "tests/gate/probes/fixes/crr/crr06_returned.wf",
+    "tests/gate/probes/fixes/crr/crr07_enum_payload.wf",
+    "tests/gate/probes/fixes/crr/crr08_clear_in_loop.wf",
+]
+code = "W0301"
+note = "a run of a closure reads through a captured reference to a container of references after the referent changes"
+
+[[claim]]
+finding = "C-RR"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr09_enum_arg.wf"]
+code = "W0301"
+note = "a call argument of a user enum holds a reference to a container of references"
+
+[[claim]]
+finding = "C-RR"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr03_opfn.wf"]
+code = "W0301"
+note = "a clause runs the function value of a perform after it clears the referent"
+
+[[claim]]
+finding = "C-RR"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F16.4"
+repro = [
+    "tests/gate/probes/fixes/crr/crr01_direct_c.wf",
+    "tests/gate/probes/fixes/crr/crr02_closure_calls_callee_c.wf",
+    "tests/gate/probes/fixes/crr/crr04_callee_runs_c.wf",
+    "tests/gate/probes/fixes/crr/crr05_stored_c.wf",
+    "tests/gate/probes/fixes/crr/crr06_returned_c.wf",
+    "tests/gate/probes/fixes/crr/crr07_enum_payload_c.wf",
+    "tests/gate/probes/fixes/crr/crr08_clear_in_loop_c.wf",
+]
+note = "the clean twins of C-RR"
+
+[[claim]]
+finding = "C-RR"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr09_enum_arg_c.wf"]
+note = "the clean twin of the call argument of C-RR"
+
+[[claim]]
+finding = "C-RR"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr03_opfn_c.wf"]
+note = "the clean twin of the clause run of C-RR"

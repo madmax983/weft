@@ -1994,3 +1994,17 @@ files = ["tests/gate/probes/fixes/f16/closure/cl03_closure_after_resume.wf"]
 finding = "F16-CLAUSE-CLOSURE"
 reason = "an old hole of stage F16 (claim F16-CLAUSE-CLOSURE): the code of a clause after `resume` runs a closure that changes the place that the value of the handled body points into. The old pipeline checks the program while group D is off and accepts it; the run reads a freed cell. The `ir` pipeline with group D rejects it (W0301). Drop this entry when group D is on (stage F17)"
 stage = "F16"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/crr/crr03_opfn.wf"]
+finding = "C-RR"
+reason = "an old hole of follow-up F16.4 (claim C-RR): a clause clears `v`, then runs the function value of a perform; the closure reads through a captured reference to a vector of references into `v`. The old pipeline checks the program while group D is off and accepts it; the run reads a freed cell. The `ir` pipeline with group D rejects it (W0301). Drop this entry when group D is on (stage F17)"
+stage = "F16.4"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/crr/crr01_direct.wf"]
+codes = ["W0301"]
+reason = "class C-RR (follow-up F16.4): the closure is made after `v.clear()` and reads through a captured reference to a vector of references into `v`. The old pipeline reports the capture where the closure is made (line 9); the `ir` pipeline reports the run of the closure (line 10), where the read through the chain is"
+stage = "F16.4"
