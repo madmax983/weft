@@ -66,6 +66,14 @@
 //!   local of the callee) is not checked, and the report counts it. At most
 //!   [`SUMMARY_DEPTH`] frames below the callee are checked.
 //!
+//! - **A5 (clause cover, stage F17.2).** A clause of a local handler runs
+//!   from a node of its handled body: the frames above the `handle` that
+//!   are of the component of the handled body wait at their nodes. A node
+//!   there with `escapes_at` of the effect of the handler and no
+//!   `performs_at` with the capability of the handler is a failure: the
+//!   facts send the effect past the function, and the clause does not run
+//!   at the node.
+//!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
 //! buffer handle of an array and an access of a cell that the op frees need
@@ -148,6 +156,10 @@ pub struct FactReport {
     /// Such references whose local has no `points_into` place: A4 does not
     /// check them.
     pub resume_unnamed: u64,
+    /// The checks of A5 (plan stage F17.2): a clause of a local handler
+    /// runs, and a node of its handled body has `performs_at` with the
+    /// capability of the handler.
+    pub clause: u64,
 }
 
 /// What the IR of a run gives the fact oracle: the IR and the components.
@@ -1040,6 +1052,100 @@ impl FactOracle {
             names: None,
         };
         self.add_wait(uid, w);
+    }
+
+    /// A5 (plan stage F17.2): a clause of the local handler of the handled
+    /// body of frame `frames[0]` runs; `frames` are the code frames above
+    /// the `handle`, the bottom first. The frames of the component of the
+    /// handled body wait at their nodes; one such node must have
+    /// `performs_at` with the capability of the handler. If none does and
+    /// one has `escapes_at` of the effect of the handler, the facts send
+    /// the effect past the function: a failure.
+    ///
+    /// # Errors
+    ///
+    /// The message of the failure.
+    pub fn clause_run(&mut self, frames: &[u64]) -> Result<(), String> {
+        let Some(fr) = frames.first().and_then(|uid| self.frames.get(uid)) else {
+            return Ok(());
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return Ok(());
+        };
+        let unit = comp.unit;
+        let Some(weft_ir::BodyKind::Handled(h)) = self
+            .input
+            .built
+            .program
+            .bodies
+            .get(comp.body.index())
+            .map(|b| b.kind)
+        else {
+            return Ok(());
+        };
+        let effect = self
+            .input
+            .built
+            .program
+            .handlers
+            .get(h.index())
+            .and_then(|d| comp.tys.effects().get(d.effect.index()))
+            .map(|e| e.identity.clone())
+            .unwrap_or_default();
+        let cap = self.input.comps.as_ref().ok().and_then(|cs| {
+            cs.get(unit).and_then(|c| {
+                c.emitted
+                    .handler_caps
+                    .iter()
+                    .find(|(x, _)| *x == h)
+                    .map(|&(_, k)| k)
+            })
+        });
+        // The frames of the component from the handled body up: a frame of
+        // another component (a callee) ends them. A frame whose node sends
+        // the effect past the function and does not run the clause is a
+        // failure (the frame of a closure that runs a function with the
+        // effect in its row, too).
+        let mut escapes: Option<(NodeId, usize)> = None;
+        for uid in frames {
+            let Some(f) = self.frames.get(uid) else {
+                break;
+            };
+            let Some(c) = self.comps.get(f.comp) else {
+                break;
+            };
+            if c.unit != unit {
+                break;
+            }
+            let group = c.group(&f.cur);
+            let runs = group
+                .iter()
+                .any(|&n| cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k))));
+            if runs {
+                continue;
+            }
+            if let Some(&n) = group.iter().find(|&&n| {
+                c.facts
+                    .escapes_at
+                    .iter()
+                    .any(|(m, e)| *m == n && *e == effect)
+            }) {
+                escapes = Some((n, f.comp));
+                break;
+            }
+        }
+        self.report.clause += 1;
+        let Some((n, ci)) = escapes else {
+            return Ok(());
+        };
+        let (text, fname) = self
+            .comps
+            .get(ci)
+            .map(|c| (c.node_text(n), c.facts.name.clone()))
+            .unwrap_or_default();
+        Err(format!(
+            "clause oracle (A5): in `{fname}` at {text}, a clause of the local handler of `{effect}` runs from the node, and the node has `escapes_at` of `{effect}` and no `performs_at` with the capability of the handler"
+        ))
     }
 
     /// A4 of copies (plan stage F17.1): a `multi` operation of task `task`

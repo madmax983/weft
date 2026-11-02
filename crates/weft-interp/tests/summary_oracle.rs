@@ -446,3 +446,42 @@ fn a_copy_of_a_callee_frame_needs_a_use_at_the_copy_node() {
     };
     assert!(m.starts_with("summary oracle (A4)"), "{m}");
 }
+
+/// A function value runs in the handled body of a local handler of its
+/// effect (D-FNVAL-ROW of the third review of group D). The value is a
+/// function item: it runs with the handlers of the call, so the local
+/// clause handles its `log` and clears `items` while `report` holds
+/// `first`.
+const FNVAL_ROW: &str = "effect Log { fn log(m: i64) }\n\
+    fn report(items: &Vec<i64>) / Log {\n\
+    let first = &items[0]\n\
+    log(first + 0)\n\
+    print(first + 1)\n\
+    }\n\
+    fn with_buffer(run: fn(&Vec<i64>) / Log, items: &Vec<i64>) / Log, mut(items) {\n\
+    handle Log { fn log(m) { items.clear(); resume(()) } } in {\n\
+    run(items)\n\
+    }\n\
+    }\n\
+    fn main() {\n\
+    let items = Vec.new()\n\
+    items.push(5)\n\
+    handle Log { fn log(m) { resume(()) } } in {\n\
+    with_buffer(report, &items)\n\
+    }\n\
+    }\n";
+
+/// A5 (plan stage F17.2): the run of a clause of a local handler from a
+/// node whose facts send the effect past the function is a failure. The
+/// facts of the generator send the `log` of the function value past
+/// `with_buffer` (the hole D-FNVAL-ROW): the oracle fails at the run node.
+#[test]
+fn a_clause_run_from_a_node_that_sends_the_effect_past_fails_the_clause_cover() {
+    let c = check_abcd(FNVAL_ROW);
+    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the run of the clause passes"),
+        Err(e) => e.message,
+    };
+    assert!(m.starts_with("clause oracle (A5)"), "{m}");
+    assert!(m.contains("`with_buffer`"), "{m}");
+}

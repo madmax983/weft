@@ -528,6 +528,9 @@ pub struct Emitted {
     /// The summary of each closure of the component: a caller of the
     /// function applies it to a closure that the function gives back.
     pub closures: Vec<(weft_ir::ClosureId, crate::analysis::Summary)>,
+    /// The capability of each local handler of the component in the facts
+    /// (`performs_at`). The fact oracle reads it (plan stage F17.2).
+    pub handler_caps: Vec<(weft_ir::HandlerId, weft_facts::CapId)>,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -877,6 +880,7 @@ pub fn emit_parts(
     }
     decls::std_effects(facts);
     facts.normalize();
+    let handler_caps = hx.ids.iter().map(|(&h, &(_, c))| (h, c)).collect();
     Ok(Emitted {
         diags,
         roots,
@@ -902,6 +906,7 @@ pub fn emit_parts(
             u
         }),
         closures: closure_sums,
+        handler_caps,
     })
 }
 

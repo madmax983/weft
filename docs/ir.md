@@ -4606,6 +4606,18 @@ reference to it. When a copy of `g` goes on, each hit must be covered by a `uses
 on each hole of the review (D-MULTI-MID: v12, v14, v18, v20 to v23, v25; D-COPY-WAIT-CALL:
 v07, v09, v10, v11) before the fix, and on no clean twin.
 
+**As built (F17.2): the clause cover (A5, ORACLE-GAP-3 of the third review of group
+D).** When a perform finds a local handler, the oracle looks at the code frames above
+the `handle` that are of the component of the handled body, from the handled body up
+(a frame of another component ends them). A frame whose current node has `escapes_at`
+of the effect of the handler and no `performs_at` with the capability of the handler
+(`Emitted::handler_caps`) is a failure: "clause oracle (A5)". The facts send the effect
+past the function, so the clause does not run at the node. A5 failed on each hole of
+D-FNVAL-ROW (d01, d02, d03, d06, d07, d08, d10, d11, d14, e02, k03, p01, s04, a02) and on
+their clean twins before the fix, and on one program of the gate
+(`probes/r2/interp/repro/holds/ip_lexical.wf`). A closure that runs from a callee (a
+frame of another component) is not checked.
+
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program
 and a concrete step, found before a review finds it.

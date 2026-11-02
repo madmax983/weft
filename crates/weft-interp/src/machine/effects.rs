@@ -41,6 +41,19 @@ impl super::Machine<'_, '_> {
             .and_then(|e| e.ops.get(op))
             .is_some_and(|o| o.multi);
         let frames = self.task().frames.split_off(idx);
+        // A5 of the fact oracle: a node of the handled body runs the clause.
+        if let Some(fo) = self.facts.as_mut() {
+            let uids: Vec<u64> = frames
+                .iter()
+                .filter_map(|f| match f {
+                    Frame::Code(cf) if cf.uid != 0 => Some(cf.uid),
+                    _ => None,
+                })
+                .collect();
+            if let Err(m) = fo.clause_run(&uids) {
+                return Err(self.fault(m));
+            }
+        }
         // A4 of copies of the fact oracle: a later `resume` runs copies of
         // these frames again.
         if multi {
