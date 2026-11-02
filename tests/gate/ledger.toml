@@ -2318,8 +2318,9 @@ stage = "F17"
 [[entry]]
 class = "new-fp"
 files = ["verify/s5/R3x/p2/h6_option_closure.wf"]
-reason_class = "stricter"
-reason = "ADR 0005 and the linear rules (W0602, W0601): a closure that captures a linear value is linear, also in the payload of an `Option`, and the type of the payload has no `on abort`. So the value is live across `fail` (W0602) and a path drops it (W0601). The old pipeline does not see the linear value in the `Option<fn()>` and accepts the program; the run is clean because the unwinder finds the captured `Lock` and runs its `on abort`. Group D puts the program in scope (a `handle Fail` in `mainrun`); `work` itself is group A and C"
+reason_class = "precision"
+issue = 0
+reason = "an `ir` false positive of the groups A and C (the second review of group D does not confirm `stricter`; issue number 0 is a placeholder until the coordinator files the precision issue). W0601: a copy of a linear closure out of an `Option` payload (`match o { Some(f) => f(), None => {} }`, `_6 = copy (_2 as #0).0`) does not end the linear value of `o`, so `o` is dropped at the end of `work`; the same W0601 comes with the default groups and no `fail` (dreview2 `h6/h6c_no_fail.wf`, `h6g_no_handler.wf`); a tuple field (`let f = o.0`) and a plain local do not have it. W0602: the `on abort` of the captured `Lock` does not reach the closure in the payload, against ADR 0007 (each linear part has `on abort`). The run is clean. Group D puts the program in scope (`handle Fail` in `mainrun`)"
 stage = "F17"
 
 [[entry]]
