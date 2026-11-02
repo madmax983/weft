@@ -2282,10 +2282,19 @@ fn emit_block(
         } else {
             Vec::new()
         };
+        // A re-entry through a handler of a caller at a call of a known
+        // function, or of a closure, that can resume more than once (class
+        // D-ROW-MID of the third review of group D) gets the copy of the
+        // frame too. An unknown function value does not (corpus 102,
+        // `bump`).
+        let known = local.is_none()
+            && (frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind)
+                || (em.hx.dyn_rows.contains(&(bid, block))
+                    && frames::runs_closure(em.p, bid, &blk.term.kind)));
         handlers::copy_node(
             em,
             (c, n),
-            (block, root, local.is_some()),
+            (block, root, local.is_some() || known),
             &row_returns,
             &st,
             &blk.term.kind,

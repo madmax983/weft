@@ -1,0 +1,18 @@
+// D-ROW-MID (F17.2): a search step pushes, runs a callee that waits at a `multi` operation of a caller, then undoes. The second resume runs a copy of the callee frame with a reference into the cleared vector.
+effect Choose { multi fn choose() -> bool }
+fn search(path: &Vec<i64>) / Choose {
+    let last = &path[0]
+    if choose() { print(last + 10) } else { print(last + 20) }
+}
+fn step(path: &Vec<i64>) / Choose, mut(path) {
+    path.push(5)
+    search(path)   //~ W0301
+    path.clear()
+}
+fn main() {
+    let path = Vec.new()
+    path.push(1)
+    handle Choose { fn choose() { resume(true); resume(false) } } in {
+        step(&path)
+    }
+}

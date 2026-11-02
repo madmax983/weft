@@ -562,3 +562,14 @@ fn a_function_value_runs_the_clauses_of_a_local_handler_of_its_row() {
     check("fnval_row_ok.wf");
     check("fnval_row_inert_ok.wf");
 }
+
+/// D-ROW-MID (plan stage F17.2): a known callee (or a closure) that waits
+/// at a `multi` operation of a handler of a caller gets a copy of its frame
+/// at the `Copy` node. A change of the function after the call reaches the
+/// copy: W0301 at the call. The clean twin only reads the place.
+#[test]
+fn a_copy_of_a_callee_frame_sees_the_changes_after_a_row_reentry() {
+    check("row_mid_callee.wf");
+    check("row_mid_closure.wf");
+    check("row_mid_ok.wf");
+}

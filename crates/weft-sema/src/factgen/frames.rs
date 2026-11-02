@@ -557,6 +557,19 @@ fn local_effects(p: &Program, tys: &TyTable, env: CapEnvId) -> Vec<String> {
     out
 }
 
+/// True if terminator `t` of body `body` is a call of a function value
+/// that only a closure can give ([`closure_only`]): the analysis knows the
+/// summaries that it applies.
+pub fn runs_closure(p: &Program, body: BodyId, t: &TermKind) -> bool {
+    match t {
+        TermKind::Call {
+            callee: Callee::Value(weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q)),
+            ..
+        } if q.proj.is_empty() => closure_only(p, None, body, q.local, 0),
+        _ => false,
+    }
+}
+
 /// The most copies of a function value that [`closure_only`] follows.
 const COPY_DEPTH: usize = 8;
 

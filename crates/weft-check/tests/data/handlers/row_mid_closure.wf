@@ -1,0 +1,18 @@
+// D-ROW-MID (F17.2): a closure runs the perform; the function clears the vector after the run.
+effect Pick { multi fn pick() -> bool }
+fn k(v: &Vec<i64>) / Pick, mut(v) {
+    let f = || {
+        let r = &v[0]
+        let b = pick()
+        print(r + 1)
+    }
+    f()   //~ W0301
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        k(&v)
+    }
+}

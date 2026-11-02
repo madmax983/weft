@@ -534,3 +534,6 @@ again if it runs. They come from the third review of group D (scratchpad
   into. `c1_*`: a closure of the handled body calls a function with the effect in its
   row while it holds a reference. `w01_c` and `w02_c`: class FP-W0805-FNVAL, a closure
   or a function item runs in the handled body of `main`.
+- `fixes/f17/row_mid/*.wf`: class D-ROW-MID, a callee waits at a `multi` operation of
+  a handler of a caller, and the function changes the place after the call, before the
+  second run of the copied callee frame (old holes).

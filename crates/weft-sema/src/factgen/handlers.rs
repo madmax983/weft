@@ -937,7 +937,9 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
 /// the perform again: the changes and the frees of the call apply again at
 /// `c`.
 /// With `local`, the node also runs a clause of a local `multi` handler
-/// that can resume more than once (`Frames::reentry_root`). `row_returns`
+/// that can resume more than once (`Frames::reentry_root`), or runs a known
+/// callee that can wait at a `multi` operation of a caller: the node gets
+/// a variable for the copy of the callee frame. `row_returns`
 /// are the `Return` nodes of the function if the node can also wait at a
 /// `multi` operation of a caller.
 pub fn copy_node(
@@ -1074,9 +1076,11 @@ pub fn copy_node(
     // `resume`s, or after the node in the caller, D-COPY-WAIT-CALL) makes it
     // invalid there (W0301). A variable that the copy rule binds again (it
     // points only into the copied frames) does not count; a moved one does.
-    // Only for a local handler: for a `multi` operation of a handler of a
-    // caller the copied frames are the frames of this function, and the
-    // callee checks its own references across its `multi` point.
+    // For a local handler, and (with `local` from the caller) for a known
+    // callee of a `multi` operation of a handler of a caller (class
+    // D-ROW-MID, plan stage F17.2): the code of this function after the
+    // call runs before the copy, and a change there reaches the copy. Not
+    // for an unknown function value.
     let local = local || matches!(p.body(hb).map(|b| b.kind), Some(BodyKind::Handled(_)));
     if frame.is_some() && local {
         // A moved variable counts: the callee frame holds its references

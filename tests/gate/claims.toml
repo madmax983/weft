@@ -5913,3 +5913,57 @@ repro = [
     "tests/gate/probes/fixes/f17/fnval_row/w02_fp_fnitem_local_run_in_hb_main_c.wf",
 ]
 note = "the clean twins of D-FNVAL-ROW, and FP-W0805-FNVAL: a closure or a function item that runs in the handled body of main performs to the local handler (no W0805)"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r01_row_mid_frame_clears_after_call.wf",
+    "tests/gate/probes/fixes/f17/row_mid/r13_row_backtrack_undo.wf",
+    "tests/gate/probes/fixes/f17/row_mid/k02_container_vec_of_refs_multi_row.wf",
+    "tests/gate/probes/fixes/f17/row_mid/t02_refref_struct_holds_ref_multi_row.wf",
+    "tests/gate/probes/fixes/f17/row_mid/e04_enum_user_multi_row_mid_reassign.wf",
+]
+code = "W0301"
+note = "a known callee waits at a multi operation of a handler of a caller; the function changes the place after the call, before the second run of the copied callee frame (an old hole)"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r06_row_mid_closure_runs_g_then_clears.wf",
+]
+code = "W0301"
+note = "the copied frame is the frame of a closure of the function"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r01_row_mid_frame_clears_after_call_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/r13_row_backtrack_undo_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/k02_container_vec_of_refs_multi_row_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/t02_refref_struct_holds_ref_multi_row_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/e04_enum_user_multi_row_mid_reassign_c.wf",
+]
+note = "the clean twins of D-ROW-MID: the function only reads the place after the call"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r06_row_mid_closure_runs_g_then_clears_c.wf",
+]
+note = "the clean twin of the closure case of D-ROW-MID"

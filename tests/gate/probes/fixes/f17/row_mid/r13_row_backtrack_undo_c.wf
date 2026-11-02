@@ -1,0 +1,17 @@
+effect Choose { multi fn choose() -> bool }
+fn search(path: &Vec<i64>) / Choose {
+    let last = &path[0]
+    if choose() { print(last + 10) } else { print(last + 20) }
+}
+fn step(path: &Vec<i64>) / Choose, mut(path) {
+    path.push(5)
+    search(path)
+    print(path.len())
+}
+fn main() {
+    let path = Vec.new()
+    path.push(1)
+    handle Choose { fn choose() { resume(true); resume(false) } } in {
+        step(&path)
+    }
+}

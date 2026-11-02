@@ -3812,6 +3812,12 @@ As built (follow-up F17.2, the third review of group D):
   value with a `multi` effect in its row) takes the copied frames of the local handler;
   the copy of the frame binds again at the `Return` nodes of the function (on that path
   each frame of the function is copied).
+- D-ROW-MID (`factgen::emit`, `frames::runs_closure`). A re-entry through a handler of a
+  caller at a call of a known function, of a function value with a `multi` effect in its
+  stated row, or of a closure (`clause::Handlers::dyn_rows` with a local that only a
+  closure can give) also gets the copy of the callee frame: the code of the function
+  after the call runs before the second run of the copy, so a change there is W0301 at
+  the call. An unknown function value with no stated row does not (corpus 102 `bump`).
 
 As built (plan stage F17 part 2): the preview with group D on (`--groups ABCD`, the
 default groups of the follow-up F17.1) found one more hole (class D-CLAUSE-RUNS): a
