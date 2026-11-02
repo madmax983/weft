@@ -566,7 +566,7 @@ fn local_effects(p: &Program, tys: &TyTable, env: CapEnvId) -> Vec<String> {
 }
 
 /// True if terminator `t` of body `body` is a call of a function value
-/// that only a closure can give ([`closure_only`]): the analysis knows the
+/// that only a closure can give (`closure_only`): the analysis knows the
 /// summaries that it applies.
 pub fn runs_closure(p: &Program, body: BodyId, t: &TermKind) -> bool {
     match t {
