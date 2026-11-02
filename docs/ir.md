@@ -2247,7 +2247,7 @@ As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 - `emit` writes the facts of a body of group A with no `Call`, `Perform` or `Resume`, no
   loop and no `OnAbort` action. Another construct gives `Unsupported`, and the old pipeline
   checks the program. `factgen::preview` gives the facts of one body.
-- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B, from F13 the groups A, B and C), no program is in scope, also a program
+- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B, from F13 the groups A, B and C, from F17.1 the groups A to D), no program is in scope, also a program
   whose bodies have no IR and so use no group. `weft check|facts|agree|lint|run|test`
   take `--groups=LETTERS` to turn groups on.
 - A node `entry` before the entry block binds the parameters: `rebound_at`, `points_into`
@@ -3797,8 +3797,10 @@ D-C, D-FN, D-ABORT, D-R3RT7, D-MOVED, D-MULTI-DUP, F16-PROBE, D-DUP, D-W0313, D-
 D-EFF, D-MORE, and one `new-fp` of the linear rules); they accept rows only when group D
 is on. The claims O3-8 and map-N1 moved to the follow-ups F16.2 and F16.3 (a handler in
 a closure body, and a clause whose operation gives a reference back to a call, are not
-in scope). Group D goes on in the follow-up F17.1: twelve `lost-clean` rows of group D
-need the signature of an independent reviewer first.
+in scope). Group D went on in the follow-up F17.1, after the second independent review
+of group D signed the twelve `lost-clean` rows: `DEFAULT_GROUPS` is A to D, `done` has
+F14 to F17.1, and the `open-old` entries of the old holes that group D closes are gone
+(also D-COPY-WAIT-CALL, which F17.1 closes).
 
 As built (plan stage F17, W0313 for a capability; `analysis::clause::Escape`,
 `factgen::checks::cap_escapes`): the analysis checks the escape at the end of each

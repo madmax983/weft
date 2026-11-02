@@ -396,7 +396,7 @@ fn the_committed_caches_cover_tier_1() {
 
 /// The fact oracle (stage F9, `docs/ir.md` 8.5): a program in scope that the
 /// `ir` pipeline accepts runs with it and passes; a program that the `ir`
-/// pipeline rejects, and a program out of scope (a handler, group D), do not
+/// pipeline rejects, and a program out of scope (a task, group E), do not
 /// run. The child processes get `--fact-oracle`.
 #[test]
 fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
@@ -411,11 +411,7 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
     for s in [&on_thread, &child] {
         let out = run_all(
             &data(),
-            vec![
-                entry("clean.wf"),
-                entry("w0301.wf"),
-                entry("fact_handler.wf"),
-            ],
+            vec![entry("clean.wf"), entry("w0301.wf"), entry("fact_task.wf")],
             s,
         );
         let classes: Vec<oracle::FactClass> = out.iter().map(oracle::fact_class).collect();
