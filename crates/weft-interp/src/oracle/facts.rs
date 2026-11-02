@@ -285,6 +285,12 @@ struct Wait {
     /// The references whose target an access of the code above reached,
     /// with the kind of the access.
     hits: Vec<(usize, &'static str)>,
+    /// For a frame in a `multi` continuation that a caller frame of the
+    /// continuation runs (A4 of copies, plan stage F17.1): the fact places
+    /// of each reference in the terms of that caller frame, and `nodes` are
+    /// the `Copy` nodes of its run node. `None` for a clause frame that
+    /// waits at its `resume`.
+    names: Option<Vec<Vec<PlaceId>>>,
 }
 
 /// The target of a reference parameter at the entry of a frame, or a
@@ -1031,8 +1037,147 @@ impl FactOracle {
             uid,
             refs,
             hits: Vec::new(),
+            names: None,
         };
         self.add_wait(uid, w);
+    }
+
+    /// A4 of copies (plan stage F17.1): a `multi` operation of task `task`
+    /// takes the frames `frames` (the bottom first) into its continuation;
+    /// a later `resume` runs copies of them again. For each frame `g` that
+    /// the frame `f` below it runs (a callee or a closure; `f` waits at its
+    /// run node), the oracle records the references that the locals of `g`
+    /// hold, named in the terms of `f`. When a copy of `g` goes on, each
+    /// such reference whose target the code in between reached must be used
+    /// at the `Copy` node of the run node of `f` (a use of a variable with
+    /// a `points_into` place that overlaps it).
+    pub fn multi_frames(
+        &mut self,
+        frames: &[(u64, &Code, &[Option<CellId>])],
+        site: Option<(u64, &Code, &[Option<CellId>])>,
+        heap: &Heap,
+        task: usize,
+    ) {
+        for pair in frames.windows(2) {
+            let (Some(&(fu, fcode, fslots)), Some(&(gu, gcode, gslots))) =
+                (pair.first(), pair.get(1))
+            else {
+                continue;
+            };
+            if fu == 0 || gu == 0 || self.waits.contains_key(&gu) {
+                continue;
+            }
+            let (Some(f), Some(g)) = (self.frames.get(&fu), self.frames.get(&gu)) else {
+                continue;
+            };
+            let (fc, gc) = (f.comp, g.comp);
+            let Some(comp) = self.comps.get(fc) else {
+                continue;
+            };
+            let group = comp.group(&f.cur);
+            let nodes: Vec<NodeId> = (0..comp.succ.len())
+                .filter(|&m| {
+                    comp.facts
+                        .nodes
+                        .get(m)
+                        .is_some_and(|x| x.kind.ends_with(" copy"))
+                        && comp
+                            .succ
+                            .get(m)
+                            .is_some_and(|ss| ss.iter().any(|y| group.contains(y)))
+                })
+                .map(|m| NodeId(u32_of(m)))
+                .collect();
+            if nodes.is_empty() {
+                continue;
+            }
+            let Some(gcomp) = self.comps.get(gc) else {
+                continue;
+            };
+            let mut refs = Vec::new();
+            for (s, cell) in gslots.iter().enumerate() {
+                let (Some(cell), Some(&l)) = (cell, gcode.slot_locals.get(s)) else {
+                    continue;
+                };
+                let l = LocalId(l);
+                if !gcomp.of_local.contains_key(&l) {
+                    continue;
+                }
+                let Ok(x) = heap.slot(*cell) else {
+                    continue;
+                };
+                let mut out = Vec::new();
+                refs_of(heap, &x.val, &mut Vec::new(), &[], false, 0, &mut out);
+                refs.extend(out.into_iter().map(|t| (t, l)));
+            }
+            if refs.is_empty() {
+                continue;
+            }
+            // A handled body names the locals of its site as upvars: the
+            // frame of the site (below the continuation, in the same facts)
+            // names them.
+            let unit = comp.unit;
+            let site = site.filter(|(su, _, _)| {
+                self.frames
+                    .get(su)
+                    .and_then(|x| self.comps.get(x.comp))
+                    .is_some_and(|c| c.unit == unit)
+            });
+            let mut names: Vec<Vec<PlaceId>> = Vec::new();
+            for (t, _) in &refs {
+                if let Some((ns, _)) = self.name(fu, fcode, fslots, heap, t) {
+                    names.push(ns);
+                    continue;
+                }
+                // The facts of the site frame are another copy of the facts
+                // of the unit: a place maps by its text.
+                let Some((su, sc, ss)) = site else {
+                    names.push(Vec::new());
+                    continue;
+                };
+                let found = self
+                    .name(su, sc, ss, heap, t)
+                    .map(|(ns, _)| ns)
+                    .unwrap_or_default();
+                let (Some(sf), Some(ff)) = (
+                    self.frames.get(&su).and_then(|x| self.comps.get(x.comp)),
+                    self.comps.get(fc),
+                ) else {
+                    names.push(Vec::new());
+                    continue;
+                };
+                // A place that the facts of the frame do not have maps to
+                // its nearest parent that they have (a change of the parent
+                // covers it).
+                let mut out: Vec<PlaceId> = Vec::new();
+                for &q in &found {
+                    let mut at = Some(q);
+                    while let Some(x) = at {
+                        let text = &sf.facts.place(x).display;
+                        let hit: Vec<PlaceId> = (0..ff.facts.places.len())
+                            .map(|i| PlaceId(u32_of(i)))
+                            .filter(|&y| &ff.facts.place(y).display == text)
+                            .collect();
+                        if !hit.is_empty() {
+                            out.extend(hit);
+                            break;
+                        }
+                        at = sf.facts.place(x).parent;
+                    }
+                }
+                names.push(out);
+            }
+            let w = Wait {
+                comp: fc,
+                nodes,
+                task,
+                uid: gu,
+                refs,
+                hits: Vec::new(),
+                names: Some(names),
+            };
+            self.add_wait(gu, w);
+        }
     }
 
     /// Records wait `w` with key `key`.
@@ -1082,7 +1227,22 @@ impl FactOracle {
                 if w.task != task || (uid != 0 && w.uid == uid) {
                     continue;
                 }
-                let reached = w.refs.get(i).is_some_and(|(t, _)| t.reached_by(path));
+                // A copy of a frame (A4 of copies): a write at or below the
+                // target keeps the reference valid; a write strictly above
+                // it, a move at or above it, and a free end it.
+                let reached = w.refs.get(i).is_some_and(|(t, _)| {
+                    if w.names.is_none() {
+                        return t.reached_by(path);
+                    }
+                    match (t, path, what) {
+                        (_, None, _) => true,
+                        (Target::Elems(_), Some(p), _) => p.is_empty(),
+                        (Target::Place(tp), Some(p), "a move") => tp.path.starts_with(p),
+                        (Target::Place(tp), Some(p), _) => {
+                            tp.path.len() > p.len() && tp.path.starts_with(p)
+                        }
+                    }
+                });
                 if reached && !w.hits.iter().any(|(j, _)| *j == i) {
                     w.hits.push((i, what));
                 }
@@ -1107,6 +1267,39 @@ impl FactOracle {
         let Some(comp) = self.comps.get(w.comp) else {
             return Ok(());
         };
+        if let Some(names) = &w.names {
+            let used: Vec<PlaceId> = w
+                .nodes
+                .iter()
+                .flat_map(|n| comp.uses.get(n.index()).cloned().unwrap_or_default())
+                .flat_map(|v| comp.points.get(&v).cloned().unwrap_or_default())
+                .collect();
+            for &(i, what) in &w.hits {
+                let ns = names.get(i).cloned().unwrap_or_default();
+                if ns.is_empty() {
+                    self.report.resume_unnamed += 1;
+                    continue;
+                }
+                self.report.resume += 1;
+                let ok = ns
+                    .iter()
+                    .any(|&q| used.iter().any(|&m| comp.below(q, m) || comp.below(m, q)));
+                if !ok {
+                    let shown: Vec<String> = ns
+                        .iter()
+                        .map(|&q| comp.facts.place(q).display.clone())
+                        .collect();
+                    let nodes: Vec<String> = w.nodes.iter().map(|&n| comp.node_text(n)).collect();
+                    return Err(format!(
+                        "summary oracle (A4): in `{}` at {}, a copy of a frame that the run node runs goes on after a `multi` `resume`, and the code before made {what} of `{}`, which a reference of the copy points into; the `Copy` node uses no variable that points there",
+                        comp.facts.name,
+                        nodes.join(", "),
+                        shown.join("` or `"),
+                    ));
+                }
+            }
+            return Ok(());
+        }
         let cover: Vec<PlaceId> = w
             .nodes
             .iter()

@@ -4573,6 +4573,19 @@ A4 failed on each hole program of the review (D-CONT-RUN, D-CONT-NEST, D-CONT-UN
 D-COPY-WAIT) before the fix of the region, and on the clean twins whose write after the
 perform the region did not have.
 
+**As built (F17.1): A4 of copies (ORACLE-GAP-2 of the second review of group D).** When a
+`multi` operation takes frames into its continuation, each frame `g` of the continuation
+that the frame `f` below it runs (a callee or a closure) gets a wait too
+(`FactOracle::multi_frames`): the references of the locals of `g`, named in the terms of
+`f` (or of the frame of the site of the handler, through the text of the place and its
+nearest parent that the facts of `f` have), and the `Copy` nodes of the run node of `f`.
+A copy of `g` waits with the hits so far. A write strictly above a target, a move at or
+above it, and a free of its cell are hits; a write at or below a target keeps a
+reference to it. When a copy of `g` goes on, each hit must be covered by a `uses` at a
+`Copy` node of a variable whose `points_into` place overlaps the name. A4 of copies failed
+on each hole of the review (D-MULTI-MID: v12, v14, v18, v20 to v23, v25; D-COPY-WAIT-CALL:
+v07, v09, v10, v11) before the fix, and on no clean twin.
+
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program
 and a concrete step, found before a review finds it.

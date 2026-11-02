@@ -389,3 +389,33 @@ fn a_missing_summary_of_a_resume_fails_the_resume_cover_of_a_copied_frame() {
     let m = broken_resume(RESUME_COPY);
     assert!(m.starts_with("summary oracle (A4)"), "{m}");
 }
+
+/// A `multi` clause clears `v` between its two `resume`s while a copied
+/// callee frame holds a reference into it (D-MULTI-MID of the second review
+/// of group D). Each `resume` runs a copy of the frame of `g` again.
+const MULTI_MID: &str = "effect Pick { multi fn pick() -> bool }\n\
+    fn g(v: &Vec<i64>) / Pick {\n\
+    let r = &v[0]\n\
+    let b = pick()\n\
+    print(r + 1)\n\
+    }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    handle Pick { fn pick() { resume(true); v.clear(); resume(false) } } in {\n\
+    g(&v)\n\
+    }\n\
+    }\n";
+
+/// A4 of copies (plan stage F17.1): the run of a copy of a callee frame
+/// whose reference the code before cleared needs a use at the `Copy` node
+/// of the run node. Without it the oracle fails before the read.
+#[test]
+fn a_copy_of_a_callee_frame_needs_a_use_at_the_copy_node() {
+    let c = check_abcd(MULTI_MID);
+    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the run of the copy passes"),
+        Err(e) => e.message,
+    };
+    assert!(m.starts_with("summary oracle (A4)"), "{m}");
+}

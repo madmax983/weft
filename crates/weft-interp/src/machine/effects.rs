@@ -41,6 +41,26 @@ impl super::Machine<'_, '_> {
             .and_then(|e| e.ops.get(op))
             .is_some_and(|o| o.multi);
         let frames = self.task().frames.split_off(idx);
+        // A4 of copies of the fact oracle: a later `resume` runs copies of
+        // these frames again.
+        if multi {
+            if let Some(fo) = self.facts.as_mut() {
+                let codes: Vec<(u64, &crate::code::Code, &[Option<CellId>])> = frames
+                    .iter()
+                    .filter_map(|f| match f {
+                        Frame::Code(cf) => Some((cf.uid, cf.code.as_ref(), cf.slots.as_slice())),
+                        _ => None,
+                    })
+                    .collect();
+                let site = self.tasks.get(self.cur).and_then(|t| {
+                    t.frames.iter().rev().find_map(|f| match f {
+                        Frame::Code(cf) => Some((cf.uid, cf.code.as_ref(), cf.slots.as_slice())),
+                        _ => None,
+                    })
+                });
+                fo.multi_frames(&codes, site, &self.heap, self.cur);
+            }
+        }
         let k = self.conts.len();
         self.conts.push(ContRec {
             k: Continuation::new(multi),
