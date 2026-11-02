@@ -506,3 +506,18 @@ which is off until part 2 of stage F17: the old pipeline checks them by default.
   runs a function parameter of its function, and the summary of the function did not
   have the run. The caller missed the change and the move of the value. The old
   pipeline rejects the five faulting programs.
+
+## Follow-up F17.1: the findings of the second review of group D
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They come from the second review of group D (scratchpad
+`dreview2/variants`).
+
+- `fixes/f17/multi_mid/*.wf`: class D-MULTI-MID, a `multi` clause changes a place
+  between two `resume`s while a copied callee or closure frame holds a reference into
+  it. `v20_c` is not a probe (the old pipeline rejects it with a false W0301, a
+  lost-clean row with no signature). The clean twins `v21_c` and `v25_c` have no claim
+  (`v25_c` is rejected by both pipelines).
+- `fixes/f17/copy_wait_call/*.wf`: class D-COPY-WAIT-CALL, the caller changes the place
+  after the call, before the second run of the copied callee frame (old holes: ledger
+  `open-old` while group D is off).

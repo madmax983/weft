@@ -407,13 +407,40 @@ const MULTI_MID: &str = "effect Pick { multi fn pick() -> bool }\n\
     }\n\
     }\n";
 
+/// Removes the uses at each `Copy` node of a call.
+fn no_copy_uses(f: &mut FnFacts) {
+    let copies: Vec<weft_facts::NodeId> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind == "call copy")
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .collect();
+    f.uses.retain(|(_, n)| !copies.contains(n));
+}
+
 /// A4 of copies (plan stage F17.1): the run of a copy of a callee frame
 /// whose reference the code before cleared needs a use at the `Copy` node
-/// of the run node. Without it the oracle fails before the read.
+/// of the run node. The `ir` pipeline rejects the program there (W0301);
+/// the run of its facts reaches the dangling read with no oracle failure.
+/// With no use at the `Copy` node the oracle fails before the read.
 #[test]
 fn a_copy_of_a_callee_frame_needs_a_use_at_the_copy_node() {
     let c = check_abcd(MULTI_MID);
+    assert!(
+        c.ir.as_ref().is_some_and(|ir| ir
+            .diags
+            .iter()
+            .any(|d| d.code == weft_syntax::diag::Code::W0301)),
+        "{:?}",
+        c.ir.as_ref().map(|ir| &ir.diags)
+    );
     let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the run of the copy passes"),
+        Err(e) => e.message,
+    };
+    assert!(!m.contains("oracle (A4)"), "{m}");
+    let m = match run_main_with_facts(&c, &opts(), no_copy_uses) {
         Ok(_) => panic!("the run of the copy passes"),
         Err(e) => e.message,
     };

@@ -531,3 +531,17 @@ fn a_function_value_that_a_clause_runs_is_in_the_summary_of_the_function() {
     check("clause_runs.wf");
     check("clause_runs_once.wf");
 }
+
+/// D-MULTI-MID and D-COPY-WAIT-CALL (second review of group D, plan stage
+/// F17.1): a `multi` `resume` runs a copy of the callee frame (or of the
+/// frame of a closure) again. The copy holds the references that it made
+/// into the places of its arguments, so a change of these places between
+/// the run node and its `Copy` node (in the clause between two `resume`s,
+/// or after the node in the caller) is W0301 at the node.
+#[test]
+fn a_copy_of_a_callee_frame_sees_the_changes_before_its_second_run() {
+    check("multi_mid_callee.wf");
+    check("multi_mid_closure.wf");
+    check("copy_wait_call.wf");
+    check("multi_mid_ok.wf");
+}

@@ -1411,7 +1411,8 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // The `Copy` node of a node that a `multi` resume runs again (plan
         // stage F16): the locals of the copied frames get new values, a call
         // runs the code of its callee after the perform again, and the
-        // linear value of the `handle` of the first run ends.
+        // linear value of the `handle` of the first run ends. The copy of
+        // the frame of a call is used again (follow-up F17.1, D-MULTI-MID).
         "perform copy" | "call copy" => (
             &[
                 "cfg_edge",
@@ -1420,6 +1421,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "lends_mut",
                 "releases_at",
                 "moved_at",
+                "uses",
             ],
             &[],
         ),

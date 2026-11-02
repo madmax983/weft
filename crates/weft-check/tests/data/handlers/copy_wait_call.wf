@@ -1,0 +1,15 @@
+// D-COPY-WAIT-CALL (F17.1): the caller clears the place after the call, before the second run of the copied callee frame.
+effect Pick { multi fn pick() -> bool }
+fn g(v: &Vec<i64>) / Pick {
+    let r = &v[0]
+    let b = pick()
+    print(r + 1)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        g(&v)   //~ W0301
+        v.clear()
+    }
+}

@@ -2321,3 +2321,38 @@ files = ["verify/s5/R3x/p2/h6_option_closure.wf"]
 reason_class = "stricter"
 reason = "ADR 0005 and the linear rules (W0602, W0601): a closure that captures a linear value is linear, also in the payload of an `Option`, and the type of the payload has no `on abort`. So the value is live across `fail` (W0602) and a path drops it (W0601). The old pipeline does not see the linear value in the `Option<fn()>` and accepts the program; the run is clean because the unwinder finds the captured `Lock` and runs its `on abort`. Group D puts the program in scope (a `handle Fail` in `mainrun`); `work` itself is group A and C"
 stage = "F17"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f17/copy_wait_call/v07_multi_waiting_clause_in_callee.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v09_multi_callee_hb_local_caller_clears.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v10_multi_waiting_param_clause_in_callee.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v11_multi_waiting_clause_callee_two_level.wf",
+]
+finding = "D-COPY-WAIT-CALL"
+reason = "old holes of the second review of group D (claim D-COPY-WAIT-CALL): a copied callee frame holds a reference across a `multi` operation, and the caller changes the place after the call, before the second run. The old pipeline checks the programs while group D is off and accepts them; the run reads a freed cell. The `ir` pipeline with group D rejects them (W0301 at the `Copy` node of the call, follow-up F17.1). Drop this entry when group D is on"
+stage = "F17.1"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f17/multi_mid/v12_multi_waiting_clause_callee_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v14_multi_callee_local_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v18_multi_callee_param_read_pick_clause_pushes.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v21_multi_callee_local_fnparam_pick.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v22_multi_two_level_callee_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v23_multi_callee_field_ref_clause_reassigns.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v25_multi_callee_post_after_last_resume.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v25_multi_callee_post_after_last_resume_c.wf",
+]
+codes = ["W0301", "W0312"]
+reason = "class D-MULTI-MID (follow-up F17.1): the old pipeline gives W0312 (the clause changes the place while the argument of the call points into it); the `ir` pipeline gives W0301 at the `Copy` node of the call (the copy of the callee frame runs again with its references after the change). Same line; rejected by both pipelines"
+stage = "F17.1"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/f17/multi_mid/v20_multi_closure_local_pick_clause_clears.wf"]
+codes = ["W0301"]
+reason = "class D-MULTI-MID (follow-up F17.1): the old pipeline reports the read in the closure (line 9); the `ir` pipeline reports the run of the closure at its `Copy` node (line 11)"
+stage = "F17.1"

@@ -968,6 +968,102 @@ pub fn copy_node(
     }
     vars.sort();
     vars.dedup();
+    // The copy of the callee frame (or of the frame of the closure that the
+    // node runs) runs again with the references that the node gave it, and
+    // with the references into their places that it made and holds across
+    // its `multi` point (class D-MULTI-MID of the second review of group D).
+    // A variable `the copy of the frame` points into each place below the
+    // references that the node uses (a wildcard place), binds at `Ret` and
+    // is used at `Copy`: a change between the two (at `Post`, between two
+    // `resume`s, or after the node in the caller, D-COPY-WAIT-CALL) makes it
+    // invalid there (W0301). A variable that the copy rule binds again (it
+    // points only into the copied frames) and a moved one do not count. Only
+    // for a local handler: for a `multi` operation of a handler of a caller
+    // the copied frames are the frames of this function, and the callee
+    // checks its own references across its `multi` point.
+    let local = matches!(p.body(hb).map(|b| b.kind), Some(BodyKind::Handled(_)));
+    if frame.is_some() && local {
+        let moved_here: HashSet<VarId> = em
+            .facts
+            .moved_at
+            .iter()
+            .filter(|(_, n)| *n == main)
+            .map(|(v, _)| *v)
+            .collect();
+        let used: HashSet<VarId> = em
+            .facts
+            .uses
+            .iter()
+            .filter(|(v, n)| {
+                *n == main && !moved_here.contains(v) && vars.binary_search(v).is_err()
+            })
+            .map(|(v, _)| *v)
+            .collect();
+        let mut places: Vec<PlaceId> = em
+            .facts
+            .points_into
+            .iter()
+            .filter(|(v, _)| used.contains(v))
+            .map(|(_, q)| *q)
+            .collect();
+        // A closure that captures a local by reference points into the cell
+        // of the local: the copy of its frame holds references into the
+        // value of the local too.
+        let cells: Vec<PlaceId> = places
+            .iter()
+            .filter_map(|&q| match em.roots.role(em.facts.place(q).root) {
+                Some(Role::Cell(k)) => em
+                    .roots
+                    .local_roots()
+                    .find(|(x, _)| *x == k)
+                    .map(|(_, r)| r),
+                _ => None,
+            })
+            .collect();
+        places.extend(cells);
+        // A place in the copied frames gets a new copy too (the `Copy` rule):
+        // the copy of the frame holds the copied place, not the old one.
+        places.retain(|&q| match em.roots.role(em.facts.place(q).root) {
+            Some(Role::Local(k) | Role::Cell(k)) => {
+                !inside(p, k.0, hb) || in_clause_or_closure(p, k.0, hb)
+            }
+            Some(Role::Frame(i)) => Some(i) != frame,
+            _ => true,
+        });
+        places.sort();
+        places.dedup();
+        if !places.is_empty() {
+            let node = em.facts.node(main).clone();
+            let name = format!("copy of the frame that `{}` runs", node.label);
+            let var = em.facts.add_var(weft_facts::VarInfo::plain(
+                name,
+                weft_facts::VarKind::Temp,
+                node.span,
+                "",
+            ));
+            for q in places {
+                let w = em.facts.wildcard(q);
+                em.facts.points_into.push((var, w));
+            }
+            // It binds after the changes of the node itself (at `Ret`, the
+            // node after `Copy`): the callee checks its own changes across
+            // its `multi` point (the re-entry edges of its own facts).
+            let rets: Vec<NodeId> = em
+                .facts
+                .cfg_edge
+                .iter()
+                .filter(|(a, _)| *a == c)
+                .map(|(_, b)| *b)
+                .collect();
+            if rets.is_empty() {
+                em.facts.rebound_at.push((var, main));
+            }
+            for r in rets {
+                em.facts.rebound_at.push((var, r));
+            }
+            em.facts.uses.push((var, c));
+        }
+    }
     for v in vars {
         em.facts.rebound_at.push((v, c));
         if !linear.contains(&v) {

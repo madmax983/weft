@@ -3770,6 +3770,22 @@ the IR and the analysis, not a surface walk:
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
 
+As built (follow-up F17.1, D-MULTI-MID and D-COPY-WAIT-CALL of the second review of
+group D; `handlers::copy_node`): a `multi` `resume` runs a copy of the callee frame (or of
+the frame of a closure that the node runs) again from its `multi` point. The copy holds
+the references that it made into the places of its arguments. At the `Copy` node of a
+call, a new variable `copy of the frame that f runs` points into the wildcard place under
+each place that the variables that `Main` uses point into (a variable that the `Copy`
+rule binds again, and a moved one, do not count; a capture of a closure by reference adds
+the root of the local). It binds at `Ret` (after the changes of the call itself, which the
+callee checks across its own `multi` point) and is used at `Copy`. So a change between
+two `resume`s (at `Post`) or after the node in the caller (before the second run) is W0301
+at the node. The old pipeline gives W0312 for the first shape and misses the second.
+Only for a local handler: for a `multi` operation of a handler of a caller (the re-entry
+edge from `Return`) the copied frames are the frames of the function, and the callee
+checks its own references across its `multi` point (corpus 102 `bump` keeps no false
+W0301).
+
 As built (plan stage F17 part 2): the preview with group D on (`--groups ABCD`, the
 default groups of the follow-up F17.1) found one more hole (class D-CLAUSE-RUNS): a
 clause that runs a function value of the interface of its function (a parameter) gave

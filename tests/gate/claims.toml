@@ -5784,3 +5784,69 @@ repro = [
     "tests/gate/probes/fixes/f17/clause_runs/x05_clause_closure_runs_param_c.wf",
 ]
 note = "the clean twins of D-CLAUSE-RUNS"
+
+# Follow-up F17.1: the findings of the second review of group D.
+
+[[claim]]
+finding = "D-MULTI-MID"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/multi_mid/v12_multi_waiting_clause_callee_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v14_multi_callee_local_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v18_multi_callee_param_read_pick_clause_pushes.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v22_multi_two_level_callee_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v23_multi_callee_field_ref_clause_reassigns.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v25_multi_callee_post_after_last_resume.wf",
+]
+code = "W0301"
+note = "a copy of a callee frame runs again after a `multi` clause changes the place between two `resume`s: the copy of the frame is used at the `Copy` node"
+
+[[claim]]
+finding = "D-MULTI-MID"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/multi_mid/v20_multi_closure_local_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v21_multi_callee_local_fnparam_pick.wf",
+]
+code = "W0301"
+note = "the copied frame is the frame of a closure, or a callee that runs a function parameter"
+
+[[claim]]
+finding = "D-COPY-WAIT-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/copy_wait_call/v07_multi_waiting_clause_in_callee.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v09_multi_callee_hb_local_caller_clears.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v10_multi_waiting_param_clause_in_callee.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v11_multi_waiting_clause_callee_two_level.wf",
+]
+code = "W0301"
+note = "the caller changes the place after the call and before the second run of the copied callee frame (an old hole: ledger open-old while group D is off)"
+
+[[claim]]
+finding = "D-MULTI-MID"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/multi_mid/v12_multi_waiting_clause_callee_pick_clause_clears_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v14_multi_callee_local_pick_clause_clears_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v18_multi_callee_param_read_pick_clause_pushes_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v22_multi_two_level_callee_pick_clause_clears_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v23_multi_callee_field_ref_clause_reassigns_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v07_multi_waiting_clause_in_callee_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v09_multi_callee_hb_local_caller_clears_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v10_multi_waiting_param_clause_in_callee_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v11_multi_waiting_clause_callee_two_level_c.wf",
+]
+note = "the clean twins of D-MULTI-MID and D-COPY-WAIT-CALL"
