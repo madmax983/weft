@@ -3770,6 +3770,20 @@ the IR and the analysis, not a surface walk:
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
 
+As built (plan stage F17 part 2): the preview with group D on (`--groups ABCD`, the
+default groups of the follow-up F17.1) found one more hole (class D-CLAUSE-RUNS): a
+clause that runs a function value of the interface of its function (a parameter) gave
+no entry to the part `runs` of the summary of the function, so a caller did not apply
+the changes and the moves of the value that it gave. The runs of the clause bodies now
+join the runs of the function, each one `many` (the clause runs at each perform of its
+operation). The ledger has entries for the rows of the group-D classes (D-POST, D-TEMP,
+D-C, D-FN, D-ABORT, D-R3RT7, D-MOVED, D-MULTI-DUP, F16-PROBE, D-DUP, D-W0313, D-GEN,
+D-EFF, D-MORE, and one `new-fp` of the linear rules); they accept rows only when group D
+is on. The claims O3-8 and map-N1 moved to the follow-ups F16.2 and F16.3 (a handler in
+a closure body, and a clause whose operation gives a reference back to a call, are not
+in scope). Group D goes on in the follow-up F17.1: twelve `lost-clean` rows of group D
+need the signature of an independent reviewer first.
+
 As built (plan stage F17, W0313 for a capability; `analysis::clause::Escape`,
 `factgen::checks::cap_escapes`): the analysis checks the escape at the end of each
 `handle` (`clause::handle_run`), not at the `Dead` of the `Cap` local. A closure that
@@ -4878,7 +4892,7 @@ a repro of group E uses group C too; the claims file holds the set of groups tha
 | R3RT5 | FP | construction | a `ByMove` field has no tie to the variable (5.1.7) | `r3/redteam/repro/R3RT5_byvalue_capture_scope.wf` | C | F11 |
 | R3RT6 | FP | partly | `from_signature` gives a `mut` place only the held references of the other arguments whose types fit (F5); the flow before the call stays until reference versions (11) | `r3/redteam/repro/R3RT6_ref_arg_flow_fp.wf` | A | P1 |
 | O3-7 | FP | one rule | `call_mut` with the root of the function argument that the change comes from (6.4) | `r3/oracle/repro/O3-7_fp_op_closure_w0312.wf` | C, D | F14 |
-| O3-8 | FP | construction | a handled body inside a closure is spliced into the closure component; its performs do not leave the summary (6.1) | `r3/oracle/repro/O3-8_fp_closure_inner_multi.wf` | C, D | F16 |
+| O3-8 | FP | construction | a handled body inside a closure is spliced into the closure component; its performs do not leave the summary (6.1) | `r3/oracle/repro/O3-8_fp_closure_inner_multi.wf` | C, D | F16.2 |
 | O3-9 | FP | one rule | task sets as abstract values; the must half of the `tasks` part (6.6, 6.7) | `r3/oracle/repro/O3-9_fp_join_not_seen.wf` | C, E | F18 |
 | O3-10 | FP | construction | a `Spawn` has no `multi_at` (6.4) | `r3/oracle/repro/O3-10_fp_spawn_param_multi.wf` | C, E | F19 |
 | O3-11 | FP | construction | the cell root `C(x)` (5.1.7) | `r3/oracle/repro/O3-11_fp_move_then_refill.wf` | C | F11 |

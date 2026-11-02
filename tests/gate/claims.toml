@@ -640,9 +640,9 @@ finding = "O3-8"
 kind = "fp"
 verdict = "construction"
 group = "ACD"
-stage = "F16"
+stage = "F16.2"
 repro = ["tests/gate/probes/r3/oracle/repro/O3-8_fp_closure_inner_multi.wf"]
-note = "A closure with its own multi handler is a multi and abort point"
+note = "A closure with its own multi handler is a multi and abort point. A handler in a closure body is not in scope until the follow-up F16.2 (stage F17 moved the claim there)"
 
 [[claim]]
 finding = "O3-9"
@@ -863,9 +863,9 @@ finding = "map-N1"
 kind = "unsound"
 verdict = "one-rule"
 group = "AD"
-stage = "F8"
+stage = "F16.3"
 repro = ["tests/gate/probes/ir/work/map/opres.wf"]
-note = "the result of an operation of a handler of a caller has no places"
+note = "the result of an operation of a handler of a caller has no places. Stage F17 (group D on) moved the claim to the follow-up F16.3: a call that runs a clause whose operation gives a reference back is not in scope (`GIVES_BACK`), so the old pipeline checks the repro (ledger open-old)"
 
 [[claim]]
 finding = "map-N2"
@@ -5741,3 +5741,46 @@ group = "ACD"
 stage = "F17"
 repro = ["tests/gate/probes/fixes/f17/w0313/rebind_c.wf"]
 note = "the clean twin of D-REBIND"
+
+# Stage F17 part 2: group D on. A hole that the default gate with group D
+# found (the tier-2 row `verify/partb/S4/run/rec.wf`).
+
+[[claim]]
+finding = "D-CLAUSE-RUNS"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/clause_runs/x01_clause_runs_param_clear.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x03_clause_post_runs_param.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x04_clause_runs_param_nested_callee.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x05_clause_closure_runs_param.wf",
+]
+code = "W0301"
+note = "a clause runs a function parameter of its function: the summary of the function has the run, so the caller applies its change"
+
+[[claim]]
+finding = "D-CLAUSE-RUNS"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/clause_runs/x02_clause_runs_once_twice.wf"]
+code = "W0502"
+note = "the clause runs the function parameter at each perform: more than once"
+
+[[claim]]
+finding = "D-CLAUSE-RUNS"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/clause_runs/x01_clause_runs_param_clear_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x02_clause_runs_once_twice_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x03_clause_post_runs_param_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x04_clause_runs_param_nested_callee_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x05_clause_closure_runs_param_c.wf",
+]
+note = "the clean twins of D-CLAUSE-RUNS"

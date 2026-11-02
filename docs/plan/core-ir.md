@@ -1371,6 +1371,17 @@ with the group forced on, report only).
   groups A to D (rules of F8), with the fact oracle and the summary oracle.
 - Gate: the common gates; the common exit; tier 2.
 - Exit: the common exit on the scope of groups A to D.
+- As built (three commits; group D goes on in the follow-up F17.1, rule 5): part 0
+  fixes the findings of the independent review of group D (the region of the
+  continuation of a `resume`, `factgen::handlers::Region`; the resume cover A4 of the
+  fact oracle); part 1 is W0313 for a capability over the values of the analysis
+  (`clause::Escape`, `factgen::checks::cap_escapes`), the weak update of D-REBIND, W0118
+  in IR mode and `each_violation_has_one_diagnostic` in IR mode; part 2 is the hole
+  D-CLAUSE-RUNS that the default gate with group D found, the ledger entries of the
+  group-D classes, and the claims O3-8 and map-N1 moved to F16.2 and F16.3. W0313 for a
+  continuation stays with the old pipeline (a captured continuation is F16.1); corpus 83
+  and 122 keep their markers through the fallback. Twelve `lost-clean` rows of group D
+  need an independent reviewer before group D goes on (F17.1).
 
 #### F18 Tasks: scopes, spawn, join, detach (group E, part 1)
 
@@ -1612,6 +1623,7 @@ gate and the exit of its parent, limited to its group of differences.
 | F16.1 | F16 | fallback (old pipeline) / group D: a continuation that a closure captures (`CaptureMode::Kont`, a `resume` in a closure that a clause makes; 40 tier-1 programs fall back), and the continuation summary of `ir` 6.7 (`analysis/cont.rs`). Claims R3RT4, V121, J2 and RT8 hold only through the fallback today. Do: a run of such a closure in its clause is a resume point at the run node; a closure that holds the continuation and leaves the clause is W0313 (stage F17) | open |
 | F16.2 | F16 | fallback / group D: a handler in a closure body (11 tier-1 programs; claim O3-8), a closure that a clause gives to the handled body (`resume(\|\| ..)`, 4), a `multi` resume point in a clause or a closure inside the handled body (2). Do: the clause runs of the closure body in its own facts; the states of the clause where the given closure runs | open |
 | F16.3 | F16 | fallback / group D: `GIVES_BACK`, a call that runs a clause of an operation with a function value, a type parameter or a reference result and a clause that resumes (18 tier-1 programs; σ(Caller) at the call is the resumed values, and only code of a caller lends places of `Caller`), and a `multi` operation of a handler of a caller in a clause (14). Type parameters go to stage F20 | open |
+| F17.1 | F17 | lost-clean / group D: group D on. The default groups are A to D (`DEFAULT_GROUPS`), `done` gets F14 to F17, the 14 `open-old` entries of the old holes that group D closes go, and the tests of the default groups change (scope, the fallback of `weft check`, the data of the fact oracle test of the gate). The 12 `lost-clean` rows of group D (old false positives W0301, W0312, W0502, W0503, W0601, W0805; scratchpad `f17/lostclean_rows.txt`) need the signature of an independent reviewer first; then the ready patch (scratchpad `f17/flip.patch`) applies | open |
 | F16.4 | F16 | lost-fault W0301 / none in groups A and C, found by the self-attack of stage F16 (class C-RR, scratchpad `f16/open/crr_*.wf`). A closure that holds a reference to a container of references (`kr: &Vec<&i64>`) reads through it; the node that runs the closure used only the variables of the captures, not of the references on the chain, so `v.clear(); g()` was accepted (the old pipeline also missed it through a callee or a returned closure). Fix (docs/ir.md 6.9 "As built (follow-up F16.4)"): the run node follows the chain from σ(`CaptureHeld(k)`) of each such capture, as `deep_uses` of a call argument; the type test also looks into the fields of a struct and the payloads of an enum. Probes `tests/gate/probes/fixes/crr/` (claim C-RR; ledger `open-old` for the group-D probe `crr03_opfn.wf`, `moved` for `crr01_direct.wf`) | done (F16.4) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
@@ -1638,6 +1650,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | F10 (tier 2, groups A and B) | 2852 of 57393 | 56822 | 10 | 0 | 8 (signed) | 16 | 449 | 88 (tier-2 policy) |
 | F13 (tier 1, groups A to C) | 2154 of 3893 | 3411 | 117 | 1 (`fixes/f12c/n2/tw.wf`, map N2, `stricter`) | 45 (signed) | 67 | 185 | 67 (open-old) |
 | F13 (tier 2, groups A to C) | 4049 of 57393 | 56527 | 19 | 1 (`verify/s5/r2a/t/ln1.wf`, map N2, `stricter`) | 35 (signed) | 66 | 666 | 79 (tier-2 policy) |
+| F17 (tier 1, groups A to D, the default of F17.1) | 2823 of 4146 | 3544 | 155 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 57 (45 signed; 12 need a reviewer) | 87 | 246 | 56 (open-old) |
+| F17 (tier 2, groups A to D, the default of F17.1) | 5043 of 57393 | 56303 | 34 | 2 (`ln1.wf`; `verify/s5/R3x/p2/h6_option_closure.wf`, `stricter`, ADR 0005) | 44 (35 signed; 9 need a reviewer, copies of tier-1 rows) | 91 | 855 | 64 (tier-2 policy) |
 
 ---
 

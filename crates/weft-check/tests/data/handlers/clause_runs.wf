@@ -1,0 +1,10 @@
+// D-CLAUSE-RUNS (plan stage F17): a clause runs a function parameter of its function, also after `resume`, in a closure, and through a callee.
+effect Note { fn note() }
+fn via(f: fn()) { handle Note { fn note() { f(); resume(()) } } in { note() } }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    via(|| v.clear())
+    print(r + 1)   //~ W0301
+}

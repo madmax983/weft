@@ -2019,3 +2019,305 @@ files = ["tests/gate/probes/fixes/f17/copy/m11_multi_copies_waiting_clause.wf"]
 finding = "D-COPY-WAIT"
 reason = "an old hole of the review of group D (claim D-COPY-WAIT): a `multi` re-run copies the frame of an inner clause that waits at its `resume`, and the code after the inner `handle` clears the place that the clause holds a reference into before the copy goes on. The old pipeline checks the program while group D is off and accepts it; the run reads a freed cell. The `ir` pipeline with group D rejects it (W0301). Drop this entry when group D is on (stage F17)"
 stage = "F17"
+
+# ----------------------------------------------------------------------
+# Stage F17 part 2: the rows of the group-D classes (scratchpad f14, f15,
+# f16 and f17 preview_classes), signed by class at stage F17. They match
+# rows only when group D is on (follow-up F17.1). The lost-clean rows of
+# group D wait for an independent reviewer.
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/oracle/fp/W0501_p1199.wf",
+    "r2/oracle/fp/W0501_p1304.wf",
+    "tests/gate/probes/r2/oracle/fp/W0501_p1199.wf",
+    "tests/gate/probes/r2/oracle/fp/W0501_p1304.wf",
+]
+codes = ["W0602"]
+reason = "class D-ABORT of group D (stage F17): the `Post` node can abort (the code after `resume` of a clause runs there): one more W0602 at the line of the `handle`. Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/116_rc_stores.wf",
+    "tests/gate/probes/verify/s5/p/d6_closure_via_clause.wf",
+    "tests/gate/probes/verify/s5/p/f1_closure_stash.wf",
+    "tests/programs/116_rc_stores.wf",
+    "verify/s5/R3x/p2/h5_vec_closure.wf",
+    "verify/s5/S5c/mut/progs/m00527_68_clause_values.wf",
+    "verify/s5/S5c/mut/progs/m00611_05b_effects_bad.wf",
+    "verify/s5/S5c/mut/progs/m01006_116_rc_stores.wf",
+    "verify/s5/S5c/mut/progs/m01069_116_rc_stores.wf",
+    "verify/s5/S5c/mut/progs/m01175_116_rc_stores.wf",
+    "verify/s5/S5c/mut/progs/m01554_116_rc_stores.wf",
+    "verify/s5/S5c/mut/progs/m01609_116_rc_stores.wf",
+    "verify/s5/S5c/mut/progs/m01754_88_empty_values.wf",
+    "verify/s5/S5c/mut/progs/m01810_36_captures.wf",
+    "verify/s5/S5c/mut/progs/m02118_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m02620_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m02832_44_returned_fns.wf",
+    "verify/s5/S5c/mut/progs/m02852_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m02922_113_returned_closures.wf",
+    "verify/s5/p/d6_closure_via_clause.wf",
+    "verify/s5/p/f1_closure_stash.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0502", "W0601", "W0702", "W0703"]
+reason = "class D-C of group D (stage F17): the rules of group C on programs that group D brings into scope: on-abort functions that run unknown function values (W0601/W0602 of the linear closures), the rc slot rule (116_rc_stores lines 131/137, stricter), more true W0301/W0204 of a clause that keeps a reference into a callee local (f3_2), a linear closure in an `Option` that a `match` runs (W0601 at the end of `main`, where the old pipeline gives W0502/W0601/W0301 at other lines). Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/S5c/mut/progs/m00447_46_value_args.wf",
+    "verify/s5/S5c/mut/progs/m00614_46_value_args.wf",
+    "verify/s5/S5c/mut/progs/m01063_46_value_args.wf",
+    "verify/s5/S5c/mut/progs/m01685_46_value_args.wf",
+    "verify/s5/S5c/mut/progs/m02127_46_value_args.wf",
+    "verify/s5/S5c/mut/progs/m02839_46_value_args.wf",
+]
+codes = ["W0301"]
+reason = "class D-C of group D (stage F17): the rules of group C on programs that group D brings into scope: on-abort functions that run unknown function values (W0601/W0602 of the linear closures), the rc slot rule (116_rc_stores lines 131/137, stricter), more true W0301/W0204 of a clause that keeps a reference into a callee local (f3_2), a linear closure in an `Option` that a `match` runs (W0601 at the end of `main`, where the old pipeline gives W0502/W0601/W0301 at other lines). Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/p/v08_decl.wf",
+    "verify/p/v08_decl.wf",
+]
+codes = ["W0402"]
+reason = "class D-DUP of group D (stage F17): `v08_decl`, a duplicate W0402 of the old pipeline at one line. Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/fidelity/p/rh1.wf",
+    "tests/gate/probes/r3/fidelity/p/rh1.wf",
+    "verify/s5/S5c/mut/progs/m01695_90_pass_through.wf",
+]
+codes = ["W0701"]
+reason = "class D-EFF of group D (stage F17): W0701/W0702/W0801 effect-row diagnostics at other lines (the rows of the closures that the clauses run). Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/verify/partb/S3/p/f6.wf",
+    "verify/partb/S3/p/f6.wf",
+]
+codes = ["W0801"]
+reason = "class D-EFF of group D (stage F17): W0701/W0702/W0801 effect-row diagnostics at other lines (the rows of the closures that the clauses run). Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/redteam/p/m2_alias.wf",
+    "specreview/progs/p9_lib_root.wf",
+    "tests/gate/probes/r3/redteam/p/m2_alias.wf",
+    "tests/gate/probes/specreview/progs/p9_lib_root.wf",
+]
+codes = ["W0701"]
+reason = "class D-FN of group D (stage F17): the effects of a function value resolve where it is made (the interpreter agrees), not at the local handler where a body runs it: other W0701/W0801 lines. Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/quality/gen/p/g00018.wf",
+    "verify/quality/gen/p/g00214.wf",
+    "verify/quality/gen/p/g00275.wf",
+    "verify/quality/gen/p/g00308.wf",
+    "verify/quality/gen/p/g00315.wf",
+    "verify/quality/gen/p/g00322.wf",
+    "verify/quality/gen/p/g00359.wf",
+    "verify/quality/gen/p/g00438.wf",
+    "verify/quality/gen/p/g00459.wf",
+    "verify/quality/gen/p/g00631.wf",
+    "verify/quality/gen/p/g00800.wf",
+    "verify/quality/gen/p/g00879.wf",
+    "verify/quality/gen/p/g01011.wf",
+    "verify/quality/gen/p/g01064.wf",
+    "verify/quality/gen/p/g01069.wf",
+    "verify/quality/gen/p/g01112.wf",
+    "verify/quality/gen/p/g01128.wf",
+    "verify/quality/gen/p/g01169.wf",
+    "verify/quality/gen/p/g01242.wf",
+    "verify/quality/gen/p/g01295.wf",
+    "verify/quality/gen/p/g01299.wf",
+    "verify/quality/gen/p/g01303.wf",
+    "verify/quality/gen/p/g01435.wf",
+]
+codes = ["W0301", "W0601", "W0602", "W0702", "W0703"]
+reason = "class D-GEN of group D (stage F17): generated programs with many type and row errors: the multiset of W0601/W0702/W0703/W0301 duplicates differs at the same lines. Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/ir_targets/f3_2_callee_local_refs.wf",
+]
+codes = ["W0204", "W0301"]
+reason = "class D-MORE of group D (stage F17): more true W0301/W0204 reports: a clause keeps a reference into a callee local; the old pipeline reports one. Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/verify/partb/S4/p/d4_overwrite_more.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/def1.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/def3.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/ow1.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/f3_variants.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_FD3_more.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/fd3_fn.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/m6c_variants.wf",
+    "tests/gate/probes/verify/s5/diff/p/v6c.wf",
+    "tests/programs/46_value_args.wf",
+    "verify/partb/S4/p/d4_overwrite_more.wf",
+    "verify/partb/S4diff/p/def1.wf",
+    "verify/partb/S4diff/p/def3.wf",
+    "verify/partb/S4diff/p/ow1.wf",
+    "verify/review_core/Core_S2/probes/f3_variants.wf",
+    "verify/s5/R2b: closures, function values and stored references/V_FD3_more.wf",
+    "verify/s5/R2b: closures, function values and stored references/fd3_fn.wf",
+    "verify/s5/S5a/e6b_clause.wf",
+    "verify/s5/S5a/e6b_clause2.wf",
+    "verify/s5/S5a/e6b_clause3.wf",
+    "verify/s5/S5a/x/p/m6c_variants.wf",
+    "verify/s5/S5c/mut/progs/m00615_35_wild_places.wf",
+    "verify/s5/S5c/mut/progs/m00760_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m01009_29_owner_drops.wf",
+    "verify/s5/S5c/mut/progs/m01433_73_immovable.wf",
+    "verify/s5/S5c/mut/progs/m02652_73_immovable.wf",
+    "verify/s5/diff/p/v6c.wf",
+]
+codes = ["W0204", "W0301", "W0304", "W0601"]
+reason = "class D-MOVED of group D (stage F17): the same code one line up or down: the statement of the handled body or of the clause, or the read in the clause, vs the line of the `handle` or of the perform"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/probes/mu4_outer_move_apply.wf",
+    "r3/redteam/p/e3_stored_multi.wf",
+    "r3/redteam/p/e5_spared_byval.wf",
+    "tests/gate/probes/r3/oracle/probes/mu4_outer_move_apply.wf",
+    "tests/gate/probes/r3/redteam/p/e3_stored_multi.wf",
+    "tests/gate/probes/r3/redteam/p/e5_spared_byval.wf",
+    "tests/gate/probes/verify/s5/R2c/p/o1.wf",
+    "tests/gate/probes/verify/s5/R2c/p/o2.wf",
+    "tests/gate/probes/verify/s5/R2c/p/o7.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/or4_v2.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/k5_linear_closure.wf",
+    "verify/quality/multi_vec.wf",
+    "verify/s5/R2c/p/o1.wf",
+    "verify/s5/R2c/p/o2.wf",
+    "verify/s5/R2c/p/o7.wf",
+    "verify/s5/R2c: effects, continuations, on abort and drops/p/or4_v2.wf",
+    "verify/s5/S5a/x/p/k5_linear_closure.wf",
+]
+codes = ["W0302", "W0502", "W0503", "W0601"]
+reason = "class D-MULTI-DUP of group D (stage F17): `multi` re-runs: the `ir` pipeline gives W0503 (and W0602, W0502) at the perform line and not the extra W0302/W0601/W0502 duplicate of the old pipeline at the same line (or the reverse). Each program stays rejected at the same line"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "ir/work/machine/m2_post_resume_move.wf",
+    "ir/work/machine/m4_post_resume_callee.wf",
+    "ir/work/machine/m4b_post_resume_callee.wf",
+    "r2/fidelity/p/rebind_closure.wf",
+    "r3/fidelity/p/orc1.wf",
+    "r3/redteam/p/w4_opargs.wf",
+    "tests/gate/probes/fixes/f14/post/a4_clause_push_body_clears.wf",
+    "tests/gate/probes/fixes/f15/twice/d01_post_moves_in_loop.wf",
+    "tests/gate/probes/ir/work/machine/m2_post_resume_move.wf",
+    "tests/gate/probes/ir/work/machine/m4_post_resume_callee.wf",
+    "tests/gate/probes/ir/work/machine/m4b_post_resume_callee.wf",
+    "tests/gate/probes/r2/fidelity/p/rebind_closure.wf",
+    "tests/gate/probes/r3/fidelity/p/orc1.wf",
+    "tests/gate/probes/r3/redteam/p/w4_opargs.wf",
+]
+codes = ["W0301", "W0302", "W0312", "W0601", "W0602"]
+reason = "class D-POST of group D (stage F17): the `ir` pipeline applies the code of a clause after `resume` at `Post` of the `handle` and the rest of the handled body at the `resume` (the old pipeline applies the footprint of the clause at the perform). Same faults, rejected by both pipelines, at other lines or with one more true report"
+stage = "F17"
+
+[[entry]]
+class = "moved"
+files = [
+    "ir/work/machine/m6c_resume_result_body_local.wf",
+    "tests/gate/probes/fixes/f14/post/a2_body_push_post_clear.wf",
+    "tests/gate/probes/fixes/f14/post/h3_loop_body_perform_post.wf",
+    "tests/gate/probes/fixes/f14/post/n3_outer_post_clears.wf",
+    "tests/gate/probes/fixes/f15/twice/d02_post_moves_two_calls.wf",
+    "tests/gate/probes/fixes/f15/twice/d03_post_moves_nested_inner_twice.wf",
+    "tests/gate/probes/ir/work/machine/m6c_resume_result_body_local.wf",
+]
+codes = ["W0301", "W0302", "W0602"]
+reason = "class D-POST of group D (stage F17): the `ir` pipeline applies the code of a clause after `resume` at `Post` of the `handle` and the rest of the handled body at the `resume` (the old pipeline applies the footprint of the clause at the perform). Same faults, rejected by both pipelines, at other lines or with one more true report"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/redteam/p/l2_opin.wf",
+    "r3/redteam/repro/R3RT7_op_in_param.wf",
+    "tests/gate/probes/r3/redteam/p/l2_opin.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT7_op_in_param.wf",
+]
+codes = ["W0203", "W0312"]
+reason = "class D-R3RT7 of group D (stage F17): an `in` place on a parameter of an operation is checked as for a function (W0203, R3RT7), not as the W0312 of the old pipeline. Rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/repro/O3-3_clause_temporary.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-3_clause_temporary.wf",
+    "tests/gate/probes/verify/s5/R3a/p/clausetemp3.wf",
+    "verify/s5/R3a/p/clausetemp3.wf",
+]
+codes = ["W0204", "W0301"]
+reason = "class D-TEMP of group D (stage F17): a reference into a temporary of a clause leaves it: the old W0204 becomes W0301 at the use after `Exit` (the value of the `handle` joins `_0` of the handled body and the values of the clauses). Same fault, rejected by both pipelines"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5a/b1_byval_ref.wf",
+]
+codes = ["W0301"]
+reason = "class D-W0313 of group D (stage F17): W0313 over the values of the analysis: the same W0313 lines; the old pipeline gives one more W0301 in a body with no IR (a type error, W0303) or reports the escape where the `ir` pipeline reports the run"
+stage = "F17"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f16/closure/o1_pre_clear.wf",
+    "tests/gate/probes/fixes/f16/closure/o2_post_clear.wf",
+    "tests/gate/probes/fixes/f16/closure/o5_linear_dropped.wf",
+]
+codes = ["W0301", "W0312", "W0502", "W0602"]
+reason = "class F16-PROBE of group D (stage F17): the probes of stage F16: the old pipeline reports W0312/W0502 at the perform, the `ir` pipeline the fault line"
+stage = "F17"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f16/cap/c07_byref_given.wf",
+    "tests/gate/probes/fixes/f16/closure/o4_once_twice.wf",
+]
+codes = ["W0301", "W0502"]
+reason = "class F16-PROBE of group D (stage F17): the probes of stage F16: the old pipeline reports W0312/W0502 at the perform, the `ir` pipeline the fault line"
+stage = "F17"
+
+[[entry]]
+class = "new-fp"
+files = ["verify/s5/R3x/p2/h6_option_closure.wf"]
+reason_class = "stricter"
+reason = "ADR 0005 and the linear rules (W0602, W0601): a closure that captures a linear value is linear, also in the payload of an `Option`, and the type of the payload has no `on abort`. So the value is live across `fail` (W0602) and a path drops it (W0601). The old pipeline does not see the linear value in the `Option<fn()>` and accepts the program; the run is clean because the unwinder finds the captured `Lock` and runs its `on abort`. Group D puts the program in scope (a `handle Fail` in `mainrun`); `work` itself is group A and C"
+stage = "F17"

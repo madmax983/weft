@@ -521,3 +521,13 @@ fn a_capability_that_leaves_its_handler_is_w0313() {
 fn a_capability_that_a_clause_of_its_handler_runs_is_w0313() {
     check("w0313_own_clause.wf");
 }
+
+/// D-CLAUSE-RUNS (plan stage F17, found when group D went on): a clause
+/// runs a function parameter of its function. The summary of the function
+/// has the run (more than once: the clause runs at each perform), so the
+/// caller applies the changes and the moves of the value that it gives.
+#[test]
+fn a_function_value_that_a_clause_runs_is_in_the_summary_of_the_function() {
+    check("clause_runs.wf");
+    check("clause_runs_once.wf");
+}

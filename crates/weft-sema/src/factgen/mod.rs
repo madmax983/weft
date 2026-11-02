@@ -705,7 +705,7 @@ pub fn emit_parts(
             (em.code_multi, em.own_lends),
         )
     };
-    let (mut stored, aborts, union, runs, returns, last, (code_multi, own_lends)) = stored;
+    let (mut stored, aborts, union, mut runs, returns, last, (code_multi, own_lends)) = stored;
     let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
         .iter()
         .filter_map(|&cb| p.closure_of(cb).map(|(c, _)| c))
@@ -769,6 +769,7 @@ pub fn emit_parts(
         .map_err(|e| unsupported(&e))?;
         clause_entries.push((cb, n.0));
         clause_stored.extend(n.1.into_iter().map(|x| (cb, x)));
+        runs.extend(n.3);
         // A closure that the clause makes starts from the states of the
         // clause (plan stage F16).
         unions.insert(cb, n.2);
@@ -1410,6 +1411,16 @@ fn emit_closure(
     Ok((en, union))
 }
 
+/// What [`emit_clause`] gives back: the entry node of the clause, its
+/// stores, the join of its states (the seed of the closures that it makes)
+/// and the runs of function values of the interface in it.
+type ClauseOut = (
+    weft_facts::NodeId,
+    Vec<templates::Stored>,
+    crate::analysis::State,
+    Vec<(crate::analysis::transfer::RunOf, bool)>,
+);
+
 /// The facts of clause body `cb` (plan stage F14): its nodes (with the
 /// handled bodies that splice into it), from a node `clause entry` where its
 /// parameters and its continuation bind, in the tables of the component.
@@ -1430,14 +1441,7 @@ fn emit_clause(
         &[weft_ir::BodyId],
     ),
     cb: weft_ir::BodyId,
-) -> Result<
-    (
-        weft_facts::NodeId,
-        Vec<templates::Stored>,
-        crate::analysis::State,
-    ),
-    alpha::AlphaError,
-> {
+) -> Result<ClauseOut, alpha::AlphaError> {
     let p = cx.p;
     let body = p
         .bodies
@@ -1556,7 +1560,14 @@ fn emit_clause(
     // (`handlers::map_stored`).
     let stored = std::mem::take(&mut em.stored);
     let union = em.union.take().unwrap_or_default();
-    Ok((en, stored, union))
+    // The runs of function values of the interface in the clause: the
+    // function runs them at each perform of the operation, so more than
+    // once (class D-CLAUSE-RUNS of stage F17).
+    let runs = std::mem::take(&mut em.runs)
+        .into_iter()
+        .map(|(r, _)| (r, true))
+        .collect();
+    Ok((en, stored, union, runs))
 }
 
 /// The facts of one component and the tables that map its IR to them

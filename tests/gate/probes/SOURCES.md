@@ -501,3 +501,8 @@ which is off until part 2 of stage F17: the old pipeline checks them by default.
   check over the values of the analysis: a callee may run the closure that gives a
   local of the site a new value, so the local keeps its old value too (a weak update).
   The old pipeline rejects `rebind.wf` (W0313); the preview with group D accepted it.
+- `fixes/f17/clause_runs/*.wf`: class D-CLAUSE-RUNS (part 2 of stage F17), found when
+  group D went on (the tier-2 row `verify/partb/S4/run/rec.wf` lost a W0502): a clause
+  runs a function parameter of its function, and the summary of the function did not
+  have the run. The caller missed the change and the move of the value. The old
+  pipeline rejects the five faulting programs.

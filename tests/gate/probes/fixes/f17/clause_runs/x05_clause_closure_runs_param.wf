@@ -1,0 +1,10 @@
+// D-CLAUSE-RUNS: a clause runs a function value of the interface of its function; the summary of the function has that run (more than once)
+effect Note { fn note() }
+fn via(f: fn()) { handle Note { fn note() { let g = || f(); g(); resume(()) } } in { note() } }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    via(|| v.clear())
+    print(r + 1)
+}

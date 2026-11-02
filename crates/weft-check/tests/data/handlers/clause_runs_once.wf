@@ -1,0 +1,9 @@
+// D-CLAUSE-RUNS (plan stage F17): the clause runs a `once` closure at each perform.
+effect Note { fn note() }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn via(f: fn()) { handle Note { fn note() { f(); resume(()) } } in { note(); note() } }
+fn main() {
+    let b = Buf { items: Vec.new() }
+    via(|| eat(b))   //~ W0502
+}
