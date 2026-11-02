@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2"]
 
 
 # ----------------------------------------------------------------------
@@ -5850,3 +5850,66 @@ repro = [
     "tests/gate/probes/fixes/f17/copy_wait_call/v11_multi_waiting_clause_callee_two_level_c.wf",
 ]
 note = "the clean twins of D-MULTI-MID and D-COPY-WAIT-CALL"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/d01_fnitem_value_run_local_handler_clears.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d02_fnitem_value_made_in_hb_clears.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d03_fnparam_run_local_handler_clears.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d07_middleware_callback_vec.wf",
+]
+code = "W0312"
+note = "a function item or a function parameter runs with the handlers of the call: the clause of the local handler of its row runs at the run node and clears the place that the argument points into"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/d06_fnparam_hb_holds_ref_across_run.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d10_fnparam_abort_clause_ref_after_handle.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d11_fnparam_multi_local_handler.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/c1_closure_in_hb_calls_rowfn_holds_ref.wf",
+]
+code = "W0301"
+note = "the clause of the local handler that the run of the function value runs (also after an abort, and between two resumes of a multi clause), or that a call of a closure body runs through the captured capability, invalidates a held reference"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/d14_fnparam_clause_moves_site_value_resume.wf",
+]
+code = "W0302"
+note = "the clause that the run of the function parameter runs moves a value of the site"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/c1_closure_in_hb_calls_rowfn_holds_ref_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d01_fnitem_value_run_local_handler_clears_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d02_fnitem_value_made_in_hb_clears_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d03_fnparam_run_local_handler_clears_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d06_fnparam_hb_holds_ref_across_run_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d07_middleware_callback_vec_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d10_fnparam_abort_clause_ref_after_handle_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d11_fnparam_multi_local_handler_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d14_fnparam_clause_moves_site_value_resume_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/w01_fp_closure_in_hb_calls_rowfn_main_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/w02_fp_fnitem_local_run_in_hb_main_c.wf",
+]
+note = "the clean twins of D-FNVAL-ROW, and FP-W0805-FNVAL: a closure or a function item that runs in the handled body of main performs to the local handler (no W0805)"

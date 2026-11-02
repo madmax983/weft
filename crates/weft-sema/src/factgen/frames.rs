@@ -18,6 +18,11 @@
 //!   (`raises`) goes to the `Fail` handler of that environment; an `assert`
 //!   goes past the function. A call whose summary cannot abort has no
 //!   destination: the fact generator does not emit its abort edge.
+//! - A `Call` of a function value aborts past the function, through the
+//!   `Fail` handler of the capability environment of the call, and to the
+//!   handler there of each effect that the value can perform (plan stage
+//!   F17.2: a function item or a parameter runs with the handlers of the
+//!   call).
 //! - `Join` and `Fork` abort past the function when the task is cancelled.
 //!   A child failure is `Fail.fail` through the capability environment at
 //!   the node: to the local `Fail` handler (its clause cannot resume, W0504,
@@ -245,6 +250,30 @@ pub fn resolve(p: &Program, tys: &TyTable, env: CapEnvId, effect: &str, value: b
     Dest::Past
 }
 
+/// The first environment on the chain of `env` that adds the capability of
+/// `effect`, with the place of the capability there.
+pub fn adding_env(
+    p: &Program,
+    tys: &TyTable,
+    env: CapEnvId,
+    effect: &str,
+) -> Option<(CapEnvId, weft_ir::Place)> {
+    let mut at = Some(env);
+    for _ in 0..=p.cap_envs.len() {
+        let id = at?;
+        let e = p.cap_envs.get(id.index())?;
+        if let Some((_, q)) = e
+            .adds
+            .iter()
+            .find(|(x, _)| identity(tys, *x) == Some(effect))
+        {
+            return Some((id, q.clone()));
+        }
+        at = e.parent;
+    }
+    None
+}
+
 /// The capability environment of body `body`.
 fn env_of(p: &Program, body: BodyId) -> Option<CapEnvId> {
     p.bodies.get(body.index()).map(|b| b.cap_env)
@@ -413,6 +442,23 @@ fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKin
             out.push(Dest::Past);
             out.push(fails(site_env_of(p, body)));
         }
+        // A function item or a function parameter runs with the handlers of
+        // the call: an effect of its row goes to the handler of the effect in
+        // the capability environment of the call, and a failure of the
+        // runtime goes to the `Fail` handler there (plan stage F17.2,
+        // D-FNVAL-ROW). A closure runs with the handlers where it was made:
+        // its effects can go past the function too.
+        TermKind::Call {
+            callee: Callee::Value(f),
+            caps: CapArgs::Lexical(e),
+            ..
+        } => {
+            out.push(Dest::Past);
+            out.push(fails(Some(*e)));
+            for effect in value_effects(p, tys, sums, body, f, *e) {
+                out.push(resolve(p, tys, *e, &effect, true));
+            }
+        }
         _ => out.push(Dest::Past),
     }
     // A run of a function value can run a closure that performs through a
@@ -435,6 +481,212 @@ fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKin
     out.sort();
     out.dedup();
     out
+}
+
+/// The effects of local handlers that a run of the function value `f` of
+/// body `body` can perform through the capability environment `env` of the
+/// call (plan stage F17.2, D-FNVAL-ROW).
+///
+/// The handled bodies on the chain of `env` give the local handlers. A
+/// value whose type states a row can perform the effects of the row. A
+/// value with no stated row passes the effects of the call through: each
+/// effect of a local handler, except for a value that only a closure can
+/// give (a closure runs with the handlers where it was made).
+fn value_effects(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    f: &weft_ir::Operand,
+    env: CapEnvId,
+) -> Vec<String> {
+    let local = local_effects(p, tys, env);
+    if local.is_empty() {
+        return local;
+    }
+    let q = match f {
+        weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) if q.proj.is_empty() => q,
+        _ => return local,
+    };
+    let ty = p.body(body).and_then(|b| b.local(q.local)).map(|d| d.ty);
+    match ty.and_then(|t| tys.try_get(t)) {
+        Some(weft_ir::Ty::Fn(fty)) => match &fty.row {
+            Some(row) => row
+                .iter()
+                .filter_map(|&e| identity(tys, e))
+                .filter(|e| local.iter().any(|x| x == e))
+                .map(str::to_string)
+                .collect(),
+            None if closure_only(p, Some(sums), body, q.local, 0) => Vec::new(),
+            None => local,
+        },
+        _ => local,
+    }
+}
+
+/// The identities of the effects that a handled body on the chain of
+/// capability environment `env` handles, and that no inner environment of
+/// the chain adds first.
+fn local_effects(p: &Program, tys: &TyTable, env: CapEnvId) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    let mut at = Some(env);
+    for _ in 0..=p.cap_envs.len() {
+        let Some(id) = at else { break };
+        let Some(e) = p.cap_envs.get(id.index()) else {
+            break;
+        };
+        let handled = p
+            .bodies
+            .iter()
+            .any(|b| matches!(b.kind, BodyKind::Handled(_)) && b.cap_env == id);
+        for (x, _) in &e.adds {
+            let Some(name) = identity(tys, *x) else {
+                continue;
+            };
+            if seen.iter().any(|s| s == name) {
+                continue;
+            }
+            seen.push(name.to_string());
+            if handled {
+                out.push(name.to_string());
+            }
+        }
+        at = e.parent;
+    }
+    out
+}
+
+/// The most copies of a function value that [`closure_only`] follows.
+const COPY_DEPTH: usize = 8;
+
+/// True if local `l` of body `body` can only hold closures: each value that
+/// goes into the local (or a local of a parent body that it names) is a new
+/// closure or a copy of a local that can only hold closures. With the
+/// summaries `sums`, the result of a call of a function whose result can
+/// only be closures that call and perform nothing ([`inert`]) counts too
+/// (the closure runs with the handlers of the call that made it). A
+/// parameter, another result of a terminator or another value can be a
+/// function item.
+fn closure_only(
+    p: &Program,
+    sums: Option<&Summaries>,
+    body: BodyId,
+    l: weft_ir::LocalId,
+    depth: usize,
+) -> bool {
+    if depth > COPY_DEPTH {
+        return false;
+    }
+    let Ok(owner) = super::alpha::owner_local(p, body, l) else {
+        return false;
+    };
+    let is_owner = |b: BodyId, q: &weft_ir::Place| {
+        q.proj.is_empty() && super::alpha::owner_local(p, b, q.local).ok() == Some(owner)
+    };
+    let param = p
+        .body(owner.0)
+        .and_then(|b| b.local(owner.1))
+        .is_none_or(|d| {
+            !matches!(
+                d.kind,
+                weft_ir::LocalKind::User | weft_ir::LocalKind::Temp(_)
+            )
+        });
+    if param {
+        return false;
+    }
+    let mut any = false;
+    for (i, b) in p.bodies.iter().enumerate() {
+        let bid = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        for blk in &b.blocks {
+            for s in &blk.stmts {
+                let weft_ir::StmtKind::Assign(q, rv) = &s.kind else {
+                    continue;
+                };
+                if !is_owner(bid, q) {
+                    continue;
+                }
+                any = true;
+                let ok = match rv {
+                    weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(_), _) => true,
+                    weft_ir::Rvalue::Use(
+                        weft_ir::Operand::Copy(src) | weft_ir::Operand::Move(src),
+                    ) if src.proj.is_empty() => closure_only(p, sums, bid, src.local, depth + 1),
+                    _ => false,
+                };
+                if !ok {
+                    return false;
+                }
+            }
+            if term_dest(&blk.term.kind).is_some_and(|q| is_owner(bid, q)) {
+                if !makes_inert(p, sums, &blk.term.kind) {
+                    return false;
+                }
+                any = true;
+            }
+        }
+    }
+    any
+}
+
+/// True if terminator `t` is a call of a function whose result can only be
+/// closures that call and perform nothing ([`inert`]).
+fn makes_inert(p: &Program, sums: Option<&Summaries>, t: &TermKind) -> bool {
+    let (
+        Some(sums),
+        TermKind::Call {
+            callee: Callee::Fn(f, _),
+            ..
+        },
+    ) = (sums, t)
+    else {
+        return false;
+    };
+    sums.get(*f).is_ok_and(|s| {
+        !s.ret.fns.is_empty()
+            && s.ret.fns.iter().all(|x| match x {
+                crate::analysis::summary::RetFn::Made(c) => inert(p, *c),
+                _ => false,
+            })
+    })
+}
+
+/// True if the body of closure `c` has no call, no perform and no other
+/// terminator that can run code of another body or suspend.
+fn inert(p: &Program, c: weft_ir::ClosureId) -> bool {
+    p.closures
+        .get(c.index())
+        .and_then(|d| p.body(d.body))
+        .is_some_and(|b| {
+            b.blocks.iter().all(|blk| {
+                matches!(
+                    blk.term.kind,
+                    TermKind::Goto(_)
+                        | TermKind::Switch { .. }
+                        | TermKind::Return
+                        | TermKind::UnwindExit
+                        | TermKind::Unreachable
+                        | TermKind::Assert { .. }
+                )
+            })
+        })
+}
+
+/// The destination place of terminator `t`, if it has one.
+const fn term_dest(t: &TermKind) -> Option<&weft_ir::Place> {
+    match t {
+        TermKind::Call { dest, .. }
+        | TermKind::Perform { dest, .. }
+        | TermKind::Resume { dest, .. }
+        | TermKind::Handle { dest, .. }
+        | TermKind::Scope { dest, .. }
+        | TermKind::Join { dest, .. }
+        | TermKind::Fork { dest, .. }
+        | TermKind::IterNext { dest, .. } => Some(dest),
+        TermKind::Spawn { dest, .. } => dest.as_ref(),
+        _ => None,
+    }
 }
 
 /// True if terminator `t` of body `body` can run a function value: a call

@@ -458,4 +458,11 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
     };
     assert_eq!(oracle::fact_class(&summary), oracle::FactClass::Summary);
     assert!(oracle::fact_class(&summary).is_failure());
+    // A failure of the clause cover (A5, stage F17.2) counts with the
+    // summary oracle.
+    let clause = Outcome {
+        verdict: Verdict::Fault,
+        detail: "seed 1, workers 1: runtime error: clause oracle (A5): in `k`".to_string(),
+    };
+    assert_eq!(oracle::fact_class(&clause), oracle::FactClass::Summary);
 }

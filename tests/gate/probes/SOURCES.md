@@ -521,3 +521,16 @@ again if it runs. They come from the second review of group D (scratchpad
 - `fixes/f17/copy_wait_call/*.wf`: class D-COPY-WAIT-CALL, the caller changes the place
   after the call, before the second run of the copied callee frame (old holes: ledger
   `open-old` while group D is off).
+
+## Follow-up F17.2: the findings of the third review of group D
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They come from the third review of group D (scratchpad
+`dreview3/variants`), except `c1_*` (the self-attack of F17.2).
+
+- `fixes/f17/fnval_row/*.wf`: class D-FNVAL-ROW, a function item or a function
+  parameter runs in the handled body of a local handler of its row, and the clause
+  changes, frees or moves a place that a reference of the body (or of the value) points
+  into. `c1_*`: a closure of the handled body calls a function with the effect in its
+  row while it holds a reference. `w01_c` and `w02_c`: class FP-W0805-FNVAL, a closure
+  or a function item runs in the handled body of `main`.

@@ -1979,16 +1979,14 @@ reason = "class D-EFF of group D (stage F17): W0701/W0702/W0801 effect-row diagn
 stage = "F17"
 
 [[entry]]
-class = "changed"
+class = "moved"
 files = [
-    "r3/redteam/p/m2_alias.wf",
     "specreview/progs/p9_lib_root.wf",
-    "tests/gate/probes/r3/redteam/p/m2_alias.wf",
     "tests/gate/probes/specreview/progs/p9_lib_root.wf",
 ]
-codes = ["W0701"]
-reason = "class D-FN of group D (stage F17): the effects of a function value resolve where it is made (the interpreter agrees), not at the local handler where a body runs it: other W0701/W0801 lines. Rejected by both pipelines"
-stage = "F17"
+codes = ["W0801"]
+reason = "class D-FN of group D (stage F17, corrected in follow-up F17.2): a function parameter runs with the handlers of the call, so its `net` goes to the local root handler (the interpreter agrees): the `ir` pipeline reports W0801 at the run of `f` (lines 4, 8), the old pipeline at the `handle` (lines 3, 7). Rejected by both pipelines. Since F17.2 `m2_alias.wf` gives the old lines (no more W0701 for a function whose local handler handles the effect of its parameter)"
+stage = "F17.2"
 
 [[entry]]
 class = "changed"
@@ -2212,6 +2210,13 @@ codes = ["W0301"]
 reason = "class D-MULTI-MID (follow-up F17.1): the old pipeline reports the read in the closure (line 9); the `ir` pipeline reports the run of the closure at its `Copy` node (line 11)"
 stage = "F17.1"
 
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/f17/fnval_row/d11_fnparam_multi_local_handler.wf"]
+codes = ["W0301", "W0312"]
+reason = "class D-FNVAL-ROW (follow-up F17.2): the function parameter runs the `multi` clause of the local handler; the old pipeline gives W0312 (the clause clears the place that the argument points into), the `ir` pipeline W0301 at the `Copy` node of the run (the copy of the frame of the value runs again after the change). Same line; rejected by both pipelines"
+stage = "F17.2"
+
 # Follow-up F17.1: the lost-clean rows of group D, signed by the independent
 # review round 2 of group D (scratchpad dreview2/review.md, "The 12 lost-clean
 # rows"; stressed variants in dreview2/lc, rows lc_results.tsv).
@@ -2360,7 +2365,7 @@ files = [
     "verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/d4b_field_fn_root.wf",
     "verify/s5/S5c/mut/progs/m01695_90_pass_through.wf",
 ]
-reason = "class D-FN of group D (follow-up F17.1): the effects of a function value resolve where it is made (the interpreter agrees), not at the handler where a body runs it: the row of the body names the effect of a handler of a caller that the value performs through, or no effect for a value that a local handler handles (d4_field_fn, d4b_field_fn_root: signed lost-clean rows)"
+reason = "class D-FN of group D (follow-up F17.1, corrected in F17.2): the effects of a closure resolve where it is made, and the effects of a function item or a function parameter at the handlers of the call (the interpreter agrees in both cases); the old row names the effects of the function type where a body runs the value. The row of the body names the effect of a handler of a caller that the value performs through, or no effect for a value that a local handler handles (d4_field_fn, d4b_field_fn_root: signed lost-clean rows)"
 stage = "F17.1"
 
 [[entry]]

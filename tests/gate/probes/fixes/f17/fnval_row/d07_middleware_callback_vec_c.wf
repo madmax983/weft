@@ -1,0 +1,18 @@
+effect Log { fn log(m: i64) }
+fn report(items: &Vec<i64>) / Log {
+    let first = &items[0]
+    log(first + 0)
+    print(first + 1)
+}
+fn with_buffer(run: fn(&Vec<i64>) / Log, items: &Vec<i64>) / Log, mut(items) {
+    handle Log { fn log(m) { print(items.len()); resume(()) } } in {
+        run(items)
+    }
+}
+fn main() {
+    let items = Vec.new()
+    items.push(5)
+    handle Log { fn log(m) { resume(()) } } in {
+        with_buffer(report, &items)
+    }
+}

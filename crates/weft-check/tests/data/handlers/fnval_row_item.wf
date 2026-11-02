@@ -1,0 +1,19 @@
+// D-FNVAL-ROW (F17.2): a function item runs with the handlers of the call. The local clause handles its `log` and clears `v`.
+effect Log { fn log(m: i64) }
+fn note(r: &i64) / Log {
+    log(1)
+    print(r + 1)
+}
+fn k(v: &Vec<i64>) / Log, mut(v) {
+    let h = note
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        h(&v[0])   //~ W0312
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { print(100 + m); resume(()) } } in {
+        k(&v)
+    }
+}

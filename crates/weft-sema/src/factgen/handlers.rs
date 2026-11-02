@@ -556,6 +556,7 @@ fn spares(em: &Em<'_>, body: BodyId, t: &TermKind) -> Option<Vec<BodyId>> {
 /// the call (no `call_mut`: the callee gives the place, as it lends a place
 /// to an operation of a caller).
 pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
+    captured_calls(em, nodes, st, t)?;
     let n = nodes.main;
     let body = em.body;
     let block = em.at.0;
@@ -598,6 +599,96 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                 .unwrap_or_default();
         for clause in clauses {
             let (args, deps) = gv.sigma(em.p, em.tys, clause);
+            em.hx.runs.push(ClauseRun {
+                node: n,
+                handler: h,
+                clause,
+                post: false,
+                helds: args.clone(),
+                args,
+                deps,
+                at: body,
+                spares: None,
+                ins: Vec::new(),
+                given: Some(gv.roots.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A call in a closure body whose effect goes to a capability that the
+/// closure captures (plan stage F17.2, FP-W0805-FNVAL and D-FNVAL-ROW).
+///
+/// The call gets the capability of an effect of its row from the
+/// environment of the closure: the operation goes to the handler of the
+/// captured capability, as a perform through the capability does
+/// (`templates::perform`). The effect does not leave the function (no
+/// `escapes_at`), the summary of the closure performs through the capture,
+/// and the node runs the code of each clause of the handler before its
+/// resume points.
+fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
+    let TermKind::Call {
+        caps: weft_ir::CapArgs::Lexical(env),
+        ..
+    } = t
+    else {
+        return Ok(());
+    };
+    let p = em.p;
+    let body = em.body;
+    let Some((c, _)) = p.closure_of(body) else {
+        return Ok(());
+    };
+    let Some(own) = p.body(body).map(|b| b.cap_env) else {
+        return Ok(());
+    };
+    let n = nodes.main;
+    let at = |x: &NodeId| *x == n || Some(*x) == nodes.ret;
+    let mut effects: Vec<String> = em
+        .facts
+        .escapes_at
+        .iter()
+        .filter(|(x, _)| at(x))
+        .map(|(_, e)| e.clone())
+        .collect();
+    effects.sort();
+    effects.dedup();
+    let mut hs: Vec<HandlerId> = Vec::new();
+    for e in effects {
+        let Some((id, q)) = super::frames::adding_env(p, em.tys, *env, &e) else {
+            continue;
+        };
+        if id != own {
+            continue;
+        }
+        let Some((k, _)) = clause::captured_cap(p, em.tys, body, &q) else {
+            continue;
+        };
+        let Some(h) = clause::capture_handler(p, c, k) else {
+            continue;
+        };
+        em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+        em.hx.cap_performs.push((n, k, e));
+        hs.push(h);
+    }
+    hs.sort();
+    hs.dedup();
+    if hs.is_empty() {
+        return Ok(());
+    }
+    let block = em.at.0;
+    let gv = clause::given(&mut em.cx(), body, block, st, t)?;
+    for h in hs {
+        let (_, cap) = ids(em, h);
+        em.facts.performs_at.push((n, cap));
+        let clauses: Vec<BodyId> = p
+            .handlers
+            .get(h.index())
+            .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
+            .unwrap_or_default();
+        for clause in clauses {
+            let (args, deps) = gv.sigma(p, em.tys, clause);
             em.hx.runs.push(ClauseRun {
                 node: n,
                 handler: h,
@@ -845,10 +936,15 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
 /// callee frame is a copied frame too, and the callee runs its code after
 /// the perform again: the changes and the frees of the call apply again at
 /// `c`.
+/// With `local`, the node also runs a clause of a local `multi` handler
+/// that can resume more than once (`Frames::reentry_root`). `row_returns`
+/// are the `Return` nodes of the function if the node can also wait at a
+/// `multi` operation of a caller.
 pub fn copy_node(
     em: &mut Em<'_>,
     (c, main): (NodeId, NodeId),
-    (block, root): (BlockId, BodyId),
+    (block, root, local): (BlockId, BodyId, bool),
+    row_returns: &[NodeId],
     st: &State,
     t: &TermKind,
 ) {
@@ -977,26 +1073,19 @@ pub fn copy_node(
     // is used at `Copy`: a change between the two (at `Post`, between two
     // `resume`s, or after the node in the caller, D-COPY-WAIT-CALL) makes it
     // invalid there (W0301). A variable that the copy rule binds again (it
-    // points only into the copied frames) and a moved one do not count. Only
-    // for a local handler: for a `multi` operation of a handler of a caller
-    // the copied frames are the frames of this function, and the callee
-    // checks its own references across its `multi` point.
-    let local = matches!(p.body(hb).map(|b| b.kind), Some(BodyKind::Handled(_)));
+    // points only into the copied frames) does not count; a moved one does.
+    // Only for a local handler: for a `multi` operation of a handler of a
+    // caller the copied frames are the frames of this function, and the
+    // callee checks its own references across its `multi` point.
+    let local = local || matches!(p.body(hb).map(|b| b.kind), Some(BodyKind::Handled(_)));
     if frame.is_some() && local {
-        let moved_here: HashSet<VarId> = em
-            .facts
-            .moved_at
-            .iter()
-            .filter(|(_, n)| *n == main)
-            .map(|(v, _)| *v)
-            .collect();
+        // A moved variable counts: the callee frame holds its references
+        // (an argument of a call of a function value moves at `Main`).
         let used: HashSet<VarId> = em
             .facts
             .uses
             .iter()
-            .filter(|(v, n)| {
-                *n == main && !moved_here.contains(v) && vars.binary_search(v).is_err()
-            })
+            .filter(|(v, n)| *n == main && vars.binary_search(v).is_err())
             .map(|(v, _)| *v)
             .collect();
         let mut places: Vec<PlaceId> = em
@@ -1059,6 +1148,12 @@ pub fn copy_node(
                 em.facts.rebound_at.push((var, main));
             }
             for r in rets {
+                em.facts.rebound_at.push((var, r));
+            }
+            // A re-entry through a handler of a caller copies each frame of
+            // the function: the copy of the frame is new on that path (the
+            // edges from the `Return` nodes of the function).
+            for &r in row_returns {
                 em.facts.rebound_at.push((var, r));
             }
             em.facts.uses.push((var, c));

@@ -1,0 +1,12 @@
+// D-FNVAL-ROW (F17.2), a clean case: a function value with no stated row that only a closure of a callee can give, and the closure calls and performs nothing. Its run runs no clause of the local handler.
+effect Pick { multi fn pick() -> bool }
+fn mk(v: &Vec<i64>) -> fn() { let r = &v[0]; || print(r + 1) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let f = mk(&v)
+        let b = pick()
+        if b { v[0] = 2 } else { f() }
+    }
+}

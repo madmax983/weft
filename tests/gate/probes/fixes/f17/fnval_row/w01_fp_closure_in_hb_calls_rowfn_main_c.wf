@@ -1,0 +1,8 @@
+effect Log { fn log(m: i64) }
+fn note(x: i64) / Log { log(x) }
+fn main() {
+    handle Log { fn log(m) { print(m); resume(()) } } in {
+        let f = |x| note(x)
+        f(1)
+    }
+}

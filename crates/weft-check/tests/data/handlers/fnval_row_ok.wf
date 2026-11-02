@@ -1,0 +1,25 @@
+// D-FNVAL-ROW and FP-W0805-FNVAL (F17.2), the clean cases: the clauses only read the places, and a function value or a closure that runs in the handled body of `main` performs to the local handler.
+effect Log { fn log(m: i64) }
+fn note(r: &i64) / Log {
+    log(1)
+    print(r + 1)
+}
+fn tick() / Log { log(1) }
+fn k(h: fn() / Log, v: &Vec<i64>) / Log {
+    handle Log { fn log(m) { print(v.len()); resume(()) } } in {
+        let r = &v[0]
+        h()
+        print(r + 1)
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { print(m); resume(()) } } in {
+        let h = note
+        h(&v[0])
+        let f = || tick()
+        f()
+        k(tick, &v)
+    }
+}

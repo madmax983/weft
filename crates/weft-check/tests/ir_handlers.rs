@@ -546,3 +546,19 @@ fn a_copy_of_a_callee_frame_sees_the_changes_before_its_second_run() {
     check("copy_wait_call.wf");
     check("multi_mid_ok.wf");
 }
+
+/// D-FNVAL-ROW (plan stage F17.2): a function item or a function parameter
+/// runs with the handlers of the call, so the clause of a local handler of
+/// its row runs at the run node (W0312, W0301). A call in a closure body
+/// gets the captured capability for the effects of its row: the clause runs
+/// at the call. The clean cases have no error, also in `main` (no W0805:
+/// FP-W0805-FNVAL).
+#[test]
+fn a_function_value_runs_the_clauses_of_a_local_handler_of_its_row() {
+    check("fnval_row_item.wf");
+    check("fnval_row_param.wf");
+    check("fnval_row_multi.wf");
+    check("fnval_row_closure.wf");
+    check("fnval_row_ok.wf");
+    check("fnval_row_inert_ok.wf");
+}

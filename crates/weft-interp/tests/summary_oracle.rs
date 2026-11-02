@@ -471,14 +471,45 @@ const FNVAL_ROW: &str = "effect Log { fn log(m: i64) }\n\
     }\n\
     }\n";
 
+/// Sends the effect `main.Log` past each `call` node that runs a clause
+/// (`escapes_at` in place of `performs_at`): the facts of the hole
+/// D-FNVAL-ROW before the fix.
+fn no_clause_runs(f: &mut FnFacts) {
+    let calls: Vec<weft_facts::NodeId> = f
+        .performs_at
+        .iter()
+        .map(|&(n, _)| n)
+        .filter(|n| f.nodes.get(n.index()).is_some_and(|x| x.kind == "call"))
+        .collect();
+    f.performs_at.retain(|(n, _)| !calls.contains(n));
+    for n in calls {
+        f.escapes_at.push((n, "main.Log".to_string()));
+    }
+}
+
 /// A5 (plan stage F17.2): the run of a clause of a local handler from a
 /// node whose facts send the effect past the function is a failure. The
-/// facts of the generator send the `log` of the function value past
-/// `with_buffer` (the hole D-FNVAL-ROW): the oracle fails at the run node.
+/// facts of the generator run the clause at the run node of the function
+/// value (W0312): the run reaches the dangling read with no failure of A5.
+/// With the effect sent past the run node (the facts before the fix of
+/// D-FNVAL-ROW), the oracle fails at the run node.
 #[test]
 fn a_clause_run_from_a_node_that_sends_the_effect_past_fails_the_clause_cover() {
     let c = check_abcd(FNVAL_ROW);
+    assert!(
+        c.ir.as_ref().is_some_and(|ir| ir
+            .diags
+            .iter()
+            .any(|d| d.code == weft_syntax::diag::Code::W0312)),
+        "{:?}",
+        c.ir.as_ref().map(|ir| &ir.diags)
+    );
     let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the run of the clause passes"),
+        Err(e) => e.message,
+    };
+    assert!(!m.contains("oracle (A5)"), "{m}");
+    let m = match run_main_with_facts(&c, &opts(), no_clause_runs) {
         Ok(_) => panic!("the run of the clause passes"),
         Err(e) => e.message,
     };

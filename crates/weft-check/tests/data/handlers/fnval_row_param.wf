@@ -1,0 +1,17 @@
+// D-FNVAL-ROW (F17.2): a function parameter runs in the handled body of a local handler of its row. The body holds a reference across the run, and the clause clears the place.
+effect Log { fn log(m: i64) }
+fn tick() / Log { log(1) }
+fn k(h: fn() / Log, v: &Vec<i64>) / Log, mut(v) {
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let r = &v[0]
+        h()
+        print(r + 1)   //~ W0301
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { print(100 + m); resume(()) } } in {
+        k(tick, &v)
+    }
+}

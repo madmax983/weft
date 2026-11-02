@@ -1,0 +1,17 @@
+effect Log { fn log(m: i64) }
+fn tick() / Log { log(1) }
+fn k(h: fn() / Log) / Log {
+    let s = Vec.new()
+    s.push(1)
+    let keep = Vec.new()
+    handle Log { fn log(m) { print(s.len()); resume(()) } } in {
+        h()
+    }
+    print(s.len())
+    print(keep.len())
+}
+fn main() {
+    handle Log { fn log(m) { resume(()) } } in {
+        k(tick)
+    }
+}

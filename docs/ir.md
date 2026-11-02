@@ -3786,6 +3786,33 @@ edge from `Return`) the copied frames are the frames of the function, and the ca
 checks its own references across its `multi` point (corpus 102 `bump` keeps no false
 W0301).
 
+As built (follow-up F17.2, the third review of group D):
+
+- D-FNVAL-ROW (`frames::reach`, `value_effects`). A function item or a function
+  parameter runs with the handlers of the call; a closure runs with the handlers where
+  it was made. A call of a function value with the capability environment `e` now has
+  the destinations of the effects that the value can perform through `e`: each effect
+  of the stated row of its function type, or, for a type with no stated row, each effect
+  of a handled body on the chain of `e` (not for a local that only a closure can give,
+  `closure_only`: a new closure, or the result of a call whose summary gives only
+  closures that call and perform nothing), and a failure through `e`. A local handler there gives
+  `Dest::Handler`: the node runs the clauses of the handler (`call_clauses`,
+  `performs_at`, no `escapes_at` of the effect), its abort edges and its re-entry
+  edges. The past destination stays (a closure made outside the handled body). The
+  clauses get the state before the call (`transfer::term`).
+- A call in a closure body that gets the capability of an effect of its row from the
+  environment of the closure (a captured capability, `handlers::captured_calls`) runs
+  the clauses of the handler of the capture at the node, as a perform through the
+  capture does. The summary of the closure performs through the capture
+  (`cap_performs`), so no `escapes_at` stays in the function (class FP-W0805-FNVAL: a
+  closure or a function item that runs in the handled body of `main` gave W0805).
+- The copy of the callee frame (D-MULTI-MID) also counts a variable that the node moves
+  at `Main` (an argument of a call of a function value). A node that runs a clause of a
+  local `multi` handler and can also wait at a `multi` operation of a caller (a function
+  value with a `multi` effect in its row) takes the copied frames of the local handler;
+  the copy of the frame binds again at the `Return` nodes of the function (on that path
+  each frame of the function is copied).
+
 As built (plan stage F17 part 2): the preview with group D on (`--groups ABCD`, the
 default groups of the follow-up F17.1) found one more hole (class D-CLAUSE-RUNS): a
 clause that runs a function value of the interface of its function (a parameter) gave

@@ -1,0 +1,16 @@
+effect Stop { fn stop() }
+fn halt() / Stop { stop() }
+fn k(h: fn() / Stop, v: &Vec<i64>) / Stop, mut(v) {
+    let r = &v[0]
+    handle Stop { fn stop() { v.clear() } } in {
+        h()
+    }
+    print(r + 1)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Stop { fn stop() { resume(()) } } in {
+        k(halt, &v)
+    }
+}

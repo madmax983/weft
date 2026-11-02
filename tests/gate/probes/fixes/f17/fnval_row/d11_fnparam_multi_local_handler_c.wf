@@ -1,0 +1,18 @@
+effect Pick { multi fn pick() -> bool }
+fn choose(v: &Vec<i64>) / Pick {
+    let r = &v[0]
+    let b = pick()
+    print(r + 1)
+}
+fn k(h: fn(&Vec<i64>) / Pick, v: &Vec<i64>) / Pick, mut(v) {
+    handle Pick { fn pick() { resume(true); print(v.len()); resume(false) } } in {
+        h(v)
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true) } } in {
+        k(choose, &v)
+    }
+}

@@ -1070,8 +1070,12 @@ pub fn term(
             dest,
             ..
         } => {
+            // A function item or a parameter runs the clauses of a local
+            // handler of its row (plan stage F17.2): they get the places of
+            // the state before the call.
+            let before = super::clause::runs_clauses(cx, body, t).then(|| st.clone());
             call_value(cx, body, block, st, f, args, dest)?;
-            super::clause::call_clauses(cx, (body, block), None, st, t)
+            super::clause::call_clauses(cx, (body, block), before.as_ref(), st, t)
         }
         TermKind::Perform {
             cap: weft_ir::CapOperand::Row(e),

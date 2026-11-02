@@ -2247,12 +2247,49 @@ fn emit_block(
         // of the function for a handler of a caller.
         let row = frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind)
             || em.hx.dyn_rows.contains(&(bid, block));
-        let root = if row {
-            handlers::splice_root(em.p, bid)
-        } else {
-            frames.reentry_root(em.p, bid, block).unwrap_or(bid)
+        // A node that can run a clause of a local handler and wait at an
+        // operation of a caller (a function value, plan stage F17.2) takes
+        // the smaller set of copied frames: the frames up to the local
+        // handler. A local outside them keeps its state at the copy.
+        let local = frames.reentry_root(em.p, bid, block);
+        let root = match local {
+            Some(r) => r,
+            None if row => handlers::splice_root(em.p, bid),
+            None => bid,
         };
-        handlers::copy_node(em, (c, n), (block, root), &st, &blk.term.kind);
+        let row_returns: Vec<weft_facts::NodeId> = if row && local.is_some() {
+            let top = handlers::splice_root(em.p, bid);
+            em.p.body(top)
+                .map(|b| {
+                    b.blocks
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, x)| {
+                            !x.cleanup && matches!(x.term.kind, weft_ir::TermKind::Return)
+                        })
+                        .filter_map(|(i, _)| {
+                            table.get(NodeKey {
+                                body: top,
+                                block: weft_ir::BlockId(u32::try_from(i).unwrap_or(u32::MAX)),
+                                at: nodes::TERM,
+                                phase: nodes::Phase::Main,
+                                dest: NORMAL,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        handlers::copy_node(
+            em,
+            (c, n),
+            (block, root, local.is_some()),
+            &row_returns,
+            &st,
+            &blk.term.kind,
+        );
     }
     Ok(st)
 }
