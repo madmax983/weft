@@ -1287,8 +1287,15 @@ fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
         for (k, path) in can_get_linear_with(cx, &changed, fns) {
             st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
         }
+        // A closure that a callee runs (`late`) can run on no path: the
+        // local keeps its old value too (a weak update; class D-REBIND of
+        // stage F17: a closure that keeps a capability stayed in the local).
         for (k, v) in &app.rebinds {
-            st.write(*k, &[], v.clone());
+            if app.late {
+                st.add(*k, &[], v);
+            } else {
+                st.write(*k, &[], v.clone());
+            }
         }
     }
 }
@@ -1442,7 +1449,7 @@ fn note_multi_apps(
 /// Returns [`AlphaError::Later`] for such a perform that the node does not
 /// run the clause of.
 fn check_cap_apps(
-    cx: &Cx<'_>,
+    cx: &mut Cx<'_>,
     (body, block): (BodyId, weft_ir::BlockId),
     apps: &[Applied],
 ) -> Result<(), AlphaError> {
@@ -1459,6 +1466,11 @@ fn check_cap_apps(
                 .cloned()
                 .unwrap_or_default();
             if caps.is_empty() {
+                // The closure ran after its `handle` ended: a capability that
+                // left its handler was found, and W0313 rejects the program.
+                if !cx.hx.escapes.is_empty() {
+                    continue;
+                }
                 return Err(later);
             }
             let Some(t) =
@@ -1479,7 +1491,25 @@ fn check_cap_apps(
                     }
                     _ => None,
                 };
+                // A clause of the handler itself runs the closure: the clause
+                // runs outside its handler (V046). The perform gave the
+                // closure to code that can keep it (W0313).
+                let own_clause = super::clause::enclosing_clause(cx.p, body).and_then(|c| {
+                    cx.p.handlers
+                        .iter()
+                        .position(|d| d.clauses.iter().any(|(_, x)| *x == c))
+                });
+                if let Some(h) = h.filter(|h| own_clause == Some(h.index())) {
+                    cx.hx.escapes.push((h, super::clause::Escape::Given));
+                    continue;
+                }
                 if !h.is_some_and(|h| hs.contains(&h)) {
+                    // A capability that left its handler gives W0313 at the
+                    // `handle` (`clause::Escape`), so W0313 rejects the
+                    // program: the run is not checked.
+                    if !cx.hx.escapes.is_empty() {
+                        continue;
+                    }
                     return Err(later);
                 }
             }

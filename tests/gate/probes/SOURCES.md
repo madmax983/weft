@@ -497,3 +497,7 @@ which is off until part 2 of stage F17: the old pipeline checks them by default.
   `m11_multi_copies_waiting_clause.wf`).
 - `fixes/f17/own/*.wf`: class FP-OWN, a reference into a local of a clause across its
   own `resume` (false positives of the preview).
+- `fixes/f17/w0313/*.wf`: class D-REBIND (part 1 of stage F17), found by the W0313
+  check over the values of the analysis: a callee may run the closure that gives a
+  local of the site a new value, so the local keeps its old value too (a weak update).
+  The old pipeline rejects `rebind.wf` (W0313); the preview with group D accepted it.

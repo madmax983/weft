@@ -215,6 +215,15 @@ fn typo() -> u64 { nope }
 fn plain(n: u64) -> u64 { n + 1 }
 ";
 
+/// A program that the fact generator does not support with each group on:
+/// a `resume` of a captured continuation (follow-up F16.1). Stage F17 put
+/// the W0313 escape of `ESCAPE` in scope.
+const KONT: &str = "effect Ask { fn ask() -> u64 }
+fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }
+fn typo() -> u64 { nope }
+fn plain(n: u64) -> u64 { n + 1 }
+";
+
 #[test]
 fn the_old_pipeline_checks_a_program_out_of_scope_and_says_why() {
     let old = analyze(ESCAPE, Options::default());
@@ -228,8 +237,10 @@ fn the_old_pipeline_checks_a_program_out_of_scope_and_says_why() {
     assert!(!scope.in_scope());
     assert_eq!(shape(&ir.bodies), shape(&old.bodies));
     assert_eq!(diags(&ir), diags(&old));
-    // Every group is on, but the stub fact generator supports none.
-    let ir = analyze(ESCAPE, opts(FactGen::Ir, Groups::ALL));
+    // Every group is on, but the fact generator does not support the
+    // program.
+    let old = analyze(KONT, Options::default());
+    let ir = analyze(KONT, opts(FactGen::Ir, Groups::ALL));
     let why = ir
         .ir_scope
         .as_ref()
@@ -280,8 +291,9 @@ fn the_both_mode_gives_both_fact_sets() {
     assert!(ir.bodies.iter().all(|b| b.facts.nodes.is_empty()));
     assert!(!ir.diags.iter().any(|d| d.code == Code::W0313));
     assert!(ir.diags.iter().any(|d| d.code == Code::W0101));
-    // With the stub fact generator, the ir side is the old side.
-    let stub = analyze(ESCAPE, opts(FactGen::Both, Groups::ALL));
+    // With a program that the fact generator does not support, the ir side
+    // is the old side.
+    let stub = analyze(KONT, opts(FactGen::Both, Groups::ALL));
     assert!(stub.ir_facts.is_none());
     assert!(stub.ir_scope.and_then(|s| s.fallback).is_some());
     // The ir view of the both mode is the analysis of the ir mode.

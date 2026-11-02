@@ -501,3 +501,23 @@ fn a_reference_into_a_local_of_the_clause_across_its_resume_is_valid() {
     check("cont_own.wf");
     check("cont_own_variant.wf");
 }
+
+/// W0313 over the values of the analysis (plan stage F17, `docs/ir.md`
+/// 6.9): a closure that captures the capability of a handler leaves the
+/// `handle` in its value, in a local of the site, in a heap slot or through
+/// a callee that stores it. The diagnostic is at the `handle` expression,
+/// as in the old pipeline (the functions of `tests/programs/62_cap_escape.wf`
+/// that the `ir` pipeline checks).
+#[test]
+fn a_capability_that_leaves_its_handler_is_w0313() {
+    check("w0313_cap.wf");
+    check("w0313_rebind.wf");
+}
+
+/// V046 (plan stage F17): a closure goes to an operation of its own
+/// handler. The clause runs it outside the handler, so the handled body gave
+/// it to code that can keep it.
+#[test]
+fn a_capability_that_a_clause_of_its_handler_runs_is_w0313() {
+    check("w0313_own_clause.wf");
+}

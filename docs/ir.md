@@ -3770,6 +3770,38 @@ the IR and the analysis, not a surface walk:
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
 
+As built (plan stage F17, W0313 for a capability; `analysis::clause::Escape`,
+`factgen::checks::cap_escapes`): the analysis checks the escape at the end of each
+`handle` (`clause::handle_run`), not at the `Dead` of the `Cap` local. A closure that
+captures the capability of the handler leaves the `handle` if it is in the value of the
+`handle` (the value of the handled body, of a clause, or of a landing), in a local of
+the site or in a heap slot in the states where the handled body ends (its exit and the
+landing of a clause that ends with no `resume`). The IR gives a closure of the handled
+body each capability in scope, so a closure counts only if its summary performs through
+the capture, runs a function value, or gives one back or away (with no summary, each
+capture of the capability counts). The states of the code of a clause
+after its `resume` are not used: there a local of the site has its value at the resume
+point too. A run of a closure with a captured capability in a clause of the same
+handler (V046: the perform gives the closure to its own handler) is an escape too
+("the body gives it to code that can keep it"). Each escape is one W0313 at the span of
+the `handle` terminator, with the texts of the old lowering (`check_cap_escape`). After
+an escape, a run of a closure whose capability left its handler is not checked
+(`transfer::check_cap_apps`), because W0313 rejects the program; with no escape such a
+run is not in scope, as before. A closure that a callee runs (`late`) gives the local
+that it rebinds a weak update (class D-REBIND of stage F17: `maybe(c, || { f = .. })`
+kept only the new value of `f`, so a closure with the capability that `f` held was
+lost). The facts have no capability root yet: no `error` of the spec has a capability
+root as its evidence free, so nothing folds into the W0313 diagnostic. W0313 for a
+continuation stays with the old pipeline: a closure that captures a continuation is
+not in scope (follow-up F16.1), and the corpus programs 83 and 122 use other
+constructs that are not in scope (a function value that an operation gives to a
+handler of a caller, group E).
+
+The `error` of the spec for a returned reference into a by-value parameter that the
+signature states has the W0204 of the signature check: the diagnosis gives a fold
+diagnostic (`diagnose::FOLD`), and the driver moves its fact keys into that W0204
+(`driver::fold`), so `each_violation_has_one_diagnostic` holds in IR mode too.
+
 As built (plan stage F13, the W0204 store forms): the check (`factgen::stored_behind`)
 reads the stores of each body of the component, also of the instantiated closure bodies,
 and the stores that a run node applies (parts `stores`, `puts`, `put_fns` of a callee or a

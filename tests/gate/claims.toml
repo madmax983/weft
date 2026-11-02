@@ -5720,3 +5720,24 @@ repro = [
     "tests/gate/probes/fixes/f17/own/e03_callee_rest_variant_c.wf",
 ]
 note = "the rest of the handled body does not free a local of the clause that waits at its `resume`"
+
+# Stage F17 part 1: W0313 for a capability over the values of the analysis.
+
+[[claim]]
+finding = "D-REBIND"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/w0313/rebind.wf"]
+code = "W0313"
+note = "a callee may run the closure that rebinds the local: the local keeps the closure with the capability (a weak update of `rebinds` for a `late` run)"
+
+[[claim]]
+finding = "D-REBIND"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/w0313/rebind_c.wf"]
+note = "the clean twin of D-REBIND"

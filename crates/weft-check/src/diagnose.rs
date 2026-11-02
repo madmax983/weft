@@ -254,6 +254,11 @@ pub fn diagnose(f: &FnFacts, r: &Report, file: &weft_syntax::SourceFile) -> Vec<
 
 /// Turns a checker report into diagnostics whose notes can hold markers of
 /// node offsets (`MARK`). Each rule has a function of its own.
+/// The start of the message of a diagnostic whose facts fold into a
+/// diagnostic of a check in Rust (W0204 of the signature check: a returned
+/// reference into a by-value parameter that the signature states).
+pub(crate) const FOLD: &str = "fold: by-value parameter ";
+
 pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     let v = &r.violations;
     let mut out = Vec::new();
@@ -330,7 +335,7 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
                         .collect();
                     var_keys("error", e.var, &uses)
                 });
-                out.extend(returned(f, inv, o).map(|d| d.with_facts(keys)));
+                out.push(returned(f, inv, o).with_facts(keys));
                 continue;
             }
         }
@@ -416,7 +421,11 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
 ///   signature check: no second error.
 /// - a handled body, a scope body or a clause: W0301, the value leaves
 ///   after its place ends.
-fn returned(f: &FnFacts, inv: &Invalidation, o: VarId) -> Option<Diagnostic> {
+///
+/// The error of a by-value parameter that the signature states gives a
+/// diagnostic whose message is [`FOLD`] and the name of the parameter: the
+/// driver folds its facts into the W0204 of the signature check.
+fn returned(f: &FnFacts, inv: &Invalidation, o: VarId) -> Diagnostic {
     let var = f.var(inv.var);
     let mut owner = f.var(o).clone();
     // A closure that captures a local by reference points into the cell of
@@ -435,11 +444,9 @@ fn returned(f: &FnFacts, inv: &Invalidation, o: VarId) -> Option<Diagnostic> {
             "the value leaves after its place ends: the value of this {frame} points into `{path}`, but `{}` goes out of scope at the end of the {frame}",
             owner.name
         );
-        return Some(
-            Diagnostic::error(Code::W0301, message, span)
-                .note_at(holder, var.span)
-                .note_at(what, at),
-        );
+        return Diagnostic::error(Code::W0301, message, span)
+            .note_at(holder, var.span)
+            .note_at(what, at);
     }
     let root = f.place(inv.path).root;
     let stated = f.ref_sites.iter().any(|site| {
@@ -449,7 +456,9 @@ fn returned(f: &FnFacts, inv: &Invalidation, o: VarId) -> Option<Diagnostic> {
                 .any(|&(n, d)| n == site.node && f.place(d).root == root)
     });
     if owner.kind == VarKind::Param && stated {
-        return None;
+        // The W0204 of the signature check reports it: the error folds into
+        // that diagnostic (`crate::driver::fold`).
+        return Diagnostic::error(Code::W0204, format!("{FOLD}{}", owner.name), span);
     }
     let message = if closure {
         let whose = match owner.kind {
@@ -479,11 +488,9 @@ fn returned(f: &FnFacts, inv: &Invalidation, o: VarId) -> Option<Diagnostic> {
             f.name
         )
     };
-    Some(
-        Diagnostic::error(Code::W0204, message, span)
-            .note_at(holder, var.span)
-            .note_at(what, at),
-    )
+    Diagnostic::error(Code::W0204, message, span)
+        .note_at(holder, var.span)
+        .note_at(what, at)
 }
 
 /// Returns the footprint of the handler that node `n` performs through, as a

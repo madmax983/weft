@@ -154,13 +154,32 @@ fn corpus_exercises_every_rule() {
 /// one diagnostic.
 #[test]
 fn each_violation_has_one_diagnostic() {
+    violations_have_one_diagnostic(Options::from_markers);
+}
+
+/// `each_violation_has_one_diagnostic` with the `ir` pipeline and the
+/// groups A to D (plan stage F17): the W0313 check of the `ir` pipeline
+/// stays in Rust, and its diagnostic reports no fact of the spec.
+#[test]
+fn each_violation_has_one_diagnostic_in_ir_mode() {
+    violations_have_one_diagnostic(|src| Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("ABCD").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::from_markers(src)
+    });
+}
+
+/// Each violation of the spec in the facts of each corpus program, checked
+/// with the options `opts`, has one diagnostic that reports it, and each
+/// fact that a diagnostic reports is a violation.
+fn violations_have_one_diagnostic(opts: impl Fn(&str) -> Options) {
     let mut bad = Vec::new();
     for path in corpus_paths() {
         let src = fs::read_to_string(&path).expect("the program is readable");
         let name = path
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        let checked = check_source(&name, &src, Options::from_markers(&src));
+        let checked = check_source(&name, &src, opts(&src));
         let mut spec_keys = BTreeSet::new();
         for (i, b) in checked.analysis.bodies.iter().enumerate() {
             let out = bridge::evaluate_spec(&b.facts, false).expect("the spec runs");

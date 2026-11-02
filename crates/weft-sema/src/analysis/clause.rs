@@ -117,6 +117,24 @@ pub struct Handlers {
     /// calls run are running, with the body of the call, the innermost last
     /// (`run_clause`).
     pub frames: Vec<(weft_facts::PlaceId, BodyId)>,
+    /// The handlers whose capability a closure takes out of the `handle`,
+    /// with how it leaves (W0313, plan stage F17).
+    pub escapes: Vec<(HandlerId, Escape)>,
+}
+
+/// How a closure that captures the capability of a handler leaves the
+/// `handle` (W0313, `docs/ir.md` 6.9).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Escape {
+    /// It is in the value of the `handle`.
+    Value,
+    /// A local of the site keeps it (the name of the local).
+    Local(String),
+    /// A heap slot that a local of the site or a parameter reaches keeps it.
+    Stored,
+    /// The handled body gives it to code that can keep it (a clause of the
+    /// handler itself runs it).
+    Given,
 }
 
 /// The state of the abort edge of a terminator that runs a clause.
@@ -692,7 +710,7 @@ pub fn handle_run(
         seeds.extend(cx.hx.extra.get(&hb).into_iter().flatten().cloned());
         let r = run_handled(cx, (h, hb, &clauses), st, seeds)?;
         if !multi || r.again.is_empty() {
-            return finish_handle(cx, h, hb, r, Vec::new());
+            return Ok(finish_handle(cx, h, hb, r, Vec::new()));
         }
         if r.nested {
             return Err(AlphaError::Later(
@@ -737,7 +755,7 @@ pub fn handle_run(
             }
         }
         if !changed {
-            return finish_handle(cx, h, hb, r, out);
+            return Ok(finish_handle(cx, h, hb, r, out));
         }
         round += 1;
         if round > MULTI_ROUNDS {
@@ -906,19 +924,16 @@ fn run_handled(
 /// ([`handle_run`]): the state after it, its value, and what the handler
 /// keeps ([`Info`]). `reentries` are the re-entries of a `multi` handler:
 /// the body and the block of each node, the state before its `Copy` node
-/// and the values of the later `resume`s.
-///
-/// # Errors
-///
-/// Returns [`AlphaError::Later`] for a closure that takes the capability
-/// of the handler out of the `handle` (W0313, stage F17).
+/// and the values of the later `resume`s. A closure that takes the
+/// capability of the handler out of the `handle` is an escape (W0313,
+/// [`Escape`]).
 fn finish_handle(
     cx: &mut Cx<'_>,
     h: HandlerId,
     hb: BodyId,
     r: HandledRun,
     reentries: Vec<(BodyId, BlockId, State, Tree)>,
-) -> Result<HandleOut, AlphaError> {
+) -> HandleOut {
     let p = cx.p;
     let clauses: Vec<BodyId> = p
         .handlers
@@ -943,26 +958,66 @@ fn finish_handle(
     // A closure that captures the capability of the handler and leaves the
     // `handle` (in its value, in a local of the site or in a heap slot)
     // takes the capability out of its handler: W0313 of stage F17.
+    // The closure can perform through the capture. The IR gives a closure
+    // of the handled body each capability in scope, so a closure whose
+    // summary does not perform through it, runs no function value and gives
+    // none back or away holds it for nothing. With no summary, each capture
+    // of the capability counts.
+    let sums = cx.sums;
     let own = |f: &super::FnVal| match f {
         super::FnVal::Closure(c) | super::FnVal::Made(c) => {
             p.closures.get(c.index()).is_some_and(|d| {
                 (0..d.captures.len()).any(|k| {
-                    capture_handler(p, *c, u32::try_from(k).unwrap_or(u32::MAX)) == Some(h)
+                    let k = u32::try_from(k).unwrap_or(u32::MAX);
+                    capture_handler(p, *c, k) == Some(h)
+                        && sums.closure(*c).map_or(true, |s| {
+                            s.performs
+                                .iter()
+                                .any(|pf| pf.cap == super::summary::CapIface::Cap(k))
+                                || !s.runs.is_empty()
+                                || !s.put_fns.is_empty()
+                                || !s.ret.fns.is_empty()
+                        })
                 })
             })
         }
         _ => false,
     };
-    let leaves = value.flat().fns.iter().any(own)
-        || after
-            .trees()
-            .filter(|(k, _)| !inside(p, k.0, hb))
-            .any(|(_, t)| t.flat().fns.iter().any(own))
-        || after.behind_fns().values().any(|fs| fs.iter().any(own));
-    if leaves {
-        return Err(AlphaError::Later(
-            "a capability that leaves its handler (stage F17)",
-        ));
+    // The states where the handled body ends: its exit and the landing of
+    // a clause that ends with no `resume`. The code of a clause after its
+    // `resume` (`Post`) sees the locals of the site with their values at the
+    // resume point too, so its states are not used here: a closure that a
+    // clause puts into a place of the site after `resume` and that runs
+    // later is a run outside its handler (`transfer::check_cap_apps`).
+    let ends: Vec<&State> = r.exit.iter().chain(landing.iter()).collect();
+    let site = |k: &super::Key| !inside(p, k.0, hb) && !clauses.iter().any(|&c| inside(p, k.0, c));
+    let local = ends
+        .iter()
+        .flat_map(|s| s.trees())
+        .filter(|(k, _)| site(k))
+        .find(|(_, t)| t.flat().fns.iter().any(own))
+        .map(|(k, _)| {
+            p.body(k.0)
+                .and_then(|b| b.local(k.1))
+                .and_then(|d| d.name.clone())
+        });
+    let how = if value.flat().fns.iter().any(own) {
+        Some(Escape::Value)
+    } else if let Some(name) = local {
+        Some(name.map_or(Escape::Stored, Escape::Local))
+    } else if ends
+        .iter()
+        .any(|s| s.behind_fns().values().any(|fs| fs.iter().any(own)))
+    {
+        Some(Escape::Stored)
+    } else {
+        None
+    };
+    // The check gives W0313 (`crate::factgen::checks::cap_escapes`).
+    if let Some(how) = how {
+        if !cx.hx.escapes.iter().any(|(x, _)| *x == h) {
+            cx.hx.escapes.push((h, how));
+        }
     }
     let info = cx.hx.info.entry(h).or_default();
     if let Some(ex) = &r.exit {
@@ -974,14 +1029,14 @@ fn finish_handle(
         }
     }
     info.resumed.join(&r.resumed);
-    Ok(HandleOut {
+    HandleOut {
         states: r.states,
         exit: r.exit,
         after,
         value,
         landing,
         reentries,
-    })
+    }
 }
 
 impl Open {

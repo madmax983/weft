@@ -1,0 +1,13 @@
+// D-REBIND (plan stage F17): a callee may run the closure that gives the local a new value, so the local keeps the closure with the capability too.
+effect Note { fn note() }
+fn maybe(c: bool, g: fn()) { if c { g() } }
+
+fn cond_reset2(c: bool) {
+    let f = || print(0)
+    handle Note { fn note() { resume(()) } } in {   //~ W0313
+        f = || note()
+        maybe(c, || { f = || print(1) })
+    }
+    f()
+}
+fn main() { cond_reset2(false) }

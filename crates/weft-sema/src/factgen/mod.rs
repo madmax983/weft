@@ -722,6 +722,8 @@ pub fn emit_parts(
     }
     let mut closure_entries = Vec::new();
     let mut closure_runs: Vec<crate::analysis::clause::ClauseRun> = Vec::new();
+    let mut closure_escapes: Vec<(weft_ir::HandlerId, crate::analysis::clause::Escape)> =
+        Vec::new();
     // The facts of each clause body (plan stage F14): a component of the
     // function, from the join of the states at the performs that run it. A
     // clause has a lower id than the clauses inside it, so the performs
@@ -747,6 +749,7 @@ pub fn emit_parts(
                 sums,
                 cycles: &cycles,
                 seed: crate::analysis::State::new(),
+                escapes: &[],
             },
             &mut ClosureOut {
                 tys: &mut tys,
@@ -758,6 +761,7 @@ pub fn emit_parts(
                 table: &mut table,
                 stored: &mut stored,
                 runs: &mut closure_runs,
+                escapes: &mut closure_escapes,
             },
             (&mut hx, &frames, &comp),
             cb,
@@ -769,6 +773,7 @@ pub fn emit_parts(
         // clause (plan stage F16).
         unions.insert(cb, n.2);
     }
+    let escapes = hx.escapes.clone();
     for &cb in &closures {
         let (n, st) = emit_closure(
             &ClosureCx {
@@ -781,6 +786,7 @@ pub fn emit_parts(
                     .and_then(|(_, d)| unions.get(&handlers::splice_root(p, d.maker)))
                     .cloned()
                     .unwrap_or_default(),
+                escapes: &escapes,
             },
             &mut ClosureOut {
                 tys: &mut tys,
@@ -792,6 +798,7 @@ pub fn emit_parts(
                 table: &mut table,
                 stored: &mut stored,
                 runs: &mut closure_runs,
+                escapes: &mut closure_escapes,
             },
             cb,
         )
@@ -827,6 +834,13 @@ pub fn emit_parts(
     let handled_entries = handled_entries(p, &comp, &table);
     let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored)?;
     diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
+    let mut escapes = hx.escapes.clone();
+    for e in closure_escapes {
+        if !escapes.iter().any(|(h, _)| *h == e.0) {
+            escapes.push(e);
+        }
+    }
+    diags.extend(checks::cap_escapes(p, &tys, &escapes));
     // Each local with a root owns it, and the cell of a local that a closure
     // captures `ByRef` is owned by `C` of the local.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
@@ -912,6 +926,7 @@ fn new_rows(
 fn fresh_handlers(hx: &mut crate::analysis::clause::Handlers) -> crate::analysis::clause::Handlers {
     let mut out = crate::analysis::clause::Handlers::default();
     out.dyn_rows = std::mem::take(&mut hx.dyn_rows);
+    out.escapes = std::mem::take(&mut hx.escapes);
     out
 }
 
@@ -967,6 +982,10 @@ struct ClosureCx<'a> {
     /// The values of the maker where the closure can run: the join of its
     /// states before each terminator and before each closure literal.
     seed: crate::analysis::State,
+    /// The handlers whose capability a closure of the component took out of
+    /// the `handle` (W0313 at the `handle`, plan stage F17): a run of such
+    /// a closure is not checked.
+    escapes: &'a [(weft_ir::HandlerId, crate::analysis::clause::Escape)],
 }
 
 /// What the facts of a closure body write into ([`emit_closure`]): the
@@ -974,6 +993,9 @@ struct ClosureCx<'a> {
 struct ClosureOut<'a, 'b> {
     /// The types.
     tys: &'b mut weft_ir::TyTable,
+    /// The capabilities that leave their handler that a closure body found
+    /// (W0313, plan stage F17).
+    escapes: &'b mut Vec<(weft_ir::HandlerId, crate::analysis::clause::Escape)>,
     /// The facts of the component.
     facts: &'b mut FnFacts,
     /// The roots of the component.
@@ -1311,6 +1333,7 @@ fn emit_closure(
         .row_reentry_edges(p, out.facts, cb, &known.iter().copied().collect::<Vec<_>>());
     let params = decls::closure_params(p, out.tys, out.facts, out.roots, cb)?;
     let mut hx = crate::analysis::clause::Handlers::default();
+    hx.escapes = cx.escapes.to_vec();
     let mut cycles = cx.cycles.clone();
     let (env, states) = loop {
         let r = {
@@ -1377,6 +1400,13 @@ fn emit_closure(
     // capability (plan stage F16): `handlers::project` of the component
     // gives them the code of the clause.
     out.runs.append(&mut hx.runs);
+    // The capabilities that leave their handler that this body found (W0313
+    // at the `handle`).
+    for e in hx.escapes {
+        if !cx.escapes.contains(&e) && !out.escapes.contains(&e) {
+            out.escapes.push(e);
+        }
+    }
     Ok((en, union))
 }
 
