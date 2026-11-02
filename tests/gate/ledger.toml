@@ -2357,3 +2357,95 @@ files = ["tests/gate/probes/fixes/f17/multi_mid/v20_multi_closure_local_pick_cla
 codes = ["W0301"]
 reason = "class D-MULTI-MID (follow-up F17.1): the old pipeline reports the read in the closure (line 9); the `ir` pipeline reports the run of the closure at its `Copy` node (line 11)"
 stage = "F17.1"
+
+# Follow-up F17.1: the lost-clean rows of group D, signed by the independent
+# review round 2 of group D (scratchpad dreview2/review.md, "The 12 lost-clean
+# rows"; stressed variants in dreview2/lc, rows lc_results.tsv).
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f15/calls/b18_post_reads_given_body_clears_c.wf",
+    "fixes/f15/calls/b18_post_reads_given_body_clears_c.wf",
+]
+reason = "`give(&v)` gives `&v[0]` to the clause; the body clears `w`, another local, so `e` does not point into `w`. The old W0301 is the old wildcard of a given place. Stressed variants that clear the given vector fault and are W0301 in both pipelines"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f16/closure/o4_once_twice_c.wf",
+    "fixes/f16/closure/o4_once_twice_c.wf",
+]
+reason = "the clause runs the `once` closure once, then resumes once, and the body performs once (old W0502 false positive). Each stressed variant that runs it twice is W0502 in the `ir` pipeline and faults"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f16/closure/o5_linear_dropped_c.wf",
+    "fixes/f16/closure/o5_linear_dropped_c.wf",
+]
+reason = "the clause runs the linear closure exactly once and no path drops it (old W0502/W0601 false positives). Variants that never run it, run it on one path, abort or store it are W0601 in the `ir` pipeline; a variant that runs it twice is W0502"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r2/oracle/fp/W0503_p1580.wf",
+    "r2/oracle/fp/W0503_p1580.wf",
+    "tests/gate/probes/r2/oracle/fp/W0503_p7071.wf",
+    "r2/oracle/fp/W0503_p7071.wf",
+]
+reason = "the only clause of `Pick` does not resume (an abort: the linear value goes to its `on abort`); `multi` in the declaration alone gives no re-run (old W0503 false positive). Variants whose clause resumes twice or in a loop are W0503 in the `ir` pipeline and fault"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/oracle/probes/v1_run_op_w0312.wf",
+    "r3/oracle/probes/v1_run_op_w0312.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-7_fp_op_closure_w0312.wf",
+    "r3/oracle/repro/O3-7_fp_op_closure_w0312.wf",
+    "tests/gate/probes/s5/p/lh1.wf",
+    "s5/p/lh1.wf",
+]
+reason = "O3-7: the closure that the perform gives is the only argument; it changes `v`, and no other argument or held reference points into `v`, so it does not conflict with itself (old W0312 false positive). Variants with a held reference or a second argument into `v` are W0301/W0312 in the `ir` pipeline and fault"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/redteam/p/l3_opin_ok.wf",
+    "r3/redteam/p/l3_opin_ok.wf",
+]
+reason = "`a: &Entity in w.entities[]` states the overlap, as for the function `attack` that the old pipeline accepts; the clause changes `a.hp` and reads `w.other` only (R3RT7, old W0312 false positive). Variants that clear the stated place are W0312, W0203 or W0301 in the `ir` pipeline"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/s5r/p/r1.wf",
+    "s5r/p/r1.wf",
+]
+reason = "signed from reading (no `main`): `r` is the value of the handled body (`None`), `match r` consumes it on both arms with no abort in between, and `match o` consumes the clause value `Some(lock())` (old W0601 false positive). The runnable copy `dreview2/lc/r10_r1_main.wf` runs clean; variants that drop or skip the value are W0601/W0602 in the `ir` pipeline"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/d4_field_fn.wf",
+    "verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/d4_field_fn.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/d4b_field_fn_root.wf",
+    "verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/d4b_field_fn_root.wf",
+]
+reason = "the stored `fn() / a.Note` runs inside `handle a.Note`, so the effect is handled (the run prints 4; old W0805 false positive). Variants with no handler or a run outside the handler are W0805 in the `ir` pipeline"
+signed_by = "independent review round 2 of group D (dreview2)"
+stage = "F17.1"
