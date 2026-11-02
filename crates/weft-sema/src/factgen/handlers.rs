@@ -1968,7 +1968,12 @@ pub fn map_stored(
 /// lends each place that they change and frees each place that they free.
 /// A change or a free of a place that a parameter of the clause points into
 /// (σ of a perform) is a change or a free of the place of the parameter.
-pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a clause whose run nodes the region
+/// does not find in the handled body.
+pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> R {
     let p = t.p;
     let joined = &joined_sigma(hx);
     // The frames of the clauses end at `Post`: a reference into a local of a
@@ -2029,7 +2034,7 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         }
     }
     if hx.resumes.is_empty() {
-        return;
+        return Ok(());
     }
     let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
     for &(a, b) in &facts.cfg_edge {
@@ -2065,34 +2070,27 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         }
         m
     };
+    let rg = Region {
+        p,
+        ix: &ix,
+        hx,
+        succ: &succ,
+        multi: multi_handlers(facts, hx, &multi),
+    };
     for &(r, h, c) in &hx.resumes {
-        let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+        let Some(seen) = rg.of(h, c)? else {
             continue;
         };
-        // The nodes of the handled body (and of the bodies that splice into
-        // it): the region of the continuation.
-        let body_nodes = ix.spliced_nodes(p, hb, true);
-        let ends: Vec<NodeId> = hx
-            .ends
+        // The frame of the clause waits at its `resume`: the rest of the
+        // handled body does not free a local of the clause (the release at
+        // `Post` and `Landing` is for the frames of the clauses of the
+        // handlers inside the handled body).
+        let own: HashSet<weft_facts::RootId> = ix
+            .subtree(c)
             .iter()
-            .filter(|(x, _, _)| *x == h)
-            .flat_map(|(_, e, po)| [*e, *po])
+            .flat_map(|b| roots_of.get(b).into_iter().flatten())
+            .map(|&q| facts.place(q).root)
             .collect();
-        // The nodes after each perform of the clause, in the handled body.
-        let mut seen: HashSet<NodeId> = HashSet::new();
-        let mut work: Vec<NodeId> = hx
-            .runs
-            .iter()
-            .filter(|x| !x.post && x.clause == c)
-            .flat_map(|x| succ.get(&x.node).cloned().unwrap_or_default())
-            .collect();
-        while let Some(x) = work.pop() {
-            if !body_nodes.contains(&x) || !seen.insert(x) {
-                continue;
-            }
-            work.extend(succ.get(&x).cloned().unwrap_or_default());
-        }
-        seen.extend(ends);
         let mut changed: BTreeSet<PlaceId> = BTreeSet::new();
         let mut freed: BTreeSet<PlaceId> = BTreeSet::new();
         for x in &seen {
@@ -2102,6 +2100,7 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             }
             freed.extend(frees_of.get(x).into_iter().flatten().copied());
         }
+        freed.retain(|&q| !own.contains(&facts.place(q).root));
         // The places of the parameters of the clause.
         let mut params: Vec<(PlaceId, PlaceId)> = Vec::new();
         if let Some(s) = joined.get(&c) {
@@ -2167,6 +2166,236 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         frees_of.entry(r).or_default().extend(frees.iter().copied());
         facts.lends_mut.extend(lends.into_iter().map(|q| (r, q)));
         facts.releases_at.extend(frees.into_iter().map(|q| (r, q)));
+    }
+    Ok(())
+}
+
+/// The handler of each node that runs a clause that can resume more than
+/// once: the handler of the clause, or `None` for a `multi` operation of a
+/// handler of a caller (`multi_at`).
+fn multi_handlers(
+    facts: &FnFacts,
+    hx: &Handlers,
+    multi: &HashSet<NodeId>,
+) -> HashMap<NodeId, Option<HandlerId>> {
+    let by_cap: HashMap<CapId, HandlerId> = hx.ids.iter().map(|(&h, &(_, c))| (c, h)).collect();
+    let caps: HashSet<CapId> = facts.clause_multi.iter().copied().collect();
+    let mut out: HashMap<NodeId, Option<HandlerId>> = HashMap::new();
+    for &n in &facts.multi_at {
+        out.insert(n, None);
+    }
+    for &(n, c) in &facts.performs_at {
+        if multi.contains(&n) && caps.contains(&c) {
+            if let Some(&h) = by_cap.get(&c) {
+                out.insert(n, Some(h));
+            }
+        }
+    }
+    out
+}
+
+/// The region of the continuation of a `resume` (`docs/ir.md` 6.7, plan
+/// stage F17): the nodes that can run while a clause waits at its `resume`.
+struct Region<'a> {
+    p: &'a Program,
+    ix: &'a Index,
+    hx: &'a Handlers,
+    succ: &'a HashMap<NodeId, Vec<NodeId>>,
+    /// The nodes that run a clause that can resume more than once, with its
+    /// handler ([`multi_handlers`]).
+    multi: HashMap<NodeId, Option<HandlerId>>,
+}
+
+impl Region<'_> {
+    /// The handled body of handler `h`.
+    fn handled(&self, h: HandlerId) -> Option<BodyId> {
+        self.p.handlers.get(h.index()).map(|d| d.handled)
+    }
+
+    /// The `Exit` and `Post` nodes of handler `h`.
+    fn ends(&self, h: HandlerId) -> Vec<NodeId> {
+        self.hx
+            .ends
+            .iter()
+            .filter(|(x, _, _)| *x == h)
+            .flat_map(|(_, e, po)| [*e, *po])
+            .collect()
+    }
+
+    /// The nodes of handled body `hb` and of the bodies that splice into it,
+    /// on the normal path or on a cleanup path whose abort lands in a
+    /// handler inside `hb` (D-CONT-UNWIND of the review of group D).
+    fn body_nodes(&self, hb: BodyId) -> HashSet<NodeId> {
+        let bodies: Vec<BodyId> = self
+            .ix
+            .subtree(hb)
+            .into_iter()
+            .filter(|&b| splice_root(self.p, b) != b)
+            .collect();
+        let dests: HashSet<u32> = self
+            .p
+            .handlers
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| bodies.contains(&d.handled))
+            .map(|(i, _)| {
+                super::frames::FIRST_HANDLER.saturating_add(u32::try_from(i).unwrap_or(u32::MAX))
+            })
+            .collect();
+        self.ix
+            .nodes(&bodies)
+            .filter(|(k, _)| k.dest == NORMAL || dests.contains(&k.dest))
+            .map(|(_, n)| *n)
+            .collect()
+    }
+
+    /// The nodes of the component of body `root` (the body and the bodies
+    /// that splice into it) on the normal path.
+    fn component_nodes(&self, root: BodyId) -> HashSet<NodeId> {
+        let bodies: Vec<BodyId> = self
+            .ix
+            .subtree(root)
+            .into_iter()
+            .filter(|&b| splice_root(self.p, b) == root)
+            .collect();
+        self.ix
+            .nodes(&bodies)
+            .filter(|(k, _)| k.dest == NORMAL)
+            .map(|(_, n)| *n)
+            .collect()
+    }
+
+    /// The start points of the region of clause `c` in the nodes `body` of
+    /// its handled body: each node that runs the clause, and if the node
+    /// itself runs code after the perform (a call, the run of a function
+    /// value, or the run of an inner clause), the node too (D-CONT-RUN). A
+    /// perform in a clause of an inner handler maps to the nodes that run
+    /// that clause (D-CONT-NEST).
+    ///
+    /// Returns `None` if a run of the clause maps to no node of `body`.
+    fn starts(&self, c: BodyId, body: &HashSet<NodeId>) -> Option<Vec<(NodeId, bool)>> {
+        let mut out: Vec<(NodeId, bool)> = Vec::new();
+        let mut todo: Vec<(&ClauseRun, bool)> = self
+            .hx
+            .runs
+            .iter()
+            .filter(|x| !x.post && x.clause == c)
+            .map(|x| (x, false))
+            .collect();
+        let mut done: HashSet<BodyId> = HashSet::new();
+        while let Some((x, mapped)) = todo.pop() {
+            if body.contains(&x.node) {
+                out.push((x.node, mapped || x.given.is_some()));
+                continue;
+            }
+            match clause::enclosing_clause(self.p, x.at) {
+                // A perform in a closure body that a node of the handled
+                // body runs: that node is a run of the clause too (a call
+                // that runs a clause, plan stage F16). A closure that no
+                // node runs (dead code) runs no clause.
+                None if !mapped => {
+                    let mut runs = self
+                        .hx
+                        .runs
+                        .iter()
+                        .filter(|y| y.clause == c && y.given.is_some())
+                        .peekable();
+                    if runs.peek().is_some() && !runs.any(|y| body.contains(&y.node)) {
+                        return None;
+                    }
+                }
+                Some(c1) if c1 != c => {
+                    if done.insert(c1) {
+                        todo.extend(
+                            self.hx
+                                .runs
+                                .iter()
+                                .filter(|y| y.clause == c1)
+                                .map(|y| (y, true)),
+                        );
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    /// The nodes from the nodes `starts` (each with the node itself or only
+    /// the nodes after it) on, inside the nodes `body`.
+    fn walk(&self, starts: &[(NodeId, bool)], body: &HashSet<NodeId>, seen: &mut HashSet<NodeId>) {
+        let mut work: Vec<NodeId> = Vec::new();
+        for &(n, with) in starts {
+            if with && body.contains(&n) {
+                seen.insert(n);
+            }
+            work.extend(self.succ.get(&n).into_iter().flatten().copied());
+        }
+        while let Some(x) = work.pop() {
+            if !body.contains(&x) || !seen.insert(x) {
+                continue;
+            }
+            work.extend(self.succ.get(&x).into_iter().flatten().copied());
+        }
+    }
+
+    /// The region of the continuation of each `resume` of clause `c` of
+    /// handler `h`: the nodes of the handled body after each node that runs
+    /// the clause, and `Exit` and `Post` of the `handle`. If a node of the
+    /// region runs a clause of an outer `multi` handler, a copy of the frame
+    /// of the clause waits while the rest of that handled body runs, and
+    /// runs again from the node (D-COPY-WAIT): the region has those nodes
+    /// too.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlphaError::Later`] if a run of the clause maps to no node
+    /// of the handled body.
+    fn of(&self, h: HandlerId, c: BodyId) -> Result<Option<HashSet<NodeId>>, AlphaError> {
+        let Some(hb) = self.handled(h) else {
+            return Ok(None);
+        };
+        let body = self.body_nodes(hb);
+        let Some(starts) = self.starts(c, &body) else {
+            return Err(AlphaError::Later(
+                "a perform whose rest of the handled body the facts do not find (stage F17)",
+            ));
+        };
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        self.walk(&starts, &body, &mut seen);
+        let ends = self.ends(h);
+        seen.extend(ends.iter().copied());
+        // The outer `multi` handlers whose clauses a node of the region runs.
+        let mut done: HashSet<Option<HandlerId>> = HashSet::new();
+        loop {
+            let found: Vec<Option<HandlerId>> = seen
+                .iter()
+                .filter_map(|n| self.multi.get(n).copied())
+                .filter(|m| !done.contains(m))
+                .collect();
+            let Some(m) = found.first().copied() else {
+                break;
+            };
+            done.insert(m);
+            let outer = match m {
+                Some(hm) if hm == h => continue,
+                Some(hm) => match self.handled(hm) {
+                    Some(hbm) if inside(self.p, hb, hbm) => {
+                        let mut b = self.body_nodes(hbm);
+                        b.extend(self.ends(hm));
+                        b
+                    }
+                    _ => continue,
+                },
+                None => self.component_nodes(splice_root(self.p, hb)),
+            };
+            let from: Vec<(NodeId, bool)> = ends.iter().map(|&n| (n, false)).collect();
+            self.walk(&from, &outer, &mut seen);
+            if let Some(hm) = m {
+                seen.extend(self.ends(hm));
+            }
+        }
+        Ok(Some(seen))
     }
 }
 

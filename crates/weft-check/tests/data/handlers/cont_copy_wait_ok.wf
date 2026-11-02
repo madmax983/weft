@@ -1,0 +1,15 @@
+// D-COPY-WAIT, the clean twin: the code after the inner handle only writes the element.
+effect Pick { multi fn pick() -> bool }
+effect Op { fn op() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        handle Op { fn op() { let y = &v[0]; resume(()); print(y + 1) } } in {
+            op()
+            let b = pick()
+            print(b)
+        }
+        v[0] = 3
+    }
+}

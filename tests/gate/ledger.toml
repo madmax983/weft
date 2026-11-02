@@ -2008,3 +2008,14 @@ files = ["tests/gate/probes/fixes/crr/crr01_direct.wf"]
 codes = ["W0301"]
 reason = "class C-RR (follow-up F16.4): the closure is made after `v.clear()` and reads through a captured reference to a vector of references into `v`. The old pipeline reports the capture where the closure is made (line 9); the `ir` pipeline reports the run of the closure (line 10), where the read through the chain is"
 stage = "F16.4"
+
+# ----------------------------------------------------------------------
+# Stage F17 part 0: the findings of the independent review of group D
+# (group D is off until part 2 of stage F17).
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f17/copy/m11_multi_copies_waiting_clause.wf"]
+finding = "D-COPY-WAIT"
+reason = "an old hole of the review of group D (claim D-COPY-WAIT): a `multi` re-run copies the frame of an inner clause that waits at its `resume`, and the code after the inner `handle` clears the place that the clause holds a reference into before the copy goes on. The old pipeline checks the program while group D is off and accepts it; the run reads a freed cell. The `ir` pipeline with group D rejects it (W0301). Drop this entry when group D is on (stage F17)"
+stage = "F17"

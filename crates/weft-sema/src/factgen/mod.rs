@@ -851,7 +851,8 @@ pub fn emit_parts(
         },
         facts,
         &hx,
-    );
+    )
+    .map_err(|e| unsupported(&e))?;
     // A `@ uniq` value is not `many` (`once_var`, as in the old lowering):
     // a `multi` resume would copy it (W0503).
     for (i, v) in facts.vars.iter_mut().enumerate() {

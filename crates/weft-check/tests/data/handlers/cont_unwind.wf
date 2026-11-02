@@ -1,0 +1,15 @@
+// D-CONT-UNWIND: the local of an inner handled body ends only on the abort path to the inner handler.
+effect Peek { fn peek(x: &i64) }
+effect Stop { fn stop() }
+fn main() {
+    handle Peek { fn peek(x) { resume(()); print(x + 1) } } in { //~ W0301
+        let n = handle Stop { fn stop() { 0 } } in {
+            let w = Vec.new()
+            w.push(1)
+            peek(&w[0])
+            loop { stop() }
+            1
+        }
+        print(n)
+    }
+}

@@ -141,6 +141,13 @@ pub struct FactReport {
     /// a `handle` or at a `resume` unwinds, and no frame of its component
     /// unwound above it (plan stage F14).
     pub abort_skipped: u64,
+    /// The checks of A4 (plan stage F17): a clause frame continues after its
+    /// `resume`, and the rest of the handled body changed or freed the
+    /// target of a reference that a local of the frame holds.
+    pub resume: u64,
+    /// Such references whose local has no `points_into` place: A4 does not
+    /// check them.
+    pub resume_unnamed: u64,
 }
 
 /// What the IR of a run gives the fact oracle: the IR and the components.
@@ -164,6 +171,9 @@ pub enum HeapEvent {
     Take(Place),
     /// The run follows the reference at a place.
     Deref(Place),
+    /// A cell ends: a buffer, a box or an `Rc` object is freed, or the cell
+    /// of a local ends.
+    Free(CellId),
 }
 
 /// What a variable is at run time.
@@ -237,6 +247,46 @@ enum Target {
     Elems(CellId),
 }
 
+impl Target {
+    /// The cell of the target.
+    const fn cell(&self) -> CellId {
+        match self {
+            Self::Place(p) => p.cell,
+            Self::Elems(c) => *c,
+        }
+    }
+
+    /// True if an access of the place at `path` of the cell of the target
+    /// (`None`: the whole cell ends) reaches the target: the place is at,
+    /// above or below the target.
+    fn reached_by(&self, path: Option<&[u32]>) -> bool {
+        match (self, path) {
+            (_, None) | (Self::Elems(_), _) => true,
+            (Self::Place(t), Some(p)) => t.path.starts_with(p) || p.starts_with(&t.path),
+        }
+    }
+}
+
+/// A clause frame that waits at a `resume` (A4, plan stage F17): the rest
+/// of the handled body runs above it. The `Resume` node lends and frees what
+/// that code changes and frees (`lends_mut`, `releases_at`).
+#[derive(Clone, Debug)]
+struct Wait {
+    /// The component of the clause frame.
+    comp: usize,
+    /// The nodes of the `resume`.
+    nodes: Vec<NodeId>,
+    /// The task of the frame.
+    task: usize,
+    /// The frame (0 for a copy of a frame).
+    uid: u64,
+    /// Each reference that a local of the frame holds, with the local.
+    refs: Vec<(Target, LocalId)>,
+    /// The references whose target an access of the code above reached,
+    /// with the kind of the access.
+    hits: Vec<(usize, &'static str)>,
+}
+
 /// The target of a reference parameter at the entry of a frame, or a
 /// captured cell of a frame of a closure body.
 #[derive(Clone, Debug)]
@@ -307,6 +357,13 @@ pub struct FactOracle {
     /// The fact places and the type of each IR place that the map named:
     /// the component, the place and the parameter of its anchor.
     names: NameCache,
+    /// The clause frames that wait at a `resume` (A4), by frame, or by the
+    /// key of a copy of a frame in a `multi` continuation.
+    waits: HashMap<u64, Wait>,
+    /// The waits and the references that point into each cell.
+    wait_cells: HashMap<CellId, Vec<(u64, usize)>>,
+    /// The last key of a copy of a waiting frame.
+    copy_keys: u64,
     /// What the run saw.
     pub report: FactReport,
 }
@@ -317,6 +374,10 @@ type NameCache =
 
 /// The most frames below a callee that the summary oracle checks.
 pub const SUMMARY_DEPTH: usize = 16;
+
+/// The first key of a copy of a waiting frame: above the numbers of the
+/// frames.
+const COPY_KEYS: u64 = 1 << 62;
 
 /// A dummy index local for an element step: α does not read it.
 const ELEM: LocalId = LocalId(u32::MAX);
@@ -556,6 +617,22 @@ impl Comp {
         }
     }
 
+    /// The kind of node `n` (`""` for a node of no kind).
+    fn kind_of(&self, n: NodeId) -> &str {
+        self.facts
+            .nodes
+            .get(n.index())
+            .map_or("", |x| x.kind.as_str())
+    }
+
+    /// The label of node `n`.
+    fn label_of(&self, n: NodeId) -> &str {
+        self.facts
+            .nodes
+            .get(n.index())
+            .map_or("", |x| x.label.as_str())
+    }
+
     /// The text of node `n` for a message.
     fn node_text(&self, n: NodeId) -> String {
         self.facts.nodes.get(n.index()).map_or_else(
@@ -710,6 +787,9 @@ impl FactOracle {
             unwound: None,
             last: None,
             names: HashMap::new(),
+            waits: HashMap::new(),
+            wait_cells: HashMap::new(),
+            copy_keys: COPY_KEYS,
             report,
         }
     }
@@ -894,6 +974,217 @@ impl FactOracle {
     /// The frame `uid` ended.
     pub fn leave(&mut self, uid: u64) {
         self.frames.remove(&uid);
+        self.drop_wait(uid);
+    }
+
+    /// A4: the clause frame `uid` of task `task`, with the code `code` and
+    /// the cells `slots`, starts to wait at its `resume`. The oracle records
+    /// the references that its locals hold.
+    pub fn wait_begin(
+        &mut self,
+        uid: u64,
+        code: &Code,
+        slots: &[Option<CellId>],
+        heap: &Heap,
+        task: usize,
+    ) {
+        self.drop_wait(uid);
+        let Some(fr) = self.frames.get(&uid) else {
+            return;
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return;
+        };
+        // The `Main` node of the `resume`: its `lends_mut` and `releases_at`
+        // are the summary of the rest of the handled body.
+        let nodes: Vec<NodeId> = comp
+            .group(&fr.cur)
+            .into_iter()
+            .filter(|&n| comp.kind_of(n) == "resume" && comp.label_of(n) == "resume")
+            .collect();
+        if !comp.clause || nodes.is_empty() {
+            return;
+        }
+        let mut refs = Vec::new();
+        for (s, cell) in slots.iter().enumerate() {
+            let (Some(cell), Some(&l)) = (cell, code.slot_locals.get(s)) else {
+                continue;
+            };
+            let l = LocalId(l);
+            if !comp.of_local.contains_key(&l) {
+                continue;
+            }
+            let Ok(x) = heap.slot(*cell) else {
+                continue;
+            };
+            let mut out = Vec::new();
+            refs_of(heap, &x.val, &mut Vec::new(), &[], false, 0, &mut out);
+            refs.extend(out.into_iter().map(|t| (t, l)));
+        }
+        if refs.is_empty() {
+            return;
+        }
+        let w = Wait {
+            comp: fr.comp,
+            nodes,
+            task,
+            uid,
+            refs,
+            hits: Vec::new(),
+        };
+        self.add_wait(uid, w);
+    }
+
+    /// Records wait `w` with key `key`.
+    fn add_wait(&mut self, key: u64, w: Wait) {
+        for (i, (t, _)) in w.refs.iter().enumerate() {
+            self.wait_cells.entry(t.cell()).or_default().push((key, i));
+        }
+        self.waits.insert(key, w);
+    }
+
+    /// Removes the wait with key `key`, if there is one.
+    fn drop_wait(&mut self, key: u64) -> Option<Wait> {
+        let w = self.waits.remove(&key)?;
+        for (t, _) in &w.refs {
+            if let Some(v) = self.wait_cells.get_mut(&t.cell()) {
+                v.retain(|(k, _)| *k != key);
+                if v.is_empty() {
+                    self.wait_cells.remove(&t.cell());
+                }
+            }
+        }
+        Some(w)
+    }
+
+    /// A4: the op of frame `uid` (0 for a copied frame) of task `task` made
+    /// the accesses `events`. An access that reaches the target of a
+    /// reference of a waiting clause frame of the task (not the frame of the
+    /// op) is a hit of that wait.
+    pub fn wait_events(&mut self, task: usize, uid: u64, events: &[HeapEvent]) {
+        if self.waits.is_empty() {
+            return;
+        }
+        for e in events {
+            let (cell, path, what) = match e {
+                HeapEvent::Write(p, false) => (p.cell, Some(p.path.as_slice()), "a write"),
+                HeapEvent::Take(p) => (p.cell, Some(p.path.as_slice()), "a move"),
+                HeapEvent::Free(c) => (*c, None, "a free"),
+                _ => continue,
+            };
+            let Some(ws) = self.wait_cells.get(&cell) else {
+                continue;
+            };
+            for &(key, i) in ws {
+                let Some(w) = self.waits.get_mut(&key) else {
+                    continue;
+                };
+                if w.task != task || (uid != 0 && w.uid == uid) {
+                    continue;
+                }
+                let reached = w.refs.get(i).is_some_and(|(t, _)| t.reached_by(path));
+                if reached && !w.hits.iter().any(|(j, _)| *j == i) {
+                    w.hits.push((i, what));
+                }
+            }
+        }
+    }
+
+    /// A4: the frame with wait key `key` (a frame, or a copy of a frame)
+    /// continues after its `resume`. Each reference of the frame whose
+    /// target the code above reached is inside a place that the `Resume`
+    /// node lends or frees: a `lends_mut`, a `mutates_at` or a free of a
+    /// place that overlaps a `points_into` place of a variable of its
+    /// local.
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure.
+    pub fn wait_end(&mut self, key: u64) -> Result<(), String> {
+        let Some(w) = self.drop_wait(key) else {
+            return Ok(());
+        };
+        let Some(comp) = self.comps.get(w.comp) else {
+            return Ok(());
+        };
+        let cover: Vec<PlaceId> = w
+            .nodes
+            .iter()
+            .flat_map(|n| {
+                let i = n.index();
+                let c = comp.changes.get(i).map_or(&[][..], Vec::as_slice);
+                let f = comp.frees.get(i).map_or(&[][..], Vec::as_slice);
+                c.iter().chain(f).copied()
+            })
+            .collect();
+        for &(i, what) in &w.hits {
+            let Some((_, l)) = w.refs.get(i) else {
+                continue;
+            };
+            let vars = comp.of_local.get(l).cloned().unwrap_or_default();
+            let mut points: Vec<PlaceId> = vars
+                .iter()
+                .flat_map(|v| comp.points.get(v).cloned().unwrap_or_default())
+                .collect();
+            points.sort();
+            points.dedup();
+            if points.is_empty() {
+                self.report.resume_unnamed += 1;
+                continue;
+            }
+            self.report.resume += 1;
+            let ok = points
+                .iter()
+                .any(|&q| cover.iter().any(|&m| comp.below(q, m) || comp.below(m, q)));
+            if !ok {
+                let name = comp
+                    .s_of
+                    .get(l)
+                    .map_or_else(|| format!("{l:?}"), |v| var_name(&comp.facts, *v));
+                let shown: Vec<String> = points
+                    .iter()
+                    .map(|&q| comp.facts.place(q).display.clone())
+                    .collect();
+                let nodes: Vec<String> = w.nodes.iter().map(|&n| comp.node_text(n)).collect();
+                return Err(format!(
+                    "summary oracle (A4): in `{}` at {}, the clause waits at its `resume`, and the rest of the handled body makes {what} of the target of `{name}` (in `{}`); the `resume` node has no `lends_mut` or `releases_at` that covers it",
+                    comp.facts.name,
+                    nodes.join(", "),
+                    shown.join("`, `"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A4: the frame with wait key `key` goes into a copy of a `multi`
+    /// continuation, and `map` gives the new cell of each copied cell. The
+    /// copy waits too, with the hits of the frame so far. Returns the key of
+    /// the copy, or 0 if the frame does not wait.
+    pub fn copy_wait(&mut self, key: u64, map: &std::collections::BTreeMap<CellId, CellId>) -> u64 {
+        let Some(w) = self.waits.get(&key) else {
+            return 0;
+        };
+        let mut c = w.clone();
+        c.uid = 0;
+        for (t, _) in &mut c.refs {
+            match t {
+                Target::Place(p) => {
+                    if let Some(&n) = map.get(&p.cell) {
+                        p.cell = n;
+                    }
+                }
+                Target::Elems(b) => {
+                    if let Some(&n) = map.get(b) {
+                        *b = n;
+                    }
+                }
+            }
+        }
+        self.copy_keys += 1;
+        let k = self.copy_keys;
+        self.add_wait(k, c);
+        k
     }
 
     /// The next op of frame `uid` is at location (`block`, `stmt`) of a body
@@ -1213,7 +1504,7 @@ impl FactOracle {
         for e in events {
             let (place, kind) = match e {
                 HeapEvent::Read(p) => (p, "read"),
-                HeapEvent::Write(_, true) => continue,
+                HeapEvent::Write(_, true) | HeapEvent::Free(_) => continue,
                 HeapEvent::Write(p, false) => (p, "write"),
                 HeapEvent::Take(p) => (p, if moves { "move" } else { "write" }),
                 HeapEvent::Deref(p) => {
@@ -1398,7 +1689,7 @@ impl FactOracle {
         for e in events {
             let (place, kind) = match e {
                 HeapEvent::Read(p) => (p, "read"),
-                HeapEvent::Write(_, true) | HeapEvent::Deref(_) => continue,
+                HeapEvent::Write(_, true) | HeapEvent::Deref(_) | HeapEvent::Free(_) => continue,
                 HeapEvent::Write(p, false) | HeapEvent::Take(p) => (p, "write"),
             };
             // A cell that the op freed: the write of its owner is the

@@ -5607,3 +5607,116 @@ group = "ACD"
 stage = "F16.4"
 repro = ["tests/gate/probes/fixes/crr/crr03_opfn_c.wf"]
 note = "the clean twin of the clause run of C-RR"
+
+# Stage F17 part 0: the findings of the independent review of group D. The
+# region of the continuation of a `resume` (`factgen::handlers::Region`).
+
+[[claim]]
+finding = "D-CONT-RUN"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/run/n05_callee_rest_after_perform.wf",
+    "tests/gate/probes/fixes/f17/run/n08_two_level_callee_rest.wf",
+    "tests/gate/probes/fixes/f17/run/n10_inferred_callee_rest.wf",
+    "tests/gate/probes/fixes/f17/run/n11_multi_callee_rest.wf",
+    "tests/gate/probes/fixes/f17/run/f04_param_callee_clears_arg.wf",
+]
+code = "W0301"
+note = "the run node of a call that performs is in the region of the continuation: the callee clears the place after the perform"
+
+[[claim]]
+finding = "D-CONT-RUN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/run/n06_closure_rest_after_perform.wf",
+    "tests/gate/probes/fixes/f17/run/n09_cap_closure_callee_rest.wf",
+]
+code = "W0301"
+note = "the run node of a closure with a captured capability is in the region of the continuation"
+
+[[claim]]
+finding = "D-CONT-NEST"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/nest/n01_outer_perform_in_inner_clause.wf",
+    "tests/gate/probes/fixes/f17/nest/n02_outer_perform_in_inner_clause_ihb.wf",
+    "tests/gate/probes/fixes/f17/nest/n03_outer_param_inner_clause.wf",
+    "tests/gate/probes/fixes/f17/nest/n04_outer_perform_after_inner_post.wf",
+]
+code = "W0301"
+note = "a perform in a clause of an inner handler maps to the nodes that run that clause: the continuation is the rest of the inner and of the outer handled body"
+
+[[claim]]
+finding = "D-CONT-NEST"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/nest/n01_outer_perform_in_inner_clause_c.wf",
+    "tests/gate/probes/fixes/f17/nest/n02_outer_perform_in_inner_clause_ihb_c.wf",
+    "tests/gate/probes/fixes/f17/nest/n03_outer_param_inner_clause_c.wf",
+    "tests/gate/probes/fixes/f17/nest/n04_outer_perform_after_inner_post_c.wf",
+]
+note = "the clean twins of D-CONT-NEST"
+
+[[claim]]
+finding = "D-CONT-UNWIND"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/unwind/g12_cont_only_abort_frees.wf"]
+code = "W0301"
+note = "the region of the continuation has the cleanup path of an abort that lands in a handler inside the handled body"
+
+[[claim]]
+finding = "D-CONT-UNWIND"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/unwind/g12_cont_only_abort_frees_c.wf"]
+note = "the clean twin of D-CONT-UNWIND"
+
+[[claim]]
+finding = "D-COPY-WAIT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/copy/m11_multi_copies_waiting_clause.wf"]
+code = "W0301"
+note = "a node of the region runs a clause of an outer `multi` handler: the region has the rest of that handled body (an old hole, ledger `open-old` while group D is off)"
+
+[[claim]]
+finding = "D-COPY-WAIT"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/copy/m11_multi_copies_waiting_clause_c.wf"]
+note = "the clean twin of D-COPY-WAIT"
+
+[[claim]]
+finding = "FP-OWN"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/own/p01_clause_local_ref_across_resume.wf",
+    "tests/gate/probes/fixes/f17/own/p01_clause_local_ref_across_resume_c.wf",
+    "tests/gate/probes/fixes/f17/own/e03_callee_rest_variant.wf",
+    "tests/gate/probes/fixes/f17/own/e03_callee_rest_variant_c.wf",
+]
+note = "the rest of the handled body does not free a local of the clause that waits at its `resume`"

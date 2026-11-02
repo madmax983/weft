@@ -61,6 +61,10 @@ pub struct CodeFrame {
     /// With `--ir-trace` or the fact oracle: the number of the frame in
     /// the run (from 1). 0 for a frame that nothing follows.
     pub uid: u64,
+    /// With the fact oracle: for a copy of a clause frame that waits at its
+    /// `resume` (a `multi` continuation), the key of its wait in the oracle
+    /// (A4, plan stage F17). Else 0.
+    pub wait: u64,
 }
 
 /// One clause of a handler mark: operation, code and captured cells.
@@ -558,6 +562,7 @@ impl<'r, 'a> Machine<'r, 'a> {
             henv,
             chain: None,
             uid,
+            wait: 0,
         })
     }
 

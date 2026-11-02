@@ -2818,6 +2818,41 @@ preview with `--groups ABCD` until stage F17):
   the re-entry nodes), and a clause that an op of a copied frame runs has no known
   site.
 
+As built (plan stage F17 part 0, the findings of the independent review of group D;
+`factgen/handlers.rs` `Region`): the region of the continuation of a `resume` is the
+set of nodes that can run while the clause waits at it. A `Resume` lends and frees
+what the nodes of the region change and free (also through the parameters of the
+clause).
+
+- D-CONT-RUN. A node that runs the clause and also runs code after the perform (a
+  call that runs a clause, the run of a closure with a captured capability) is in
+  the region itself, not only the nodes after it: the callee or the closure goes on
+  after the perform. The changes of the callee before the perform count too (an
+  over-approximation; the old pipeline does the same).
+- D-CONT-NEST. A perform in a clause of an inner handler (or in a closure that such
+  a clause makes) maps to the nodes that run that clause (`clause::enclosing_clause`),
+  and these nodes are in the region with the nodes after them, also through more
+  levels. A perform of the clause in a closure body with no clause maps to the run
+  node of the closure in the handled body (a call that runs the clause). A run that
+  maps to no node of the handled body is not in scope (`AlphaError::Later`).
+- D-CONT-UNWIND. The region has the cleanup nodes of the bodies of the handled body
+  whose abort lands in a handler inside the handled body (its `Landing` goes on in
+  the handled body).
+- D-COPY-WAIT. If a node of the region runs a clause of an outer `multi` handler `H`
+  (the handle is inside the handled body of `H`), a copy of the frame of the clause
+  waits while the rest of the handled body of `H` runs, and while the handled body
+  of `H` runs again from the node. The region has the nodes after `Exit` and `Post`
+  of the `handle` in the handled body of `H`, and `Exit` and `Post` of `H`. For a
+  `multi` operation of a handler of a caller (`multi_at`) the region has the nodes of
+  the function after `Post`.
+- FP-OWN. The frame of the clause is alive while it waits at its `resume`: the region
+  frees no root of a local of the clause or of a body inside it (the release of the
+  clause frames at `Post` and `Landing` is for the clauses of the handlers inside the
+  handled body).
+- E-POST-ROUNDS. If the values of the clauses after their resume points do not reach
+  a fixpoint in `POST_ROUNDS` rounds, the program is not in scope, as for
+  `MULTI_ROUNDS`.
+
 ### 6.6 The analysis
 
 The analysis gives the abstract values that the templates read. It replaces the abstract
@@ -4465,6 +4500,32 @@ stage F13 found that A3 did not check the parts `puts` and `put_fns` (a missing
   the environment from the closures that the reference reaches, not the places that the
   reference itself points into: the facts had `reads_at` of `fs.entities`, a place that
   does not exist (`so04`).
+
+**As built (F17 part 0): the resume cover (A4).** The review of group D found that no
+oracle checked the summary of a `resume` (ORACLE-GAP): A3 checks a clause frame that waits
+at its `resume` with the nodes of the frame above it, not with the `Resume` node. A4 does:
+
+- When a clause frame calls its continuation, the oracle records the references that the
+  locals of the frame (with variables in the facts) hold (`FactOracle::wait_begin`).
+- Each access of an op of the same task while the frame waits (a write that is not a
+  first value, a take, the end of a cell: `HeapEvent::Free`, which the heap logs when a
+  buffer, a box or an `rc` object is freed and when the cell of a local ends) that
+  reaches the target of such a reference (the same cell, and a place at, above or below
+  the target) is a hit of the wait. The accesses of ops of copied frames, of unwind
+  steps and of the end of a `handle` count too.
+- When the frame goes on after its `resume`, each hit must be covered: a `lends_mut`, a
+  `mutates_at` or a free at the `Resume` (`Main`) node of a place that overlaps a
+  `points_into` place of a variable of the local. Else the run fails with "summary
+  oracle (A4)". A local with no `points_into` place is counted, not checked
+  (`FactReport::resume_unnamed`).
+- A copy of a waiting clause frame in a `multi` continuation waits too, with the hits of
+  the frame so far and the cells of the copy (`FactOracle::copy_wait`, the key in
+  `CodeFrame::wait`). The original frame stays in the template of the continuation; its
+  copies go on.
+
+A4 failed on each hole program of the review (D-CONT-RUN, D-CONT-NEST, D-CONT-UNWIND,
+D-COPY-WAIT) before the fix of the region, and on the clean twins whose write after the
+perform the region did not have.
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

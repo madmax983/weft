@@ -1,0 +1,13 @@
+// D-CONT-NEST: a clause of an inner handler performs the outer operation; the outer handled body clears the place after the inner handle.
+effect Peek { fn peek() }
+effect Op { fn op() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek() { let y = &v[0]; resume(()); print(y + 1) } } in { //~ W0301
+        handle Op { fn op() { peek(); resume(()) } } in {
+            op()
+        }
+        v.clear()
+    }
+}

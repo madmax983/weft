@@ -448,3 +448,56 @@ fn a_function_value_that_a_perform_gives_runs_in_the_clause() {
 fn a_closure_run_in_a_clause_reads_through_a_captured_reference_to_references() {
     check("crr_op_closure.wf");
 }
+
+/// D-CONT-RUN (review of group D, plan stage F17): the node that runs a
+/// clause is a call, or the run of a closure with a captured capability.
+/// The callee or the closure goes on after the perform while the clause
+/// waits at its `resume`, so the region of the continuation holds the run
+/// node too. A change of the place there is W0301 at the read of the clause
+/// after `resume`.
+#[test]
+fn the_rest_of_a_callee_after_a_perform_is_in_the_continuation() {
+    check("cont_run_callee.wf");
+    check("cont_run_closure.wf");
+    check("cont_run_multi.wf");
+    check("cont_run_param.wf");
+}
+
+/// D-CONT-NEST (review of group D, plan stage F17): a clause of an inner
+/// handler performs the operation of the outer handler. The continuation of
+/// the outer clause is the rest of the inner clause, of the inner handled
+/// body and of the outer handled body: the node of the perform maps to the
+/// nodes that run the inner clause.
+#[test]
+fn a_perform_in_an_inner_clause_has_the_rest_of_the_outer_body() {
+    check("cont_nest.wf");
+    check("cont_nest_param.wf");
+    check("cont_nest_post.wf");
+}
+
+/// D-CONT-UNWIND (review of group D, plan stage F17): an abort to a handler
+/// inside the handled body ends a local whose element the parameter of the
+/// clause points into. The cleanup path is in the continuation.
+#[test]
+fn the_continuation_has_the_cleanup_path_of_an_abort_inside_the_body() {
+    check("cont_unwind.wf");
+}
+
+/// D-COPY-WAIT (review of group D, plan stage F17): a `multi` re-run copies
+/// the frame of an inner clause that waits at its `resume`. The code after
+/// the inner `handle` runs before the copy goes on, so it is in the
+/// continuation of the inner clause. The clean twin writes an element only.
+#[test]
+fn a_copy_of_a_waiting_clause_sees_the_rest_of_the_multi_body() {
+    check("cont_copy_wait.wf");
+    check("cont_copy_wait_ok.wf");
+}
+
+/// FP-OWN (review of group D, plan stage F17): the frame of a clause is
+/// alive while the clause waits at its own `resume`. A reference into a
+/// local of the clause across the `resume` stays valid.
+#[test]
+fn a_reference_into_a_local_of_the_clause_across_its_resume_is_valid() {
+    check("cont_own.wf");
+    check("cont_own_variant.wf");
+}

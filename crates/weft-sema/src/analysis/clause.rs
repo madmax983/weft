@@ -838,6 +838,7 @@ fn run_handled(
     let mut clause_values = Tree::none();
     let mut again: Vec<(Tree, State)> = Vec::new();
     if let Some(ex) = &exit {
+        let mut stable = false;
         for _ in 0..POST_ROUNDS {
             post.clear();
             let mut vals = Tree::none();
@@ -861,9 +862,17 @@ fn run_handled(
             all.join(&vals);
             clause_values = vals;
             if all == resumed {
+                stable = true;
                 break;
             }
             resumed = all;
+        }
+        // The values of the clauses did not reach a fixpoint (E-POST-ROUNDS
+        // of the review of group D): the analysis does not know them.
+        if !stable {
+            return Err(AlphaError::Later(
+                "the values of the clauses of a handler that do not reach a fixpoint (stage F17)",
+            ));
         }
     }
     let mut after: Option<State> = exit.clone();

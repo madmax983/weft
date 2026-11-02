@@ -475,3 +475,25 @@ class (scratchpad `f16/open/crr_*.wf`).
 - `fixes/crr/crr09*.wf`: a call argument of a user enum whose payload is a reference
   to a container of references. The read through a call argument now also looks
   into the fields and payloads of a struct or an enum.
+
+## Stage F17 part 0: the findings of the independent review of group D
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class. They
+come from the review of group D (scratchpad `dreview/variants`). They use group D,
+which is off until part 2 of stage F17: the old pipeline checks them by default.
+
+- `fixes/f17/run/*.wf`: class D-CONT-RUN, a callee or a closure performs, and its
+  code after the perform changes the place that the clause holds a reference into
+  across its `resume`. The run node is in the region of the continuation. The clean
+  twins write the element or clear the vector after the perform: the old pipeline
+  rejects them too (W0301), so they have no claim.
+- `fixes/f17/nest/*.wf`: class D-CONT-NEST, a clause of an inner handler performs the
+  operation of an outer handler.
+- `fixes/f17/unwind/*.wf`: class D-CONT-UNWIND, the local of an inner handled body
+  ends only on the abort path to the inner handler.
+- `fixes/f17/copy/*.wf`: class D-COPY-WAIT, a `multi` re-run copies the frame of an
+  inner clause that waits at its `resume` (ledger `open-old` for the old hole
+  `m11_multi_copies_waiting_clause.wf`).
+- `fixes/f17/own/*.wf`: class FP-OWN, a reference into a local of a clause across its
+  own `resume` (false positives of the preview).

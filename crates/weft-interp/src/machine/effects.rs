@@ -140,6 +140,19 @@ impl super::Machine<'_, '_> {
                 return Err(self.fault("a continuation was resumed after it was dropped"));
             }
         }
+        // A4 of the fact oracle: the clause frame waits at its `resume`
+        // while the frames of the continuation run.
+        if let (Some(fo), Some(Frame::Code(cf))) = (
+            self.facts.as_mut(),
+            self.tasks.get(self.cur).and_then(|t| t.frames.last()),
+        ) {
+            if cf.uid != 0 {
+                fo.wait_begin(cf.uid, &cf.code, &cf.slots, &self.heap, self.cur);
+            }
+        }
+        let Some(rec) = self.conts.get_mut(k) else {
+            return Err(self.fault("internal: bad continuation"));
+        };
         let frames = if rec.k.multi {
             let tmpl = std::mem::take(&mut rec.frames);
             let copy = self.copy_frames(&tmpl);
@@ -1150,6 +1163,13 @@ impl super::Machine<'_, '_> {
         for f in frames {
             out.push(match f {
                 Frame::Code(cf) => {
+                    // A clause frame that waits at its `resume` waits in the
+                    // copy too (A4 of the fact oracle).
+                    let key = if cf.uid == 0 { cf.wait } else { cf.uid };
+                    let wait = match (key, self.facts.as_mut()) {
+                        (0, _) | (_, None) => 0,
+                        (k, Some(fo)) => fo.copy_wait(k, map),
+                    };
                     let stack = cf
                         .stack
                         .iter()
@@ -1170,6 +1190,7 @@ impl super::Machine<'_, '_> {
                         // The fact oracle does not follow a copied frame
                         // (group D, stage F16).
                         uid: 0,
+                        wait,
                     })
                 }
                 Frame::Handle(h) => Frame::Handle(HandleMark {

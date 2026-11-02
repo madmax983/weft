@@ -306,3 +306,86 @@ fn a_value_that_a_body_runs_and_that_no_caller_gives_passes_the_summary_oracle()
     let r = o.fact_oracle.expect("a fact oracle report");
     assert!(r.summary > 0, "{r:?}");
 }
+
+/// Checks `src` with both pipelines and the groups A to D on.
+fn check_abcd(src: &str) -> Checked {
+    let opts = Options {
+        facts: FactGen::Both,
+        ir_groups: weft_sema::Groups::parse("ABCD").unwrap(),
+        ..Options::default()
+    };
+    check_source("test.wf", src, opts)
+}
+
+/// Removes the `lends_mut` and `releases_at` facts of each `resume` node.
+fn no_resume_summary(f: &mut FnFacts) {
+    let resumes: Vec<weft_facts::NodeId> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind == "resume" && n.label == "resume")
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .collect();
+    f.lends_mut.retain(|(n, _)| !resumes.contains(n));
+    f.releases_at.retain(|(n, _)| !resumes.contains(n));
+}
+
+/// A4 (plan stage F17, review of group D): the oracle runs `src` with the
+/// groups A to D. The facts of the generator pass, and A4 checked a hit.
+/// With no summary at the `resume` nodes, the run fails with A4.
+fn broken_resume(src: &str) -> String {
+    let c = check_abcd(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let report = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(o) => o.fact_oracle.expect("a fact oracle report"),
+        Err(e) => panic!("{}", e.message),
+    };
+    assert!(report.resume > 0, "A4 checked nothing: {report:?}");
+    match run_main_with_facts(&c, &opts(), no_resume_summary) {
+        Ok(_) => panic!("the broken summary of the `resume` passes"),
+        Err(e) => e.message,
+    }
+}
+
+/// The clause holds a reference into an element across its `resume`, and
+/// the rest of the handled body writes the element. The `resume` node
+/// lends the place.
+const RESUME_WRITE: &str = "effect Peek { fn peek() }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    handle Peek { fn peek() { let y = &v[0]; resume(()); print(y + 1) } } in {\n\
+    peek()\n\
+    v[0] = 5\n\
+    }\n\
+    }\n";
+
+/// A `multi` re-run copies the frame of the inner clause that waits at its
+/// `resume` (D-COPY-WAIT): the write after the inner `handle` runs while the
+/// copy waits.
+const RESUME_COPY: &str = "effect Pick { multi fn pick() -> bool }\n\
+    effect Op { fn op() }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    handle Pick { fn pick() { resume(true); resume(false) } } in {\n\
+    handle Op { fn op() { let y = &v[0]; resume(()); print(y + 1) } } in {\n\
+    op()\n\
+    let b = pick()\n\
+    print(b)\n\
+    }\n\
+    v[0] = 3\n\
+    }\n\
+    }\n";
+
+#[test]
+fn a_missing_summary_of_a_resume_fails_the_resume_cover() {
+    let m = broken_resume(RESUME_WRITE);
+    assert!(m.starts_with("summary oracle (A4)"), "{m}");
+}
+
+#[test]
+fn a_missing_summary_of_a_resume_fails_the_resume_cover_of_a_copied_frame() {
+    let m = broken_resume(RESUME_COPY);
+    assert!(m.starts_with("summary oracle (A4)"), "{m}");
+}

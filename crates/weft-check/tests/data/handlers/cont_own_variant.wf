@@ -1,0 +1,21 @@
+// FP-OWN: the clause moves a vector out of a place of the site into its own local.
+enum Slot { Full(Vec<i64>), Empty }
+struct W { s: Slot }
+effect Peek { fn peek() }
+fn g(w: &W) / Peek, mut(w.s) {
+    peek()
+    w.s = Slot.Empty
+}
+fn main() {
+    let w = W { s: Slot.Full([1, 2]) }
+    handle Peek {
+        fn peek() {
+            match w.s {
+                Slot.Full(xs) => { let y = &xs[0]; resume(()); print(y + 1) }
+                Slot.Empty => resume(()),
+            }
+        }
+    } in {
+        g(&w)
+    }
+}

@@ -234,12 +234,34 @@ impl super::Machine<'_, '_> {
         };
         if uid == 0 {
             // The fact oracle does not follow a copied frame: the summary
-            // oracle does not check its op either.
+            // oracle does not check its op either. A copy of a clause frame
+            // that waited at its `resume` continues now (A4).
+            let wait = match self.tasks[cur].frames.last() {
+                Some(Frame::Code(cf)) => cf.wait,
+                _ => 0,
+            };
             if let Some(fo) = self.facts.as_mut() {
                 fo.report.summary_skipped += 1;
                 fo.untracked_op();
+                let events = self.heap.take_facts_log();
+                fo.wait_events(cur, 0, &events);
+                if wait != 0 {
+                    if let Err(m) = fo.wait_end(wait) {
+                        return Err(self.fault(m));
+                    }
+                }
             }
-            return self.exec(op);
+            if wait != 0 {
+                if let Some(Frame::Code(cf)) = self.tasks[cur].frames.last_mut() {
+                    cf.wait = 0;
+                }
+            }
+            let flow = self.exec(op)?;
+            if let Some(fo) = self.facts.as_mut() {
+                let events = self.heap.take_facts_log();
+                fo.wait_events(cur, 0, &events);
+            }
+            return Ok(flow);
         }
         if let Err(m) = self.before_op(uid, &code, pc, op) {
             return Err(self.fault(m));
@@ -273,6 +295,11 @@ impl super::Machine<'_, '_> {
         let Some(fo) = self.facts.as_mut() else {
             return Ok(());
         };
+        // A4: the accesses since the last op (an unwind, the end of a
+        // `handle`), then the end of a wait of this frame at its `resume`.
+        let events = self.heap.take_facts_log();
+        fo.wait_events(self.cur, 0, &events);
+        fo.wait_end(uid)?;
         let changed = fo.step(uid, loc.block, loc.stmt)?;
         let Some(Frame::Code(cf)) = self.tasks.get(self.cur).and_then(|t| t.frames.last()) else {
             return Ok(());
@@ -309,6 +336,7 @@ impl super::Machine<'_, '_> {
             return Ok(());
         };
         let events = self.heap.take_facts_log();
+        fo.wait_events(self.cur, uid, &events);
         if matches!(op, Op::Return) {
             fo.leave(uid);
             return Ok(());

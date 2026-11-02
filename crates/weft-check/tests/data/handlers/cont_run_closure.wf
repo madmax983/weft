@@ -1,0 +1,10 @@
+// D-CONT-RUN: a closure with a captured capability performs, then clears the place.
+effect Peek { fn peek() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek() { let y = &v[0]; resume(()); print(y + 1) } } in { //~ W0301
+        let f = || { peek(); v.clear() }
+        f()
+    }
+}

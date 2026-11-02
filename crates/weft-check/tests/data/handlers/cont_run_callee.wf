@@ -1,0 +1,13 @@
+// D-CONT-RUN: a callee performs, then clears the place that the clause holds a reference into.
+effect Peek { fn peek() }
+fn g(v: &Vec<i64>) / Peek, mut(v) {
+    peek()
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek() { let y = &v[0]; resume(()); print(y + 1) } } in { //~ W0301
+        g(&v)
+    }
+}
