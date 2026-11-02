@@ -1002,7 +1002,15 @@ pub fn assign(
             _ => false,
         };
         let shares = kept.get(i).copied().unwrap_or(false);
+        let reads = em.facts.reads_at.len();
         operand_moves(em, n, st, op, relocate, !shares)?;
+        // The closure shares the cell of a `Kept` variable: the literal
+        // reads no value of it, so a task that writes the variable does
+        // not conflict with the literal (OR8, plan stage F18). A program
+        // with no task keeps the read.
+        if shares && !em.p.spawns.is_empty() {
+            em.facts.reads_at.truncate(reads);
+        }
         if let Operand::Const(weft_ir::Const::Fn(f, _)) = op {
             let sim =
                 em.p.fns
@@ -1747,7 +1755,40 @@ pub fn drop_place(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, pair: O
 /// The errors of α.
 pub fn consume(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place) -> R {
     let al = em.alpha(st, place)?;
-    moved(em, n, st, place, &al)
+    moved(em, n, st, place, &al)?;
+    consume_tasks(em, n, st, place)
+}
+
+/// A `Consume` of a value with no linear part here (a variant with no
+/// payload, `None`): a task handle that the analysis puts in the value is
+/// not there on this path. A task of a site that no other value holds and
+/// that is not lost cannot run then: `joined_at(T, n)` (O3-9, a join in a
+/// `match` of an `Option`; plan stage F18).
+///
+/// # Errors
+///
+/// The errors of α.
+fn consume_tasks(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place) -> R {
+    if em.hx.task_ids.is_empty() {
+        return Ok(());
+    }
+    let Some((k, path)) = transfer::move_path(em.p, em.body, place)? else {
+        return Ok(());
+    };
+    let ts = st.value(k, &path).flat().tasks;
+    if ts.is_empty() {
+        return Ok(());
+    }
+    let others = crate::analysis::tasks::held_tasks(st, Some((k, &path)));
+    for site in ts {
+        if others.contains(&site) || st.lost_tasks().contains(&site) {
+            continue;
+        }
+        if let Some(t) = em.hx.task_ids.get(&site).copied() {
+            em.facts.joined_at.push((t, n));
+        }
+    }
+    Ok(())
 }
 
 /// `Uninit(p)`: `unset_at(S(l))` for a whole local, `unset_at(U(p))` for a
@@ -1988,6 +2029,7 @@ pub fn unwind_value(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, a: &U
             .map(|(_, _, v)| *v),
     );
     em.facts.unwound_at.extend(vs.map(|v| (v, n)));
+    scope_unwind(em, n, place);
     if let UnwindAction::OnAbort(f) = a {
         on_abort(em, n, st, place, *f)?;
     }
@@ -4091,4 +4133,654 @@ fn clause_run_in_closure(
         given: None,
     });
     Ok(())
+}
+
+/// The identity of the standard effect that a scope, a spawn and a `join`
+/// perform.
+const ASYNC: &str = "Async";
+
+/// The identity of the standard effect `Fail`.
+const FAIL: &str = "Fail";
+
+/// Why a task whose code performs through a capability of a local handler
+/// is not in scope (plan stage F19: the operation runs on the task).
+const TASK_OPS: &str = "a task that performs an operation of an enclosing `handle` (stage F19)";
+
+/// Why a task that runs code of a caller is not in scope (plan stage F19:
+/// the caller checks the value as a task).
+const TASK_CODE: &str = "a task that runs code of a caller (stage F19)";
+
+/// Why a task that performs an operation of a handler of a caller is not
+/// in scope (W0314, plan stage F19).
+const TASK_ROW: &str = "a task that performs an operation of a caller (stage F19)";
+
+/// Why a task that runs a function value more than once is not in scope
+/// (plan stage F19: a spawn has no `Ret` node for the second run).
+const TASK_AGAIN: &str = "a task that runs a callback more than once (stage F19)";
+
+/// True if fact place `inner` is at or below fact place `outer`.
+fn at_or_below(facts: &FnFacts, inner: PlaceId, outer: PlaceId) -> bool {
+    let (Some(i), Some(o)) = (
+        facts.places.get(inner.index()),
+        facts.places.get(outer.index()),
+    ) else {
+        return false;
+    };
+    i.root == o.root && weft_verified::places::within(&i.steps, &o.steps)
+}
+
+/// `Spawn` `Main` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// The operands; `spawned_at(T, n)`; the run of the task body at `n` as a
+/// run of a closure with no arguments (`emit_apps`), whose changes and
+/// lends become `task_writes(T, _)` and whose reads become
+/// `task_reads(T, _)` (they stay at `n` too: the task can run before the
+/// next node); `captures(T, v)` of the variable of each capture of the
+/// closure, `mut_through(T, v)` if the task changes a place that the
+/// capture reaches, `kept(T, root(x))` of each `Kept` capture; `opaque(T)`
+/// for a value that the analysis does not follow; `escapes_at(n, Async)`.
+/// The handle binds (`rebound_at`, `points_into`), or a spawn statement
+/// gives its `TaskResult` local `rebound_at` and `empty_at`.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a task that performs through a
+/// capability of a local handler, and the errors of α.
+pub fn spawn(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    block: weft_ir::BlockId,
+    (site, scope, task, dest): (weft_ir::SpawnId, &Operand, &Operand, Option<&Place>),
+    origin: weft_ir::Span,
+) -> R {
+    use crate::analysis::tasks;
+    let body = em.body;
+    let at = span(origin);
+    operand(em, n, st, scope)?;
+    let ret_ty = tasks::task_ret(&mut em.cx(), body, task)?;
+    let fns = transfer::operand(&mut em.cx(), body, st, task)?.flat().fns;
+    let out = transfer::value_out_ty(&mut em.cx(), (body, block), st, task, &[], ret_ty)?;
+    // A failure of the task is a child failure: `join` and `ScopeWait` run
+    // the `fail` clause of a local handler (`clause::runs_clauses`).
+    if out.apps.iter().any(|a| {
+        a.summary.performs.iter().any(|pf| {
+            !matches!(pf.cap, crate::analysis::summary::CapIface::Row) && pf.effect != FAIL
+        })
+    }) {
+        return Err(AlphaError::Later(TASK_OPS));
+    }
+    // A run again at `Ret` (a value that runs another value more than once,
+    // OR3): a spawn has no `Ret` node.
+    if out.apps.iter().any(|a| a.again || a.late) {
+        return Err(AlphaError::Later(TASK_AGAIN));
+    }
+    // Code of a caller that runs as a task (a parameter, a value that the
+    // analysis does not follow, a closure that runs one): the caller must
+    // check it as a task (OR7, V132, plan stage F19).
+    let known = fns
+        .iter()
+        .all(|f| matches!(f, FnVal::Closure(_) | FnVal::Made(_) | FnVal::Item(..)));
+    if !known
+        || out
+            .apps
+            .iter()
+            .any(|a| a.code || !a.summary.runs.is_empty())
+    {
+        return Err(AlphaError::Later(TASK_CODE));
+    }
+    // An operation of a handler of a caller on the task: no runtime root
+    // handler serves it there (W0314, plan stage F19).
+    let no_runtime = em.hx.no_runtime;
+    if out.apps.iter().any(|a| {
+        a.summary.performs.iter().any(|pf| {
+            matches!(pf.cap, crate::analysis::summary::CapIface::Row)
+                && pf.effect != ASYNC
+                && pf.effect != FAIL
+                && (no_runtime || !crate::effects::is_std(&pf.effect))
+        })
+    }) {
+        return Err(AlphaError::Later(TASK_ROW));
+    }
+    operand_moves(em, n, st, task, false, true)?;
+    let marks = (
+        em.facts.mutates_at.len(),
+        em.facts.lends_mut.len(),
+        em.facts.reads_at.len(),
+    );
+    let nodes = CallNodes {
+        main: n,
+        ret: None,
+        frame_end: None,
+        aborts: Vec::new(),
+        may_abort: false,
+        values: Vec::new(),
+    };
+    let frames = emit_apps(em, &nodes, st, block, &[], &out.apps, at, &[], &[])?;
+    apps_at_ret(em, n, st, &out.apps, at)?;
+    end_frames(em, &nodes, &frames);
+    em.facts.escapes_at.push((n, ASYNC.to_string()));
+    if let Some(t) = em.hx.task_ids.get(&site).copied() {
+        em.facts.spawned_at.push((t, n));
+        // A place of a caller (code of a caller, an operation of a caller)
+        // and a local of a callee of the task are no places that the task
+        // shares with the body (as the old lowering).
+        // The closure value moves into the task: its environment is the
+        // task's own.
+        let own = match task {
+            Operand::Copy(q) | Operand::Move(q) => {
+                let k = em.key(q.local)?;
+                em.roots
+                    .local(em.p, em.tys, em.facts, k.0, k.1)
+                    .ok()
+                    .and_then(|r| em.facts.places.get(r.index()).map(|i| i.root))
+            }
+            Operand::Const(_) => None,
+        };
+        let roots = &*em.roots;
+        let facts = &*em.facts;
+        let shared = |q: PlaceId| {
+            facts.places.get(q.index()).is_none_or(|i| {
+                Some(i.root) != own
+                    && !matches!(
+                        roots.role(i.root),
+                        Some(super::alpha::Role::Caller | super::alpha::Role::Frame(_))
+                    )
+            })
+        };
+        let mut writes: Vec<PlaceId> = em.facts.mutates_at[marks.0..]
+            .iter()
+            .chain(&em.facts.lends_mut[marks.1..])
+            .filter(|(m, q)| *m == n && shared(*q))
+            .map(|(_, q)| *q)
+            .collect();
+        writes.sort();
+        writes.dedup();
+        let mut reads: Vec<PlaceId> = em.facts.reads_at[marks.2..]
+            .iter()
+            .filter(|(m, q)| *m == n && shared(*q))
+            .map(|(_, q)| *q)
+            .collect();
+        reads.sort();
+        reads.dedup();
+        em.facts.task_writes.extend(writes.iter().map(|&q| (t, q)));
+        em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
+        task_captures(em, st, t, &fns, &writes)?;
+        // A callee that can start a pinned task: work stealing cannot check
+        // the task (`pinned`).
+        if out.apps.iter().any(|a| a.summary.pins) {
+            em.facts.opaque.push(t);
+        }
+    }
+    // The value after the spawn: the handle, or the `TaskResult` local.
+    let mut after = st.clone();
+    tasks::spawn(&mut em.cx(), (body, block), &mut after, site, task, dest)?;
+    if let Some(d) = dest {
+        let v = if let Some((k, path)) = transfer::move_path(em.p, body, d)? {
+            after.value(k, &path)
+        } else {
+            let result = tasks::task_result(&em.cx(), ret_ty, &out.ret);
+            let t = em
+                .place_ty(d)
+                .ok_or_else(|| AlphaError::BadPlace("a handle with no type".to_string()))?;
+            tasks::handle_value(&em.cx(), t, site, &result)
+        };
+        return bind_dest(em, n, st, d, &v);
+    }
+    let orphan = em.p.body(body).and_then(|b| {
+        b.locals
+            .iter()
+            .position(|d| d.kind == LocalKind::TaskResult(site))
+            .and_then(|i| u32::try_from(i).ok())
+    });
+    if let Some(l) = orphan {
+        let k = em.key(LocalId(l))?;
+        whole(em, n, st, k, &Tree::leaf(crate::analysis::AbsVal::plain()));
+    }
+    Ok(())
+}
+
+/// The facts of the captures of the closures `fns` that task `t` runs, in
+/// state `st` at the spawn: `captures`, `mut_through` (the task writes the
+/// places `writes`), `kept`, and the `ByRef` and `Kept` captures that can
+/// hold a reference (`Handlers::task_cells`).
+///
+/// # Errors
+///
+/// The errors of α.
+fn task_captures(
+    em: &mut Em<'_>,
+    st: &State,
+    t: weft_facts::TaskId,
+    fns: &std::collections::BTreeSet<FnVal>,
+    writes: &[PlaceId],
+) -> R {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut work: Vec<weft_ir::ClosureId> = fns
+        .iter()
+        .filter_map(|f| match f {
+            FnVal::Closure(c) | FnVal::Made(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
+    while let Some(c) = work.pop() {
+        if !seen.insert(c) {
+            continue;
+        }
+        let Some(decl) = em.p.closures.get(c.index()) else {
+            continue;
+        };
+        let maker = decl.maker;
+        // A capture of a closure body is a capture of the closure that
+        // made it: the variables are in its maker.
+        if em.p.closure_of(maker).is_some() {
+            continue;
+        }
+        for cap in &decl.captures {
+            if matches!(
+                cap.mode,
+                weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
+            ) {
+                continue;
+            }
+            let src = &cap.source;
+            let Some(v) = em.base_var(maker, src)? else {
+                continue;
+            };
+            em.facts.captures.push((t, v));
+            let k = transfer::key(em.p, maker, src.local)?;
+            let val = st.value(k, &[]).flat();
+            // A captured closure: its captures are captures of the task.
+            for f in &val.fns {
+                if let FnVal::Closure(c2) | FnVal::Made(c2) = f {
+                    work.push(*c2);
+                }
+            }
+            let ty = super::alpha::place_ty(em.p, em.tys, maker, src);
+            let is_ref =
+                ty.is_some_and(|t| matches!(em.tys.try_get(t), Some(weft_ir::Ty::Ref(..))));
+            let root = em.roots.local(em.p, em.tys, em.facts, k.0, k.1).ok();
+            let mut refs: Vec<PlaceId> = if is_ref {
+                val.refs.iter().copied().collect()
+            } else {
+                Vec::new()
+            };
+            if !is_ref {
+                refs.extend(root);
+            }
+            let through = writes
+                .iter()
+                .any(|&m| refs.iter().any(|&r| at_or_below(em.facts, m, r)));
+            if through {
+                em.facts.mut_through.push((t, v));
+            }
+            if cap.mode == weft_ir::CaptureMode::Kept {
+                if let Some(r) = root {
+                    em.facts.kept.push((t, r));
+                }
+            }
+            let holds_refs = ty.is_some_and(|t| ir_props(em.tys, t).holds_refs);
+            // The task reads the cell of the variable when it runs: each
+            // later value of the variable (`finish_task_values` of the old
+            // lowering).
+            let shared = matches!(
+                cap.mode,
+                weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
+            );
+            if shared && holds_refs {
+                em.hx.task_cells.push((t, v, val.refs.clone()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `Join` `Main` and `Ret` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// `Main`: the handle is used and moves; `joined_at(T, main)` for each task
+/// that the handle must hold (`crate::analysis::tasks::must_join`);
+/// `may_abort` (a child failure, a cancel); `escapes_at(main, Async)`.
+/// `Ret`: the result binds. The writes of each task that ends there become
+/// `lends_mut` at the end of the component ([`task_ends`]).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn join(em: &mut Em<'_>, nodes: &CallNodes, st: &State, task: &Operand, dest: &Place) -> R {
+    use crate::analysis::tasks;
+    let body = em.body;
+    let main = nodes.main;
+    let joined = tasks::must_join(&mut em.cx(), body, st, task)?;
+    operand_moves(em, main, st, task, false, true)?;
+    handle_write(em, main, st, task)?;
+    let end = nodes.ret.unwrap_or(main);
+    for site in joined {
+        if let Some(t) = em.hx.task_ids.get(&site).copied() {
+            em.facts.joined_at.push((t, main));
+            em.hx.task_ends.push((t, end));
+        } else if crate::analysis::tasks::iface_index(site).is_some() {
+            em.hx.iface_joins.push((site, main));
+        }
+    }
+    em.facts.escapes_at.push((main, ASYNC.to_string()));
+    if nodes.may_abort {
+        em.facts.may_abort.push(main);
+    }
+    if let Some(r) = nodes.ret {
+        let mut after = st.clone();
+        tasks::join(&mut em.cx(), body, &mut after, task, dest)?;
+        let v = match transfer::move_path(em.p, body, dest)? {
+            Some((k, path)) => after.value(k, &path),
+            None => Tree::leaf(transfer::operand(&mut em.cx(), body, st, task)?.flat()),
+        };
+        bind_dest(em, r, st, dest, &v)?;
+    }
+    Ok(())
+}
+
+/// The tasks that call `t` ends (O3-9, plan stage F18).
+///
+/// The part `joins` of the summary of the callee gives the operands:
+/// `joined_at(T, main)` for each task that the operand of a joined handle
+/// must hold; the writes of the task become `lends_mut` at `Ret`. A handle
+/// of a task of a caller goes to the part `joins` of the body.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn call_joins(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
+    use crate::analysis::tasks;
+    if em.hx.task_ids.is_empty() && em.p.spawns.is_empty() {
+        return Ok(());
+    }
+    let body = em.body;
+    let ops: Vec<Operand> = tasks::joined_ops(&mut em.cx(), body, st, t)
+        .into_iter()
+        .cloned()
+        .collect();
+    let end = nodes.ret.unwrap_or(nodes.main);
+    for op in &ops {
+        for site in tasks::must_join(&mut em.cx(), body, st, op)? {
+            if let Some(t) = em.hx.task_ids.get(&site).copied() {
+                em.facts.joined_at.push((t, nodes.main));
+                em.hx.task_ends.push((t, end));
+            } else if tasks::iface_index(site).is_some() {
+                em.hx.iface_joins.push((site, nodes.main));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A `join` or a `detach` of a handle in a variable, a parameter or a
+/// capture.
+///
+/// The machine can write the place of the handle (it takes the task out),
+/// so node `n` changes it (`mutates_at`, C5 of the fact oracle).
+///
+/// # Errors
+///
+/// The errors of α.
+fn handle_write(em: &mut Em<'_>, n: NodeId, st: &State, task: &Operand) -> R {
+    let (Operand::Copy(q) | Operand::Move(q)) = task else {
+        return Ok(());
+    };
+    let body = em.body;
+    // The facts of a closure body in the terms of its interface give its
+    // summary: a change of its environment there would be a change of the
+    // closure value at each run node. Its instantiated facts get it.
+    let param =
+        em.p.body(body)
+            .and_then(|b| b.local(q.local))
+            .is_some_and(|d| matches!(d.kind, LocalKind::Param(_) | LocalKind::User));
+    let env = super::alpha::env_capture(em.p, body, q).is_some()
+        && !transfer::in_interface(&em.cx(), body);
+    if param || env {
+        let al = em.alpha(st, q)?;
+        em.facts
+            .mutates_at
+            .extend(al.places.iter().map(|&p| (n, p)));
+    }
+    Ok(())
+}
+
+/// The tasks of the component that scope body `sb` joins at its
+/// `ScopeWait` and on its cleanup chain: each task of a spawn site of its
+/// scope.
+fn scope_tasks(em: &Em<'_>, sb: BodyId) -> Vec<weft_facts::TaskId> {
+    let Some(weft_ir::BodyKind::Scope(k)) = em.p.body(sb).map(|b| b.kind) else {
+        return Vec::new();
+    };
+    em.hx
+        .task_ids
+        .iter()
+        .filter(|(site, _)| {
+            em.p.spawns
+                .get(site.index())
+                .is_some_and(|d| d.scope == Some(k))
+        })
+        .map(|(_, t)| *t)
+        .collect()
+}
+
+/// `ScopeWait` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// The scope capability is used; `joined_at(T, n)` for each task of the
+/// scope; `may_abort` (a child failure, a cancel); each `TaskResult` local of `orphans` gets the result
+/// of its task (`rebound_at`, `points_into`). The writes of the tasks
+/// become `lends_mut` of the node after `n` (`nodes.ret`) at the end of the
+/// component ([`task_ends`]).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_wait(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    scope: &Place,
+    orphans: &[LocalId],
+) -> R {
+    let body = em.body;
+    let n = nodes.main;
+    let (a, _) = em.access(st, scope, false)?;
+    em.apply(n, kernel::read(&a));
+    // The tasks end at `n`; the node after it changes what they write
+    // (`nodes.ret`: the first node of the next block).
+    for t in scope_tasks(em, body) {
+        em.facts.joined_at.push((t, n));
+        if let Some(e) = nodes.ret {
+            em.hx.task_ends.push((t, e));
+        }
+    }
+    if nodes.may_abort {
+        em.facts.may_abort.push(n);
+    }
+    let mut after = st.clone();
+    crate::analysis::tasks::scope_wait(&mut em.cx(), body, &mut after, orphans)?;
+    for &l in orphans {
+        let k = em.key(l)?;
+        let v = after.value(k, &[]);
+        whole(em, n, st, k, &v);
+    }
+    Ok(())
+}
+
+/// The cleanup chain of a scope body cancels and joins the tasks of its
+/// scope at the `UnwindValue` of its `ScopeCap` local (V084, plan stage
+/// F18): `joined_at(T, n)` for each task of the scope.
+pub fn scope_unwind(em: &mut Em<'_>, n: NodeId, place: &Place) {
+    let body = em.body;
+    let cap = place.proj.is_empty()
+        && em
+            .p
+            .body(body)
+            .and_then(|b| b.local(place.local))
+            .is_some_and(|d| d.kind == LocalKind::ScopeCap);
+    if cap {
+        for t in scope_tasks(em, body) {
+            em.facts.joined_at.push((t, n));
+        }
+    }
+}
+
+/// `Detach` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// The handle is used and moves; the result of the task goes away, so a linear result is the drop
+/// pair of the terminator (`rebound_at` at `n`, `scope_end` at the node
+/// `next` after it: W0601, ADR 0007).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn detach(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    block: weft_ir::BlockId,
+    task: &Operand,
+    next: Option<NodeId>,
+) -> R {
+    operand_moves(em, n, st, task, false, true)?;
+    handle_write(em, n, st, task)?;
+    if let Some(d) = em.vars.get(&VarKey::D(em.body, block, super::nodes::TERM)) {
+        if em.facts.var(d).linear {
+            em.facts.rebound_at.push((d, n));
+            // The pair ends at `next`: W0601 there, and no later node sees
+            // the dropped value (no W0602 at a later node that can abort,
+            // N1 of `r3/issues.md`).
+            if let Some(x) = next {
+                em.facts.scope_end.push((d, x));
+                em.facts.moved_at.push((d, x));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The scope capability of scope body `sb` binds at `Main` of its
+/// `scope` (`n`); the scope performs `Async`, and it can abort (a cancel,
+/// `docs/ir.md` 6.4, plan stage F18).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_main(em: &mut Em<'_>, n: NodeId, sb: BodyId, may_abort: bool) -> R {
+    if let Some(cap) = em.p.body(sb).and_then(|b| {
+        b.locals
+            .iter()
+            .position(|d| d.kind == LocalKind::ScopeCap)
+            .and_then(|i| u32::try_from(i).ok())
+    }) {
+        let k = transfer::key(em.p, sb, LocalId(cap))?;
+        let saved = em.body;
+        em.body = sb;
+        whole(
+            em,
+            n,
+            &State::new(),
+            k,
+            &Tree::leaf(crate::analysis::AbsVal::plain()),
+        );
+        em.body = saved;
+    }
+    em.facts.escapes_at.push((n, ASYNC.to_string()));
+    if may_abort {
+        em.facts.may_abort.push(n);
+    }
+    Ok(())
+}
+
+/// `Scope` `Exit` (`docs/ir.md` 6.4, plan stage F18): `_0` of the scope body
+/// `sb` is used (and moves, if it can be linear), and the destination gets
+/// the value `value`.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_exit(
+    em: &mut Em<'_>,
+    x: NodeId,
+    st: &State,
+    sb: BodyId,
+    dest: &Place,
+    value: &Tree,
+) -> R {
+    if let Some(ret) = em.p.body(sb).map(|b| b.ret) {
+        let k = transfer::key(em.p, sb, ret)?;
+        if let Some(s) = em.s_var(k) {
+            em.facts.uses.push((s, x));
+            if em.facts.var(s).linear {
+                em.facts.moved_at.push((s, x));
+            }
+        }
+        let vars = em.vars;
+        em.facts.uses.extend(
+            vars.parts_of(k.0, k.1)
+                .iter()
+                .filter(|(kind, _, _)| *kind == PartKind::H)
+                .map(|(_, _, v)| (*v, x)),
+        );
+    }
+    bind_dest(em, x, st, dest, value)
+}
+
+/// The end of the component (plan stage F18).
+///
+/// Each node where a task ends changes what the task writes (`lends_mut`): a reference that the body
+/// made while the task ran is invalid after it (W0301). A task that a
+/// later `ByRef` value of a captured variable reaches reads (and, with
+/// `mut_through`, writes) what each value of the variable points into.
+pub fn task_ends(em: &mut Em<'_>) {
+    let cells = std::mem::take(&mut em.hx.task_cells);
+    for (t, v, at_spawn) in cells {
+        let places: Vec<PlaceId> = em
+            .facts
+            .points_into
+            .iter()
+            .filter(|(x, q)| *x == v && !at_spawn.contains(q))
+            .map(|(_, q)| *q)
+            .collect();
+        let through = em.facts.mut_through.contains(&(t, v));
+        for q in places {
+            em.facts.task_reads.push((t, q));
+            if through {
+                em.facts.task_writes.push((t, q));
+            }
+        }
+    }
+    let mut writes: BTreeMap<weft_facts::TaskId, Vec<PlaceId>> = BTreeMap::new();
+    for &(t, m) in &em.facts.task_writes {
+        writes.entry(t).or_default().push(m);
+    }
+    for (t, e) in std::mem::take(&mut em.hx.task_ends) {
+        for &m in writes.get(&t).into_iter().flatten() {
+            em.facts.lends_mut.push((e, m));
+        }
+    }
+    // A task does not keep a variable that a reference of the task points
+    // into (a captured reference): the reference is invalid after the end
+    // of the variable (as the old lowering, `borrowed_roots`).
+    let roots_of = |f: &FnFacts, q: PlaceId| f.places.get(q.index()).map(|i| i.root);
+    let mut borrowed: std::collections::BTreeSet<_> = std::collections::BTreeSet::new();
+    for &(t, v) in &em.facts.captures {
+        for &(x, q) in &em.facts.points_into {
+            if x == v {
+                if let Some(r) = roots_of(em.facts, q) {
+                    borrowed.insert((t, r));
+                }
+            }
+        }
+    }
+    let kept = std::mem::take(&mut em.facts.kept);
+    let facts = &*em.facts;
+    let kept: Vec<_> = kept
+        .into_iter()
+        .filter(|&(t, r)| roots_of(facts, r).is_none_or(|x| !borrowed.contains(&(t, x))))
+        .collect();
+    em.facts.kept = kept;
+    em.facts.task_reads.sort();
+    em.facts.task_reads.dedup();
+    em.facts.task_writes.sort();
+    em.facts.task_writes.dedup();
 }

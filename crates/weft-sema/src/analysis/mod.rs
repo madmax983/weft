@@ -29,6 +29,7 @@ pub mod domain;
 pub mod sig;
 pub mod summarize;
 pub mod summary;
+pub mod tasks;
 pub mod transfer;
 pub mod unknown;
 pub mod widen;

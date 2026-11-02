@@ -1,0 +1,53 @@
+// V096: a `join` ends the tasks of the sites of its handle only if no
+// other value can hold a handle of the site. While another handle can hold
+// the task that changes `st`, the task can still run.
+struct Stats { count: u64 }
+
+fn rotate(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let h = s.spawn(|| print(0))
+        let g = s.spawn(|| st.count += 1)
+        let i = 0
+        while i < n {
+            h.join()
+            print(st.count) //~ W0405 W0405
+            h = g
+            g = s.spawn(|| st.count += 1) //~ W0405 W0405
+            i += 1
+        }
+        h.join()
+        g.join()
+    }
+}
+
+fn swaps(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let t0 = s.spawn(|| print(1))
+        let t1 = s.spawn(|| st.count += 1)
+        let m = 0
+        while m < n {
+            let x = t0
+            t0 = t1
+            t1 = x
+            m += 1
+        }
+        t0.join()
+        print(st.count) //~ W0405
+        t1.join()
+    }
+}
+
+fn direct(st: &Stats) / mut(st), async {
+    scope { s =>
+        let t = s.spawn(|| st.count += 1)
+        t.join()
+        print(st.count)
+    }
+}
+
+fn main() / async {
+    let st = Stats { count: 0 }
+    rotate(&st, 3)
+    swaps(&st, 2)
+    direct(&st)
+}

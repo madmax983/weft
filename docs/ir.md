@@ -2241,6 +2241,19 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
 (each effect can abort, ADR 0005), a call or a resume whose summary can abort, `Join`,
 `ScopeWait`, `Fork`, `Assert`, `Scope` (it performs `Async`).
 
+As built (plan stage F18, `factgen/templates.rs`, `analysis/tasks.rs`; group E is a
+preview until F19): the writes of a task that ends become `lends_mut` at `Join` `Ret`
+and at the node after `ScopeWait` (at `ScopeWait` itself the task is still active).
+`ScopeWait` of a scope with no spawn cannot abort, and its node has the span of the
+scope body. The end of a `TaskResult` local has the span of its spawn. A `join` or a
+`detach` of a handle in a parameter (or, in the instantiated facts, a capture) changes
+its place (`mutates_at`, C5 of the fact oracle). A spawn as the tail of a scope body
+gives a handle of an ended task: with a result that cannot be linear, the value is
+not linear. A discarded temporary that a spawn gives a handle to drops only the
+result. The spawn performs `Async`; a task that performs another effect through a
+handler of a caller, or through a local capability other than `Fail`, is not in scope
+(F19).
+
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
 

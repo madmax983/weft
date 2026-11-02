@@ -1,0 +1,42 @@
+// O3-4: a spawn in statement position gives the result of the task to the
+// scope. A linear result with no consumer is W0601 at the end of its
+// `TaskResult` local (plan stage F18). A joined result is consumed.
+linear struct Lk { id: u64 }
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn make() -> Lk { Lk { id: 5 } }
+
+fn fresh() {
+    scope { s =>
+        s.spawn(|| Lk { id: 1 }) //~ W0601
+        print(1)
+    }
+}
+
+fn captured() {
+    let t = Tx { id: 2 }
+    scope { s =>
+        s.spawn(|| t) //~ W0601
+        print(2)
+    }
+}
+
+fn item() {
+    scope { s =>
+        s.spawn(make) //~ W0601
+        print(3)
+    }
+}
+
+fn joined() {
+    scope { s =>
+        let h = s.spawn(|| Lk { id: 6 })
+        unlock(h.join())
+    }
+}
+
+fn main() {
+    joined()
+}

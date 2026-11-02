@@ -258,6 +258,16 @@ fn is_task(tys: &TyTable, t: TyId) -> bool {
     matches!(tys.lang(t), Some((Lang::Task, _)))
 }
 
+/// True if a spawn of body `b` gives its handle to local `l`.
+fn spawn_dest(b: &weft_ir::Body, l: LocalId) -> bool {
+    b.blocks.iter().any(|blk| {
+        matches!(
+            &blk.term.kind,
+            TermKind::Spawn { dest: Some(d), .. } if d.local == l && d.proj.is_empty()
+        )
+    })
+}
+
 /// The name of the variable of `_0` of a body of kind `kind`: the
 /// diagnostics name the frame by it (`docs/ir.md` 6.9). `None` for another
 /// local.
@@ -450,13 +460,30 @@ impl Vars {
                         d.kind,
                         LocalKind::TaskResult(_) | LocalKind::ScopeCap | LocalKind::Kont(false)
                     );
+                // The handle of a spawn in a discarded temporary (the tail
+                // of a block statement): the scope keeps the task, as for a
+                // spawn statement, and the end of the temporary drops only
+                // the result (plan stage F18, as the old lowering). A bound
+                // handle that moves there is dropped (W0601).
+                let spawned = task && spawn_dest(b, l);
+                let (linear, on_abort) = match (spawned, d.kind) {
+                    (true, LocalKind::Temp(TempKind::Discarded)) => {
+                        let ret = match tys.lang(d.ty) {
+                            Some((Lang::Task, args)) => args.first().copied(),
+                            _ => None,
+                        };
+                        let pr = ret.map(|t| ir_props(tys, t)).unwrap_or_default();
+                        (pr.linear, pr.on_abort)
+                    }
+                    _ => (d.props.linear, d.props.on_abort),
+                };
                 let info = VarInfo {
                     name: result_text(&b.kind, d).unwrap_or_else(|| local_text(tys, d)),
                     kind: var_kind(tys, d),
                     span: span(d.origin.span),
                     ty: tys.show(d.ty),
-                    linear: d.props.linear,
-                    has_on_abort: d.props.linear && d.props.on_abort,
+                    linear,
+                    has_on_abort: linear && on_abort,
                     once,
                     // A value built in place does not move, unless a call
                     // that does not build it in place takes it (W0604).
@@ -672,9 +699,9 @@ impl Vars {
         }
     }
 
-    /// Adds the drop pair variable of each `Drop` statement of body `bid`.
-    /// It has the flags of the type of the place: the old value can be
-    /// linear.
+    /// Adds the drop pair variable of each `Drop` statement of body `bid`,
+    /// and of each `detach` (the result of the task). It has the flags of
+    /// the type of the place: the old value can be linear.
     fn drop_pairs(&mut self, p: &Program, tys: &mut TyTable, facts: &mut FnFacts, bid: BodyId) {
         let Some(b) = p.bodies.get(bid.index()) else {
             return;
@@ -698,6 +725,30 @@ impl Vars {
                 info.has_on_abort = props.linear && props.on_abort;
                 info.once = props.linear;
                 self.add(facts, VarKey::D(bid, block, at), info);
+            }
+            // `detach` drops the result of the task (ADR 0007, plan stage
+            // F18): a drop pair at the terminator.
+            if let TermKind::Detach {
+                task: Operand::Copy(q) | Operand::Move(q),
+                ..
+            } = &blk.term.kind
+            {
+                let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+                let ret = place_ty(p, tys, bid, q).and_then(|t| match tys.try_get(t) {
+                    Some(Ty::Adt(_, args)) => args.first().copied(),
+                    _ => None,
+                });
+                let props = ret.map(|t| ir_props(tys, t)).unwrap_or_default();
+                let mut info = Self::plain(
+                    "detach".to_string(),
+                    span(blk.term.origin.span),
+                    ret.map_or_else(String::new, |t| tys.show(t)),
+                );
+                info.kind = VarKind::Dropped;
+                info.linear = props.linear;
+                info.has_on_abort = props.linear && props.on_abort;
+                info.once = props.linear;
+                self.add(facts, VarKey::D(bid, block, super::nodes::TERM), info);
             }
         }
     }

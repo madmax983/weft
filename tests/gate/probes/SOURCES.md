@@ -537,3 +537,20 @@ again if it runs. They come from the third review of group D (scratchpad
 - `fixes/f17/row_mid/*.wf`: class D-ROW-MID, a callee waits at a `multi` operation of
   a handler of a caller, and the function changes the place after the call, before the
   second run of the copied callee frame (old holes).
+
+## Stage F18: tasks (group E, part 1)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They use group E, which is off until stage F19: the old pipeline
+checks them by default, and their claims are off.
+
+- `fixes/f18/scope/*.wf`: F3-7 (the value of a scope body across `ScopeWait`) and V084
+  (the cleanup chain of a scope body joins its tasks).
+- `fixes/f18/result/*.wf`: O3-4 (a spawn statement drops a linear result), the
+  `detach` control of F3-6 (N1), and class F18-RESULT (a spawn as the tail of a scope
+  body, with a clean twin `_c`).
+- `fixes/f18/rc/*.wf`: O3-6 with no generic callee.
+- `fixes/f18/join/*.wf`: V096 (the must rule of a `join`), O3-9 with no generic `id`,
+  and class F18-JOIN from the self-attack of stage F18: the handle in a tuple, a
+  struct, an `Option`, a closure or a callee; each bad program has a clean twin
+  (`_c`) that the old pipeline rejects (W0405).

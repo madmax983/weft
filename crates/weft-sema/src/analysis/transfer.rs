@@ -364,7 +364,7 @@ pub fn alpha(
 }
 
 /// The type of `place` of body `body`.
-fn place_ty(cx: &mut Cx<'_>, body: BodyId, place: &Place) -> Result<TyId, AlphaError> {
+pub(crate) fn place_ty(cx: &mut Cx<'_>, body: BodyId, place: &Place) -> Result<TyId, AlphaError> {
     alpha::place_ty(cx.p, cx.tys, body, place)
         .ok_or_else(|| AlphaError::BadPlace(format!("{place:?} has no type")))
 }
@@ -862,8 +862,16 @@ pub fn dead(p: &Program, body: BodyId, st: &mut State, l: LocalId) -> Result<(),
                     && cap.source.local == l
             })
     });
+    let k = key(p, body, l)?;
+    // A task handle that ends with its local: the task runs on (plan stage
+    // F18).
+    let ts: Vec<weft_ir::SpawnId> = st
+        .tree(k)
+        .map(|t| t.flat().tasks.into_iter().collect())
+        .unwrap_or_default();
+    st.lose_tasks(ts);
     if !kept {
-        st.clear(key(p, body, l)?, &[]);
+        st.clear(k, &[]);
     }
     Ok(())
 }
@@ -913,6 +921,9 @@ pub fn assign(
         return Ok(());
     }
     let flat = Tree::leaf(v.flat());
+    // A task handle behind a reference or in an element: no local holds it
+    // for sure (plan stage F18).
+    st.lose_tasks(flat.top.tasks.iter().copied());
     let targets: BTreeSet<(Key, Vec<PathStep>)> = a
         .iter()
         .flat_map(|a| a.places.iter())
@@ -1048,6 +1059,30 @@ pub fn term(
     st: &mut State,
     t: &TermKind,
 ) -> Result<(), AlphaError> {
+    // A task handle that goes to a callee, an operation or a continuation
+    // leaves the values of the component (plan stage F18).
+    if !cx.p.spawns.is_empty() {
+        // A callee that joins a task handle on each path ends the task
+        // (part `joins`, O3-9): its handle is not lost.
+        let joined = super::tasks::joined_ops(cx, body, st, t);
+        let mut ops: Vec<&Operand> = match t {
+            TermKind::Call { args, .. } | TermKind::Perform { args, .. } => args.iter().collect(),
+            TermKind::Resume { arg, .. } => vec![arg],
+            _ => Vec::new(),
+        };
+        if let TermKind::Call {
+            callee: weft_ir::Callee::Value(f),
+            ..
+        } = t
+        {
+            ops.push(f);
+        }
+        ops.retain(|o| !joined.iter().any(|j| std::ptr::eq(*j, *o)));
+        if !ops.is_empty() {
+            let ts = super::tasks::operand_tasks(cx, body, st, ops).unwrap_or_default();
+            st.lose_tasks(ts);
+        }
+    }
     match t {
         TermKind::Goto(_) => goto(st),
         TermKind::Switch { on, .. } => switch(cx.p, body, st, on),
@@ -1104,12 +1139,25 @@ pub fn term(
         TermKind::Handle { handler, dest, .. } => {
             super::clause::handle(cx, body, st, *handler, dest)
         }
-        TermKind::Scope { .. }
-        | TermKind::ScopeWait { .. }
-        | TermKind::Spawn { .. }
-        | TermKind::Join { .. }
-        | TermKind::Detach { .. }
-        | TermKind::Fork { .. } => Err(AlphaError::Later("a task (stage F18)")),
+        TermKind::Scope { scope, dest, .. } => super::tasks::scope(cx, body, st, *scope, dest),
+        TermKind::ScopeWait { orphans, .. } => {
+            // A child failure runs the `fail` clause of a local handler of
+            // the site of the scope (plan stage F18).
+            let before = super::clause::runs_clauses(cx, body, t).then(|| st.clone());
+            super::tasks::scope_wait(cx, body, st, orphans)?;
+            super::clause::call_clauses(cx, (body, block), before.as_ref(), st, t)
+        }
+        TermKind::Spawn {
+            site, task, dest, ..
+        } => super::tasks::spawn(cx, (body, block), st, *site, task, dest.as_ref()),
+        TermKind::Join { task, dest, .. } => {
+            // A child failure runs the `fail` clause of a local handler.
+            let before = super::clause::runs_clauses(cx, body, t).then(|| st.clone());
+            super::tasks::join(cx, body, st, task, dest)?;
+            super::clause::call_clauses(cx, (body, block), before.as_ref(), st, t)
+        }
+        TermKind::Detach { task, .. } => super::tasks::detach(cx, body, st, task),
+        TermKind::Fork { .. } => Err(AlphaError::Later("a `fork` (stage F19)")),
     }
 }
 
@@ -1276,7 +1324,7 @@ pub fn call_out(
 /// (a function value behind a reference stays with the old pipeline), so
 /// the summary of an item gives a linear closure to a place only with
 /// `fns`. A closure and code of a caller can make one.
-fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
+pub(crate) fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
     for app in apps {
         let fns = fns || app.kind != super::apply::RunKind::Item;
         for (q, refs) in &app.stores {
@@ -1937,6 +1985,23 @@ pub fn value_out(
     dest: &Place,
 ) -> Result<ValueOut, AlphaError> {
     let ret_ty = place_ty(cx, body, dest)?;
+    value_out_ty(cx, (body, block), st, callee, args, ret_ty)
+}
+
+/// [`value_out`] with the type `ret_ty` of the result, for a run with no
+/// destination: a task (plan stage F18).
+///
+/// # Errors
+///
+/// The errors of [`value_out`].
+pub fn value_out_ty(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, weft_ir::BlockId),
+    st: &State,
+    callee: &Operand,
+    args: &[Operand],
+    ret_ty: TyId,
+) -> Result<ValueOut, AlphaError> {
     let mut fns = operand(cx, body, st, callee)?.flat().fns;
     // A local that holds no value here (it moved): the call stops with a
     // fault at run time, and the use of the local is W0302 or W0502. No

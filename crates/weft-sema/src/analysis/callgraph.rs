@@ -197,6 +197,8 @@ fn stated(
     out.put_fns.clone_from(&body.put_fns);
     out.lends.clone_from(&body.lends);
     out.gives_frame = body.gives_frame;
+    out.pins = body.pins;
+    out.joins.clone_from(&body.joins);
     out
 }
 
@@ -239,6 +241,8 @@ fn summary_of(
             }
             sig::put_parts(&mut sum, inf);
             sum.gives_frame = inf.gives_frame;
+            sum.pins = inf.pins || sig.effects.pins;
+            sum.joins.clone_from(&inf.joins);
             sum.only_self &= inf.runs.is_empty()
                 && inf
                     .lends
@@ -263,6 +267,9 @@ fn effect_sig(a: &Analysis, sema: crate::FnId, inf: &Inferred, sum: &Summary) ->
             multi: inf.multi,
             drops: inf.drops.iter().map(|&j| j as usize).collect(),
             holds: inf.holds.iter().map(|&j| j as usize).collect(),
+            // A stated signature keeps the part `pins` of the old
+            // inference too (a callee of the runtime, `http.serve`).
+            pins: inf.pins || sig.effects.pins,
             ..EffectSig::default()
         },
         _ => sig::to_effect_sig(&a.program, sum),
@@ -517,6 +524,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 rebind_nodes: &[],
                                 lends: &e.own_lends,
                                 cap_performs: &[],
+                                joins: &e.joins,
                             },
                         );
                         add_steps(&mut steps, &facts);

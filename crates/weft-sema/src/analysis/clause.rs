@@ -120,6 +120,33 @@ pub struct Handlers {
     /// The handlers whose capability a closure takes out of the `handle`,
     /// with how it leaves (W0313, plan stage F17).
     pub escapes: Vec<(HandlerId, Escape)>,
+    /// The value of the result of the task of each spawn site, a join over
+    /// the runs of the spawn (plan stage F18, `super::tasks`): `ScopeWait`
+    /// gives it to the `TaskResult` local of a spawn statement.
+    pub task_values: BTreeMap<weft_ir::SpawnId, Tree>,
+    /// The task of each spawn site of the component in the facts (plan
+    /// stage F18).
+    pub task_ids: BTreeMap<weft_ir::SpawnId, weft_facts::TaskId>,
+    /// The nodes where a task ends (`joined_at` at a `join` or at
+    /// `ScopeWait`): the templates give them the `lends_mut` of the writes
+    /// of the task when the component is done (`crate::factgen::templates::task_ends`).
+    pub task_ends: Vec<(weft_facts::TaskId, weft_facts::NodeId)>,
+    /// The variables of the `ByRef` and `Kept` captures of each task that can hold a
+    /// reference: the task reads (and writes, with `mut_through`) what each
+    /// later value of the variable points into.
+    /// The places that the variable points into at the spawn are in the
+    /// footprint already: only the other places count.
+    pub task_cells: Vec<(
+        weft_facts::TaskId,
+        weft_facts::VarId,
+        std::collections::BTreeSet<weft_facts::PlaceId>,
+    )>,
+    /// The `Main` node of each `join` that ends the handle of a task of a
+    /// caller (`super::tasks::iface`), with its interface site.
+    pub iface_joins: Vec<(weft_ir::SpawnId, weft_facts::NodeId)>,
+    /// The program runs with no runtime (`// weft: no-runtime`): no root
+    /// handler serves a standard effect on a task (plan stage F18).
+    pub no_runtime: bool,
 }
 
 /// How a closure that captures the capability of a handler leaves the
@@ -1940,9 +1967,14 @@ pub fn call_clauses(
 /// Why a call that runs a clause is not in scope ([`given_ops`]).
 pub const GIVES_BACK: &str = "a call that runs a clause of a local handler whose operation gives a function value or a reference back to the callee (stage F16)";
 
-/// True if call `t` of body `body` runs a clause of a local handler.
+/// True if call `t` of body `body` runs a clause of a local handler: a
+/// call, or a `join` or a `ScopeWait` whose child failure goes to a local
+/// `Fail` handler (plan stage F18).
 pub fn runs_clauses(cx: &Cx<'_>, body: BodyId, t: &TermKind) -> bool {
-    matches!(t, TermKind::Call { .. }) && !call_handlers(cx, body, t).is_empty()
+    matches!(
+        t,
+        TermKind::Call { .. } | TermKind::Join { .. } | TermKind::ScopeWait { .. }
+    ) && !call_handlers(cx, body, t).is_empty()
 }
 
 /// The transfer of a perform through the capability `cap` of a local

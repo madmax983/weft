@@ -122,7 +122,8 @@ impl Index {
 }
 
 /// The body that the nodes of body `b` splice into: the site of a handled
-/// body (through each handled body on the way), or `b` itself.
+/// body or of a scope body (through each such body on the way, plan stage
+/// F18), or `b` itself.
 pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
     let mut at = b;
     for _ in 0..=p.bodies.len() {
@@ -130,11 +131,50 @@ pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
             return at;
         };
         match (x.kind, x.parent) {
-            (BodyKind::Handled(_), Some(site)) => at = site,
+            (BodyKind::Handled(_) | BodyKind::Scope(_), Some(site)) => at = site,
             _ => return at,
         }
     }
     at
+}
+
+/// True if body `b` splices into a function or a test body.
+///
+/// `b` is such a body, or a handled body or a scope body whose site is one (through each
+/// such body on the way). A scope and the task terminators are in scope
+/// only there (plan stage F18).
+pub fn spliceable(p: &Program, b: BodyId) -> bool {
+    p.body(splice_root(p, b))
+        .is_some_and(|r| matches!(r.kind, BodyKind::Fn(_) | BodyKind::Test(_)))
+}
+
+/// True if the spawn site `site` of body `b` starts its task in a scope
+/// whose scope body is `b` or a body that `b` splices into (plan stage
+/// F18): the facts of the body see each task of the scope.
+pub fn own_spawn(p: &Program, b: BodyId, site: weft_ir::SpawnId) -> bool {
+    let Some(sb) = p
+        .spawns
+        .get(site.index())
+        .and_then(|d| d.scope)
+        .and_then(|k| p.scopes.get(k.index()))
+        .map(|d| d.body)
+    else {
+        return false;
+    };
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        if at == sb {
+            return true;
+        }
+        let Some(x) = p.bodies.get(at.index()) else {
+            return false;
+        };
+        match (x.kind, x.parent) {
+            (BodyKind::Handled(_) | BodyKind::Scope(_), Some(site)) => at = site,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The bodies whose nodes splice into body `root` (`root` first), in the

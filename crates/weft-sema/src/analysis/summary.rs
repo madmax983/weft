@@ -284,6 +284,17 @@ pub struct Summary {
     /// The tasks that the body starts in a scope that it does not own
     /// (stage F18 fills this part).
     pub tasks: Vec<u32>,
+    /// The body can start a pinned task (a task that captures a
+    /// nonportable value, writes through a reference that is not `@ uniq`,
+    /// or runs code that the analysis does not follow), or it calls a
+    /// function that can: a task that runs the body is pinned too (part
+    /// `pins` of the signature, plan stage F18).
+    pub pins: bool,
+    /// The task handles of the interface (parameters of a function,
+    /// captures of a closure) that the body joins on each path to its
+    /// `Return` (a must part; plan stage F18, O3-9): a run node ends their
+    /// tasks.
+    pub joins: BTreeSet<u32>,
     /// The value of `_0`.
     pub ret: Ret,
     /// The values that the body writes behind a reference parameter.

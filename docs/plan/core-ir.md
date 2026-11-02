@@ -1404,6 +1404,34 @@ with the group forced on, report only).
 - Do: the code above. Group E stays off; gate preview.
 - Gate: the common gates.
 - Exit: the tests pass.
+- As built (group E stays off; the gate with `--groups ABCDE` is a preview):
+  `analysis/tasks.rs` runs a scope body from the state before the `scope` (the scope
+  body splices into its site: `handlers::splice_root`, `NodeTable::splice_scopes`,
+  `Frames::past_scope`), runs a task body at its spawn as a closure run with no
+  arguments, and keeps the task sites of each handle (`AbsVal::tasks`, may) with the
+  sites whose handles left the values of the component (`State::lost_tasks`: a call
+  argument, a store behind a reference, a `detach`, an overwrite, the end of a local).
+  A `join` ends each site of its handle that no other value holds and that is not
+  lost (`tasks::must_join`, V096). The templates (`templates::spawn`, `join`,
+  `scope_wait`, `detach`, `scope_main`, `scope_exit`, `scope_unwind`, `task_ends`)
+  give `spawned_at`, `task_reads`/`task_writes` (the changes and reads of the run at
+  the spawn, without the places of a caller and the environment of the task),
+  `captures`, `mut_through`, `kept` (not for a variable that a captured reference
+  points into), `joined_at` at a `join`, at `ScopeWait` and at the `UnwindValue` of
+  the `ScopeCap` local (V084), `lends_mut` of the writes of an ended task at the node
+  after its end, the later values of a `ByRef` or `Kept` capture, and the drop pair of
+  `detach` (one W0601, no W0602). The summary part `joins` (the task handle
+  parameters and captures that a body joins on each path to `Return`) ends tasks at a
+  call of a callee or a closure (O3-9), and a `Consume` of an empty variant ends the
+  tasks that only its value holds. The summary part `pins` replaces the old part.
+  Not in scope until F19 (fallback): `fork`, a spawn on a scope that the body does not
+  own (in a closure, a clause, a parameter), a task that runs code of a caller or runs
+  a value more than once, a task that performs an operation of an enclosing `handle`
+  or of a caller (W0314; `Fail` goes to `join` and `ScopeWait`), `sim.run`,
+  `with_timeout`. Tests: `crates/weft-check/tests/ir_tasks.rs` (data
+  `tests/data/tasks/`), `factgen_units.rs` (kept, the ends of a scope, the must rule,
+  part `joins`), and the ignored corpus preview of `programs_ir.rs`. Probes
+  `tests/gate/probes/fixes/f18/` with claims (stage F18, off).
 
 #### F19 `fork`, `sim.run`, `with_timeout`, W0314; group E on
 

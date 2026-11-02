@@ -5967,3 +5967,131 @@ repro = [
     "tests/gate/probes/fixes/f17/row_mid/r06_row_mid_closure_runs_g_then_clears_c.wf",
 ]
 note = "the clean twin of the closure case of D-ROW-MID"
+
+# ----------------------------------------------------------------------
+# Stage F18: tasks (group E, part 1). Group E is a preview until stage F19,
+# so these claims are off (F18 is not in `done`).
+
+[[claim]]
+finding = "O3-4"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/o34_statement_spawn.wf"]
+code = "W0601"
+note = "a spawn statement gives a linear result to its TaskResult local, and nothing consumes it"
+
+[[claim]]
+finding = "F3-7"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/scope/f37_scope_value.wf"]
+code = "W0602"
+note = "the linear value of a scope body is live across ScopeWait, which can abort"
+
+[[claim]]
+finding = "V084"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/scope/v084_scope_abort.wf"]
+note = "the cleanup chain of a scope body cancels and joins its tasks (UnwindValue of the ScopeCap local)"
+
+[[claim]]
+finding = "issues-N1"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/f36_detach.wf"]
+exact = ["W0601"]
+note = "the drop pair of `detach` ends at the next node: one W0601, no W0602"
+
+[[claim]]
+finding = "O3-6"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/rc/o36_rc_handle.wf"]
+code = "W0405"
+note = "a task reads through an Rc handle that the parent moves, rebinds or ends (no generic callee)"
+
+[[claim]]
+finding = "V096"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/join/v096_must_set.wf"]
+code = "W0405"
+note = "a join does not end a task that another handle can hold"
+
+[[claim]]
+finding = "O3-9"
+kind = "fp"
+verdict = "one-rule"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/join/o39_joins.wf"]
+note = "a join through a callee, a tuple, an Option and a closure ends the task (no generic `id`)"
+
+[[claim]]
+finding = "F18-RESULT"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/f04_scope_tail_linear_task.wf"]
+code = "W0601"
+note = "a spawn as the tail of a scope body gives a linear result that nothing consumes"
+
+[[claim]]
+finding = "F18-RESULT"
+kind = "sound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/f04_scope_tail_linear_task_c.wf"]
+note = "the clean twin: the result of the tail spawn is plain data"
+
+[[claim]]
+finding = "F18-JOIN"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/fixes/f18/join/a02_tuple_two.wf",
+    "tests/gate/probes/fixes/f18/join/a03_struct_field.wf",
+    "tests/gate/probes/fixes/f18/join/a04_option_none_arm.wf",
+    "tests/gate/probes/fixes/f18/join/k01_closure_join_twice.wf",
+    "tests/gate/probes/fixes/f18/join/k03_callee_detach.wf",
+    "tests/gate/probes/fixes/f18/join/k04_callee_join_one_path.wf",
+    "tests/gate/probes/fixes/f18/join/k05_callee_chain_join.wf",
+    "tests/gate/probes/fixes/f18/join/k06_closure_two_handles_one_joined.wf",
+]
+code = "W0405"
+note = "the task still runs at the access: the handle is not joined there, or a callee or a closure detaches it"
+
+[[claim]]
+finding = "F18-JOIN"
+kind = "fp"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/fixes/f18/join/a02_tuple_two_c.wf",
+    "tests/gate/probes/fixes/f18/join/a03_struct_field_c.wf",
+    "tests/gate/probes/fixes/f18/join/a04_option_none_arm_c.wf",
+    "tests/gate/probes/fixes/f18/join/k01_closure_join_twice_c.wf",
+    "tests/gate/probes/fixes/f18/join/k03_callee_detach_c.wf",
+    "tests/gate/probes/fixes/f18/join/k04_callee_join_one_path_c.wf",
+    "tests/gate/probes/fixes/f18/join/k05_callee_chain_join_c.wf",
+    "tests/gate/probes/fixes/f18/join/k06_closure_two_handles_one_joined_c.wf",
+]
+note = "a join through a pattern, a callee or a closure ends the task before the access (O3-9)"

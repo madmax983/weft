@@ -14,8 +14,8 @@
 //! destination has no abort edge. A handled body splices into its site
 //! ([`NodeTable::splice`], plan stage F14), with the `Landing` of an abort to
 //! its handler, and the `Copy` nodes of the re-entry edges of a clause that
-//! runs more than once (plan stage F16). The splice of a scope body (F18)
-//! comes later.
+//! runs more than once (plan stage F16). A scope body splices into its
+//! site in the same way, with no `Landing` (plan stage F18).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -224,10 +224,14 @@ fn stmt_span(b: &Body, s: &weft_ir::Stmt) -> Span {
         {
             return span(b.origin.span);
         }
+        // The end of the `TaskResult` local of a spawn statement has the
+        // span of the spawn (plan stage F18): W0601 of a linear result is
+        // there.
         if let Some(d) = d.filter(|d| {
             matches!(
                 d.kind,
                 weft_ir::LocalKind::Temp(weft_ir::TempKind::Discarded)
+                    | weft_ir::LocalKind::TaskResult(_)
             )
         }) {
             return span(d.origin.span);
@@ -458,9 +462,13 @@ impl NodeTable {
             self.chain(facts, &mut last, n, body, block, dest);
         }
         let name = term_name(&blk.term.kind);
-        // The handled body runs between `Main` and `Exit` of a `handle`
-        // (the splice, [`NodeTable::splice`]): no edge from `Main` to `Exit`.
-        let handle = matches!(blk.term.kind, TermKind::Handle { .. });
+        // The handled body runs between `Main` and `Exit` of a `handle`,
+        // and the scope body between `Main` and `Exit` of a `scope` (the
+        // splice, [`NodeTable::splice`]): no edge from `Main` to `Exit`.
+        let handle = matches!(
+            blk.term.kind,
+            TermKind::Handle { .. } | TermKind::Scope { .. }
+        );
         for phase in normal_phases(&blk.term.kind) {
             if handle && phase == Phase::Exit {
                 last = None;
@@ -478,12 +486,13 @@ impl NodeTable {
                 format!("{name} {}", phase.name())
             };
             let label = callee.map_or(kind.as_str(), String::as_str);
-            let n = self.node(
-                facts,
-                key,
-                span(blk.term.origin.span),
-                [label, &kind, &detail],
-            );
+            // `ScopeWait` has the span of the `scope` (its body), as the
+            // scope end of the old lowering (plan stage F18).
+            let at = match blk.term.kind {
+                TermKind::ScopeWait { .. } => span(b.origin.span),
+                _ => span(blk.term.origin.span),
+            };
+            let n = self.node(facts, key, at, [label, &kind, &detail]);
             if handle && phase == Phase::Exit {
                 last = Some(n);
                 continue;
@@ -589,7 +598,11 @@ impl NodeTable {
         };
         let detail = format!("b{} bb{}", body.0, block.0);
         let name = term_name(kind);
-        for dst in dests {
+        // The `Main` node of a `scope` aborts past the function only (a
+        // cancel): an abort of the scope body goes through its cleanup
+        // chain to the cleanup chain of the site (plan stage F18).
+        let scope = matches!(kind, TermKind::Scope { .. });
+        for dst in dests.iter().filter(|d| !scope || matches!(d, Dest::Past)) {
             let d = dst.id();
             let mut prev = main;
             for phase in abort_phases(kind, dst.value()).into_iter().skip(1) {
@@ -621,6 +634,7 @@ impl NodeTable {
         let Some(b) = p.bodies.get(site.index()) else {
             return;
         };
+        self.splice_scopes(p, facts, site, b);
         for (bi, blk) in b.blocks.iter().enumerate() {
             let TermKind::Handle {
                 handler, unwind, ..
@@ -695,6 +709,75 @@ impl NodeTable {
                 let end = NodeKey {
                     body: hb,
                     block: h.unwind_exit,
+                    at: TERM,
+                    phase: Phase::Main,
+                    dest: d,
+                };
+                if let (Some(from), Some(to)) = (self.get(end), self.first(site, *u, d)) {
+                    facts.cfg_edge.push((from, to));
+                }
+            }
+        }
+    }
+
+    /// The splice of each scope body of the `scope` terminators of body
+    /// `site` (body `b`; `docs/ir.md` 6.5, plan stage F18): an edge from
+    /// `Main` of the `scope` to the entry of the scope body, from each
+    /// `Return` of the scope body to `Exit` of the `scope`, and from the end
+    /// of the cleanup chain of the scope body for each destination to the
+    /// copy of the cleanup block of the `scope` for that destination. No
+    /// clause stops an abort there: a scope has no `Landing`.
+    fn splice_scopes(&self, p: &Program, facts: &mut FnFacts, site: BodyId, b: &Body) {
+        for (bi, blk) in b.blocks.iter().enumerate() {
+            let TermKind::Scope { scope, unwind, .. } = &blk.term.kind else {
+                continue;
+            };
+            if blk.cleanup {
+                continue;
+            }
+            let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+            let Some(sb) = p.scopes.get(scope.index()).map(|d| d.body) else {
+                continue;
+            };
+            let Some(s) = p.bodies.get(sb.index()) else {
+                continue;
+            };
+            let at = |phase| NodeKey {
+                body: site,
+                block,
+                at: TERM,
+                phase,
+                dest: NORMAL,
+            };
+            if let (Some(main), Some(first)) =
+                (self.get(at(Phase::Main)), self.first(sb, s.entry, NORMAL))
+            {
+                facts.cfg_edge.push((main, first));
+            }
+            if let Some(exit) = self.get(at(Phase::Exit)) {
+                for (ri, rb) in s.blocks.iter().enumerate() {
+                    if rb.cleanup || !matches!(rb.term.kind, TermKind::Return) {
+                        continue;
+                    }
+                    let r = NodeKey {
+                        body: sb,
+                        block: BlockId(u32::try_from(ri).unwrap_or(u32::MAX)),
+                        at: TERM,
+                        phase: Phase::Main,
+                        dest: NORMAL,
+                    };
+                    if let Some(n) = self.get(r) {
+                        facts.cfg_edge.push((n, exit));
+                    }
+                }
+            }
+            let Some(u) = unwind else {
+                continue;
+            };
+            for d in self.copies(sb, s.unwind_exit) {
+                let end = NodeKey {
+                    body: sb,
+                    block: s.unwind_exit,
                     at: TERM,
                     phase: Phase::Main,
                     dest: d,

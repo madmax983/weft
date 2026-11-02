@@ -343,7 +343,14 @@ fn check_supported(
                     return no(Group::D, "a handler in a closure body (stage F16)");
                 }
             }
-            BodyKind::Scope(_) => return no(Group::E, "a task scope (stage F18)"),
+            // A scope body splices into its site (plan stage F18), if the
+            // site is a function or a test body, or a body that splices
+            // into one.
+            BodyKind::Scope(_) => {
+                if !handlers::spliceable(p, bid) {
+                    return no(Group::E, "a task scope in a nested body (stage F19)");
+                }
+            }
         }
         if b.locals.iter().any(|d| tys.mentions_param(d.ty)) {
             return no(Group::F, "a type parameter (stage F20)");
@@ -423,7 +430,23 @@ fn check_supported(
                         }
                     }
                 }
-                _ => return no(Group::E, "a task (stage F18)"),
+                // The task terminators of a body that splices into a
+                // function or a test body (plan stage F18). A spawn needs
+                // its own scope in the bodies that splice there.
+                // A `join` or a `detach` in a closure body ends a handle of
+                // the interface (part `joins`, O3-9).
+                TermKind::ScopeWait { .. } | TermKind::Join { .. } | TermKind::Detach { .. }
+                    if handlers::spliceable(p, bid)
+                        || (p.closure_of(bid).is_some()
+                            && !matches!(blk.term.kind, TermKind::ScopeWait { .. })) => {}
+                TermKind::Spawn { site, .. }
+                    if handlers::spliceable(p, bid) && handlers::own_spawn(p, bid, *site) => {}
+                TermKind::Scope { .. } if handlers::spliceable(p, bid) => {}
+                TermKind::Fork { .. } => return no(Group::E, "a `fork` (stage F19)"),
+                TermKind::Spawn { .. } => {
+                    return no(Group::E, "a task of a scope that the body does not own (stage F19)")
+                }
+                _ => return no(Group::E, "a task in a nested body (stage F19)"),
             }
         }
     }
@@ -531,6 +554,9 @@ pub struct Emitted {
     /// The capability of each local handler of the component in the facts
     /// (`performs_at`). The fact oracle reads it (plan stage F17.2).
     pub handler_caps: Vec<(weft_ir::HandlerId, weft_facts::CapId)>,
+    /// The task handle parameters that the entry body joins on each path
+    /// (part `joins` of the summary, plan stage F18).
+    pub joins: Vec<u32>,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -625,8 +651,18 @@ pub fn emit_parts(
         }
         None => (Vec::new(), None),
     };
-    decls::tasks(p, &comp, facts);
-    let init = decls::entry_state(p, entry, &params).map_err(|e| unsupported(&e))?;
+    let task_ids = decls::tasks(p, &comp, facts);
+    let mut init = decls::entry_state(p, entry, &params).map_err(|e| unsupported(&e))?;
+    // A task handle parameter holds a task of a caller (plan stage F18).
+    for (j, &l) in body.params.iter().enumerate() {
+        let task = body
+            .local(l)
+            .is_some_and(|d| crate::analysis::tasks::is_task(&tys, d.ty));
+        if task {
+            let j = u32::try_from(j).unwrap_or(u32::MAX);
+            crate::analysis::tasks::add_iface(&mut init, (entry, l), &[], j);
+        }
+    }
     let mut cycles = crate::analysis::widen::Cycles::of(p, &comp);
     cycles.add_handlers(p, &comp, &frames);
     cycles.add_rows(p, &tys, sums, &comp);
@@ -668,6 +704,10 @@ pub fn emit_parts(
     };
     let mut uniq: BTreeMap<weft_facts::VarId, bool> = BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
+    let has_tasks = !task_ids.is_empty();
+    hx.task_ids = task_ids;
+    hx.no_runtime = a.bodies.iter().any(|b| b.facts.no_runtime);
+    let joins: Vec<u32>;
     let stored = {
         let mut em = templates::Em {
             p,
@@ -698,6 +738,16 @@ pub fn emit_parts(
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
+        if has_tasks {
+            templates::task_ends(&mut em);
+        }
+        let exits = return_nodes(&table, entry, body);
+        joins = crate::analysis::tasks::must_joins(
+            &em.facts.cfg_edge,
+            entry_node,
+            &exits,
+            &em.hx.iface_joins,
+        );
         (
             em.stored,
             em.aborts,
@@ -907,6 +957,7 @@ pub fn emit_parts(
         }),
         closures: closure_sums,
         handler_caps,
+        joins,
     })
 }
 
@@ -1166,6 +1217,29 @@ fn closure_summary(
             let mut init = decls::entry_state(p, cb, &params.entry).map_err(|e| unsupported(&e))?;
             if let Some(&e) = body.params.first() {
                 init.write((cb, e), &[], env.clone());
+                // A task handle that the closure captures by move holds a
+                // task of the maker (plan stage F18).
+                for (k, cap) in p
+                    .closure_of(cb)
+                    .map(|(_, d)| d.captures.as_slice())
+                    .unwrap_or_default()
+                    .iter()
+                    .enumerate()
+                {
+                    let maker = p.closure_of(cb).map(|(_, d)| d.maker);
+                    let task = maker
+                        .and_then(|m| alpha::place_ty(p, cx.tys, m, &cap.source))
+                        .is_some_and(|t| crate::analysis::tasks::is_task(cx.tys, t));
+                    if task && cap.mode == weft_ir::CaptureMode::ByMove {
+                        let k = u32::try_from(k).unwrap_or(u32::MAX);
+                        crate::analysis::tasks::add_iface(
+                            &mut init,
+                            (cb, e),
+                            &[crate::analysis::PathStep::Field(k)],
+                            k,
+                        );
+                    }
+                }
             }
             let states = crate::analysis::run(&mut cx, cb, init).map_err(|e| unsupported(&e))?;
             (env, states)
@@ -1227,6 +1301,12 @@ fn closure_summary(
         )
     };
     let rebind_nodes = rebind_nodes(p, &table, cb);
+    let joins = crate::analysis::tasks::must_joins(
+        &facts.cfg_edge,
+        en,
+        &return_nodes(&table, cb, body),
+        &hx.iface_joins,
+    );
     let ret_linear = crate::analysis::summarize::ret_linear(p, &tys, &returns, cb);
     let mut sum = crate::analysis::summarize::closure(
         p,
@@ -1244,6 +1324,7 @@ fn closure_summary(
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
             cap_performs: &hx.cap_performs,
+            joins: &joins,
         },
     );
     sum.ret.linear = ret_linear;
@@ -2133,11 +2214,14 @@ fn emit_block(
         return Ok(st);
     };
     // The state at a `Return` of the function or closure body (a handled
-    // body and a clause give their value to the `handle`).
+    // body and a clause give their value to the `handle`, a scope body to
+    // the `scope`).
     let own_return = em.p.body(bid).is_some_and(|b| {
         !matches!(
             b.kind,
-            weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Clause(..)
+            weft_ir::BodyKind::Handled(_)
+                | weft_ir::BodyKind::Clause(..)
+                | weft_ir::BodyKind::Scope(_)
         )
     });
     if matches!(blk.term.kind, weft_ir::TermKind::Return) && dest == NORMAL && own_return {
@@ -2202,6 +2286,7 @@ fn emit_block(
             };
             templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
+            templates::call_joins(em, &nodes, &st, &blk.term.kind)?;
         }
         weft_ir::TermKind::Perform { cap, .. } => {
             let nodes = templates::CallNodes {
@@ -2239,6 +2324,58 @@ fn emit_block(
         }
         weft_ir::TermKind::Handle { handler, dest, .. } => {
             emit_handle(em, table, frames, &st, block, n, (*handler, dest))?;
+        }
+        weft_ir::TermKind::Scope { scope, dest, .. } => {
+            emit_scope(em, table, frames, &st, block, n, (*scope, dest))?;
+        }
+        weft_ir::TermKind::Spawn {
+            site,
+            scope,
+            task,
+            dest,
+            ..
+        } => {
+            templates::spawn(
+                em,
+                n,
+                &st,
+                block,
+                (*site, scope, task, dest.as_ref()),
+                blk.term.origin.span,
+            )?;
+        }
+        weft_ir::TermKind::Join { task, dest, .. } => {
+            let nodes = templates::CallNodes {
+                main: n,
+                ret: table.get(at(Phase::Ret, NORMAL)),
+                frame_end: None,
+                aborts: Vec::new(),
+                may_abort: !dests.is_empty(),
+                values,
+            };
+            templates::join(em, &nodes, &st, task, dest)?;
+            handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
+        }
+        weft_ir::TermKind::ScopeWait {
+            scope,
+            orphans,
+            next,
+            ..
+        } => {
+            let nodes = templates::CallNodes {
+                main: n,
+                ret: table.first(bid, *next, NORMAL),
+                frame_end: None,
+                aborts: Vec::new(),
+                may_abort: !dests.is_empty(),
+                values,
+            };
+            templates::scope_wait(em, &nodes, &st, scope, orphans)?;
+            handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
+        }
+        weft_ir::TermKind::Detach { task, next } => {
+            let after = table.first(bid, *next, NORMAL);
+            templates::detach(em, n, &st, block, task, after)?;
         }
         _ => templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?,
     }
@@ -2387,6 +2524,77 @@ fn emit_handle(
             em.facts,
         );
         em.hx.landings.push((h, landing));
+    }
+    Ok(())
+}
+
+/// The `Main` node of each `Return` of body `bid` (`b`) on the normal path.
+fn return_nodes(
+    table: &nodes::NodeTable,
+    bid: weft_ir::BodyId,
+    b: &weft_ir::Body,
+) -> Vec<weft_facts::NodeId> {
+    b.blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, x)| !x.cleanup && matches!(x.term.kind, weft_ir::TermKind::Return))
+        .filter_map(|(i, _)| {
+            table.get(nodes::NodeKey {
+                body: bid,
+                block: weft_ir::BlockId(u32::try_from(i).unwrap_or(u32::MAX)),
+                at: nodes::TERM,
+                phase: nodes::Phase::Main,
+                dest: nodes::NORMAL,
+            })
+        })
+        .collect()
+}
+
+/// The templates of the `scope` of scope `k` at the end of block `block`,
+/// whose `Main` node is `n`, from the state `st` before it (plan stage F18,
+/// `docs/ir.md` 6.4 and 6.5): `Main`; the scope body, with the states of
+/// its analysis from the state before the `scope`; then `Exit` in the state
+/// at the end of the scope body, and `FrameEnd` in the state after it.
+fn emit_scope(
+    em: &mut templates::Em<'_>,
+    table: &nodes::NodeTable,
+    frames: &frames::Frames,
+    st: &crate::analysis::State,
+    block: weft_ir::BlockId,
+    n: weft_facts::NodeId,
+    (k, dest): (weft_ir::ScopeId, &weft_ir::Place),
+) -> Result<(), alpha::AlphaError> {
+    use nodes::{NodeKey, Phase, NORMAL, TERM};
+    let site = em.body;
+    let p = em.p;
+    let out = crate::analysis::tasks::scope_run(&mut em_cx(em), st, k)?;
+    let sb = out.body;
+    let sbody = p
+        .body(sb)
+        .ok_or_else(|| alpha::AlphaError::BadPlace(format!("no body b{}", sb.0)))?;
+    let may_abort = !frames.dests(site, block).is_empty();
+    templates::scope_main(em, n, sb, may_abort)?;
+    let saved = (em.ret_places.take(), em.cleanup, em.skip_s);
+    em.body = sb;
+    let r = emit_blocks(em, table, frames, &out.states, sbody);
+    em.body = site;
+    em.ret_places = saved.0;
+    em.cleanup = saved.1;
+    em.skip_s = saved.2;
+    r?;
+    let at = |phase| NodeKey {
+        body: site,
+        block,
+        at: TERM,
+        phase,
+        dest: NORMAL,
+    };
+    if let (Some(x), Some(ex)) = (table.get(at(Phase::Exit)), &out.exit) {
+        em.holders.before(x, ex, em.facts);
+        templates::scope_exit(em, x, ex, sb, dest, &out.value)?;
+    }
+    if let Some(fe) = table.get(at(Phase::FrameEnd)) {
+        em.holders.before(fe, &out.after, em.facts);
     }
     Ok(())
 }

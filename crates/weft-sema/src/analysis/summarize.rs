@@ -267,8 +267,25 @@ pub fn summarize(
             if let TermKind::Assert { .. } = blk.term.kind {
                 out.assert = true;
             }
+            // A child failure at a `join` or at `ScopeWait` that no local
+            // `Fail` handler stops raises past the function (plan stage F18).
+            if matches!(
+                blk.term.kind,
+                TermKind::Join { .. } | TermKind::ScopeWait { .. }
+            ) && !blk.cleanup
+            {
+                let ds = crate::factgen::frames::destinations(ir, tys, sums, b, &blk.term.kind);
+                if !ds.is_empty()
+                    && !ds
+                        .iter()
+                        .any(|d| matches!(d, crate::factgen::frames::Dest::Handler { .. }))
+                {
+                    out.raises = true;
+                }
+            }
             let TermKind::Call {
                 callee: Callee::Fn(f, _),
+                caps,
                 ..
             } = &blk.term.kind
             else {
@@ -277,7 +294,16 @@ pub fn summarize(
             let Ok(s) = sums.get(*f) else {
                 continue;
             };
-            if s.aborts.contains(&Abort::Raises) {
+            // In a program with tasks, a local `Fail` handler stops the
+            // failure of the callee (as the old lowering, `raise_here`;
+            // plan stage F18). The other programs keep the rule of F7.
+            let caught = !ir.spawns.is_empty()
+                && matches!(caps, weft_ir::CapArgs::Lexical(e)
+                if matches!(
+                    crate::factgen::frames::resolve(ir, tys, *e, "Fail", true),
+                    crate::factgen::frames::Dest::Handler { .. }
+                ));
+            if s.aborts.contains(&Abort::Raises) && !caught {
                 out.raises = true;
             }
             if s.aborts.contains(&Abort::Assert) {
@@ -286,9 +312,29 @@ pub fn summarize(
             if s.unknown_multi {
                 out.multi = true;
             }
+            // A program with no spawn keeps the part of the old inference
+            // (a callee of the runtime that pins, `http.serve`).
+            if s.pins && !ir.spawns.is_empty() {
+                out.pins = true;
+            }
         }
     }
+    out.pins |= task_pins(facts);
+    out.joins.extend(fv.joins.iter().copied());
     out
+}
+
+/// True if a task of the facts `facts` is pinned for a reason in the body.
+///
+/// The rule `pinned` of `spec/weft.dl` (plan stage F18): a task captures a nonportable value, writes
+/// through a captured reference that is not `@ uniq`, or runs code that the
+/// analysis does not follow.
+pub fn task_pins(facts: &FnFacts) -> bool {
+    !facts.opaque.is_empty()
+        || facts.captures.iter().any(|&(t, v)| {
+            let info = facts.var(v);
+            info.nonportable || (facts.mut_through.contains(&(t, v)) && !info.uniq)
+        })
 }
 
 /// True if a body can give a place of its own frame to an operation of a
@@ -394,6 +440,9 @@ pub struct FnParts<'a> {
     /// of the effect (plan stage F16). The summary performs through `Cap(k)`: the node that runs the
     /// closure runs the clause of the handler of the capability.
     pub cap_performs: &'a [(weft_facts::NodeId, u32, String)],
+    /// The task handles of the interface that the body joins on each path
+    /// (part `joins`, plan stage F18).
+    pub joins: &'a [u32],
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -1177,6 +1226,8 @@ pub fn closure(
             .any(|&(m, q, _)| m == n && place(q).is_none())
     });
     out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
+    out.pins = task_pins(facts);
+    out.joins = fv.joins.iter().copied().collect();
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can. A perform
     // through a captured capability is a `multi` point of the node that

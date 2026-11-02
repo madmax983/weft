@@ -350,6 +350,12 @@ pub struct State {
     /// store put there (may; a weak update). The places that their
     /// environments point into are in `behind`.
     behind_fns: Rc<BTreeMap<PlaceId, BTreeSet<FnVal>>>,
+    /// The task sites whose handle a value can hold that no local of the
+    /// component holds (may, plan stage F18): a handle that went to a
+    /// callee, behind a reference, into a task, or that a `detach`
+    /// consumed. A task of such a site can still run, so a `join` of a
+    /// handle of the site does not end each task of the site.
+    lost: Rc<BTreeSet<SpawnId>>,
 }
 
 /// The number of locals of one chunk of a [`Chunked`] map.
@@ -574,6 +580,14 @@ impl State {
     /// update): it can and must hold a value now, and its parts get the
     /// parts of `v`.
     pub fn write(&mut self, key: Key, path: &[PathStep], v: Tree) {
+        // A task handle that the new value overwrites: its task runs on, and
+        // no value holds it now (plan stage F18).
+        let old: Vec<SpawnId> = self
+            .vals
+            .get(key)
+            .map(|t| t.get(path).flat().tasks.into_iter().collect())
+            .unwrap_or_default();
+        self.lose_tasks(old);
         Rc::make_mut(self.vals.entry(key, || Rc::new(Tree::none()))).set(path, v);
         self.may.remove_below(key, path);
         self.must.remove_below(key, path);
@@ -720,6 +734,7 @@ impl State {
                 out.holes.0.insert(*k, Rc::clone(ps));
             }
         }
+        out.lose_tasks(o.lost.iter().copied());
         out
     }
 
@@ -785,7 +800,25 @@ impl State {
                 changed |= self.store_fns_behind(*q, fns.iter().cloned());
             }
         }
+        changed |= self.lose_tasks(o.lost.iter().copied());
         changed
+    }
+
+    /// Adds the task sites `ts` to the sites whose handle no local holds
+    /// (plan stage F18). Returns true if the set changed.
+    pub fn lose_tasks(&mut self, ts: impl IntoIterator<Item = SpawnId>) -> bool {
+        let new: Vec<SpawnId> = ts.into_iter().filter(|t| !self.lost.contains(t)).collect();
+        if new.is_empty() {
+            return false;
+        }
+        Rc::make_mut(&mut self.lost).extend(new);
+        true
+    }
+
+    /// The task sites whose handle a value can hold that no local of the
+    /// component holds (plan stage F18).
+    pub fn lost_tasks(&self) -> &BTreeSet<SpawnId> {
+        &self.lost
     }
 
     /// Joins the heap slots of `o` (`behind`, `behind_fns`) into `self`; the
@@ -802,6 +835,7 @@ impl State {
                 changed |= self.store_fns_behind(*q, fns.iter().cloned());
             }
         }
+        changed |= self.lose_tasks(o.lost.iter().copied());
         changed
     }
 

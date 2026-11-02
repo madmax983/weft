@@ -1,0 +1,9 @@
+// F18-RESULT: a spawn as the tail of a scope body gives a linear result that nothing consumes
+linear struct Tx { id: u64 }
+fn main() / async {
+    scope { s =>
+        print(0)
+        s.spawn(|| Tx { id: 1 })
+    }
+    print(1)
+}

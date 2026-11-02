@@ -1,0 +1,11 @@
+// F18-JOIN (clean twin): a join through a pattern, a callee or a closure ends the task before the access (O3-9)
+fn maybe(t: Task<()>, c: bool) { if c { t.join() } else { t.join() } }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        maybe(t, false)
+        v.push(3)
+    }
+}

@@ -416,7 +416,12 @@ fn the_phases_of_each_terminator_follow_ir_6_2() {
 
 /// The analysis and the IR of `src`.
 fn built(src: &str) -> (Analysis, Built) {
-    let a = analyze_source(src, Options::default())
+    built_with(src, Options::default())
+}
+
+/// The analysis and the IR of `src` with the options `opts`.
+fn built_with(src: &str, opts: Options) -> (Analysis, Built) {
+    let a = analyze_source(src, opts)
         .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
     let b = irbuild::build(&a);
     assert!(b.broken.is_empty(), "{:?}", b.broken);
@@ -1203,14 +1208,18 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // The `Copy` node of a `handle` whose clauses can run more than once
         // (plan stages F15, F16): `Post` runs again after it.
         "live" | "handle copy" => (&["cfg_edge", "rebound_at"], &[]),
-        "unwind continuation" | "goto" | "unreachable" | "resume frame end" => (&["cfg_edge"], &[]),
+        "unwind continuation" | "goto" | "unreachable" | "resume frame end" | "scope frame end" => {
+            (&["cfg_edge"], &[])
+        }
         // The end of an abort to a local handler: the frames of the clauses
         // end (plan stage F14).
         "handle landing" => (&["cfg_edge", "releases_at"], &[]),
         // The unwinder finishes the `ByMove` captures of a closure body
         // (stage F11).
         "unwind exit" => (&["cfg_edge"], &["unwound_at"]),
-        "dead" => (&["cfg_edge", "scope_end"], &["unwound_at"]),
+        // The node after a `ScopeWait` (its first `Dead`): the writes of the
+        // tasks of the scope change there (plan stage F18).
+        "dead" => (&["cfg_edge", "scope_end", "lends_mut"], &["unwound_at"]),
         "assign" => (
             &[
                 "cfg_edge",
@@ -1236,13 +1245,20 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         ),
         "drop" => (&["cfg_edge", "reads_at", "rebound_at", "uses"], &[]),
         // Not a use: a pattern moved the parts before it.
-        "consume" => (&["cfg_edge", "moved_at", "moved_part", "rest_linear"], &[]),
+        // A `Consume` of a value with no handle on this path ends the
+        // tasks that only it can hold (O3-9, plan stage F18).
+        "consume" => (
+            &["cfg_edge", "moved_at", "moved_part", "rest_linear", "task"],
+            &[],
+        ),
         "uninit" => (&["cfg_edge", "unset_at"], &[]),
         // A mention reads the pointers and the index locals of its place
         // (stage F9).
         "bounds" | "switch" | "print" | "mention" => (&["cfg_edge", "reads_at", "uses"], &[]),
         // An `on abort` function: the summary of the function at the node,
         // with the root handlers (plan stage F7).
+        // The `UnwindValue` of the `ScopeCap` local of a scope body cancels
+        // and joins the tasks of the scope (V084, plan stage F18).
         "unwind value" => (
             &[
                 "cfg_edge",
@@ -1250,6 +1266,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "reads_at",
                 "mutates_at",
                 "lends_mut",
+                "task",
             ],
             &[],
         ),
@@ -1384,7 +1401,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         "handle exit"
         | "perform abort value (abort)"
         | "call abort value (abort)"
-        | "resume abort value (abort)" => (
+        | "resume abort value (abort)"
+        | "join abort value (abort)"
+        | "scope wait abort value (abort)" => (
             &[
                 "cfg_edge",
                 "uses",
@@ -1426,6 +1445,108 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         "resume frame end (abort)" => (&["cfg_edge", "unwound_at"], &[]),
+        // Tasks (plan stage F18, `docs/ir.md` 6.4). `Main` of a `scope`:
+        // the scope capability binds; the scope can abort (a cancel).
+        "scope" => (&["cfg_edge", "rebound_at", "empty_at", "may_abort"], &[]),
+        // `Exit`: the value of the scope body is used and binds.
+        "scope exit" => (
+            &[
+                "cfg_edge",
+                "uses",
+                "rebound_at",
+                "empty_at",
+                "mutates_at",
+                "reads_at",
+                "moved_at",
+                "overwrites",
+                "unset_at",
+            ],
+            &[],
+        ),
+        // The scope ends its tasks; the `TaskResult` locals get the results;
+        // a child failure runs the `fail` clause of a local handler.
+        "scope wait" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "task",
+                "may_abort",
+                "rebound_at",
+                "empty_at",
+                "performs_at",
+                "releases_at",
+            ],
+            &[],
+        ),
+        // A spawn: the operands, the task (its run at the node), and the
+        // handle (or the `TaskResult` local) binds.
+        "spawn" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "lends_mut",
+                "call",
+                "rebound_at",
+                "empty_at",
+                "overwrites",
+                "task",
+            ],
+            &[],
+        ),
+        // A `join`: the handle moves (the machine takes the task out of its
+        // place), the tasks that only it holds end.
+        "join" => (
+            &[
+                "cfg_edge",
+                "mutates_at",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "task",
+                "may_abort",
+                "performs_at",
+                "releases_at",
+            ],
+            &[],
+        ),
+        // The result binds; the writes of the ended tasks change.
+        "join ret" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "uses",
+                "moved_at",
+                "mutates_at",
+                "reads_at",
+                "overwrites",
+                "lends_mut",
+                "unset_at",
+            ],
+            &[],
+        ),
+        // `detach`: the handle moves; the drop pair of the result.
+        "detach" => (
+            &[
+                "cfg_edge",
+                "mutates_at",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "rebound_at",
+            ],
+            &[],
+        ),
         // A `resume`: its operand, the continuation, and the rest of the
         // handled body (`factgen::handlers::continuations`).
         "resume" => (
@@ -3196,4 +3317,148 @@ fn a_multi_resume_runs_the_code_after_the_perform_again_from_copied_frames() {
     let (w, r) = (var_named(&g, "w"), var_named(&g, "r"));
     assert!(g.rebound_at.contains(&(w, copy[0])));
     assert!(!g.rebound_at.contains(&(r, copy[0])));
+}
+
+/// The options of the `ir` pipeline with the groups A to E on (plan stage
+/// F18: group E is a preview).
+fn abcde() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("ABCDE").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::default()
+    }
+}
+
+const SCOPES: &str = "\
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn join_it(t: Task<()>) { t.join() }
+fn maybe(t: Task<()>, c: bool) { if c { t.join() } else { t.detach() } }
+
+fn kept() / async {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| print(n))
+        }
+        print(0)
+    }
+}
+
+fn work(v: &Vec<u64>) / mut(v), async {
+    scope { s =>
+        let h = s.spawn(|| v.push(1))
+        h.join()
+        s.spawn(|| v.push(2))
+        let d = s.spawn(|| begin())
+        d.detach()
+        v.push(3)
+    }
+}
+
+fn two(v: &Vec<u64>, c: bool) / mut(v), async {
+    scope { s =>
+        let a = s.spawn(|| v.push(1))
+        let b = s.spawn(|| print(1))
+        if c { let x = a; a = b; b = x }
+        a.join()
+        b.join()
+    }
+}
+
+fn main() {}
+";
+
+#[test]
+fn a_task_that_captures_a_kept_variable_keeps_its_root() {
+    // `docs/ir.md` 6.4: `kept(T, root(x))` for each `Kept` capture of the
+    // task; the end of `n` is no free for the task (ADR 0006).
+    let f = ir_facts_with(SCOPES, abcde(), "kept");
+    check_templates(&f, "kept");
+    let n = var_named(&f, "n");
+    assert_eq!(f.spawned_at.len(), 1);
+    let t = f.spawned_at[0].0;
+    assert!(f.captures.contains(&(t, n)), "{:?}", f.captures);
+    let root = f
+        .owner
+        .iter()
+        .find(|(_, v)| *v == n)
+        .map_or_else(|| panic!("no root of `n`"), |(p, _)| *p);
+    assert!(f.kept.contains(&(t, root)), "{:?}", f.kept);
+    assert!(f.task_reads.contains(&(t, root)));
+}
+
+#[test]
+fn a_scope_joins_each_task_at_its_wait_and_on_its_cleanup_chain() {
+    // `ScopeWait` ends each task of the scope; the `UnwindValue` of the
+    // `ScopeCap` local on the cleanup chain cancels and joins them (V084).
+    // A `join` of a handle that must hold its task ends it at `Main`, and
+    // the writes of a task are `lends_mut` after its end.
+    let f = ir_facts_with(SCOPES, abcde(), "work");
+    check_templates(&f, "work");
+    assert_eq!(f.spawned_at.len(), 3);
+    let wait = nodes_labelled(&f, "scope wait");
+    let join = nodes_labelled(&f, "join");
+    let unwind: Vec<NodeId> = nodes_labelled(&f, "unwind value");
+    assert_eq!((wait.len(), join.len()), (1, 1));
+    for &(t, _) in &f.spawned_at {
+        assert!(f.joined_at.contains(&(t, wait[0])), "{t:?}");
+        assert!(unwind.iter().any(|&u| f.joined_at.contains(&(t, u))));
+    }
+    // The tasks in the order of their spawns.
+    let mut order = f.spawned_at.clone();
+    order.sort_by_key(|(_, n)| *n);
+    let h = order[0].0;
+    assert!(f.joined_at.contains(&(h, join[0])));
+    let ret = nodes_labelled(&f, "join ret");
+    let writes: Vec<PlaceId> = f
+        .task_writes
+        .iter()
+        .filter(|(t, _)| *t == h)
+        .map(|(_, p)| *p)
+        .collect();
+    assert!(!writes.is_empty());
+    for p in writes {
+        assert!(f.lends_mut.contains(&(ret[0], p)));
+    }
+    // The detached task runs on: its handle ends at `detach` only.
+    let d = order[2].0;
+    assert!(!f.joined_at.contains(&(d, join[0])));
+}
+
+#[test]
+fn a_join_ends_a_task_only_if_no_other_handle_can_hold_it() {
+    // V096: after the swap `a` and `b` can each hold either task, so the
+    // first `join` ends neither; the second ends both (no other handle
+    // holds them then).
+    let f = ir_facts_with(SCOPES, abcde(), "two");
+    check_templates(&f, "two");
+    let mut join = nodes_labelled(&f, "join");
+    join.sort();
+    assert_eq!(join.len(), 2);
+    assert_eq!(f.spawned_at.len(), 2);
+    for &(t, _) in &f.spawned_at {
+        assert!(!f.joined_at.contains(&(t, join[0])), "{t:?}");
+        assert!(f.joined_at.contains(&(t, join[1])), "{t:?}");
+    }
+}
+
+#[test]
+fn a_function_that_joins_its_handle_parameter_on_each_path_has_part_joins() {
+    // O3-9: `join_it` joins its parameter on each path (part `joins`); a
+    // body that detaches it on one path does not.
+    let (a, b) = built_with(SCOPES, abcde());
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let f = |name: &str| {
+        let i = b
+            .fns
+            .iter()
+            .find(|(k, _)| a.program.fns.get(k.index()).is_some_and(|d| d.name == name))
+            .map_or_else(|| panic!("no `{name}`"), |(_, v)| *v);
+        sums.get(i)
+            .cloned()
+            .unwrap_or_else(|why| panic!("{name}: {why}"))
+    };
+    assert_eq!(f("join_it").joins.iter().copied().collect::<Vec<_>>(), [0]);
+    assert!(f("maybe").joins.is_empty());
 }

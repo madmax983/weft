@@ -1,0 +1,62 @@
+// O3-9: a join through a callee, a tuple, an `Option` (the `None` arm
+// consumes no handle) and a closure ends the task: no W0405 after it.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn join_it(t: Task<()>) { t.join() }
+
+fn direct() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        t.join()
+        v.push(2)
+    }
+}
+
+fn helper() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        join_it(t)
+        v.push(2)
+    }
+}
+
+fn tuple() {
+    let v = mk_v()
+    scope { s =>
+        let p = (s.spawn(|| v.push(1)), 1)
+        let (t, _) = p
+        t.join()
+        v.push(2)
+    }
+}
+
+fn option() {
+    let v = mk_v()
+    scope { s =>
+        let o = Some(s.spawn(|| v.push(1)))
+        match o {
+            Some(t) => t.join(),
+            None => {}
+        }
+        v.push(2)
+    }
+}
+
+fn closure() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        let g = || t.join()
+        g()
+        v.push(2)
+    }
+}
+
+fn main() {
+    direct()
+    helper()
+    tuple()
+    option()
+    closure()
+}

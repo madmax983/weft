@@ -117,6 +117,7 @@ files = [
     "tests/gate/probes/r3/oracle/probes/ta8_spawn_lin_in_fn.wf",
     "tests/gate/probes/r3/interp/probe/g16_spawn_stmt_lin.wf",
     "tests/gate/probes/r3/interp/probe/g16_v.wf",
+    "tests/gate/probes/fixes/f18/result/o34_statement_spawn.wf",
 ]
 finding = "O3-4"
 reason = "linear leak: a spawn in statement position (or as the scope tail) drops a linear task result"

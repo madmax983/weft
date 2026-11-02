@@ -42,9 +42,9 @@
 //! a clause the aborts of the clause past its handler. Stage F15 keeps the
 //! abort to a local handler only if a clause that the node runs can end with
 //! no `resume` (`clause::lands`); [`clause_handlers`] gives the handlers
-//! whose clauses a node runs. The splice of a scope body (F18) comes later.
-//! Until then a capability of a closure environment counts as one of a
-//! caller.
+//! whose clauses a node runs. Until then a capability of a closure
+//! environment counts as one of a caller. Stage F18: a `scope` aborts where
+//! its scope body aborts, and past the function.
 
 use std::collections::BTreeMap;
 
@@ -438,9 +438,17 @@ fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKin
             out.push(Dest::Past);
             out.push(fails(env_of(p, body)));
         }
+        // A scope with no task cannot fail or be cancelled at its end (plan
+        // stage F18, as the old lowering).
         TermKind::ScopeWait { .. } => {
-            out.push(Dest::Past);
-            out.push(fails(site_env_of(p, body)));
+            let k = match p.bodies.get(body.index()).map(|b| b.kind) {
+                Some(BodyKind::Scope(k)) => Some(k),
+                _ => None,
+            };
+            if k.is_none_or(|k| p.spawns.iter().any(|d| d.scope == Some(k))) {
+                out.push(Dest::Past);
+                out.push(fails(site_env_of(p, body)));
+            }
         }
         // A function item or a function parameter runs with the handlers of
         // the call: an effect of its row goes to the handler of the effect in
@@ -819,6 +827,15 @@ impl Frames {
                             f.past_handler(p, *handler)
                         }
                     }
+                    // A `scope` aborts where an abort of its scope body goes,
+                    // and past the function (a cancel, plan stage F18).
+                    TermKind::Scope { scope, unwind, .. } => {
+                        if unwind.is_none() {
+                            Vec::new()
+                        } else {
+                            f.past_scope(p, *scope)
+                        }
+                    }
                     t => {
                         let hs = clause_handlers(p, tys, sums, body, t);
                         if !hs.is_empty() {
@@ -1007,6 +1024,24 @@ impl Frames {
             .flat_map(|(_, ds)| ds.iter().copied())
             .filter(|d| !matches!(d, Dest::Handler { handler, .. } if *handler == h))
             .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The destinations of the abort of the scope body of scope `k`: each
+    /// destination of a terminator of the scope body, and past the
+    /// function (plan stage F18).
+    fn past_scope(&self, p: &Program, k: weft_ir::ScopeId) -> Vec<Dest> {
+        let Some(sb) = p.scopes.get(k.index()).map(|d| d.body) else {
+            return vec![Dest::Past];
+        };
+        let mut out: Vec<Dest> = self
+            .by
+            .range((sb, BlockId(0))..=(sb, BlockId(u32::MAX)))
+            .flat_map(|(_, ds)| ds.iter().copied())
+            .collect();
+        out.push(Dest::Past);
         out.sort();
         out.dedup();
         out

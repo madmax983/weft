@@ -153,8 +153,12 @@ fn unsupported(sig: &FnSig, body: bool) -> Option<&'static str> {
     {
         return Some("a call of a function that runs or keeps function values (stage F12)");
     }
-    if e.pins || !e.tasks.is_empty() || !e.task_runs.is_empty() || !e.task_effects.is_empty() {
-        return Some("a call of a function that starts tasks (stage F18)");
+    // A body gives the parts `pins` and `task_effects` (plan stage F18).
+    if (!body && (e.pins || !e.task_effects.is_empty()))
+        || !e.tasks.is_empty()
+        || !e.task_runs.is_empty()
+    {
+        return Some("a call of a function that starts tasks (stage F19)");
     }
     None
 }
@@ -297,6 +301,11 @@ pub struct Inferred {
     /// The body can give a place of its own frame to an operation of a
     /// caller (`Summary::gives_frame`, plan stage F15).
     pub gives_frame: bool,
+    /// The body can start a pinned task (`Summary::pins`, plan stage F18).
+    pub pins: bool,
+    /// The task handle parameters that the body joins on each path
+    /// (`Summary::joins`, plan stage F18).
+    pub joins: BTreeSet<u32>,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -362,6 +371,13 @@ impl Inferred {
         if o.gives_frame && !self.gives_frame {
             self.gives_frame = true;
             grew = true;
+        }
+        if o.pins && !self.pins {
+            self.pins = true;
+            grew = true;
+        }
+        for &j in &o.joins {
+            grew |= self.joins.insert(j);
         }
         for r in &o.runs {
             grew |= join_run(&mut self.runs, r);
@@ -631,6 +647,8 @@ pub fn build(
     }
     put_parts(&mut s, inf);
     s.gives_frame = inf.gives_frame;
+    s.pins = inf.pins;
+    s.joins.clone_from(&inf.joins);
     s.only_self = inf.named.is_empty()
         && inf.runs.is_empty()
         && !inf.multi
@@ -690,7 +708,10 @@ pub fn put_parts(s: &mut Summary, inf: &Inferred) {
 /// with the text of the parameter and of its steps, at most
 /// [`crate::infer::SIG_PLACE_STEPS`] steps (as the old inference).
 pub fn to_effect_sig(prog: &crate::Program, sum: &Summary) -> EffectSig {
-    let mut out = EffectSig::default();
+    let mut out = EffectSig {
+        pins: sum.pins,
+        ..EffectSig::default()
+    };
     let most = crate::infer::SIG_PLACE_STEPS as usize;
     for (m, _) in &sum.muts {
         let name = |i: u32| {
