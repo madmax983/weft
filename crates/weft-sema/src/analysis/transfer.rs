@@ -2275,7 +2275,9 @@ const TASK_RUN: &str =
 /// True if code of a caller that runs the function value `fv` on another
 /// thread at the same time can race (ADR 0006: W0401, W0403, W0405 of the
 /// old lowering): the value changes or lends a place, or a capture holds a
-/// nonportable value or is a reference to a variable.
+/// nonportable value or is a reference to a variable. A capture of a
+/// capability or a continuation of a local handler is nonportable (W0314,
+/// plan stage F16).
 fn task_unsafe(cx: &mut Cx<'_>, fv: &FnVal) -> bool {
     let sum = match fv {
         FnVal::Closure(c) | FnVal::Made(c) => {
@@ -2284,7 +2286,12 @@ fn task_unsafe(cx: &mut Cx<'_>, fv: &FnVal) -> bool {
                 return true;
             };
             for (k, cap) in decl.captures.iter().enumerate() {
-                if cap.mode == weft_ir::CaptureMode::ByRef {
+                if matches!(
+                    cap.mode,
+                    weft_ir::CaptureMode::ByRef
+                        | weft_ir::CaptureMode::Cap
+                        | weft_ir::CaptureMode::Kont
+                ) {
                     return true;
                 }
                 let k = u32::try_from(k).unwrap_or(u32::MAX);

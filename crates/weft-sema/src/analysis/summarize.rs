@@ -1135,14 +1135,10 @@ pub fn closure(
     // that it gives there (part `runs`; follow-up F13.2 for a closure that a
     // callee made, which runs the values that it holds). The lends of
     // another summary at such a node stay (`Em::own_lends`).
-    // A perform through a captured capability lends its arguments to the
-    // clause, and the clause runs at the node that runs the closure: the
-    // facts of the clause there give its changes (plan stage F16).
     let mut lends: Vec<IPlace> = facts
         .lends_mut
         .iter()
         .filter(|x| !fv.run_nodes.contains(&x.0) || fv.lends.contains(x))
-        .filter(|x| !fv.cap_performs.iter().any(|(n, _, _)| *n == x.0))
         .filter_map(|&(_, r)| place(r).map(|x| x.0))
         .collect();
     lends.sort();

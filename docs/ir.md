@@ -2777,8 +2777,10 @@ preview with `--groups ABCD` until stage F17):
   reference gives a place of the variable), also at a call of a callee that runs the
   closure. The closure gives its frame (`Summary::gives_frame`) only if a perform
   through a captured capability gives a place that is not a place of its interface.
-  The summary of the closure has no `lends` of the arguments of such a perform: the
-  facts of the clause at the run node give its changes. A run
+  These places are exact places (not wildcards): the perform lends them, so a
+  reference that the clause keeps into one of them stays valid at the lend. A
+  closure that captures a capability or a continuation is nonportable: code of a
+  caller that can run it on another thread is stage F18 (W0314). A run
   of such a closure at a node that does not run the clauses of its handler (the
   capability left its handler, W0313) is not in scope until stage F17, and so is a
   closure that captures the capability and leaves the `handle` (in its value, in a

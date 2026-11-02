@@ -1563,7 +1563,7 @@ pub fn given(
         }
     }
     for &q in &app_places {
-        roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
+        roots.push((q, crate::body::roots::STORED));
     }
     roots.sort();
     roots.dedup();
@@ -1618,8 +1618,10 @@ fn given_value(
     for q in transfer::reach_refs(cx, body, st, f)? {
         roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
     }
+    // The places of a perform of the closure are exact places: the perform
+    // lends them (plan stage F16).
     for q in cap_given(cx, (body, block), st)?.1 {
-        roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
+        roots.push((q, crate::body::roots::STORED));
     }
     roots.sort();
     roots.dedup();
@@ -1680,11 +1682,27 @@ fn cap_given(
             continue;
         }
         gives |= a.summary.gives_frame;
-        for r in a.summary.reads.iter().chain(&a.summary.lends) {
+        // A place of a parameter is a place of an argument: the call gives
+        // it with the root of its parameter.
+        let env = |r: &&super::summary::IPlace| {
+            matches!(
+                r.root,
+                super::summary::IRoot::CaptureCell(_)
+                    | super::summary::IRoot::Capture(_)
+                    | super::summary::IRoot::CaptureHeld(_)
+                    | super::summary::IRoot::CaptureDeep(_)
+            )
+        };
+        let places: Vec<&super::summary::IPlace> = a
+            .summary
+            .reads
+            .iter()
+            .chain(&a.summary.lends)
+            .chain(a.summary.muts.iter().map(|m| &m.0))
+            .filter(env)
+            .collect();
+        for r in places {
             out.extend(super::apply::iplaces(cx, &a.sigma, r)?);
-        }
-        for m in &a.summary.muts {
-            out.extend(super::apply::iplaces(cx, &a.sigma, &m.0)?);
         }
     }
     out.sort();
