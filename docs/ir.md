@@ -3808,8 +3808,10 @@ captures the capability of the handler leaves the `handle` if it is in the value
 the site or in a heap slot in the states where the handled body ends (its exit and the
 landing of a clause that ends with no `resume`). The IR gives a closure of the handled
 body each capability in scope, so a closure counts only if its summary performs through
-the capture, runs a function value, or gives one back or away (with no summary, each
-capture of the capability counts). The states of the code of a clause
+the capture, runs a value of a capture that can (with the values of the locals where the
+handled body ends; follow-up F17.1, FP-W0313-RUN of the second review), runs a parameter,
+or gives a function value back or away (with no summary, each capture of the capability
+counts; `clause::performs_cap`). The states of the code of a clause
 after its `resume` are not used: there a local of the site has its value at the resume
 point too. A run of a closure with a captured capability in a clause of the same
 handler (V046: the perform gives the closure to its own handler) is an escape too

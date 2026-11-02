@@ -958,31 +958,6 @@ fn finish_handle(
     // A closure that captures the capability of the handler and leaves the
     // `handle` (in its value, in a local of the site or in a heap slot)
     // takes the capability out of its handler: W0313 of stage F17.
-    // The closure can perform through the capture. The IR gives a closure
-    // of the handled body each capability in scope, so a closure whose
-    // summary does not perform through it, runs no function value and gives
-    // none back or away holds it for nothing. With no summary, each capture
-    // of the capability counts.
-    let sums = cx.sums;
-    let own = |f: &super::FnVal| match f {
-        super::FnVal::Closure(c) | super::FnVal::Made(c) => {
-            p.closures.get(c.index()).is_some_and(|d| {
-                (0..d.captures.len()).any(|k| {
-                    let k = u32::try_from(k).unwrap_or(u32::MAX);
-                    capture_handler(p, *c, k) == Some(h)
-                        && sums.closure(*c).map_or(true, |s| {
-                            s.performs
-                                .iter()
-                                .any(|pf| pf.cap == super::summary::CapIface::Cap(k))
-                                || !s.runs.is_empty()
-                                || !s.put_fns.is_empty()
-                                || !s.ret.fns.is_empty()
-                        })
-                })
-            })
-        }
-        _ => false,
-    };
     // The states where the handled body ends: its exit and the landing of
     // a clause that ends with no `resume`. The code of a clause after its
     // `resume` (`Post`) sees the locals of the site with their values at the
@@ -991,6 +966,11 @@ fn finish_handle(
     // later is a run outside its handler (`transfer::check_cap_apps`).
     let ends: Vec<&State> = r.exit.iter().chain(landing.iter()).collect();
     let site = |k: &super::Key| !inside(p, k.0, hb) && !clauses.iter().any(|&c| inside(p, k.0, c));
+    // The closure can perform through the capture (`performs_cap`). The IR
+    // gives a closure of the handled body each capability in scope, so a
+    // closure that holds it for nothing does not count.
+    let sums = cx.sums;
+    let own = |f: &super::FnVal| performs_cap(p, sums, h, f, &ends, RUN_DEPTH_CAP);
     let local = ends
         .iter()
         .flat_map(|s| s.trees())
@@ -2027,4 +2007,76 @@ pub fn resume(
         info.exit.as_ref(),
         &info.resumed,
     )
+}
+
+/// The most levels of function values that [`performs_cap`] follows.
+const RUN_DEPTH_CAP: usize = 8;
+
+/// True if the function value `f` can perform through the capability of
+/// handler `h` (W0313, plan stage F17): a closure that captures the
+/// capability and whose summary performs through it, runs a value of one of
+/// its captures that can (with the values of the locals in the states
+/// `ends`), runs a parameter, or gives a function value back or away. With
+/// no summary, a capture of the capability counts. Class FP-W0313-RUN of the
+/// second review of group D: a closure that runs a known closure with no
+/// perform does not count.
+fn performs_cap(
+    p: &Program,
+    sums: &super::Summaries,
+    h: HandlerId,
+    f: &super::FnVal,
+    ends: &[&State],
+    depth: usize,
+) -> bool {
+    let (super::FnVal::Closure(c) | super::FnVal::Made(c)) = f else {
+        return false;
+    };
+    let Some(d) = p.closures.get(c.index()) else {
+        return false;
+    };
+    let caps: Vec<u32> = (0..d.captures.len())
+        .map(|k| u32::try_from(k).unwrap_or(u32::MAX))
+        .filter(|&k| capture_handler(p, *c, k) == Some(h))
+        .collect();
+    if caps.is_empty() {
+        return false;
+    }
+    let Ok(s) = sums.closure(*c) else {
+        return true;
+    };
+    if depth == 0
+        || s.performs.iter().any(|pf| {
+            caps.iter()
+                .any(|&k| pf.cap == super::summary::CapIface::Cap(k))
+        })
+        || !s.put_fns.is_empty()
+        || !s.ret.fns.is_empty()
+    {
+        return true;
+    }
+    s.runs.iter().any(|r| {
+        if !r.capture {
+            return true;
+        }
+        let Some(src) = d.captures.get(r.param as usize).map(|x| &x.source) else {
+            return true;
+        };
+        let Ok(k) = crate::factgen::alpha::owner_local(p, d.maker, src.local) else {
+            return true;
+        };
+        ends.iter().any(|st| {
+            st.tree(k).is_none_or(|t| {
+                t.flat().fns.iter().any(|g| {
+                    performs_cap(p, sums, h, g, ends, depth - 1)
+                        || matches!(
+                            g,
+                            super::FnVal::Unknown
+                                | super::FnVal::Param(_)
+                                | super::FnVal::ParamResult(_)
+                                | super::FnVal::Capture(_)
+                        )
+                })
+            })
+        })
+    })
 }

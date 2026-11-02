@@ -512,6 +512,7 @@ fn a_reference_into_a_local_of_the_clause_across_its_resume_is_valid() {
 fn a_capability_that_leaves_its_handler_is_w0313() {
     check("w0313_cap.wf");
     check("w0313_rebind.wf");
+    check("w0313_run_known.wf");
 }
 
 /// V046 (plan stage F17): a closure goes to an operation of its own

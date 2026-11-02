@@ -1,0 +1,10 @@
+// FP-W0313-RUN (second review of group D, F17.1): a closure that runs a known closure with no perform does not hold the capability.
+effect Log { fn log(m: String) }
+fn main() {
+    let g = || print(1)
+    let s = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        s = || g()
+    }
+    s()
+}
