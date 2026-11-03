@@ -1,6 +1,0 @@
-// A task (group E): out of the scope of the default groups.
-fn main() {
-    scope { s =>
-        s.spawn(|| print(1))
-    }
-}

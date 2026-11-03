@@ -118,13 +118,10 @@ fn the_corpus_in_scope_of_the_groups_a_and_b_gives_the_markers_of_the_ir_pipelin
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// The preview of group E (plan stage F18): the corpus in scope of the
-/// groups A to E, and the programs whose diagnostics are not their markers
-/// of the `ir` pipeline. Stage F19 turns group E on and makes this a test
-/// with no failure. Run it with `--ignored`.
+/// The groups A to E (plan stage F19 turns group E on): the corpus in
+/// scope gives the markers of the `ir` pipeline.
 #[test]
-#[ignore = "the preview of group E (plan stage F18); stage F19 turns it on"]
-fn the_corpus_in_scope_of_the_groups_a_to_e_preview() {
+fn the_corpus_in_scope_of_the_groups_a_to_e_gives_the_markers_of_the_ir_pipeline() {
     let all = weft_sema::Groups::parse("ABCDE").expect("the groups parse");
     let (mut in_scope, mut failures) = (0, Vec::new());
     for path in corpus_paths() {
@@ -135,13 +132,9 @@ fn the_corpus_in_scope_of_the_groups_a_to_e_preview() {
             }
         }
     }
-    eprintln!(
-        "{in_scope} programs of the corpus are in scope of the groups A to E; {} differ",
-        failures.len()
-    );
-    for f in &failures {
-        eprintln!("{f}");
-    }
+    eprintln!("{in_scope} programs of the corpus are in scope of the groups A to E");
+    assert!(in_scope >= 100, "only {in_scope} programs are in scope");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

@@ -43,10 +43,10 @@ fn closure_return_ref(world: &World) / mut(world.entities) {
     print(r.hp)   //~ W0301
 }
 fn closure_return_local() {
-    let f = || {
+    let f = || {   //~ ir: W0204
         let v: Vec<u64> = Vec.new()
         if v.len() > 0 { return &v[0] }   //~ W0204
-        &v[1]   //~ W0204
+        &v[1]   //~ old: W0204
     }
 }
 

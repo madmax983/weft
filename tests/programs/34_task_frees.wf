@@ -32,7 +32,7 @@ fn fork_moves() / par {
     let v: Vec<u64> = Vec.new()
     v.push(1)
     let r = &v[0]
-    fork(|| print(r), || take(v))   //~ W0405
+    fork(|| print(r), || take(v))   //~ old: W0405 ir: W0301
 }
 
 // An inner block ends while a task reads its local.

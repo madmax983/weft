@@ -77,23 +77,6 @@ stage = "G6"
 [[entry]]
 class = "open-old"
 files = [
-    "tests/gate/probes/r2/oracle/probes/c3_task_stored.wf",
-    "tests/gate/probes/r3/oracle/probes/sc1_field_local_task.wf",
-    "tests/gate/probes/r3/oracle/probes/sc2_field_in_task.wf",
-    "tests/gate/probes/r3/oracle/probes/sc3_field_spawn_direct.wf",
-    "tests/gate/probes/r3/oracle/probes/sc10_field_two_tasks.wf",
-    "tests/gate/probes/r3/oracle/probes/sd1_field_assign.wf",
-    "tests/gate/probes/r3/oracle/probes/sd2_nested_struct.wf",
-    "tests/gate/probes/r3/oracle/probes/sd4_callee_runs_field.wf",
-    "tests/gate/probes/r3/oracle/probes/sd6_fork_field.wf",
-]
-finding = "O3-5"
-reason = "data race: a task or a fork branch runs a closure from a struct field; the footprint of the task does not have what the closure writes"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
-files = [
     "tests/gate/probes/r3/oracle/probes/rf1_field_rc_rebind.wf",
     "tests/gate/probes/r3/oracle/probes/rf2_field_rc_move.wf",
     "tests/gate/probes/r3/oracle/probes/rf3_whole_move.wf",
@@ -125,13 +108,6 @@ stage = "G6"
 
 [[entry]]
 class = "open-old"
-files = ["tests/gate/probes/r3/interp/repro/i3_1_spawn_let_wild_drops_result.wf"]
-finding = "I3-1"
-reason = "linear leak: `let _ = s.spawn(..)` drops a linear task result (I3-1 is a duplicate of O3-4 and F3-6; docs/ir.md 10.4 puts it under F3-6)"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
 files = [
     "tests/gate/probes/r3/fidelity/p/fk4.wf",
     "tests/gate/probes/r3/fidelity/p/tk6.wf",
@@ -145,13 +121,6 @@ stage = "G6"
 # Stage F8 removed the entries of i2_refenum.wf and i4_matchref.wf (R3RT2)
 # and of q1_held.wf (R3RT3): the `ir` pipeline rejects them (`fixed`; claims
 # R3RT2 and R3RT3).
-
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/verify/s5/R2d/p/c2_box_borrow_nouse.wf"]
-finding = "OL-R2d-box"
-reason = "data race: a borrow through a `Box` does not read the `Box` while a task gives it a new value"
-stage = "G6"
 
 [[entry]]
 class = "open-old"
@@ -2929,4 +2898,474 @@ files = [
     "verify/s5/R2d/p/e5_scope_vec.wf",
 ]
 reason = "class F19-SIG-TASKEFF (stage F19): the part `task_effects` of the IR (`templates::task_w0314`, `task_effects_at`): a task that is W0314 (no runtime) gives no effect to the part; a user effect of a function item that a task calls goes to the part; a task of a closure in a field or a vector, and a block of `with_timeout` that calls a function with tasks, are not followed (the W0405 of these programs stays)"
+stage = "F19"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/oracle/runs/m1/p1685.wf",
+    "r2/oracle/runs/m2/p6402.wf",
+    "r2/oracle/runs/m2/p7464.wf",
+]
+codes = ["W0314"]
+reason = "class F19-W0314 of group E (stage F19, tier 2): W0314 at the spawn of a task that performs with no runtime or a user effect (`templates::task_w0314`), the old pipeline at the perform in the task; rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/oracle/runs/m2/p5322.wf",
+]
+codes = ["W0314"]
+reason = "class F19-W0314 of group E (stage F19, tier 2): W0314 at the spawn of a task that performs with no runtime or a user effect (`templates::task_w0314`), the old pipeline at the perform in the task; rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/oracle/runs/m1/p678.wf",
+    "r2/oracle/runs/m2/p5857.wf",
+    "verify/s5/R3t/f36a.wf",
+    "verify/s5/R3t/f36t.wf",
+    "verify/s5/R3t/tail2.wf",
+    "verify/s5/R3x/p2/f12_local_fn.wf",
+    "verify/s5/R3x/p2/f13_if.wf",
+    "verify/s5/R3x/p2/f14_struct_field.wf",
+    "verify/s5/R3x/p2/f4_returned.wf",
+    "verify/s5/R3x/p2/f9_handle_capture.wf",
+]
+codes = ["W0204", "W0601", "W0602"]
+reason = "class F19-LINEAR of group E (stage F19, tier 2): W0601/W0602 of task results and of the closures of tasks: one error for each variable of the IR (the closure temporary, the result of each spawn statement, a scope tail), one W0601 and no W0602 for `detach` (N1); rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/R3x/p2/e2_vec.wf",
+]
+codes = ["W0602"]
+reason = "class F19-LINEAR of group E (stage F19, tier 2): W0601/W0602 of task results and of the closures of tasks: one error for each variable of the IR (the closure temporary, the result of each spawn statement, a scope tail), one W0601 and no W0602 for `detach` (N1); rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "moved"
+files = [
+    "r3/quality/fuzz/o24/slow_24_6090_explain.wf",
+    "r3/quality/fuzzcorp/112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m00086_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m00109_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m00413_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m00762_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m00769_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01045_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01143_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m01212_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m01219_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01280_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m01297_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01314_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m01521_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01561_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01913_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m02366_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m02504_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m02743_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m02927_112_unset_capture.wf",
+]
+codes = ["W0204", "W0304"]
+reason = "class F19-HIDDEN of group E (stage F19, tier 2), moved lines: mutants and copies of tier-1 programs where the `ir` pipeline reports W0304 at the run of the closure that gives a local its value and W0204/W0601 at the first line of a statement that spans two lines; the codes and counts are the same; rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/110_capture_by_value.wf",
+    "r3/quality/fuzzcorp/111_late_capture.wf",
+    "verify/s5/R3a_diff/g4_part.wf",
+    "verify/s5/S5c/mut/progs/m00492_110_capture_by_value.wf",
+    "verify/s5/S5c/mut/progs/m00558_115_joined_fn_values.wf",
+    "verify/s5/S5c/mut/progs/m00816_100_loop_chains.wf",
+    "verify/s5/S5c/mut/progs/m00914_115_joined_fn_values.wf",
+    "verify/s5/S5c/mut/progs/m01091_110_capture_by_value.wf",
+    "verify/s5/S5c/mut/progs/m01242_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m01434_110_capture_by_value.wf",
+    "verify/s5/S5c/mut/progs/m01480_111_late_capture.wf",
+    "verify/s5/S5c/mut/progs/m01527_111_late_capture.wf",
+    "verify/s5/S5c/mut/progs/m01629_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m01675_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m01698_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m01787_100_loop_chains.wf",
+    "verify/s5/S5c/mut/progs/m02033_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m02121_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m02614_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m02633_26_eval_order.wf",
+    "verify/s5/S5c/mut/progs/m02712_111_late_capture.wf",
+    "verify/s5/S5c/mut/progs/m02892_111_late_capture.wf",
+    "verify/s5/S5c/mut/progs/m02905_111_late_capture.wf",
+    "verify/s5/S5c/mut/progs/m02957_110_capture_by_value.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0402", "W0406", "W0502"]
+reason = "class F19-HIDDEN of group E (stage F19, tier 2): mutants and copies of tier-1 programs of the class F19-HIDDEN (the rules of the groups A to D on programs that group E brings into scope: W0204 as W0301 at the use, W0302 at a later use, W0402/W0406/W0703 at the closure, the receiver order of `heal(grow(world))`); rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/quality/gen/p/g00009.wf",
+    "verify/quality/gen/p/g00020.wf",
+    "verify/quality/gen/p/g00052.wf",
+    "verify/quality/gen/p/g00064.wf",
+    "verify/quality/gen/p/g00069.wf",
+    "verify/quality/gen/p/g00093.wf",
+    "verify/quality/gen/p/g00113.wf",
+    "verify/quality/gen/p/g00117.wf",
+    "verify/quality/gen/p/g00129.wf",
+    "verify/quality/gen/p/g00141.wf",
+    "verify/quality/gen/p/g00145.wf",
+    "verify/quality/gen/p/g00161.wf",
+    "verify/quality/gen/p/g00166.wf",
+    "verify/quality/gen/p/g00168.wf",
+    "verify/quality/gen/p/g00170.wf",
+    "verify/quality/gen/p/g00184.wf",
+    "verify/quality/gen/p/g00185.wf",
+    "verify/quality/gen/p/g00190.wf",
+    "verify/quality/gen/p/g00211.wf",
+    "verify/quality/gen/p/g00236.wf",
+    "verify/quality/gen/p/g00249.wf",
+    "verify/quality/gen/p/g00251.wf",
+    "verify/quality/gen/p/g00261.wf",
+    "verify/quality/gen/p/g00273.wf",
+    "verify/quality/gen/p/g00281.wf",
+    "verify/quality/gen/p/g00293.wf",
+    "verify/quality/gen/p/g00298.wf",
+    "verify/quality/gen/p/g00300.wf",
+    "verify/quality/gen/p/g00302.wf",
+    "verify/quality/gen/p/g00312.wf",
+    "verify/quality/gen/p/g00317.wf",
+    "verify/quality/gen/p/g00320.wf",
+    "verify/quality/gen/p/g00348.wf",
+    "verify/quality/gen/p/g00364.wf",
+    "verify/quality/gen/p/g00367.wf",
+    "verify/quality/gen/p/g00373.wf",
+    "verify/quality/gen/p/g00378.wf",
+    "verify/quality/gen/p/g00381.wf",
+    "verify/quality/gen/p/g00396.wf",
+    "verify/quality/gen/p/g00419.wf",
+    "verify/quality/gen/p/g00425.wf",
+    "verify/quality/gen/p/g00426.wf",
+    "verify/quality/gen/p/g00431.wf",
+    "verify/quality/gen/p/g00443.wf",
+    "verify/quality/gen/p/g00451.wf",
+    "verify/quality/gen/p/g00453.wf",
+    "verify/quality/gen/p/g00462.wf",
+    "verify/quality/gen/p/g00469.wf",
+    "verify/quality/gen/p/g00490.wf",
+    "verify/quality/gen/p/g00590.wf",
+    "verify/quality/gen/p/g00600.wf",
+    "verify/quality/gen/p/g00607.wf",
+    "verify/quality/gen/p/g00632.wf",
+    "verify/quality/gen/p/g00654.wf",
+    "verify/quality/gen/p/g00663.wf",
+    "verify/quality/gen/p/g00666.wf",
+    "verify/quality/gen/p/g00670.wf",
+    "verify/quality/gen/p/g00693.wf",
+    "verify/quality/gen/p/g00698.wf",
+    "verify/quality/gen/p/g00749.wf",
+    "verify/quality/gen/p/g00766.wf",
+    "verify/quality/gen/p/g00802.wf",
+    "verify/quality/gen/p/g00803.wf",
+    "verify/quality/gen/p/g00806.wf",
+    "verify/quality/gen/p/g00809.wf",
+    "verify/quality/gen/p/g00829.wf",
+    "verify/quality/gen/p/g00837.wf",
+    "verify/quality/gen/p/g00873.wf",
+    "verify/quality/gen/p/g00916.wf",
+    "verify/quality/gen/p/g00933.wf",
+    "verify/quality/gen/p/g00934.wf",
+    "verify/quality/gen/p/g00956.wf",
+    "verify/quality/gen/p/g00961.wf",
+    "verify/quality/gen/p/g00965.wf",
+    "verify/quality/gen/p/g00970.wf",
+    "verify/quality/gen/p/g00981.wf",
+    "verify/quality/gen/p/g01009.wf",
+    "verify/quality/gen/p/g01014.wf",
+    "verify/quality/gen/p/g01024.wf",
+    "verify/quality/gen/p/g01034.wf",
+    "verify/quality/gen/p/g01036.wf",
+    "verify/quality/gen/p/g01040.wf",
+    "verify/quality/gen/p/g01041.wf",
+    "verify/quality/gen/p/g01042.wf",
+    "verify/quality/gen/p/g01047.wf",
+    "verify/quality/gen/p/g01083.wf",
+    "verify/quality/gen/p/g01140.wf",
+    "verify/quality/gen/p/g01149.wf",
+    "verify/quality/gen/p/g01173.wf",
+    "verify/quality/gen/p/g01183.wf",
+    "verify/quality/gen/p/g01231.wf",
+    "verify/quality/gen/p/g01236.wf",
+    "verify/quality/gen/p/g01248.wf",
+    "verify/quality/gen/p/g01252.wf",
+    "verify/quality/gen/p/g01260.wf",
+    "verify/quality/gen/p/g01272.wf",
+    "verify/quality/gen/p/g01305.wf",
+    "verify/quality/gen/p/g01306.wf",
+    "verify/quality/gen/p/g01321.wf",
+    "verify/quality/gen/p/g01329.wf",
+    "verify/quality/gen/p/g01338.wf",
+    "verify/quality/gen/p/g01349.wf",
+    "verify/quality/gen/p/g01352.wf",
+    "verify/quality/gen/p/g01362.wf",
+    "verify/quality/gen/p/g01365.wf",
+    "verify/quality/gen/p/g01393.wf",
+    "verify/quality/gen/p/g01410.wf",
+    "verify/quality/gen/p/g01412.wf",
+    "verify/quality/gen/p/g01441.wf",
+    "verify/quality/gen/p/g01445.wf",
+    "verify/quality/gen/p/g01454.wf",
+    "verify/quality/gen/p/g01457.wf",
+]
+codes = ["W0301", "W0302", "W0312", "W0314", "W0315", "W0403", "W0405", "W0503", "W0601", "W0602", "W0702", "W0703"]
+reason = "class F19-T2-GEN of group E (stage F19, tier 2): generated programs (`verify/quality/gen`) with many errors around tasks, scopes, forks and handlers. The `ir` pipeline gives one W0601/W0602 for each variable and node of the IR, W0702/W0703 at the run of a closure or a task, W0314 at the task (`templates::task_w0314`), W0503 at the node that can resume more than once, so the counts at these lines differ from the old pipeline; both pipelines reject each program"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T1_join_set.wf",
+    "verify/s5/R3t/o35callee.wf",
+    "verify/s5/R3t/o35vec.wf",
+    "verify/s5/R3t/rt3w.wf",
+    "verify/s5/R3t_diff/o35_vec.wf",
+    "verify/s5/R3t_diff/r3rt3_more.wf",
+    "verify/s5/S5c/mut/progs/m00392_106_task_join_sets.wf",
+    "verify/s5/S5c/mut/progs/m00518_34_task_frees.wf",
+    "verify/s5/S5c/mut/progs/m00583_14_tasks.wf",
+    "verify/s5/S5c/mut/progs/m00829_34_task_frees.wf",
+    "verify/s5/S5c/mut/progs/m00865_82_stored_spawns.wf",
+    "verify/s5/S5c/mut/progs/m01054_34_task_frees.wf",
+]
+codes = ["W0301", "W0312", "W0403", "W0405", "W0601"]
+reason = "class F19-W0405 of group E (stage F19, tier 2): mutants and copies of tier-1 programs of the class F19-W0405: the task of a value that a callee runs is a task of the call, a spawn in a closure or a clause starts at the node that runs it, so W0405 (and W0403 of a fork branch) comes at each access while the task runs, also where the old pipeline gives W0312, and W0301 where a task changes what a reference points into; rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/S5c/mut/progs/m00790_137_task_values.wf",
+    "verify/s5/S5c/mut/progs/m02513_106_task_join_sets.wf",
+]
+codes = ["W0302", "W0405"]
+reason = "class F19-W0405 of group E (stage F19, tier 2): mutants and copies of tier-1 programs of the class F19-W0405: the task of a value that a callee runs is a task of the call, a spawn in a closure or a clause starts at the node that runs it, so W0405 (and W0403 of a fork branch) comes at each access while the task runs, also where the old pipeline gives W0312, and W0301 where a task changes what a reference points into; rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["muts", "named", "pins", "task_effects"]
+files = [
+    "verify/quality/gen/p/g00022.wf",
+    "verify/quality/gen/p/g00129.wf",
+    "verify/quality/gen/p/g00130.wf",
+    "verify/quality/gen/p/g00160.wf",
+    "verify/quality/gen/p/g00180.wf",
+    "verify/quality/gen/p/g00329.wf",
+    "verify/quality/gen/p/g00529.wf",
+    "verify/quality/gen/p/g00596.wf",
+    "verify/quality/gen/p/g00632.wf",
+    "verify/quality/gen/p/g00669.wf",
+    "verify/quality/gen/p/g00698.wf",
+    "verify/quality/gen/p/g00803.wf",
+    "verify/quality/gen/p/g00873.wf",
+    "verify/quality/gen/p/g00905.wf",
+    "verify/quality/gen/p/g00913.wf",
+    "verify/quality/gen/p/g00915.wf",
+    "verify/quality/gen/p/g00920.wf",
+    "verify/quality/gen/p/g00929.wf",
+    "verify/quality/gen/p/g01003.wf",
+    "verify/quality/gen/p/g01006.wf",
+    "verify/quality/gen/p/g01133.wf",
+    "verify/quality/gen/p/g01139.wf",
+    "verify/quality/gen/p/g01167.wf",
+    "verify/quality/gen/p/g01205.wf",
+    "verify/quality/gen/p/g01237.wf",
+    "verify/quality/gen/p/g01306.wf",
+    "verify/quality/gen/p/g01345.wf",
+]
+reason = "class F19-SIG-GEN (stage F19, tier 2): generated programs (`verify/quality/gen`) that both pipelines reject, with tasks, forks, `multi` handlers and type errors in one body; the rows (`named`, `muts`, `raises`, `pins`, `task_effects`) of their functions differ in the ways of the classes F19-SIG-* (the differences are not checked one by one)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["named", "raises"]
+files = [
+    "r3/quality/fuzzcorp/120_on_abort_effects.wf",
+    "verify/s5/S5c/mut/progs/m00029_120_on_abort_effects.wf",
+    "verify/s5/S5c/mut/progs/m00494_120_on_abort_effects.wf",
+    "verify/s5/S5c/mut/progs/m00927_120_on_abort_effects.wf",
+    "verify/s5/S5c/mut/progs/m01048_120_on_abort_effects.wf",
+    "verify/s5/S5c/mut/progs/m01062_120_on_abort_effects.wf",
+    "verify/s5/S5c/mut/progs/m02830_120_on_abort_effects.wf",
+]
+reason = "class F19-SIG-NAMED (stage F19, tier 2): `with_timeout` performs `Fail` (not `Async`), and the effects of a closure resolve where it is made; class F19-SIG-RAISES (stage F19, tier 2): a scope with no spawn cannot fail at its `ScopeWait`, a `with_timeout` performs `Fail` through the row and does not raise, a `fork` with no local `Fail` handler raises"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "pins", "reach_repeats", "reaches", "tasks"]
+files = [
+    "verify/s5/S5c/mut/progs/m00865_82_stored_spawns.wf",
+    "verify/s5/S5c/mut/progs/m01553_82_stored_spawns.wf",
+]
+reason = "class F19-SIG-PINS (stage F19, tier 2): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`), not counting a task that runs only code of a caller; a task that a closure body starts is `opaque`; the old part `reaches` has no part of the IR (as the `sig` entries of stage F17); the old part `tasks` has no IR part; the IR has `runs` with `task`"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "verify/s5/R3a_diff/g3_scope_abort.wf",
+    "verify/s5/R3t/o35vec.wf",
+    "verify/s5/R3t/o35vv.wf",
+    "verify/s5/R3t_diff/o35_vec.wf",
+    "verify/s5/S5c/mut/progs/m00184_14_tasks.wf",
+    "verify/s5/S5c/mut/progs/m00726_130_task_locals.wf",
+    "verify/s5/S5c/mut/progs/m01859_130_task_locals.wf",
+    "verify/s5/S5c/mut/progs/m01912_28_write_through.wf",
+]
+reason = "class F19-SIG-PINS (stage F19, tier 2): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`), not counting a task that runs only code of a caller; a task that a closure body starts is `opaque`"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["pins", "reach_repeats", "reaches"]
+files = [
+    "verify/s5/S5c/mut/progs/m00865_82_stored_spawns.wf",
+    "verify/s5/S5c/mut/progs/m01553_82_stored_spawns.wf",
+]
+reason = "class F19-SIG-PINS (stage F19, tier 2): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`), not counting a task that runs only code of a caller; a task that a closure body starts is `opaque`; the old part `reaches` has no part of the IR (as the `sig` entries of stage F17)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["pins", "reaches"]
+files = [
+    "verify/s5/R3t/o35callee.wf",
+    "verify/s5/R3t/o35v.wf",
+    "verify/s5/R3t/o35vec.wf",
+    "verify/s5/R3t_diff/o35_vec.wf",
+]
+reason = "class F19-SIG-PINS (stage F19, tier 2): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`), not counting a task that runs only code of a caller; a task that a closure body starts is `opaque`; the old part `reaches` has no part of the IR (as the `sig` entries of stage F17)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "fip.wf",
+    "r2/oracle/runs/m1/p26.wf",
+    "r3/quality/fuzz/o23/slow_23_1235_json.wf",
+    "verify/deep/scope_nest.wf",
+    "verify/review_core/Core_S1/rt2/pending.wf",
+    "verify/review_edge/Edge/nest/scope_40.wf",
+    "verify/review_edge/Edge/nest/scope_47.wf",
+    "verify/review_edge/Edge/nest/scope_48.wf",
+    "verify/s5/R3a_diff/g1_tails.wf",
+    "verify/s5/R3a_diff/g7_temp_part.wf",
+    "verify/s5/R3a_diff/one.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ok_copy__value.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ok_outer_ref__arg.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ok_outer_ref__value.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__place_then_ref__stmt.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__place_then_ref__value.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__place_then_use__stmt.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__place_then_use__value.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ref_frame_local__arg.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ref_frame_local__value.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ref_temp__arg.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ref_temp__value.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ref_temp_idx__arg.wf",
+    "verify/s5/R3a_diff/sweep/handle_in_scope__ref_temp_idx__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ok_copy__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ok_outer_ref__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ok_outer_ref__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__place_then_ref__stmt.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__place_then_ref__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__place_then_use__stmt.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__place_then_use__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ref_frame_local__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ref_frame_local__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ref_temp__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ref_temp__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ref_temp_idx__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_in_handle__ref_temp_idx__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ok_copy__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ok_outer_ref__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ok_outer_ref__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__place_then_ref__stmt.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__place_then_ref__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__place_then_use__stmt.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__place_then_use__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ref_frame_local__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ref_frame_local__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ref_temp__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ref_temp__value.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ref_temp_idx__arg.wf",
+    "verify/s5/R3a_diff/sweep/scope_nochild__ref_temp_idx__value.wf",
+    "verify/s5/R3x/p2/h12_timeout_fail_inside.wf",
+    "verify/s5/R3x/p2/h13_timeout_clause.wf",
+    "verify/s5/R3x/p2/h1_with_timeout_block.wf",
+    "verify/s5/R3x/p2/h9_timeout_returns.wf",
+    "verify/s5/S5c/mut/progs/m00109_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m00178_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m00271_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m00289_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m00322_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m00371_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m00413_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m00504_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m00769_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m00793_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m01045_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01048_120_on_abort_effects.wf",
+    "verify/s5/S5c/mut/progs/m01143_112_unset_capture.wf",
+    "verify/s5/S5c/mut/progs/m01190_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01219_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01297_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01378_121_fail_resume.wf",
+    "verify/s5/S5c/mut/progs/m01402_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m01521_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01561_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01843_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m01884_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01913_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m01930_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m01957_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m02029_121_fail_resume.wf",
+    "verify/s5/S5c/mut/progs/m02251_34_task_frees.wf",
+    "verify/s5/S5c/mut/progs/m02342_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m02393_28_write_through.wf",
+    "verify/s5/S5c/mut/progs/m02480_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m02504_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m02531_130_task_locals.wf",
+    "verify/s5/S5c/mut/progs/m02594_49_fip_paths.wf",
+    "verify/s5/S5c/mut/progs/m02646_60_jumps.wf",
+    "verify/s5/S5c/mut/progs/m02743_60_jumps.wf",
+]
+reason = "class F19-SIG-RAISES (stage F19, tier 2): a scope with no spawn cannot fail at its `ScopeWait`, a `with_timeout` performs `Fail` through the row and does not raise, a `fork` with no local `Fail` handler raises"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["task_effects"]
+files = [
+    "r2/oracle/runs/m1/p1685.wf",
+    "r2/oracle/runs/m2/p5322.wf",
+    "r2/oracle/runs/m2/p6402.wf",
+    "r2/oracle/runs/m2/p7464.wf",
+    "verify/s5/R3t/rt3w.wf",
+    "verify/s5/S5c/mut/progs/m00249_07_scopes.wf",
+    "verify/s5/S5c/mut/progs/m01008_07_scopes.wf",
+    "verify/s5/S5c/mut/progs/m01779_07_scopes.wf",
+    "verify/s5/S5c/mut/progs/m02843_07_scopes.wf",
+]
+reason = "class F19-SIG-TASKEFF (stage F19, tier 2): the part `task_effects` of the IR (`templates::task_w0314`): a task that W0314 rejects gives no effect, a task of a stored closure is not followed"
 stage = "F19"

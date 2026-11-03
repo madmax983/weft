@@ -1,0 +1,5 @@
+// A type parameter (group F): out of the scope of the default groups.
+fn id<T>(x: T) -> T { x }
+fn main() {
+    print(id(1))
+}

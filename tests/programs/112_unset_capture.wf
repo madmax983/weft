@@ -13,8 +13,8 @@ fn closure_sets() {
 fn clause_sets() {
     let x: u64
     handle Note { fn note(n) { x = n
- resume(()) } } in note(7)   //~ W0304
-    print(x)
+ resume(()) } } in note(7)   //~ old: W0304
+    print(x)   //~ ir: W0304
 }
 fn task_sets() / async {
     let x: u64

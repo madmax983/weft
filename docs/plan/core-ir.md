@@ -1452,7 +1452,11 @@ with the group forced on, report only).
 - Do: the code above; then the gate for groups A to E (rules of F8).
 - Gate: the common gates; the common exit; tier 2.
 - Exit: the common exit on the scope of groups A to E.
-- As built (group E goes on in a separate last commit, "IR F19: group E on"):
+- As built (group E goes on in a separate last commit, "IR F19: group E on": the
+  default groups are A to E, the corpus markers of nine programs get the words
+  `old:` and `ir:`, the tier-1 and tier-2 baselines change for the W0405 rule
+  below, and the open-old entries O3-5, I3-1 and OL-R2d-box go; fourteen
+  tier-1 and five tier-2 `lost-clean` rows wait for an independent signature):
   - `Fork`: the nodes `Main`, one `Task(i)` node for each branch, a `Task`
     node where the branches end, and `Ret` (`nodes::phases_with`). Branch
     `i` starts at its node (`templates::task_start`, the code that a spawn
@@ -1754,6 +1758,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | F17.1 (tier 2, groups A to D, default) | 5043 of 57393 | 56303 | 34 | 2 (`ln1.wf`, stricter; `verify/s5/R3x/p2/h6_option_closure.wf`, precision) | 44 (signed) | 91 | 855 | 64 (tier-2 policy) |
 | F17.2 (tier 1, groups A to D, default) | 2877 of 4201 | 3580 | 165 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 57 (signed) | 89 | 253 | 56 (open-old) |
 | F17.2 (tier 2, groups A to D, default) | 5041 of 57393 | 56307 | 34 | 2 (as F17.1) | 44 (signed) | 92 | 850 | 64 (tier-2 policy) |
+| F19 (tier 1, groups A to E, default) | 3468 of 4227 | 3503 | 180 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 71 (57 signed; 14 group-E rows wait for an independent signature) | 107 | 323 | 42 (open-old) |
+| F19 (tier 2, groups A to E, default) | 6730 of 57393 | 55613 | 51 | 2 (as F17.1) | 49 (44 signed; 5 wait for a signature) | 131 | 1500 | 47 (tier-2 policy) |
 
 ---
 

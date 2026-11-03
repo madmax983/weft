@@ -70,11 +70,11 @@ fn scope_argument() {
 fn clause_value() {
     let u = mk_v()
     let r = handle Ask { fn ask() { first(&mk_v()) } } in { let k = ask(); &u[0] }   //~ W0301
-    print(r + 1)
+    print(r + 1)   //~ ir: W0301
 }
 fn resume_value() {
-    let r = handle Give { fn give() { resume(first(&mk_v())) } } in { give() }   //~ W0204
-    print(r + 1)
+    let r = handle Give { fn give() { resume(first(&mk_v())) } } in { give() }   //~ old: W0204 ir: W0301
+    print(r + 1)   //~ ir: W0301
 }
 
 // The end of the scope raises the failure of the child, and the linear value

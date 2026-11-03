@@ -411,7 +411,11 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
     for s in [&on_thread, &child] {
         let out = run_all(
             &data(),
-            vec![entry("clean.wf"), entry("w0301.wf"), entry("fact_task.wf")],
+            vec![
+                entry("clean.wf"),
+                entry("w0301.wf"),
+                entry("fact_generic.wf"),
+            ],
             s,
         );
         let classes: Vec<oracle::FactClass> = out.iter().map(oracle::fact_class).collect();

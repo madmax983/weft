@@ -32,13 +32,13 @@ fn task_new_value() {
 fn made_here() -> fn() {
     let v = Vec.new()
     v.push(3)
-    || print(take(v))   //~ W0204
+    || print(take(v))   //~ old: W0204
 }
 fn block_value() {
     let f = {
         let v = Vec.new()
         v.push(4)
-        || print(take(v))   //~ W0301
+        || print(take(v))   //~ old: W0301
     }
     f()
 }
@@ -81,11 +81,11 @@ fn apply(f: fn()) { f() }
 fn capture_into_taken() {
     let v = Vec.new()
     let f = || grow(&v)
-    let g = || {   //~ W0301
+    let g = || {   //~ old: W0301
         apply(f)
         print(take(v))
     }
-    g()
+    g()   //~ ir: W0302
 }
 // Clean: the other capture points somewhere else.
 fn capture_elsewhere() {

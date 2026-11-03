@@ -450,19 +450,21 @@ fn with_no_group_on_no_program_is_in_scope() {
 }
 
 #[test]
-fn the_groups_a_to_d_are_on_by_default() {
+fn the_groups_a_to_e_are_on_by_default() {
     // Stage F8 turns group A on, stage F10 turns group B (loops) on, stage
-    // F13 turns group C (closures and function values) on, and stage F17
-    // turns group D (handlers) on (plan §2.6): the default options put a
-    // program of group A, a program with a loop, a program with a closure
-    // and a program with a handler in scope, and keep a program with a task
-    // (group E) out.
+    // F13 turns group C (closures and function values) on, stage F17 turns
+    // group D (handlers) on, and stage F19 turns group E (tasks) on (plan
+    // §2.6): the default options put a program of group A, a program with a
+    // loop, a program with a closure, a program with a handler and a program
+    // with a task in scope, and keep a program with a type parameter (group
+    // F) out.
     assert_eq!(
         Options::default().ir_groups,
         Groups::of(Group::A)
             .with(Group::B)
             .with(Group::C)
             .with(Group::D)
+            .with(Group::E)
     );
     let o = Options {
         facts: FactGen::Ir,
@@ -478,6 +480,9 @@ fn the_groups_a_to_d_are_on_by_default() {
     let a = analyze(src, o);
     assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
     let src = "fn main() {\n    scope { s =>\n        s.spawn(|| print(1))\n    }\n}\n";
+    let a = analyze(src, o);
+    assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+    let src = "fn id<T>(x: T) -> T { x }\nfn main() { print(id(1)) }\n";
     let a = analyze(src, o);
     assert!(!a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
 }
