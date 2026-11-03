@@ -93,8 +93,9 @@ fn the_corpus_in_scope_gives_the_markers_of_the_ir_pipeline() {
     }
     eprintln!("{in_scope} programs of the corpus are in scope");
     // Stage F10 turns group B (loops) on: 28 programs at F10b. Stage F13
-    // turns group C (closures and function values) on: 58 programs.
-    assert!(in_scope >= 56, "only {in_scope} programs are in scope");
+    // turns group C (closures and function values) on: 58 programs. Stage
+    // F20 turns group F (type parameters) on: 125 programs.
+    assert!(in_scope >= 125, "only {in_scope} programs are in scope");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 

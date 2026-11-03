@@ -1875,9 +1875,9 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | F19.5 (tier 1, groups A to E, default) | 3581 of 4340 | 3577 | 201 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 82 (signed) | 109 | 328 | 42 (open-old) |
 | F19.5 (tier 2, groups A to E, default) | 6730 of 57393 | 55614 | 51 | 2 (as F17.1) | 49 (signed) | 131 | 1499 | 47 (tier-2 policy) |
 | F20 (tier 1, groups A to E, default) | 3585 of 4357 | 3592 | 202 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 82 (signed) | 109 | 328 | 43 (open-old) |
-| F20 (tier 1, groups A to F, preview of the flip) | 3973 of 4357 | 3503 | 236 | 2 (`tw.wf`; `verify/partb/S4/p/c4_generic_clean.wf`, issue 47, precision: over the 0.1 % share) | 98 (82 signed; 16 wait for an independent signature) | 122 | 387 | 9 (open-old) |
+| F20 (tier 1, groups A to F, default after the flip) | 3973 of 4357 | 3502 | 236 | 2 (`tw.wf`; `verify/partb/S4/p/c4_generic_clean.wf`, issue 47, precision: over the 0.1 % share) | 100 (82 signed; 18 wait for an independent signature) | 122 | 386 | 9 (open-old) |
 | F20 (tier 2, groups A to E, default) | 6730 of 57393 | 55614 | 51 | 2 (as F17.1) | 49 (signed) | 131 | 1499 | 47 (tier-2 policy) |
-| F20 (tier 2, groups A to F, preview of the flip) | 46950 of 57393 | 44324 | 88 | 104 (6 ledgered; 98 precision losses of the groups A to E in programs that the generic `id` of a shared header kept out of scope: they need an issue) | 2468 (49 signed; 2419 wait for an independent signature: 2412 give the diagnostics of the groups A to E on the program with `id` inlined) | 1594 | 8805 | 10 (open-old) |
+| F20 (tier 2, groups A to F, default after the flip) | 46950 of 57393 | 44263 | 88 | 104 (6 ledgered; 98 precision losses of the groups A to E in programs that the generic `id` of a shared header kept out of scope: they need an issue) | 2523 (49 signed; 2474 wait for an independent signature: most give the diagnostics of the groups A to E on the program with `id` inlined, 62 are the `join` through `id` of O3-9) | 1594 | 8811 | 10 (open-old) |
 
 ---
 

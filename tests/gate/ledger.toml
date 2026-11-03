@@ -112,11 +112,9 @@ files = [
     "tests/gate/probes/r3/fidelity/p/fk4.wf",
     "tests/gate/probes/r3/fidelity/p/tk6.wf",
     "tests/gate/probes/r3/interp/probe/g14_fork_result_lin.wf",
-    "tests/gate/probes/verify/s5/p/g2_generic_task_hold.wf",
-    "tests/gate/probes/fixes/f20/ol3a_task_hold_b.wf",
 ]
 finding = "F3-6"
-reason = "unwinder fault: the runtime drops a linear task result with no `on abort`: a `fork` that a failure or a timeout ends, or an abort while a `Task<T>` handle is live (g2: through a generic T, see also OL-3a)"
+reason = "unwinder fault: the runtime drops a linear task result with no `on abort`: a `fork` that a failure or a timeout ends. Stage F20 closed the shape of a `Task<T>` handle that a generic callee holds across an abort (g2_generic_task_hold, OL-3a: `fixed`)"
 stage = "G6"
 
 # Stage F8 removed the entries of i2_refenum.wf and i4_matchref.wf (R3RT2)

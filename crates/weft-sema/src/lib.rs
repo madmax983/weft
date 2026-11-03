@@ -50,13 +50,14 @@ pub struct Options {
 ///
 /// Stage F8 turns group A on, stage F10 turns group B (loops) on, stage F13
 /// turns group C (closures and function values) on, stage F17 turns group D
-/// (handlers) on, and stage F19 turns group E (tasks) on. Each later group
-/// stage adds its group.
+/// (handlers) on, stage F19 turns group E (tasks) on, and stage F20 turns
+/// group F (type parameters) on: each group is on.
 pub const DEFAULT_GROUPS: Groups = Groups::of(Group::A)
     .with(Group::B)
     .with(Group::C)
     .with(Group::D)
-    .with(Group::E);
+    .with(Group::E)
+    .with(Group::F);
 
 impl Default for Options {
     /// A program that is not a library, with the standard runtime, the old
