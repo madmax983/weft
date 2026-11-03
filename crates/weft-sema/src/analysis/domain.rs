@@ -815,6 +815,15 @@ impl State {
         true
     }
 
+    /// Removes the task sites `ts` from the lost sites: a value of a local
+    /// holds their handle again (a generic identity gives it back, plan
+    /// stage F20).
+    pub fn find_tasks(&mut self, ts: &BTreeSet<SpawnId>) {
+        if ts.iter().any(|t| self.lost.contains(t)) {
+            Rc::make_mut(&mut self.lost).retain(|t| !ts.contains(t));
+        }
+    }
+
     /// The task sites whose handle a value can hold that no local of the
     /// component holds (plan stage F18).
     pub fn lost_tasks(&self) -> &BTreeSet<SpawnId> {

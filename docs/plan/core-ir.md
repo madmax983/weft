@@ -1618,7 +1618,9 @@ with the group forced on, report only).
     A value of a type parameter can be a function value: a parameter of a type
     parameter is `FnVal::Param`, `reach_fns` follows it (V075), a result of a type
     parameter has `ret.fns`, and a linear closure of an argument of a type
-    parameter comes back linear.
+    parameter comes back linear. A task handle that a result of a type
+    parameter gives back is no longer lost (`State::find_tasks`; O3-9
+    `through_id`: its `join` ends the task).
   - `Drop(p)` changes `p` (the IR engine clears the cell; fact oracle C5 on a
     generic body whose type argument is plain data).
   - Follow-up F8.1: a whole local that moves (`place = move t`) takes along the

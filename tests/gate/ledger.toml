@@ -3768,10 +3768,9 @@ class = "changed"
 files = [
     "tests/ir_targets/o3_6_rc_handle_tasks.wf",
     "tests/gate/probes/r3/oracle/repro/O3-6_task_rc_handle_move.wf",
-    "tests/gate/probes/r3/oracle/repro/O3-9_fp_join_not_seen.wf",
 ]
 codes = ["W0405"]
-reason = "class F20-HIDDEN (stage F20), group E: the `ir` pipeline reports W0405 for each move or new value of an `rc` handle that a running task shares (O3-6; the old pipeline misses them, the target has the markers), and no W0405 for a write after a `join` in a helper, a tuple, an `Option` or a closure (O3-9, old false positives). The generic `take` kept the programs out of scope"
+reason = "class F20-HIDDEN (stage F20), group E: the `ir` pipeline reports W0405 for each move or new value of an `rc` handle that a running task shares (O3-6; the old pipeline misses them, the target has the markers). The generic `take` kept the programs out of scope"
 stage = "F20"
 
 [[entry]]

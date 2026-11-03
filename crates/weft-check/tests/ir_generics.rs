@@ -128,3 +128,10 @@ fn a_generic_body_has_no_error_for_a_value_of_its_type_parameter() {
                fn swap<T>(x: T, y: T) -> T { let z = x\n z = y\n z }\n";
     assert_eq!(codes("generic bodies", src), Vec::new());
 }
+
+/// O3-9: a task handle that a generic identity gives back is the handle of
+/// its task: its `join` ends the task.
+#[test]
+fn a_task_handle_comes_back_from_a_generic_identity() {
+    check("task_handles.wf");
+}

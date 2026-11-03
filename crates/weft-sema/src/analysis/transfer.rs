@@ -1353,6 +1353,10 @@ pub struct CallOut {
     /// The function values that the callee puts into places of the caller
     /// (part `put_fns`, stage F13). Their references are in `stores`.
     pub put_fns: Vec<(PlaceId, BTreeSet<FnVal>)>,
+    /// The task sites of the handles that a result of a type parameter
+    /// gives back from the arguments of the type parameter (plan stage F20,
+    /// O3-9 `through_id`).
+    pub back_tasks: BTreeSet<weft_ir::SpawnId>,
 }
 
 /// The run node of a `Call` of function item `f` of block `block`, in state
@@ -1453,6 +1457,21 @@ pub fn call_out(
             }
         }
     }
+    // A task handle of an argument of a type parameter can come back in a
+    // result of a type parameter (`let u = id(t); u.join()`, O3-9).
+    let mut back_tasks = BTreeSet::new();
+    if cx.tys.mentions_param(decl.ret) {
+        for (i, a) in args.iter().enumerate() {
+            if decl
+                .params
+                .get(i)
+                .is_some_and(|&t| cx.tys.mentions_param(t))
+            {
+                back_tasks.extend(operand(cx, body, st, a)?.flat().tasks);
+            }
+        }
+        ret.top.tasks.extend(back_tasks.iter().copied());
+    }
     let ret = with_fns(cx, ret, ret_ty, fs);
     Ok(CallOut {
         sigma,
@@ -1462,6 +1481,7 @@ pub fn call_out(
         stores,
         apps: apps.out,
         put_fns,
+        back_tasks,
     })
 }
 
@@ -1618,7 +1638,9 @@ fn call(
     note_multi_apps(cx, (body, block), &out.apps)?;
     changed.extend(out.apps.iter().flat_map(|a| a.muts.iter().map(|(q, _)| *q)));
     store_fns(cx, body, st, args, &changed)?;
-    bind_result(cx, body, st, args, dest, out.ret)
+    bind_result(cx, body, st, args, dest, out.ret)?;
+    st.find_tasks(&out.back_tasks);
+    Ok(())
 }
 
 /// Notes a run node whose function values can resume more than once (a
