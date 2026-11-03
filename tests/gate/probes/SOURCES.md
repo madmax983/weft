@@ -667,3 +667,27 @@ from the self-attack of stage F20 (scratchpad `f20/att`).
   GEN-DROPS): a value of a type parameter behind a reference gets a new value; a callee
   with two type parameters drops the second. `drop_behind_ref_c.wf` was a failure of the
   fact oracle (C5) before `Drop` changed its place.
+
+## Follow-up F20.1: a linear closure in an `Option` (issue 47)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the self-attack of follow-up F20.1 (scratchpad `f47/att`).
+
+- `fixes/f47/*_c.wf` (claim ISSUE-47, `fp`): a linear closure in `Some`. The arm
+  `Some(g)` runs it, and the arm `None` consumes the `Option`: in the first arm, in the
+  second arm, nested (`Some(None)`), in a tuple, after a copy of the local, after a
+  `match` by reference, on each branch of an `if`, in a temporary scrutinee, after a new
+  value of the local, and through a generic callee (`a02`, `a10`, `b07`). Before the fix
+  the `ir` pipeline gave W0601 for each one.
+- `fixes/f47/*_b.wf` (claim ISSUE-47, `unsound`): the bad twins. A path does not run
+  the closure (the arm `Some(_)`, a branch with no `match`, a generic callee that drops
+  it). The `ir` pipeline gives W0601, as before.
+- `fixes/f47/a13_*.wf`: `Option<Tx>` with a linear type (no change).
+- Not in the gate (each clean twin is `lost-clean`: the old pipeline rejects it): the
+  pairs `a09` (struct field), `a14` (a plain closure matched twice), `a16` and `b04`
+  (a function gives back `Some` of a linear closure, old W0204), `b01` (a handled body
+  matches the `Option`, old W0602), `b05` (a `match` in a loop, old W0601). Also not in
+  the gate: the pair `a11` (a closure captures the `Option` and copies the payload; a
+  new case of the class `closure-copy` of `exports_parity.rs`, which needs a review).
+  They are in scratchpad `f47/att`.

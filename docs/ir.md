@@ -1257,6 +1257,18 @@ test_n+1: Unreachable                    (W0120 says that the arms cover each va
   Dead(t)`.
 - An arm that matches a variant with no payload consumes a linear local scrutinee:
   `Consume(s)` (ADR 0007 `empty`).
+  As built (follow-up F20.1, issue 47): a type with a function part (`Option<fn()>`) has
+  no linear part, but its value can hold a linear closure. The arm also consumes such a
+  value if the root of the place is a temporary, or a local that has the flag `linear`
+  from the analysis (`binding_props_of`, 2.3). On this path the value holds no closure,
+  so the `Consume` is sound. Before the fix the arm `None` did not end the value, and a
+  `match o { Some(g) => g(), None => {} }` was W0601 at the end of the scope of `o`. A
+  temporary has no later use, so its `Consume` cannot make a use after a move. A
+  capture (`env.k`, `u.k`) does not get it: a `Consume` there would make the capture
+  `ByMove`, and a move of plain data breaks V9. A struct pattern does not get it
+  either: a `_` over a part of a function type does not move it, so a `Consume` would
+  hide a lost closure. The bad case stays W0601: an arm `Some(_)` does not run the
+  closure, and the local is still linear at its end.
 - W0120 (exhaustiveness) stays in `typeck`. A variant pattern in a `let` is W0113 in
   `typeck`: a `let` pattern never fails.
 

@@ -135,3 +135,10 @@ fn a_generic_body_has_no_error_for_a_value_of_its_type_parameter() {
 fn a_task_handle_comes_back_from_a_generic_identity() {
     check("task_handles.wf");
 }
+
+/// Issue 47 (n03): a linear closure that a generic callee gives back in an
+/// `Option`. The arm `None` consumes the local.
+#[test]
+fn a_linear_closure_in_an_option_from_a_generic_callee_is_consumed_by_the_none_arm() {
+    check("option_payload.wf");
+}

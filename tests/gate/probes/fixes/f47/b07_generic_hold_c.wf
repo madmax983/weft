@@ -1,0 +1,10 @@
+// Issue 47 (follow-up F20.1), clean twin: a generic callee gives the `Option` back, or drops it.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn pass<T>(o: Option<T>) -> Option<T> { o }
+fn main() {
+    let t = begin(1)
+    let o = pass(Some(|| commit(t)))
+    match o { Some(g) => g(), None => {} }
+}

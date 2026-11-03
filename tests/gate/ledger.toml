@@ -1878,7 +1878,6 @@ class = "changed"
 files = [
     "r3/quality/fuzzcorp/116_rc_stores.wf",
     "tests/gate/probes/verify/s5/p/d6_closure_via_clause.wf",
-    "tests/gate/probes/verify/s5/p/f1_closure_stash.wf",
     "tests/programs/116_rc_stores.wf",
     "verify/s5/R3x/p2/h5_vec_closure.wf",
     "verify/s5/S5c/mut/progs/m00527_68_clause_values.wf",
@@ -1896,7 +1895,6 @@ files = [
     "verify/s5/S5c/mut/progs/m02852_113_returned_closures.wf",
     "verify/s5/S5c/mut/progs/m02922_113_returned_closures.wf",
     "verify/s5/p/d6_closure_via_clause.wf",
-    "verify/s5/p/f1_closure_stash.wf",
 ]
 codes = ["W0204", "W0301", "W0302", "W0502", "W0601", "W0702", "W0703"]
 reason = "class D-C of group D (stage F17): the rules of group C on programs that group D brings into scope: on-abort functions that run unknown function values (W0601/W0602 of the linear closures), the rc slot rule (116_rc_stores lines 131/137, stricter), more true W0301/W0204 of a clause that keeps a reference into a callee local (f3_2), a linear closure in an `Option` that a `match` runs (W0601 at the end of `main`, where the old pipeline gives W0502/W0601/W0301 at other lines). Rejected by both pipelines"
@@ -2153,7 +2151,7 @@ class = "new-fp"
 files = ["verify/s5/R3x/p2/h6_option_closure.wf"]
 reason_class = "precision"
 issue = 47
-reason = "an `ir` false positive of the groups A and C (the second review of group D does not confirm `stricter`; issue 47). W0601: a copy of a linear closure out of an `Option` payload (`match o { Some(f) => f(), None => {} }`, `_6 = copy (_2 as #0).0`) does not end the linear value of `o`, so `o` is dropped at the end of `work`; the same W0601 comes with the default groups and no `fail` (dreview2 `h6/h6c_no_fail.wf`, `h6g_no_handler.wf`); a tuple field (`let f = o.0`) and a plain local do not have it. W0602: the `on abort` of the captured `Lock` does not reach the closure in the payload, against ADR 0007 (each linear part has `on abort`). The run is clean. Group D puts the program in scope (`handle Fail` in `mainrun`)"
+reason = "an `ir` false positive of the groups A and C (the second review of group D does not confirm `stricter`; issue 47). Follow-up F20.1 fixed the W0601 (the arm `None` consumes `o`); the W0602 stays (issue to file). Before: W0601: a copy of a linear closure out of an `Option` payload (`match o { Some(f) => f(), None => {} }`, `_6 = copy (_2 as #0).0`) does not end the linear value of `o`, so `o` is dropped at the end of `work`; the same W0601 comes with the default groups and no `fail` (dreview2 `h6/h6c_no_fail.wf`, `h6g_no_handler.wf`); a tuple field (`let f = o.0`) and a plain local do not have it. W0602: the `on abort` of the captured `Lock` does not reach the closure in the payload, against ADR 0007 (each linear part has `on abort`). The run is clean. Group D puts the program in scope (`handle Fail` in `mainrun`)"
 stage = "F17"
 
 [[entry]]
@@ -3900,20 +3898,9 @@ stage = "F20"
 
 [[entry]]
 class = "changed"
-files = [
-    "tests/gate/probes/verify/s5/S5a/x/p/f3a_variants.wf",
-    "tests/gate/probes/verify/partb/S4/p/c3_generic_closure.wf",
-]
+files = ["tests/gate/probes/verify/s5/S5a/x/p/f3a_variants.wf"]
 codes = ["W0503", "W0601"]
-reason = "class F20-GENERIC (stage F20): a linear closure that a generic callee holds across a node that can resume more than once is W0503 and W0601 at the call (the argument moves at `Ret`), where the old pipeline gives one W0503; a linear closure in an `Option` that a `match` copies out is W0601 at the end of the scope of the `Option` (issue 47, precision). Rejected by both pipelines"
-stage = "F20"
-
-[[entry]]
-class = "new-fp"
-files = ["tests/gate/probes/verify/partb/S4/p/c4_generic_clean.wf"]
-reason_class = "precision"
-issue = 47
-reason = "issue 47 (a precision loss of the groups A and C, as `h6_option_closure.wf`): `closure_in_some` copies a linear closure out of an `Option` payload (`_5 = copy (_2 as #0).0`); the arm `None` does not end the linear value of `o` (no variant test narrows the value), so `o` is W0601 at the end of the function. The generic `gen_keep` of the program kept it out of scope before stage F20; the function with the error has no type parameter"
+reason = "class F20-GENERIC (stage F20): a linear closure that a generic callee holds across a node that can resume more than once is W0503 and W0601 at the call (the argument moves at `Ret`), where the old pipeline gives one W0503. Rejected by both pipelines. (Follow-up F20.1, issue 47: `c3_generic_closure.wf` left this entry; it is `same` now)"
 stage = "F20"
 
 # Stage F20, tier 2: `open` programs whose groups are all on now. Both
@@ -4199,7 +4186,6 @@ stage = "F20"
 class = "changed"
 files = [
     "verify/partb/S4/p/c1_closure_linear.wf",
-    "verify/partb/S4/p/c3_generic_closure.wf",
     "verify/partb/S4/run/gen2.wf",
     "verify/partb/S4/run/gen3.wf",
 ]
@@ -4985,3 +4971,16 @@ files = [
 reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
 stage = "F20"
 
+# ----------------------------------------------------------------------------
+# Follow-up F20.1 (issue 47): an arm of a variant with no payload consumes a
+# local or a temporary that holds a linear closure in an `Option`.
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f47/a10_generic_match_b.wf",
+    "tests/gate/probes/fixes/f47/b02_block_scrutinee_b.wf",
+]
+codes = ["W0601"]
+reason = "class F20.1-SCRUTINEE (follow-up F20.1, issue 47): the scrutinee of the `match` is a temporary that holds a linear closure, and the arm `Some(_)` does not run it; the `ir` pipeline gives W0601 at the end of the function (the end of the temporary), where the old pipeline reports the line of the `match`. Same fault, same function. Rejected by both pipelines"
+stage = "F20.1"

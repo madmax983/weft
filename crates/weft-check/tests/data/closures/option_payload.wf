@@ -1,0 +1,64 @@
+// Issue 47: a linear closure in an `Option`.
+// An arm of a variant with no payload consumes the scrutinee: on that path
+// it holds no closure. A copy of the payload out of the variant moves the
+// `once` closure. A closure that no path calls is W0601.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+
+fn some_then_none() {
+    let t = begin(1)
+    let o = Some(|| commit(t))
+    match o { Some(g) => g(), None => {} }
+}
+fn none_then_some() {
+    let t = begin(2)
+    let o = Some(|| commit(t))
+    match o { None => print("none"), Some(g) => g() }
+}
+fn nested() {
+    let t = begin(3)
+    let o = Some(Some(|| commit(t)))
+    match o { Some(Some(g)) => g(), Some(None) => {}, None => {} }
+}
+fn in_a_tuple() {
+    let t = begin(4)
+    let p = (Some(|| commit(t)), 1)
+    match p { (Some(g), _) => g(), (None, _) => {} }
+}
+fn on_each_path(c: bool) {
+    let t = begin(6)
+    let o = Some(|| commit(t))
+    if c { match o { Some(g) => g(), None => {} } } else { match o { None => {}, Some(g) => g() } }
+}
+
+// The closure is lost: the `Some` arm does not call it.
+fn not_called() {
+    let t = begin(7)
+    let o = Some(|| commit(t))
+    match o { Some(_) => print("some"), None => {} }
+}   //~ W0601
+// The closure is lost on the path that does not match.
+fn lost_on_one_path(c: bool) {
+    let t = begin(8)
+    let o = Some(|| commit(t))
+    if c { match o { Some(g) => g(), None => {} } }
+}   //~ W0601
+// The second `match` reads `o` after the first one took it.
+fn matched_twice() {
+    let t = begin(9)
+    let o = Some(|| commit(t))
+    match o { None => {}, Some(g) => g() }
+    match o { None => {}, Some(g) => g() }   //~ W0302
+}
+
+fn main() {
+    some_then_none()
+    none_then_some()
+    nested()
+    in_a_tuple()
+    on_each_path(true)
+    on_each_path(false)
+    not_called()
+    lost_on_one_path(false)
+}

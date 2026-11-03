@@ -1,0 +1,10 @@
+// Issue 47 (follow-up F20.1), bad twin: the local gets the `Option` in an assignment.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn main() {
+    let t = begin(1)
+    let o = None
+    o = Some(|| commit(t))
+    match o { None => {}, Some(g) => print("x") }
+}

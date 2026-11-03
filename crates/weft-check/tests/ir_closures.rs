@@ -284,3 +284,12 @@ fn a_run_of_a_closure_reads_through_a_captured_reference_to_references() {
     // after a change that ends them is W0301.
     check("crr_ref_to_ref_container.wf");
 }
+
+#[test]
+fn an_arm_of_a_variant_with_no_payload_consumes_a_linear_closure_in_an_enum() {
+    // Issue 47 (tier 1 c4_generic_clean.wf `closure_in_some`): the type
+    // `Option<fn()>` has no linear part, but the local holds a linear
+    // closure. The arm `None` consumes the local; a closure that a path does
+    // not call is still W0601.
+    check("option_payload.wf");
+}

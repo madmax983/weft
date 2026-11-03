@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1"]
 
 
 # ----------------------------------------------------------------------
@@ -6597,3 +6597,98 @@ repro = [
     "tests/gate/probes/fixes/f20/two_params_c.wf",
 ]
 note = "the clean twins: plain data behind the reference; the linear type goes to the type parameter that the callee gives back (the type parameters of `drops` are apart)"
+
+
+# Follow-up F20.1 (issue #47): a linear closure in an `Option`. The type
+# `Option<fn()>` has no linear part, so the arm of a variant with no payload
+# (`None`) did not consume the local, and the `ir` pipeline gave a false
+# W0601. Now the arm consumes a local that holds a linear closure, or a
+# temporary scrutinee. A closure that a path does not run is still W0601.
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "fp"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/fixes/f47/a01_some_call_c.wf",
+    "tests/gate/probes/fixes/f47/a03_none_first_c.wf",
+    "tests/gate/probes/fixes/f47/a04_nested_c.wf",
+    "tests/gate/probes/fixes/f47/a06_copied_c.wf",
+    "tests/gate/probes/fixes/f47/a07_by_ref_c.wf",
+    "tests/gate/probes/fixes/f47/a08_one_path_c.wf",
+    "tests/gate/probes/fixes/f47/a12_tuple_c.wf",
+    "tests/gate/probes/fixes/f47/b02_block_scrutinee_c.wf",
+    "tests/gate/probes/fixes/f47/b03_reassigned_c.wf",
+]
+code = "W0601"
+note = "the arm `Some(g)` runs the linear closure, the arm `None` consumes the `Option` (also nested, in a tuple, a copy of the local, a temporary scrutinee, a new value)"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "fp"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/verify/partb/S4/p/c4_generic_clean.wf",
+    "tests/gate/probes/fixes/f47/a02_generic_wrap_c.wf",
+    "tests/gate/probes/fixes/f47/a10_generic_match_c.wf",
+    "tests/gate/probes/fixes/f47/b07_generic_hold_c.wf",
+]
+code = "W0601"
+note = "the `Option` of the linear closure comes from a generic callee (n03 of stage F20, `c4_generic_clean.wf` `closure_in_some`)"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/fixes/f47/a01_some_call_b.wf",
+    "tests/gate/probes/fixes/f47/a03_none_first_b.wf",
+    "tests/gate/probes/fixes/f47/a04_nested_b.wf",
+    "tests/gate/probes/fixes/f47/a06_copied_b.wf",
+    "tests/gate/probes/fixes/f47/a07_by_ref_b.wf",
+    "tests/gate/probes/fixes/f47/a08_one_path_b.wf",
+    "tests/gate/probes/fixes/f47/a12_tuple_b.wf",
+    "tests/gate/probes/fixes/f47/b02_block_scrutinee_b.wf",
+    "tests/gate/probes/fixes/f47/b03_reassigned_b.wf",
+]
+code = "W0601"
+note = "the bad twins: a path does not run the linear closure in the `Option`"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/fixes/f47/a02_generic_wrap_b.wf",
+    "tests/gate/probes/fixes/f47/a10_generic_match_b.wf",
+    "tests/gate/probes/fixes/f47/b07_generic_hold_b.wf",
+]
+code = "W0601"
+note = "the bad twins with a generic callee: a path does not run the linear closure, or the callee drops it"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "sound"
+verdict = "one-rule"
+group = "A"
+stage = "F20.1"
+repro = ["tests/gate/probes/fixes/f47/a13_linear_type_c.wf"]
+note = "control: `Option<Tx>` with a linear type (no change)"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "unsound"
+verdict = "one-rule"
+group = "A"
+stage = "F20.1"
+repro = ["tests/gate/probes/fixes/f47/a13_linear_type_b.wf"]
+code = "W0601"
+note = "control: `Option<Tx>`, the arm `Some(_)` drops the linear value (no change)"
