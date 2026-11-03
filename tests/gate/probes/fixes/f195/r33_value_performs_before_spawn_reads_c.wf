@@ -1,0 +1,15 @@
+// F19.5 (R3-3, issue #51): the value performs before it starts its task; the clause reads the place of the task
+effect Note { fn note() }
+fn once(g: fn()) / Note { g() }
+fn main() / async, clock {
+    let v = Vec.new()
+    let w = Vec.new()
+    v.push(1)
+    w.push(1)
+    let c = true
+    scope { s =>
+        handle Note { fn note() { print(v.len()); resume(()) } } in {
+            once(|| { note(); s.spawn(|| v.push(2)); () })
+        }
+    }
+}

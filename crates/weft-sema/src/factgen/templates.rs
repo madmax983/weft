@@ -132,6 +132,17 @@ pub struct Em<'a> {
     /// The [`super::nodes::Phase::Task`] nodes of the call that the
     /// template emits now (plan stage F19).
     pub task_nodes: Vec<NodeId>,
+    /// The local handlers whose clauses the call that the template emits
+    /// now runs while a task of the call can run, each with its four task
+    /// nodes (`super::frames::Frames::wait_handlers`, follow-up F19.5).
+    pub wait_nodes: Vec<(weft_ir::HandlerId, [NodeId; 4])>,
+    /// The `FrameEnd` nodes of the aborts of the call that the template
+    /// emits now to a local handler, if it has `wait_nodes` (follow-up
+    /// F19.5): a task that a late run starts and that runs while the callee
+    /// aborts starts there too, so it runs at the code after the `handle`.
+    pub abort_starts: Vec<NodeId>,
+    /// The facts of the part `waits` of the body (follow-up F19.5).
+    pub waits: crate::analysis::tasks::WaitRaw,
     /// The spawn sites (`SpawnId`) whose tasks the body starts, also
     /// through the closures that it runs (part `tasks` of a closure
     /// summary, plan stage F19).
@@ -157,6 +168,42 @@ pub struct Em<'a> {
     /// what their runs found, and the templates keep the run nodes of the
     /// clauses (`super::handlers`).
     pub hx: &'a mut crate::analysis::clause::Handlers,
+}
+
+/// The tasks of a call that stand for the tasks that can run while a clause
+/// of a local handler runs at the call (follow-up F19.5, issue #50).
+///
+/// The handler has four task nodes (`super::frames::Frames::wait_handlers`).
+/// `task` starts at the first one and ends at the second one, which reads
+/// each place that the code of the clause accesses at `Main`
+/// (`super::handlers::project`); its changes are the changes of the tasks
+/// that run while the clause runs. `back` starts at the third node and
+/// ends at the fourth one, which reads each place that these tasks read;
+/// its changes are the changes of the code of the clause. So a clause
+/// that reads or changes what such a task changes, or changes what such a
+/// task reads, conflicts with it (W0405). The places of the tasks are the
+/// places of the part `waits` of the summaries that the call applies for
+/// the effect of the handler, and the places of each task of `writes_of`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WaitTask {
+    /// The task with the changes of the tasks.
+    pub task: weft_facts::TaskId,
+    /// The task with the changes of the clause.
+    pub back: weft_facts::TaskId,
+    /// The fourth task node: it reads the places that the tasks read.
+    pub reads_at: NodeId,
+    /// The `Main` node of the call.
+    pub main: NodeId,
+    /// The local handler.
+    pub handler: weft_ir::HandlerId,
+    /// The tasks of the component that a run of the call starts before the
+    /// clause can run.
+    pub stands: Vec<weft_facts::TaskId>,
+    /// The tasks of `stands` that do not run at the task nodes of the call
+    /// already (they start after `Main`), and that only the code of the
+    /// callee after the run can make wait: `task` gets their changes, and
+    /// `reads_at` their reads.
+    pub writes_of: Vec<weft_facts::TaskId>,
 }
 
 /// References that a node puts into a place that a caller keeps: behind a
@@ -2381,7 +2428,8 @@ pub struct CallNodes {
     /// Code of the component other than the callee can run at the node
     /// while the callee runs (follow-up F19.4, R2-1): a clause of a local
     /// handler, the destination of an abort at a local handler, or the code
-    /// after the node again (a `multi` resume).
+    /// after the node again (a `multi` resume). A call with wait nodes
+    /// (follow-up F19.5) has it only for a `multi` resume.
     pub local_code: bool,
 }
 
@@ -2635,6 +2683,9 @@ pub fn call(
         crate::analysis::apply::RunKind::Item,
     )?;
     slot_reads(em, main, read);
+    // The tasks of the callee that run while it waits at an operation of a
+    // handler (part `waits`, follow-up F19.5).
+    waits_at(em, main, &sum.waits, &out.sigma)?;
     // The function values that the callee runs (part `runs`, stage F12). A
     // value that the callee runs as a task applies at the task nodes; a
     // value that it runs while a task runs gives its places to them (plan
@@ -2848,6 +2899,149 @@ fn places_since(
     (writes, reads)
 }
 
+/// The part `waits` of a summary that node `main` applies with σ `sigma`
+/// (follow-up F19.5): for each effect, the places that σ gives there
+/// (`Em::waits`). A node of a task does not wait for a handler of this
+/// task (W0314).
+///
+/// # Errors
+///
+/// The errors of σ.
+fn waits_at(
+    em: &mut Em<'_>,
+    main: NodeId,
+    waits: &std::collections::BTreeMap<String, crate::analysis::summary::Wait>,
+    sigma: &crate::analysis::apply::Sigma,
+) -> R {
+    if em.in_task.is_some() {
+        return Ok(());
+    }
+    for (e, w) in waits {
+        em.waits.places.push((main, e.clone(), None, true));
+        for (ips, write) in [(&w.writes, true), (&w.reads, false)] {
+            for ip in ips {
+                for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
+                    em.waits.places.push((main, e.clone(), Some(q), write));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The tasks of a call that stand for the tasks that can run while a clause
+/// of a local handler runs at the call (follow-up F19.5, issue #50;
+/// [`WaitTask`]).
+///
+/// For each local handler of `Em::wait_nodes`: if a summary that the call
+/// applies has the part `waits` for the effect of the handler, or a run of
+/// the call starts a task that can run when the clause runs, the call gets
+/// the two tasks of a [`WaitTask`]. The first one changes the places of
+/// the part `waits`, and the fourth task node reads the places that the
+/// part reads. The tasks get the places of the tasks of `writes_of` (tasks
+/// that do not run at the task nodes of the call already: a task that
+/// starts at `Main` runs there) when the facts of the component are whole
+/// ([`wait_task_places`]), and the places of the code of the clause in
+/// `super::handlers::project`. So the code of the clause conflicts with
+/// these tasks (W0405), but the parts of the call itself at `Main` do not.
+pub fn wait_tasks(em: &mut Em<'_>, main: NodeId, origin: weft_ir::Span) {
+    let at = span(origin);
+    let hs = std::mem::take(&mut em.wait_nodes);
+    let mut stands: Vec<weft_facts::TaskId> = em
+        .waits
+        .starts
+        .iter()
+        .filter(|&&(m, _, _)| m == main)
+        .map(|&(_, t, _)| t)
+        .collect();
+    stands.sort_unstable();
+    stands.dedup();
+    // A task that starts at `Main` runs at the task nodes already; the code
+    // of a value that waits after its own spawn sees the task in the facts
+    // of the value (its part `waits`, or its body in this component).
+    let mut writes_of: Vec<weft_facts::TaskId> = em
+        .waits
+        .starts
+        .iter()
+        .filter(|&&(m, t, callee)| m == main && callee && !em.facts.spawned_at.contains(&(t, main)))
+        .map(|&(_, t, _)| t)
+        .collect();
+    writes_of.sort_unstable();
+    writes_of.dedup();
+    for (h, [s, c, s2, c2]) in hs {
+        let Some(effect) =
+            em.p.handlers
+                .get(h.index())
+                .and_then(|d| em.tys.effects().get(d.effect.index()))
+                .map(|e| e.identity.clone())
+        else {
+            continue;
+        };
+        let given: Vec<(Option<PlaceId>, bool)> = em
+            .waits
+            .places
+            .iter()
+            .filter(|(m, e, _, _)| *m == main && *e == effect)
+            .map(|&(_, _, q, w)| (q, w))
+            .collect();
+        if given.is_empty() && stands.is_empty() {
+            continue;
+        }
+        let t = em.facts.add_task(weft_facts::TaskKind::Spawn, at);
+        em.facts.spawned_at.push((t, s));
+        em.facts.joined_at.push((t, c));
+        let back = em.facts.add_task(weft_facts::TaskKind::Spawn, at);
+        em.facts.spawned_at.push((back, s2));
+        em.facts.joined_at.push((back, c2));
+        for (q, w) in given {
+            match (q, w) {
+                (Some(q), true) => em.facts.task_writes.push((t, q)),
+                (Some(q), false) => em.facts.reads_at.push((c2, q)),
+                (None, _) => {}
+            }
+        }
+        em.hx.wait_copies.push((main, h, c, back));
+        em.hx.wait_tasks.push(WaitTask {
+            task: t,
+            back,
+            reads_at: c2,
+            main,
+            handler: h,
+            stands: stands.clone(),
+            writes_of: writes_of.clone(),
+        });
+    }
+}
+
+/// Gives each [`WaitTask`] of `waits` the places of its tasks (follow-up F19.5).
+///
+/// The facts of the component are whole. The first task changes what the
+/// tasks of `writes_of` change; the fourth task node reads what they read.
+pub fn wait_task_places(facts: &mut weft_facts::FnFacts, waits: &[WaitTask]) {
+    let mut add = Vec::new();
+    let mut reads = Vec::new();
+    for w in waits {
+        for &u in &w.writes_of {
+            add.extend(
+                facts
+                    .task_writes
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|&(_, q)| (w.task, q)),
+            );
+            reads.extend(
+                facts
+                    .task_reads
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|&(_, q)| (w.reads_at, q)),
+            );
+        }
+    }
+    facts.task_writes.extend(add);
+    facts.reads_at.extend(reads);
+}
+
 /// True if a run of summary `s` can perform an operation other than
 /// `Async`, or abort: a clause of a handler of a caller can run.
 fn acts(s: &crate::analysis::Summary) -> bool {
@@ -2929,6 +3123,11 @@ fn call_tasks(
         let span_of = spans.get(run.param as usize).copied().unwrap_or(at);
         let t = em.facts.add_task(kind, span_of);
         em.facts.spawned_at.push((t, s));
+        // The task can run while the call waits at an operation (follow-up
+        // F19.5): a clause of a local handler, a handler of a caller.
+        if em.in_task.is_none() {
+            em.waits.starts.push((nodes.main, t, true));
+        }
         // Code of a local handler at the node runs at `Main` while the task
         // can run (a clause of an operation of a value that the callee runs
         // with the task): the task starts on each edge into `Main` too
@@ -3348,8 +3547,12 @@ fn emit_apps(
             // Code of a local handler at the node can run after the run and
             // while its task runs: the callee performs or aborts after the
             // run (`Run::then`), or the value itself does (R2-1, follow-up
-            // F19.4).
-            let after = nodes.local_code && (app.then || acts(&app.summary));
+            // F19.4). With the wait nodes of the call (follow-up F19.5),
+            // `local_code` holds only for a `multi` resume: a clause runs
+            // with the tasks of `wait_tasks`, and an abort starts the task
+            // at `Em::abort_starts` (R3-3, R3-4).
+            let then = app.then || acts(&app.summary);
+            let after = nodes.local_code && then;
             let early_start = n != main
                 && (!alone
                     || after
@@ -3360,9 +3563,10 @@ fn emit_apps(
                         }
                     }));
             // Code of a local handler at the node (a clause, the destination
-            // of an abort) runs at `Main`, and a late run can start the task
-            // before it: the task starts on each edge into `Main` too, so it
-            // runs at `Main` and on the abort edges (R2-1, follow-up F19.4).
+            // of an abort, the code after the node again) runs at `Main`, and
+            // a late run can start the task before it: the task starts on
+            // each edge into `Main` too, so it runs at `Main` and on the
+            // abort edges (R2-1, follow-up F19.4).
             let before: Vec<NodeId> = if n != main && after {
                 preds(em, main)
             } else {
@@ -3380,7 +3584,30 @@ fn emit_apps(
                             em.facts.spawned_at.push((t, p));
                         }
                     }
+                    // The task can run while the node waits at an operation
+                    // of the callee after the run (follow-up F19.5): a clause
+                    // of a local handler there (`wait_tasks`), a handler of a
+                    // caller (part `waits`), and the code after the `handle`
+                    // of an abort to a local handler (`Em::abort_starts`).
+                    // The value that the node itself runs orders its own
+                    // operations and spawns (its part `waits`).
+                    let by_callee = app.late || app.again || app.callee_param.is_some();
+                    if then && first && by_callee && em.in_task.is_none() {
+                        em.waits.starts.push((main, t, app.then));
+                        if n != main {
+                            for &a in &em.abort_starts {
+                                if !em.facts.spawned_at.contains(&(t, a)) {
+                                    em.facts.spawned_at.push((t, a));
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+            // The tasks of the value that run while it waits at an operation
+            // of a handler (part `waits`, follow-up F19.5).
+            if first {
+                waits_at(em, main, &app.summary.waits, &app.sigma)?;
             }
             let lent = em.facts.lends_mut.len();
             let read = em.facts.reads_at.len();

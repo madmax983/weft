@@ -364,6 +364,9 @@ pub fn summarize(
     out.joins.extend(fv.joins.iter().copied());
     out.abort_joins.extend(fv.abort_joins.iter().copied());
     out.task_effects.extend(fv.task_effects.iter().cloned());
+    // The tasks that run while the body waits at an operation of a handler
+    // of a caller (follow-up F19.5, issue #50).
+    out.waits = super::tasks::waits_of(facts, nodes, fv.waits, &place);
     out
 }
 
@@ -500,6 +503,9 @@ pub struct FnParts<'a> {
     /// The effects that a task of the body performs through a handler of a
     /// caller (part `task_effects`, plan stage F19).
     pub task_effects: &'a std::collections::BTreeSet<String>,
+    /// The facts of the part `waits` that the fact generator records at the
+    /// nodes of the body (follow-up F19.5).
+    pub waits: &'a super::tasks::WaitRaw,
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -1288,6 +1294,22 @@ pub fn closure(
     out.pins = task_pins(facts, &[]);
     out.joins = fv.joins.iter().copied().collect();
     out.abort_joins = fv.abort_joins.iter().copied().collect();
+    // The tasks that run while the closure waits at an operation of a
+    // handler of a caller (follow-up F19.5, issue #50).
+    out.waits = super::tasks::waits_of(facts, usize::MAX, fv.waits, &|q| {
+        closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
+    })
+    .into_iter()
+    .map(|(e, (ws, rs))| {
+        (
+            e,
+            super::summary::Wait {
+                writes: ws.into_iter().collect(),
+                reads: rs.into_iter().collect(),
+            },
+        )
+    })
+    .collect();
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can. A perform
     // through a captured capability is a `multi` point of the node that

@@ -80,6 +80,21 @@ pub struct Handlers {
     pub ids: BTreeMap<HandlerId, (weft_facts::HandlerId, weft_facts::CapId)>,
     /// The `Exit` and `Post` nodes of each `handle` in the facts.
     pub ends: Vec<(HandlerId, weft_facts::NodeId, weft_facts::NodeId)>,
+    /// The calls whose clauses of a local handler run while a task of the
+    /// call can run (follow-up F19.5): the `Main` node, the handler, the
+    /// task node that reads what the code of the clause at `Main` accesses,
+    /// and the task that changes what the code of the clause changes
+    /// (`crate::factgen::handlers::project`).
+    pub wait_copies: Vec<(
+        weft_facts::NodeId,
+        HandlerId,
+        weft_facts::NodeId,
+        weft_facts::TaskId,
+    )>,
+    /// The tasks of the calls that stand for the tasks that can run while a
+    /// clause of a local handler runs (follow-up F19.5,
+    /// `crate::factgen::templates::wait_tasks`).
+    pub wait_tasks: Vec<crate::factgen::templates::WaitTask>,
     /// The `Landing` node of each `handle` in the facts.
     pub landings: Vec<(HandlerId, weft_facts::NodeId)>,
     /// The state of the abort edge of the terminator that the analysis ran

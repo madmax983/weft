@@ -774,6 +774,16 @@ fn cap_effect<'t>(
 /// value that the callee runs as a task (plan stage F19).
 pub const TASK_NODES: usize = 4;
 
+/// The number of task nodes of a call for each wait handler (follow-up F19.5).
+///
+/// The [`super::nodes::Phase::Task`] nodes of a local handler of
+/// [`Frames::wait_handlers`]: the start of the task that stands for the
+/// tasks that can run while the clause runs, the node of the reads of the
+/// clause, where it ends; the start of the task of the changes of the
+/// clause, and the node of the reads of the tasks, where it ends
+/// (`templates::WaitTask`).
+pub const WAIT_NODES: usize = 4;
+
 /// The entries of the part `runs` of summary `s` that the body runs as a
 /// task, in order: a run node applies each at its task nodes.
 pub fn task_runs(
@@ -803,6 +813,11 @@ pub struct Frames {
     /// each block whose callee runs a function value as a task (plan stage
     /// F19, `docs/ir.md` 6.7).
     tasks: BTreeMap<(BodyId, BlockId), u32>,
+    /// The local handlers whose clauses the call of each block runs while a
+    /// task of the call can run (follow-up F19.5): [`WAIT_NODES`] more
+    /// [`super::nodes::Phase::Task`] nodes for each, after the nodes of
+    /// `tasks` ([`Frames::wait_handlers`]).
+    waits: BTreeMap<(BodyId, BlockId), Vec<HandlerId>>,
     /// The performs through the capability of a local handler whose clause
     /// has no `resume` (plan stage F19): they do not go on to their next
     /// block (`fail` of a local `Fail` handler).
@@ -813,7 +828,25 @@ impl Frames {
     /// The number of [`super::nodes::Phase::Task`] nodes of the call of
     /// block `block` of body `body`.
     pub fn task_nodes(&self, body: BodyId, block: BlockId) -> u32 {
+        let waits = self.waits.get(&(body, block)).map_or(0, Vec::len);
+        let waits = u32::try_from(waits.saturating_mul(WAIT_NODES)).unwrap_or(u32::MAX);
+        self.run_task_nodes(body, block).saturating_add(waits)
+    }
+
+    /// The number of [`super::nodes::Phase::Task`] nodes of the call of
+    /// block `block` of body `body` for the values that the callee runs as
+    /// tasks: the first nodes of [`Frames::task_nodes`].
+    pub fn run_task_nodes(&self, body: BodyId, block: BlockId) -> u32 {
         self.tasks.get(&(body, block)).copied().unwrap_or(0)
+    }
+
+    /// The local handlers whose clauses the call of block `block` of body
+    /// `body` runs while a task of the call can run (follow-up F19.5, issue
+    /// #50). The call has [`WAIT_NODES`] [`super::nodes::Phase::Task`]
+    /// nodes for each, in order, after the nodes of
+    /// [`Frames::run_task_nodes`] (`templates::WaitTask`).
+    pub fn wait_handlers(&self, body: BodyId, block: BlockId) -> &[HandlerId] {
+        self.waits.get(&(body, block)).map_or(&[], Vec::as_slice)
     }
 
     /// True if the terminator of block `block` of body `body` is a perform
@@ -827,7 +860,7 @@ impl Frames {
     pub fn of_body(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId) -> Self {
         let mut f = Self::default();
         f.add(body, p, |t| destinations(p, tys, sums, body, t));
-        f.add_tasks(p, sums, &[body]);
+        f.add_tasks(p, tys, sums, &[body]);
         f
     }
 
@@ -835,8 +868,10 @@ impl Frames {
     /// `bodies` whose callee runs a function value as a task: four for each
     /// such entry of the part `runs` of the summary of the callee (the
     /// start of the task, its second start, the code that runs at the same
-    /// time, its end; plan stage F19, `docs/ir.md` 6.7).
-    fn add_tasks(&mut self, p: &Program, sums: &Summaries, bodies: &[BodyId]) {
+    /// time, its end; plan stage F19, `docs/ir.md` 6.7). Then
+    /// [`WAIT_NODES`] for each local handler of [`Frames::wait_handlers`]
+    /// (follow-up F19.5).
+    fn add_tasks(&mut self, p: &Program, tys: &TyTable, sums: &Summaries, bodies: &[BodyId]) {
         for &body in bodies {
             let Some(b) = p.bodies.get(body.index()) else {
                 continue;
@@ -845,9 +880,29 @@ impl Frames {
                 if blk.cleanup {
                     continue;
                 }
+                let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
                 if crate::analysis::clause::perform_never_returns(p, body, &blk.term.kind) {
-                    let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
                     self.noreturn.insert((body, block));
+                }
+                // A call that runs a clause of a local handler while a task
+                // of the call can run: a task of the callee (part `waits`),
+                // a task that a value of the call starts (part `runs`), or a
+                // value of a function value (follow-up F19.5).
+                let waits = match &blk.term.kind {
+                    TermKind::Call {
+                        callee: Callee::Fn(f, _),
+                        ..
+                    } => sums
+                        .get(*f)
+                        .is_ok_and(|s| !s.waits.is_empty() || !s.runs.is_empty()),
+                    TermKind::Call { .. } => true,
+                    _ => false,
+                };
+                if waits {
+                    let hs = clause_handlers(p, tys, sums, body, &blk.term.kind);
+                    if !hs.is_empty() {
+                        self.waits.insert((body, block), hs);
+                    }
                 }
                 let TermKind::Call {
                     callee: Callee::Fn(f, _),
@@ -858,7 +913,6 @@ impl Frames {
                 };
                 let k = sums.get(*f).map_or(0, |s| task_runs(s).count());
                 if k > 0 {
-                    let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
                     let n = u32::try_from(k.saturating_mul(TASK_NODES)).unwrap_or(u32::MAX);
                     self.tasks.insert((body, block), n);
                 }
@@ -920,7 +974,7 @@ impl Frames {
                 }
             }
         }
-        f.add_tasks(p, sums, &order);
+        f.add_tasks(p, tys, sums, &order);
         f.clause_aborts(p, &order);
         f.twice = f.twice_of(p);
         for (&(body, block), hs) in &f.runs {

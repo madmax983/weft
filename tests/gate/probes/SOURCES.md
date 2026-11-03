@@ -617,3 +617,29 @@ again if it runs. They come from the second review of group E (scratchpad
 - `fixes/e1/e*_c.wf` (but `e07`): the clean twins of E-1 that the second review signed
   (they were in `crates/weft-check/tests/data/tasks/e1_twins/`). `e13_loop_direct_join_c`
   stays there.
+
+## Follow-up F19.5: issue #50 (R3-1, R3-2) and issue #51 (R3-3, R3-4)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the third review of group E (scratchpad `ereview/review_r3.md`, `variants_r3/`)
+and the self-attack of the fix (scratchpad `f195/att`).
+
+- `fixes/f195/w*_b.wf`: classes R3-1 and R3-2 (claims R3-1, R3-2). A task of a callee
+  changes the place of an argument while the callee waits at an operation that a
+  handler of a caller handles: a perform, a `fail`, a timeout of `with_timeout`, an
+  operation whose clause has no `resume`, a callee or a local closure that performs, a
+  chain of callees, a middle callee that handles another effect, two effects. Or a
+  callee of the scope function runs a closure that starts the task (also from a field,
+  through two runners, or a closure that starts the task and then performs), then
+  performs. The clause of the caller reads the place. Both pipelines of follow-up F19.4
+  accept each one, and each one faults (a data race). `w01_callee_task_perform_b.wf`
+  is `P19` of the review, `w02_handler_in_caller_of_scope_fn_b.wf` is `P15`.
+- `fixes/f195/w*_c.wf`: the clean twins: the task ends before the operation, starts
+  after it, the clause reads another place, or the callee performs before it runs the
+  closure.
+- `fixes/f195/r33_*.wf`, `r34_branch_pred_c.wf`: classes R3-3 and R3-4 (claims R3-3,
+  R3-4): a task of a late run conflicted with its own run node when the call runs code
+  of a local handler (`P01_c`, `P01_probe`, `P08_c`, `P09_c`, `P12_c` of the review),
+  or started on a branch before the call (`P13_c`). The `_b` files are the bad twins
+  (`P08`, `P09`, `P12`), which both pipelines reject.

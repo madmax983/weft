@@ -253,10 +253,15 @@ struct Comp {
     /// A scope body (follow-up F19.3): the oracle follows its frames only
     /// for trace conformance and the task check ([`FactOracle::light_step`]).
     light: bool,
-    /// The tasks that each node starts (`spawned_at`).
+    /// The tasks that each node starts (`spawned_at`), but the tasks of
+    /// `waits`: no task of the run is one of them.
     spawns: Vec<Vec<TaskId>>,
     /// The tasks that end after each node (`joined_at`).
     joins: Vec<Vec<TaskId>>,
+    /// The tasks of the calls that stand for the tasks that can run while a
+    /// clause of a local handler runs at the call (follow-up F19.5,
+    /// `weft_sema::factgen::templates::WaitTask`).
+    waits: Vec<weft_sema::factgen::templates::WaitTask>,
 }
 
 /// A target of a reference: a place, or the elements of a buffer (a slice).
@@ -708,9 +713,26 @@ impl Comp {
             returns,
             ret,
             light: body.is_some_and(|b| matches!(b.kind, weft_ir::BodyKind::Scope(_))),
-            spawns: per_task(&f.spawned_at),
+            spawns: per_task(
+                &f.spawned_at
+                    .iter()
+                    .copied()
+                    .filter(|(t, _)| {
+                        !c.emitted
+                            .wait_tasks
+                            .iter()
+                            .any(|w| w.task == *t || w.back == *t)
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             joins: per_task(&f.joined_at),
+            waits: c.emitted.wait_tasks.clone(),
         }
+    }
+
+    /// True if the facts start task `t` at some node (`spawned_at`).
+    fn starts_task(&self, t: TaskId) -> bool {
+        self.facts.spawned_at.iter().any(|&(u, _)| u == t)
     }
 
     /// The kind of node `n` (`""` for a node of no kind).
@@ -1050,6 +1072,7 @@ impl FactOracle {
         &mut self,
         starts: &[(u64, usize, Vec<NodeId>)],
         task: usize,
+        handler: weft_ir::HandlerId,
     ) -> Result<(), String> {
         let known = self.knows.get(&task).cloned().unwrap_or_default();
         // The innermost frame of each live task, with the task of the facts.
@@ -1076,10 +1099,21 @@ impl FactOracle {
                 continue;
             };
             let ci = *ci;
-            let ok = self.active_nodes(ci, t).is_some_and(|on| {
-                at.iter()
-                    .any(|n| on.get(n.index()).copied().unwrap_or(false))
+            // A task of the call that stands for `T` while the clause runs
+            // (follow-up F19.5) names the code of the clause too.
+            let stands = self.comps.get(ci).is_some_and(|c| {
+                c.waits.iter().any(|w| {
+                    w.handler == handler
+                        && at.contains(&w.main)
+                        && w.stands.contains(&t)
+                        && c.starts_task(w.task)
+                })
             });
+            let ok = stands
+                || self.active_nodes(ci, t).is_some_and(|on| {
+                    at.iter()
+                        .any(|n| on.get(n.index()).copied().unwrap_or(false))
+                });
             if !ok {
                 let (text, name) = self
                     .comps
@@ -1095,6 +1129,76 @@ impl FactOracle {
             }
         }
         Ok(())
+    }
+
+    /// The task start check for the tasks of a callee (follow-up F19.5,
+    /// issue #50): a clause of a local handler runs on task `task`, and the
+    /// last frame of `starts` (frame, component, nodes) is the frame of the
+    /// component of the handler that waits at a call. The frames of
+    /// `outer` (frame, component) are the frames of other components above
+    /// it: the callees. If a task that the run of such a frame started can
+    /// still run (no join ordered its end before), the call must have a task
+    /// for the handler that stands for it (a `WaitTask` at a node of the
+    /// nodes of the frame, whose task the facts start): else the facts of
+    /// the component of the handler do not see that the task runs while the
+    /// clause runs.
+    fn check_waits(
+        &self,
+        starts: &[(u64, usize, Vec<NodeId>)],
+        outer: &[(u64, usize)],
+        task: usize,
+        handler: weft_ir::HandlerId,
+    ) -> Result<(), String> {
+        let Some((_, ci, at)) = starts.last() else {
+            return Ok(());
+        };
+        let known = self.knows.get(&task);
+        let mut live: Option<(usize, usize, TaskId)> = None;
+        for (uid, oci) in outer {
+            let Some(unit) = self.comps.get(*oci).map(|c| c.unit) else {
+                continue;
+            };
+            let run = self.activation.get(uid).copied().unwrap_or(*uid);
+            for ((u, r, t), rs) in &self.instances {
+                if *u != unit || *r != run {
+                    continue;
+                }
+                if let Some(&x) = rs
+                    .iter()
+                    .find(|&&x| x != task && !known.is_some_and(|k| k.contains(&x)))
+                {
+                    live = Some((x, *oci, *t));
+                    break;
+                }
+            }
+            if live.is_some() {
+                break;
+            }
+        }
+        let Some((r, oci, t)) = live else {
+            return Ok(());
+        };
+        let Some(comp) = self.comps.get(*ci) else {
+            return Ok(());
+        };
+        if comp
+            .waits
+            .iter()
+            .any(|w| w.handler == handler && at.contains(&w.main) && comp.starts_task(w.task))
+        {
+            return Ok(());
+        }
+        let text: Vec<String> = at.iter().map(|&n| comp.node_text(n)).collect();
+        let callee = self
+            .comps
+            .get(oci)
+            .map(|c| c.facts.name.clone())
+            .unwrap_or_default();
+        Err(format!(
+            "fact oracle (task start): in `{}`, a clause of a local handler runs at {}, and task {r} of `{t}` of `{callee}` can run at the same time, but the call has no task that stands for it",
+            comp.facts.name,
+            text.join(", "),
+        ))
     }
 
     /// Task `cur` knows that task `u` is done (a join, the end of a scope or
@@ -1534,18 +1638,33 @@ impl FactOracle {
         // effect in its row, too).
         let mut escapes: Option<(NodeId, usize)> = None;
         let mut starts: Vec<(u64, usize, Vec<NodeId>)> = Vec::new();
+        // The frames of the callees above the component (follow-up F19.5).
+        let mut outer: Vec<(u64, usize)> = Vec::new();
+        let mut beyond = false;
         for uid in frames {
+            if beyond {
+                if let Some(f) = self.frames.get(uid).or_else(|| self.light.get(uid)) {
+                    outer.push((*uid, f.comp));
+                }
+                continue;
+            }
             if !tracked(*uid) {
                 // A frame of a scope body: the task start check only.
                 if let Some(f) = self.light.get(uid) {
-                    if let Some(c) = self.comps.get(f.comp).filter(|c| c.unit == unit) {
-                        let group = c.group(&f.cur);
-                        let runs: Vec<NodeId> = group
-                            .iter()
-                            .copied()
-                            .filter(|&n| cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k))))
-                            .collect();
-                        starts.push((*uid, f.comp, if runs.is_empty() { group } else { runs }));
+                    match self.comps.get(f.comp) {
+                        Some(c) if c.unit == unit => {
+                            let group = c.group(&f.cur);
+                            let runs: Vec<NodeId> = group
+                                .iter()
+                                .copied()
+                                .filter(|&n| {
+                                    cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k)))
+                                })
+                                .collect();
+                            starts.push((*uid, f.comp, if runs.is_empty() { group } else { runs }));
+                        }
+                        Some(_) => outer.push((*uid, f.comp)),
+                        None => {}
                     }
                 }
                 continue;
@@ -1557,7 +1676,9 @@ impl FactOracle {
                 break;
             };
             if c.unit != unit {
-                break;
+                beyond = true;
+                outer.push((*uid, f.comp));
+                continue;
             }
             let group = c.group(&f.cur);
             let runs: Vec<NodeId> = group
@@ -1584,7 +1705,8 @@ impl FactOracle {
             }
         }
         self.report.clause += 1;
-        self.check_started(&starts, task)?;
+        self.check_started(&starts, task, h)?;
+        self.check_waits(&starts, &outer, task, h)?;
         let Some((n, ci)) = escapes else {
             return Ok(());
         };

@@ -254,3 +254,39 @@ fn a_task_of_a_call_conflicts_with_a_clause_that_the_call_runs() {
 fn a_clause_that_ends_the_callee_loses_its_task_handle() {
     check("r2_clause_loses_handle.wf");
 }
+
+/// R3-1 and R3-2 (follow-up F19.5, issue #50): a task of a callee runs
+/// while the callee waits at an operation that a handler of a caller
+/// handles (a perform, a `fail`, a timeout, a callee or a closure that
+/// performs, a closure that a runner starts before it performs). The
+/// clause of the caller runs at the same time as the task (part `waits`).
+/// Each bad probe of `tests/gate/probes/fixes/f195/` is W0405; each clean
+/// twin (the task ends before the operation, starts after it, or the clause
+/// accesses another place) has no diagnostic.
+#[test]
+fn a_task_of_a_callee_conflicts_with_a_clause_of_a_caller() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/f195");
+    let mut n = 0;
+    for e in fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+        let path = e.map(|e| e.path()).unwrap_or_default();
+        let file = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let name = path.display().to_string();
+        let src = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = abcde_codes(&name, &src);
+        if file.ends_with("_b.wf") {
+            assert!(
+                !got.is_empty() && got.iter().all(|(c, _)| c == "W0405"),
+                "{name}: {got:?}"
+            );
+        } else if file.ends_with("_c.wf") {
+            assert_eq!(got, Vec::new(), "{name}");
+        } else {
+            continue;
+        }
+        n += 1;
+    }
+    assert!(n >= 20, "{n}");
+}

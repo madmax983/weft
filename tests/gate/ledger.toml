@@ -3675,3 +3675,30 @@ files = [
 ]
 reason = "class F19-SIG-PINS (follow-up F19.4): the part `pins` of `main` differs for the reader task that the closure starts; the part of the IR comes from the facts of the body (`summarize::task_pins`), and a task that a closure body starts is `opaque` (its captures are not named), as the other entries of the class"
 stage = "F19.4"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/f195/r33_clause_other_place_b.wf"]
+codes = ["W0312", "W0405"]
+reason = "class R3-3 (follow-up F19.5): the bad twin of `r33_clause_other_place_c.wf`. The old pipeline reports W0312 (the callee changes the place that another argument, the closure, points into); the `ir` pipeline reports W0405 at the call: the task that the closure starts runs while the clause of the local handler changes the place. Both pipelines reject the program, and it faults"
+stage = "F19.5"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_b.wf",
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_c.wf",
+]
+reason = "class F19-SIG-RAISES (follow-up F19.5, the probes of R3-3): `f` calls `with_timeout`, which performs `Fail` through the row (a local `Fail` handler stops it, 5.31) and does not raise; the old inference gives `raises` to each `with_timeout`"
+stage = "F19.5"
+
+[[entry]]
+class = "sig"
+parts = ["task_effects"]
+files = [
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_b.wf",
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_c.wf",
+]
+reason = "class F19-SIG-TASKEFF (follow-up F19.5, the probes of R3-3): the part `task_effects` of the IR: the task that the closure starts sleeps through the runtime (`Clock`), and the IR does not give a standard effect of a task with a runtime to the part; the old inference gives `tasks[Clock]`"
+stage = "F19.5"

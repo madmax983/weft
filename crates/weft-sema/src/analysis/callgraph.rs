@@ -201,6 +201,7 @@ fn stated(
     out.joins.clone_from(&body.joins);
     out.abort_joins.clone_from(&body.abort_joins);
     out.task_effects.clone_from(&body.task_effects);
+    out.waits.clone_from(&body.waits);
     out
 }
 
@@ -247,6 +248,7 @@ fn summary_of(
             sum.joins.clone_from(&inf.joins);
             sum.abort_joins.clone_from(&inf.abort_joins);
             sum.task_effects.clone_from(&inf.task_effects);
+            sum.waits = sig::waits_part(inf);
             sum.only_self &= inf.runs.is_empty()
                 && inf
                     .lends
@@ -534,6 +536,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 task_hows: &e.task_hows,
                                 code_opaque: &e.code_opaque,
                                 task_effects: &e.task_effects,
+                                waits: &e.waits,
                             },
                         );
                         add_steps(&mut steps, &facts);

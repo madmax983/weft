@@ -1,8 +1,9 @@
 // R2-1 (follow-up F19.4): code of a local handler (a clause, the
 // destination of an abort) runs at the node of a call while a task that the
 // call starts can run. A callee runs a closure that starts a task, then
-// performs, fails, or runs a value while the task runs: the task starts
-// before the call node, so it conflicts with the code of the clause. A
+// performs, fails, or runs a value while the task runs: the tasks of the
+// call that stand for the task run at the task nodes of the clause
+// (follow-up F19.5), so they conflict with the code of the clause. A
 // callee that performs only before the run does not.
 effect Note { fn note() }
 fn run_note(g: fn()) / Note { g(); note() }
@@ -37,8 +38,8 @@ fn fail_clause_writes() / async {
 
 fn task_and_clause() / async {
     let v = Vec.new()
-    handle Note { fn note() { v.push(3); resume(()) } } in {   //~ W0405
-        both(|| print(v.len()), || note())
+    handle Note { fn note() { v.push(3); resume(()) } } in {
+        both(|| print(v.len()), || note())   //~ W0405
     }
 }
 

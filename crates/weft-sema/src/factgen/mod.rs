@@ -580,6 +580,12 @@ pub struct Emitted {
     /// The effects that a task of the entry body performs through a
     /// handler of a caller (part `task_effects`, plan stage F19).
     pub task_effects: std::collections::BTreeSet<String>,
+    /// The facts of the part `waits` of the entry body (follow-up F19.5).
+    pub waits: crate::analysis::tasks::WaitRaw,
+    /// The tasks of the calls that stand for the tasks that can run while a
+    /// clause of a local handler runs (follow-up F19.5,
+    /// `templates::wait_tasks`). The fact oracle reads them.
+    pub wait_tasks: Vec<templates::WaitTask>,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -735,6 +741,7 @@ pub fn emit_parts(
     let fn_then: Vec<(u32, bool)>;
     let task_hows: Vec<crate::analysis::tasks::RawHow>;
     let task_effects: std::collections::BTreeSet<String>;
+    let fn_waits: crate::analysis::tasks::WaitRaw;
     let mut w0314: Vec<(weft_ir::Span, String)>;
     let mut task_end_list: Vec<(weft_facts::TaskId, weft_facts::NodeId)>;
     let mut task_frames: Vec<(weft_facts::TaskId, weft_facts::VarId)>;
@@ -768,6 +775,9 @@ pub fn emit_parts(
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
+            wait_nodes: Vec::new(),
+            abort_starts: Vec::new(),
+            waits: crate::analysis::tasks::WaitRaw::default(),
             started: Vec::new(),
             task_effects: std::collections::BTreeSet::new(),
             w0314: Vec::new(),
@@ -787,6 +797,7 @@ pub fn emit_parts(
         fn_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         code_opaque = std::mem::take(&mut em.code_opaque);
         task_effects = std::mem::take(&mut em.task_effects);
+        fn_waits = std::mem::take(&mut em.waits);
         w0314 = std::mem::take(&mut em.w0314);
         task_end_list = std::mem::take(&mut em.task_end_list);
         task_frames = std::mem::take(&mut em.task_frames);
@@ -928,6 +939,7 @@ pub fn emit_parts(
     }
     hx.runs.append(&mut closure_runs);
     templates::task_end_lends(facts, &task_end_list, &task_frames);
+    templates::wait_task_places(facts, &hx.wait_tasks);
     facts.task_reads.sort();
     facts.task_reads.dedup();
     facts.task_writes.sort();
@@ -1036,6 +1048,8 @@ pub fn emit_parts(
         task_hows,
         code_opaque,
         task_effects,
+        waits: fn_waits,
+        wait_tasks: hx.wait_tasks,
     })
 }
 
@@ -1417,6 +1431,7 @@ fn closure_summary(
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
     let closure_then: Vec<(u32, bool)>;
+    let closure_waits: crate::analysis::tasks::WaitRaw;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
@@ -1446,6 +1461,9 @@ fn closure_summary(
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
+            wait_nodes: Vec::new(),
+            abort_starts: Vec::new(),
+            waits: crate::analysis::tasks::WaitRaw::default(),
             started: Vec::new(),
             task_effects: std::collections::BTreeSet::new(),
             w0314: Vec::new(),
@@ -1459,6 +1477,7 @@ fn closure_summary(
         templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
         closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
+        closure_waits = std::mem::take(&mut em.waits);
         (
             std::mem::take(&mut em.returns),
             std::mem::take(&mut em.aborts),
@@ -1515,6 +1534,7 @@ fn closure_summary(
             task_hows: &[],
             code_opaque: &[],
             task_effects: &closure_task_effects,
+            waits: &closure_waits,
         },
     );
     sum.ret.linear = ret_linear;
@@ -1708,6 +1728,9 @@ fn emit_closure(
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
+        wait_nodes: Vec::new(),
+        abort_starts: Vec::new(),
+        waits: crate::analysis::tasks::WaitRaw::default(),
         started: Vec::new(),
         task_effects: std::collections::BTreeSet::new(),
         w0314: Vec::new(),
@@ -1887,6 +1910,9 @@ fn emit_clause(
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
+        wait_nodes: Vec::new(),
+        abort_starts: Vec::new(),
+        waits: crate::analysis::tasks::WaitRaw::default(),
         started: Vec::new(),
         task_effects: std::collections::BTreeSet::new(),
         w0314: Vec::new(),
@@ -2539,17 +2565,50 @@ fn emit_block(
         weft_ir::TermKind::Call { .. } => {
             // The task nodes of a callee that runs a value as a task (plan
             // stage F19).
-            em.task_nodes = (1..=frames.task_nodes(bid, block))
+            let runs = frames.run_task_nodes(bid, block);
+            em.task_nodes = (1..=runs)
                 .filter_map(|i| table.get(at(Phase::Task(i), NORMAL)))
                 .collect();
+            // The task nodes of each local handler whose clause can run
+            // while a task of the call runs (follow-up F19.5).
+            em.wait_nodes = Vec::new();
+            for (j, &h) in frames.wait_handlers(bid, block).iter().enumerate() {
+                let k = u32::try_from(j.saturating_mul(frames::WAIT_NODES)).unwrap_or(u32::MAX);
+                let node = |i: u32| {
+                    table.get(at(
+                        Phase::Task(runs.saturating_add(k).saturating_add(i)),
+                        NORMAL,
+                    ))
+                };
+                if let (Some(a), Some(b), Some(c), Some(d)) = (node(1), node(2), node(3), node(4)) {
+                    em.wait_nodes.push((h, [a, b, c, d]));
+                }
+            }
             // Code of a local handler that can run at the node (follow-up
-            // F19.4, R2-1).
-            let local_code = dests
+            // F19.4, R2-1). With task nodes for the clauses (follow-up
+            // F19.5), a task of a late run does not start before the node
+            // for a clause or for the destination of an abort: the task of
+            // the clause runs at its own node (`templates::wait_tasks`), and
+            // the task starts on the abort path at the `FrameEnd` of each
+            // abort to a local handler (`Em::abort_starts`).
+            let to_local = dests
                 .iter()
-                .any(|d| matches!(d, frames::Dest::Handler { .. }))
-                || !frames::clause_handlers(em.p, em.tys, em.sums, bid, &blk.term.kind).is_empty()
-                || frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind)
-                || copy.is_some();
+                .any(|d| matches!(d, frames::Dest::Handler { .. }));
+            let clauses =
+                !frames::clause_handlers(em.p, em.tys, em.sums, bid, &blk.term.kind).is_empty();
+            let rerun =
+                frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind) || copy.is_some();
+            let waited = !em.wait_nodes.is_empty();
+            let local_code = rerun || (!waited && (to_local || clauses));
+            em.abort_starts = if waited {
+                dests
+                    .iter()
+                    .filter(|d| matches!(d, frames::Dest::Handler { .. }))
+                    .filter_map(|d| table.get(at(Phase::FrameEnd, d.id())))
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let nodes = templates::CallNodes {
                 main: n,
                 ret: table.get(at(Phase::Ret, NORMAL)),
@@ -2562,6 +2621,9 @@ fn emit_block(
             templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
             templates::call_joins(em, &nodes, &st, &blk.term.kind)?;
+            templates::wait_tasks(em, n, blk.term.origin.span);
+            em.wait_nodes.clear();
+            em.abort_starts.clear();
         }
         weft_ir::TermKind::Perform { cap, .. } => {
             let nodes = templates::CallNodes {

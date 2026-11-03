@@ -224,6 +224,16 @@ pub struct TaskHow {
     pub foreign: bool,
 }
 
+/// The places of the tasks that can run while a body waits at an operation
+/// of one effect (part `waits`, follow-up F19.5).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Wait {
+    /// The interface places that the tasks change.
+    pub writes: Vec<IPlace>,
+    /// The interface places that the tasks read.
+    pub reads: Vec<IPlace>,
+}
+
 /// A function value that the result can be (part `ret`, stage F12).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RetFn {
@@ -343,6 +353,18 @@ pub struct Summary {
     /// through a handler of a caller (plan stage F19): a call where a
     /// handler of this task handles such an effect is W0314.
     pub task_effects: BTreeSet<String>,
+    /// The tasks that can run while the body waits at an operation that a
+    /// handler of a caller handles (follow-up F19.5, issue #50): for each
+    /// effect, the interface places that such tasks change and read. The
+    /// operation is a perform through the row (also a `fail` and a
+    /// timeout), a call of a callee or a run of a value that waits there, or
+    /// a run of a value that starts a task before such an operation of the
+    /// callee. A key with no places says that a task runs there, but that
+    /// it accesses no place of the interface. A call that runs a clause of a
+    /// local handler of the effect gives these places to the tasks of the
+    /// call that run while the clause runs
+    /// (`factgen::templates::wait_tasks`).
+    pub waits: std::collections::BTreeMap<String, Wait>,
     /// The value of `_0`.
     pub ret: Ret,
     /// The values that the body writes behind a reference parameter.

@@ -1,0 +1,15 @@
+// F19.5 (R3-2, issue #50), clean twin: the scope function calls the performing callee after the join
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn tell() / Note { note() }
+fn work(r: &Stats) / Note, async, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        t.join()
+        tell()
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { work(&st) }
+}

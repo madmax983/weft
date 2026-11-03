@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5"]
 
 
 # ----------------------------------------------------------------------
@@ -6356,3 +6356,122 @@ repro = [
     "tests/gate/probes/fixes/e1/e09_callee_loop_fail_c.wf",
 ]
 note = "the clean twins of E-1 with a loop (signed by the second review of group E)"
+
+# Follow-up F19.5 (issue #50: R3-1 and R3-2 of the third review of group E,
+# ereview/review_r3.md; issue #51: R3-3 and R3-4). R3-2: a task of a callee
+# runs while the callee waits at an operation that a handler of a caller
+# handles (a perform, `fail`, a timeout, a clause with no `resume`, a callee
+# or a closure that performs); the clause of the caller accesses the place
+# of the task (part `waits`). R3-1: a callee of the scope function runs a
+# closure that starts a task, then performs to a handler of a caller of the
+# scope function. R3-3 and R3-4: a task of a late run does not conflict with
+# its own run node, and does not start on a branch before the call.
+
+[[claim]]
+finding = "R3-2"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_b.wf",
+    "tests/gate/probes/fixes/f195/w03_chain_b.wf",
+    "tests/gate/probes/fixes/f195/w04_deep_perform_b.wf",
+    "tests/gate/probes/fixes/f195/w05_fail_b.wf",
+    "tests/gate/probes/fixes/f195/w06_timeout_b.wf",
+    "tests/gate/probes/fixes/f195/w09_closure_performs_b.wf",
+    "tests/gate/probes/fixes/f195/w11_clause_no_resume_b.wf",
+    "tests/gate/probes/fixes/f195/w12_two_effects_b.wf",
+    "tests/gate/probes/fixes/f195/w13_middle_handles_other_b.wf",
+]
+code = "W0405"
+note = "a task of the callee changes the place of an argument while the callee waits at an operation; the clause of the handler of the caller reads the place"
+
+[[claim]]
+finding = "R3-2"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_c.wf",
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_first_c.wf",
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_other_c.wf",
+    "tests/gate/probes/fixes/f195/w03_chain_c.wf",
+    "tests/gate/probes/fixes/f195/w04_deep_perform_c.wf",
+    "tests/gate/probes/fixes/f195/w05_fail_c.wf",
+    "tests/gate/probes/fixes/f195/w06_timeout_c.wf",
+    "tests/gate/probes/fixes/f195/w09_closure_performs_c.wf",
+    "tests/gate/probes/fixes/f195/w11_clause_no_resume_c.wf",
+    "tests/gate/probes/fixes/f195/w12_two_effects_c.wf",
+    "tests/gate/probes/fixes/f195/w13_middle_handles_other_c.wf",
+]
+note = "the clean twins of R3-2: the task ends before the operation, starts after it, or the clause reads another place"
+
+[[claim]]
+finding = "R3-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w02_handler_in_caller_of_scope_fn_b.wf",
+    "tests/gate/probes/fixes/f195/w07_stored_closure_b.wf",
+    "tests/gate/probes/fixes/f195/w08_runner_chain_b.wf",
+    "tests/gate/probes/fixes/f195/w10_value_spawns_then_performs_b.wf",
+]
+code = "W0405"
+note = "a callee of the scope function runs a closure that starts a task, then performs to a handler of a caller of the scope function (also through a field, two runners, or the closure itself)"
+
+[[claim]]
+finding = "R3-1"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w02_handler_in_caller_of_scope_fn_c.wf",
+    "tests/gate/probes/fixes/f195/w07_stored_closure_c.wf",
+    "tests/gate/probes/fixes/f195/w08_runner_chain_c.wf",
+]
+note = "the clean twins of R3-1: the callee performs before it runs the closure"
+
+[[claim]]
+finding = "R3-3"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/r33_clause_other_place_b.wf",
+    "tests/gate/probes/fixes/f195/r33_fail_after_run_b.wf",
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_b.wf",
+]
+code = "W0405"
+note = "the bad twins of R3-3: the clause or the code after the `handle` accesses the place of the task of the late run"
+
+[[claim]]
+finding = "R3-3"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/r33_clause_other_place_c.wf",
+    "tests/gate/probes/fixes/f195/r33_fail_after_run_c.wf",
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_c.wf",
+    "tests/gate/probes/fixes/f195/r33_value_performs_before_spawn_c.wf",
+    "tests/gate/probes/fixes/f195/r33_value_performs_before_spawn_reads_c.wf",
+]
+note = "a task of a late run does not conflict with its own run node: the clause of the call runs at the task nodes of the call (`templates::wait_tasks`), and the code after the `handle` of an abort sees the task from the `FrameEnd` of the abort"
+
+[[claim]]
+finding = "R3-4"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/r34_branch_pred_c.wf",
+]
+note = "a task of a late run does not start on the predecessors of the call node (a branch)"

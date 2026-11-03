@@ -393,6 +393,10 @@ pub struct Inferred {
     /// The effects that a task of the body performs through a handler of a
     /// caller (`Summary::task_effects`, plan stage F19).
     pub task_effects: BTreeSet<String>,
+    /// The places that tasks change and read while the body waits at an
+    /// operation of each effect that a handler of a caller handles
+    /// (`Summary::waits`, follow-up F19.5).
+    pub waits: BTreeMap<String, (BTreeSet<IPlace>, BTreeSet<IPlace>)>,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -471,6 +475,18 @@ impl Inferred {
         }
         for e in &o.task_effects {
             grew |= self.task_effects.insert(e.clone());
+        }
+        for (e, ps) in &o.waits {
+            if !self.waits.contains_key(e) {
+                grew = true;
+            }
+            let mine = self.waits.entry(e.clone()).or_default();
+            for x in &ps.0 {
+                grew |= mine.0.insert(x.clone());
+            }
+            for x in &ps.1 {
+                grew |= mine.1.insert(x.clone());
+            }
         }
         for r in &o.runs {
             grew |= join_run(&mut self.runs, r);
@@ -778,6 +794,7 @@ pub fn build(
     s.joins.clone_from(&inf.joins);
     s.abort_joins.clone_from(&inf.abort_joins);
     s.task_effects.clone_from(&inf.task_effects);
+    s.waits = waits_part(inf);
     s.only_self = inf.named.is_empty()
         && inf.runs.is_empty()
         && !inf.multi
@@ -790,6 +807,23 @@ pub fn build(
             .iter()
             .all(|l| matches!(l.root, IRoot::Param(0) | IRoot::Held(0)));
     s
+}
+
+/// The part `waits` of a summary from the inferred parts `inf` (follow-up
+/// F19.5).
+pub fn waits_part(inf: &Inferred) -> BTreeMap<String, super::summary::Wait> {
+    inf.waits
+        .iter()
+        .map(|(e, (ws, rs))| {
+            (
+                e.clone(),
+                super::summary::Wait {
+                    writes: ws.iter().cloned().collect(),
+                    reads: rs.iter().cloned().collect(),
+                },
+            )
+        })
+        .collect()
 }
 
 /// Gives summary `s` the parts `puts`, `put_fns` and the inferred `reads`

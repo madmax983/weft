@@ -1,0 +1,14 @@
+// F19.5 (R3-2, issue #50): the callee fails while its task writes; the `Fail` clause of the caller reads
+struct Stats { count: u64 }
+fn work(r: &Stats) / fail, async, clock, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        sleep(1.ms)
+        fail("x")
+        t.join()
+    }
+}
+fn main() / async, clock {
+    let st = Stats { count: 0 }
+    handle Fail { fn fail(m) { print(st.count) } } in { work(&st) }
+}

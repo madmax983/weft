@@ -1792,6 +1792,33 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .may_abort
             .iter()
             .any(|x| nodes.contains(x) && !resumes.contains(x));
+        // A call whose clause runs while a task of the call can run
+        // (follow-up F19.5): the task node of the handler reads each place
+        // that the code of the clause accesses, and the second task of the
+        // handler changes what the code of the clause changes, so the tasks
+        // of the call (`templates::wait_tasks`) conflict with the clause.
+        if !r.post {
+            for &(_, _, c, back) in hx
+                .wait_copies
+                .iter()
+                .filter(|(m, h, _, _)| *m == r.node && *h == r.handler)
+            {
+                let changes: Vec<PlaceId> = new
+                    .mutates_at
+                    .iter()
+                    .chain(&new.lends_mut)
+                    .chain(&new.releases_at)
+                    .map(|&(_, q)| q)
+                    .collect();
+                let reads = new.reads_at.iter().map(|&(_, q)| q);
+                facts
+                    .reads_at
+                    .extend(reads.chain(changes.iter().copied()).map(|q| (c, q)));
+                facts
+                    .task_writes
+                    .extend(changes.into_iter().map(|q| (back, q)));
+            }
+        }
         add_rows(facts, &new);
         if let Some(c) = clause_of.get(&r.node) {
             add_rows(parts.entry(*c).or_default(), &new);

@@ -782,12 +782,21 @@ fn joins_at_main(f: &mut FnFacts) {
             if kind(n).as_deref() != Some("call ret") {
                 return (t, n);
             }
-            let main = f
-                .cfg_edge
-                .iter()
-                .find(|&&(a, b)| b == n && kind(a).as_deref() == Some("call"))
-                .map_or(n, |&(a, _)| a);
-            (t, main)
+            // The task nodes of a call are between `Main` and `Ret`
+            // (follow-up F19.5: the wait nodes).
+            let mut at = n;
+            for _ in 0..f.nodes.len() {
+                let Some(&(a, _)) = f.cfg_edge.iter().find(|&&(a, b)| {
+                    b == at && matches!(kind(a).as_deref(), Some("call" | "call task"))
+                }) else {
+                    break;
+                };
+                at = a;
+                if kind(a).as_deref() == Some("call") {
+                    return (t, a);
+                }
+            }
+            (t, n)
         })
         .collect();
     f.joined_at = moved;
@@ -892,10 +901,11 @@ fn late_starts(f: &mut FnFacts) {
 
 /// The task start check (follow-up F19.4, R2-5): a clause of a local
 /// handler runs while a task that the call started can run, so the task
-/// must be active at the node that runs the clause. The facts of the
-/// generator start the task before the call node: the run of each probe of
-/// R2-1 fails only with the data race of the memory oracle. With the starts
-/// of the task at `Ret` or at its task node only (the facts before the
+/// must be active at the node that runs the clause, or a task of the wait
+/// nodes of the call must stand for it (follow-up F19.5). With the facts of
+/// the generator, the run of each probe of R2-1 fails only with the data
+/// race of the memory oracle. With the starts of the task at `Ret` or at
+/// its task node only, and no task of the wait nodes (the facts before the
 /// fix), the fact oracle fails when the clause runs.
 #[test]
 fn a_task_that_runs_with_a_clause_must_be_active_at_its_node() {
@@ -910,7 +920,10 @@ fn a_task_that_runs_with_a_clause_must_be_active_at_its_node() {
         let c = check(&src);
         let r = run_main(&c, &opts());
         assert!(failure(&r).is_none(), "{name}: {:?}", failure(&r));
-        let m = match run_main_with_facts(&c, &opts(), late_starts) {
+        let m = match run_main_with_facts(&c, &opts(), |f| {
+            late_starts(f);
+            no_wait_tasks(f);
+        }) {
             Ok(_) => String::new(),
             Err(e) => e.message,
         };
@@ -918,4 +931,58 @@ fn a_task_that_runs_with_a_clause_must_be_active_at_its_node() {
         n += 1;
     }
     assert!(n >= 7, "{n}");
+}
+
+/// Removes the starts of the tasks of the wait nodes of the calls (a task
+/// that starts at a task node and ends at the next one, follow-up F19.5):
+/// the facts of the holes R3-1 and R3-2 before the fix (no task of the call
+/// stands for a task of a callee while a clause of the call runs).
+fn no_wait_tasks(f: &mut FnFacts) {
+    let kind = |n: weft_facts::NodeId| f.nodes.get(n.index()).map_or("", |x| x.kind.as_str());
+    let wait = |t: weft_facts::TaskId, s: weft_facts::NodeId| {
+        kind(s) == "call task"
+            && f.joined_at
+                .iter()
+                .any(|&(u, c)| u == t && f.cfg_edge.contains(&(s, c)) && kind(c) == "call task")
+    };
+    let kept: Vec<(weft_facts::TaskId, weft_facts::NodeId)> = f
+        .spawned_at
+        .iter()
+        .copied()
+        .filter(|&(t, s)| !wait(t, s))
+        .collect();
+    f.spawned_at = kept;
+}
+
+/// The task start check for the tasks of a callee (follow-up F19.5, R3-6):
+/// a clause of a local handler runs while a task of a callee (or a task
+/// that a callee of the scope function starts) can run, so the call must
+/// have a task that stands for it. Each probe of R3-1 and R3-2 runs with no
+/// failure of the fact oracle (the bad probes fail with the data race of the
+/// memory oracle). With no task at the task nodes of the calls (the facts
+/// before the fix), the fact oracle fails on each bad probe when the clause
+/// runs.
+#[test]
+fn a_task_of_a_callee_that_runs_with_a_clause_must_have_a_task_of_the_call() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/f195");
+    let mut n = 0;
+    for p in programs(&dir) {
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        if !name.starts_with('w') {
+            continue;
+        }
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{name}: {:?}", failure(&r));
+        if name.ends_with("_b.wf") {
+            let m = match run_main_with_facts(&c, &opts(), no_wait_tasks) {
+                Ok(_) => String::new(),
+                Err(e) => e.message,
+            };
+            assert!(m.starts_with("fact oracle (task start)"), "{name}: {m}");
+            n += 1;
+        }
+    }
+    assert!(n >= 13, "{n}");
 }

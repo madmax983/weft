@@ -1,0 +1,14 @@
+// F19.5 (R3-2, issue #50), clean twin: the callee performs before it starts its task
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn work(r: &Stats) / Note, async, mut(r) {
+    scope { s =>
+        note()
+        let t = s.spawn(|| r.count += 1)
+        t.join()
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { work(&st) }
+}

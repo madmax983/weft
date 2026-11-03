@@ -777,3 +777,152 @@ pub fn task_hows(
     }
     out.into_values().collect()
 }
+
+/// The facts of the part `waits` that the fact generator records at the
+/// nodes of a body (follow-up F19.5, issue #50).
+#[derive(Clone, Debug, Default)]
+pub struct WaitRaw {
+    /// A part `waits` of a summary that a node applies: the node, the
+    /// effect, a place that σ gives there (`None` names the effect only: a
+    /// task runs, but it accesses no place that σ gives), and true for a
+    /// change (else a read).
+    pub places: Vec<(
+        weft_facts::NodeId,
+        String,
+        Option<weft_facts::PlaceId>,
+        bool,
+    )>,
+    /// A task that a run at a node starts and that can run while the node
+    /// waits at an operation: a task of a value that the callee or the
+    /// value itself can perform or abort after, and a task of a value that
+    /// the callee runs as a task. The flag is true if code of the callee
+    /// can wait after the run (`Run::then`, a task of the callee): the
+    /// facts of the value do not see that wait.
+    pub starts: Vec<(weft_facts::NodeId, weft_facts::TaskId, bool)>,
+}
+
+/// The places of the part `waits` of one effect: the changes and the
+/// reads.
+pub type WaitPlaces = (
+    BTreeSet<super::summary::IPlace>,
+    BTreeSet<super::summary::IPlace>,
+);
+
+/// The part `waits` of a body from its facts `facts` (follow-up F19.5,
+/// issue #50).
+///
+/// A node of the body (one of the first `nodes` nodes) that sends an
+/// effect other than `Async` past the function (`escapes_at`) waits there
+/// for a handler of a caller. Each task that runs at the node can run while
+/// the clause runs: a task that is active at the node and does not end
+/// there (the rule `active` of the spec), and each task of `raw.starts` at
+/// the node. Their changes and reads (`task_writes`, `task_reads`), and the
+/// places of `raw.places` at the node, are the places of the effect.
+/// `place` gives the interface place of a place of the facts; a place with
+/// none is not in the part, but the effect gets its key.
+pub fn waits_of(
+    facts: &weft_facts::FnFacts,
+    nodes: usize,
+    raw: &WaitRaw,
+    place: &dyn Fn(weft_facts::PlaceId) -> Option<super::summary::IPlace>,
+) -> std::collections::BTreeMap<String, WaitPlaces> {
+    use std::collections::{BTreeMap, HashMap};
+    use weft_facts::{NodeId, PlaceId, TaskId};
+    let mut out: BTreeMap<String, WaitPlaces> = BTreeMap::new();
+    let mut at: BTreeMap<NodeId, BTreeSet<&str>> = BTreeMap::new();
+    for (n, e) in &facts.escapes_at {
+        if n.index() < nodes && e != "Async" {
+            at.entry(*n).or_default().insert(e.as_str());
+        }
+    }
+    if at.is_empty() {
+        return out;
+    }
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    let mut ends: HashMap<TaskId, BTreeSet<NodeId>> = HashMap::new();
+    for &(t, n) in &facts.joined_at {
+        ends.entry(t).or_default().insert(n);
+    }
+    let mut starts: HashMap<TaskId, Vec<NodeId>> = HashMap::new();
+    for &(t, n) in &facts.spawned_at {
+        starts.entry(t).or_default().push(n);
+    }
+    // The nodes where each task is active.
+    let mut active: HashMap<TaskId, BTreeSet<NodeId>> = HashMap::new();
+    for (&t, ss) in &starts {
+        let none = BTreeSet::new();
+        let end = ends.get(&t).unwrap_or(&none);
+        let mut on: BTreeSet<NodeId> = BTreeSet::new();
+        let mut work: Vec<NodeId> = ss
+            .iter()
+            .flat_map(|n| succ.get(n).into_iter().flatten().copied())
+            .collect();
+        while let Some(q) = work.pop() {
+            if !on.insert(q) || end.contains(&q) {
+                continue;
+            }
+            work.extend(succ.get(&q).into_iter().flatten().copied());
+        }
+        active.insert(t, on);
+    }
+    let base = |q: PlaceId| facts.wild_base(q).unwrap_or(q);
+    let mut writes: HashMap<TaskId, Vec<PlaceId>> = HashMap::new();
+    for &(t, q) in &facts.task_writes {
+        writes.entry(t).or_default().push(base(q));
+    }
+    let mut reads: HashMap<TaskId, Vec<PlaceId>> = HashMap::new();
+    for &(t, q) in &facts.task_reads {
+        reads.entry(t).or_default().push(base(q));
+    }
+    for (n, effects) in at {
+        let mut live: BTreeSet<TaskId> = active
+            .iter()
+            .filter(|(t, on)| on.contains(&n) && !ends.get(t).is_some_and(|e| e.contains(&n)))
+            .map(|(&t, _)| t)
+            .collect();
+        live.extend(
+            raw.starts
+                .iter()
+                .filter(|(m, _, _)| *m == n)
+                .map(|&(_, t, _)| t),
+        );
+        let mut mine: WaitPlaces = (BTreeSet::new(), BTreeSet::new());
+        for t in &live {
+            for &q in writes.get(t).into_iter().flatten() {
+                mine.0.extend(place(q));
+            }
+            for &q in reads.get(t).into_iter().flatten() {
+                mine.1.extend(place(q));
+            }
+        }
+        for e in effects {
+            let given: Vec<(Option<PlaceId>, bool)> = raw
+                .places
+                .iter()
+                .filter(|(m, f, _, _)| *m == n && f == e)
+                .map(|&(_, _, q, w)| (q, w))
+                .collect();
+            if live.is_empty() && given.is_empty() {
+                continue;
+            }
+            let ps = out.entry(e.to_string()).or_default();
+            ps.0.extend(mine.0.iter().cloned());
+            ps.1.extend(mine.1.iter().cloned());
+            for (q, w) in given {
+                let Some(q) = q else {
+                    continue;
+                };
+                let ip = place(base(q));
+                if w {
+                    ps.0.extend(ip);
+                } else {
+                    ps.1.extend(ip);
+                }
+            }
+        }
+    }
+    out
+}
