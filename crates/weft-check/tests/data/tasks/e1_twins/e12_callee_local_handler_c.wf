@@ -1,0 +1,16 @@
+// E-1 (clean): a failure in the callee before its join goes to a handler of the callee
+fn check(c: bool) / fail { if c { fail("stop") } }
+fn wait(t: Task<()>, c: bool) / async {
+    handle Fail { fn fail(m) { print(m) } } in { check(c) }
+    t.join()
+}
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in { wait(t, true) }
+        v.push(3)
+    }
+}

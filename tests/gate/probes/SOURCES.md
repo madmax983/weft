@@ -570,3 +570,28 @@ from the fix of the group C hole `f19/or3c1.wf` (scratchpad `c1once/v`).
   it was moved"). `c01_direct_b.wf` is `f19/or3c1.wf`.
 - `fixes/c1once/*_c.wf`: the clean twins. The made closure runs the capture one time,
   two captures one time each (`c14`), or the argument is a `many` closure (`*_many_c`).
+
+## Follow-up F19.3: the independent review of group E
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the fix of the findings of the independent review of group E (scratchpad
+`ereview/review.md`; self-attack in scratchpad `e1fix/att`).
+
+- `fixes/e1/e*_b.wf`: class E-1 (claim E-1). A callee, a closure, a chain of callees, a
+  closure in a second local, or a closure that gives its handle to a callee can fail,
+  perform an operation whose clause does not resume, or fail in its own scope before
+  its `join` (also after a loop, and in an earlier turn of a loop that joins its own
+  handle later). A handler of the caller stops the abort, and the caller writes the
+  place of the task after it. The `ir` pipeline of stage F19 accepted each one, and
+  each one faults (a data race). `e07_closure_two_handles_c.wf` is a control: the closure joins
+  both handles before it fails, and both pipelines reject it (an abort of the first
+  `join` leaves the second task running). The clean twins of the other `e*_b.wf`
+  files are lost-clean rows of the old pipeline (W0405): they are in
+  `crates/weft-check/tests/data/tasks/e1_twins/` until a reviewer signs them.
+- `fixes/e1/p2_*.wf`: class E-2 (claim E-2). A callee or `with_timeout` runs a closure
+  that starts a writer in a scope of the caller (`_c`, clean), and the bad twins (the
+  callee runs the closure two times, or the caller writes the place after the call).
+- `fixes/e1/p3_*.wf`: class E-3 (claim E-3). A closure starts a task and gives back
+  its handle; the `join` of the result ends the task (`_c`), and the bad twins (the
+  write before the `join`, two runs and one `join`).

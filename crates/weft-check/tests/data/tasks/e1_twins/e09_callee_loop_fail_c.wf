@@ -1,0 +1,16 @@
+// E-1 (clean twin): the callee joins before the loop that can fail
+fn wait(t: Task<()>, n: u64) / fail, async {
+    t.join()
+    let i = 0
+    while i < n { if i == 1 { fail("stop") }; i += 1 }
+}
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in { wait(t, 3) }
+        v.push(3)
+    }
+}

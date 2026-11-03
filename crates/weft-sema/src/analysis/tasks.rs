@@ -61,14 +61,21 @@ pub fn add_iface(st: &mut State, k: Key, path: &[PathStep], i: u32) {
     st.add(k, path, &Tree::leaf(v));
 }
 
-/// The interface indexes of `joins` (each with the nodes where a `join`
-/// ends its handle) that each path from `entry` to a node of `exits` passes
-/// a node of: the must part `joins` of the summary.
+/// The interface indexes of `joins` that each path from `entry` to a node
+/// of `exits` joins: a must part of the summary.
+///
+/// Each entry of `joins` has a node where a `join` ends its handle. The
+/// exits are the `Return` nodes (part `joins`), or the nodes where an abort
+/// leaves the body (part `abort_joins`, follow-up F19.3).
+///
+/// With no exit, `vacuous` gives each index of `joins` (no path leaves the
+/// body there), else no index.
 pub fn must_joins(
     edges: &[(weft_facts::NodeId, weft_facts::NodeId)],
     entry: weft_facts::NodeId,
     exits: &[weft_facts::NodeId],
     joins: &[(SpawnId, weft_facts::NodeId)],
+    vacuous: bool,
 ) -> Vec<u32> {
     let mut by: std::collections::BTreeMap<u32, BTreeSet<weft_facts::NodeId>> =
         std::collections::BTreeMap::new();
@@ -77,8 +84,15 @@ pub fn must_joins(
             by.entry(i).or_default().insert(n);
         }
     }
-    if by.is_empty() || exits.is_empty() {
+    if by.is_empty() {
         return Vec::new();
+    }
+    if exits.is_empty() {
+        return if vacuous {
+            by.into_keys().collect()
+        } else {
+            Vec::new()
+        };
     }
     let mut succ: std::collections::HashMap<weft_facts::NodeId, Vec<weft_facts::NodeId>> =
         std::collections::HashMap::new();
@@ -110,14 +124,18 @@ pub fn must_joins(
 /// The operands of call `t` of body `body` whose tasks the call ends.
 ///
 /// In state `st` (part `joins` of the summaries, O3-9): an argument of a
-/// parameter that the callee joins on each path, and a closure callee whose
-/// summary joins each task handle that it captures by move.
+/// parameter that the callee joins on each path to its `Return`, and a
+/// closure callee whose summary joins each task handle that it captures by
+/// move. With each operand, `early`: the callee also joins the handle on
+/// each path where an abort leaves it (part `abort_joins`, follow-up
+/// F19.3, E-1). Then the task ends at `Main` of the call; else only on the
+/// normal path, at `Ret`: an abort of the call can leave the task running.
 pub fn joined_ops<'t>(
     cx: &mut Cx<'_>,
     body: BodyId,
     st: &State,
     t: &'t weft_ir::TermKind,
-) -> Vec<&'t Operand> {
+) -> Vec<(&'t Operand, bool)> {
     match t {
         weft_ir::TermKind::Call {
             callee: weft_ir::Callee::Fn(f, _),
@@ -127,8 +145,12 @@ pub fn joined_ops<'t>(
             Ok(s) if !s.joins.is_empty() => args
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| u32::try_from(*i).is_ok_and(|i| s.joins.contains(&i)))
-                .map(|(_, a)| a)
+                .filter_map(|(i, a)| {
+                    let i = u32::try_from(i).ok()?;
+                    s.joins
+                        .contains(&i)
+                        .then(|| (a, s.abort_joins.contains(&i)))
+                })
                 .collect(),
             _ => Vec::new(),
         },
@@ -140,46 +162,50 @@ pub fn joined_ops<'t>(
                 return Vec::new();
             };
             let fns = v.flat().fns;
-            let all = !fns.is_empty()
-                && fns.iter().all(|fv| match fv {
-                    super::FnVal::Closure(c) | super::FnVal::Made(c) => closure_joins_all(cx, *c),
-                    _ => false,
-                });
-            if all {
-                vec![f]
-            } else {
-                Vec::new()
+            if fns.is_empty() {
+                return Vec::new();
             }
+            let mut early = true;
+            for fv in &fns {
+                let joined = match fv {
+                    super::FnVal::Closure(c) | super::FnVal::Made(c) => closure_joins_all(cx, *c),
+                    _ => None,
+                };
+                match joined {
+                    Some(e) => early &= e,
+                    None => return Vec::new(),
+                }
+            }
+            vec![(f, early)]
         }
         _ => Vec::new(),
     }
 }
 
-/// True if the summary of closure `c` joins each task handle that the
-/// closure captures by move, and it captures one.
-fn closure_joins_all(cx: &mut Cx<'_>, c: weft_ir::ClosureId) -> bool {
+/// If the summary of closure `c` joins each task handle that the closure
+/// captures by move, and it captures one: `Some(early)`, with `early` true
+/// if the summary also joins each of them on each path of an abort (part
+/// `abort_joins`, follow-up F19.3). Else `None`.
+fn closure_joins_all(cx: &mut Cx<'_>, c: weft_ir::ClosureId) -> Option<bool> {
     let p = cx.p;
-    let Some(d) = p.closures.get(c.index()) else {
-        return false;
-    };
-    let Ok(s) = cx.sums.closure(c) else {
-        return false;
-    };
+    let d = p.closures.get(c.index())?;
+    let s = cx.sums.closure(c).ok()?;
     let mut any = false;
+    let mut early = true;
     for (k, cap) in d.captures.iter().enumerate() {
         let task = crate::factgen::alpha::place_ty(p, cx.tys, d.maker, &cap.source)
             .is_some_and(|t| is_task(cx.tys, t));
         if !task {
             continue;
         }
-        if cap.mode != weft_ir::CaptureMode::ByMove
-            || !u32::try_from(k).is_ok_and(|k| s.joins.contains(&k))
-        {
-            return false;
+        let k = u32::try_from(k).ok()?;
+        if cap.mode != weft_ir::CaptureMode::ByMove || !s.joins.contains(&k) {
+            return None;
         }
+        early &= s.abort_joins.contains(&k);
         any = true;
     }
-    any
+    any.then_some(early)
 }
 
 /// What the run of a scope body gives ([`scope_run`]).

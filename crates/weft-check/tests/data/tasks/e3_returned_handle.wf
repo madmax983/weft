@@ -1,0 +1,77 @@
+// E-3 (follow-up F19.3): a closure starts a task and gives back its handle.
+// A `join` of the result ends the task, if no other value can hold a
+// handle of the task. Two runs of the closure start two tasks that can run
+// at the same time.
+fn returned() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h = g()
+        h.join()
+        v.push(3)
+    }
+}
+
+fn through_a_scope() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h = scope { i => g() }
+        h.join()
+        v.push(3)
+    }
+}
+
+fn before_the_join() / async {
+    let v = Vec.new()
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h = g()
+        v.push(3)   //~ W0405
+        h.join()
+    }
+}
+
+fn two_runs_one_join() / async {
+    let v = Vec.new()
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h1 = g()
+        let h2 = g()   //~ W0405
+        h2.join()
+        v.push(3)   //~ W0405
+        h1.join()
+    }
+}
+
+fn discarded_first() / async {
+    let v = Vec.new()
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        g()
+        let h = g()   //~ W0405
+        h.join()
+        v.push(3)   //~ W0405
+    }
+}
+
+fn other_task_given_back() / async {
+    let v = Vec.new()
+    scope { s =>
+        let g = || { s.spawn(|| v.push(2)); s.spawn(|| print(1)) }
+        let h = g()
+        h.join()
+        v.push(3)   //~ W0405
+    }
+}
+
+fn main() / async {
+    returned()
+    through_a_scope()
+    before_the_join()
+    two_runs_one_join()
+    discarded_first()
+    other_task_given_back()
+}

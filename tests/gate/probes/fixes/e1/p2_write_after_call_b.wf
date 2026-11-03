@@ -1,0 +1,10 @@
+// E-2 (bad twin): the caller writes the place after the call while the writer runs
+fn once(g: fn()) { g() }
+fn main() / async {
+    let v = Vec.new()
+    scope { s =>
+        once(|| { s.spawn(|| v.push(1)); () })
+        v.push(2)
+    }
+    print(v.len())
+}

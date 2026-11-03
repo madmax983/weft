@@ -1,0 +1,10 @@
+// E-2 (bad twin): a callee runs two times a closure that starts a writer: the two writers race
+struct Stats { count: u64 }
+fn twice(g: fn()) { g(); g() }
+fn main() / async {
+    let st = Stats { count: 0 }
+    scope { s =>
+        twice(|| { s.spawn(|| st.count += 1); () })
+    }
+    print(st.count)
+}

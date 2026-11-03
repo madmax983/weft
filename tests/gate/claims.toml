@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3"]
 
 
 # ----------------------------------------------------------------------
@@ -6174,3 +6174,96 @@ repro = [
     "tests/gate/probes/fixes/c1once/c02_loop_many_c.wf",
 ]
 note = "the made closure runs a `many` capture in a loop"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.3: the independent review of group E (scratchpad
+# ereview/review.md). E-1: a callee or a closure that can abort before its
+# `join` ends the task only on the normal path. E-2: a task that a closure
+# starts, where a callee runs the closure, conflicted with its run node.
+# E-3: a closure that gives back the handle of its task. Probes
+# tests/gate/probes/fixes/e1.
+
+[[claim]]
+finding = "E-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/e01_callee_fail_first_b.wf",
+    "tests/gate/probes/fixes/e1/e02_closure_fail_first_b.wf",
+    "tests/gate/probes/fixes/e1/e03_callee_clause_no_resume_b.wf",
+    "tests/gate/probes/fixes/e1/e04_callee_inner_scope_fails_b.wf",
+    "tests/gate/probes/fixes/e1/e05_callee_chain_b.wf",
+    "tests/gate/probes/fixes/e1/e06_stored_closure_b.wf",
+    "tests/gate/probes/fixes/e1/e07_closure_two_handles_b.wf",
+    "tests/gate/probes/fixes/e1/e10_validate_then_join_b.wf",
+    "tests/gate/probes/fixes/e1/e11_closure_calls_callee_b.wf",
+    "tests/gate/probes/fixes/e1/e12_callee_local_handler_b.wf",
+]
+code = "W0405"
+note = "a callee, a closure, a chain of callees or a closure in a second local can fail, perform an operation whose clause does not resume, or fail in its own scope before its `join`; a handler of the caller stops the abort, and the caller writes the place of the task after it"
+
+[[claim]]
+finding = "E-1"
+kind = "unsound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/e08_loop_respawn_b.wf",
+    "tests/gate/probes/fixes/e1/e09_callee_loop_fail_b.wf",
+    "tests/gate/probes/fixes/e1/e13_loop_direct_join_b.wf",
+]
+code = "W0405"
+note = "E-1 with a loop: the callee fails in a loop before its `join`, or the task of an earlier turn whose callee failed first still runs when a later turn joins its own handle"
+
+[[claim]]
+finding = "E-2"
+kind = "fp"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p2_callee_runs_spawner_c.wf",
+    "tests/gate/probes/fixes/e1/p2_timeout_block_spawn_c.wf",
+]
+note = "a callee (or `with_timeout`) runs a closure that starts a writer in a scope of the caller: the task does not conflict with the node that runs the closure"
+
+[[claim]]
+finding = "E-2"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p2_callee_runs_spawner_twice_b.wf",
+    "tests/gate/probes/fixes/e1/p2_write_after_call_b.wf",
+]
+code = "W0405"
+note = "the bad twins of E-2: the callee runs the closure two times, or the caller writes the place after the call"
+
+[[claim]]
+finding = "E-3"
+kind = "fp"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p3_closure_returns_handle_c.wf",
+    "tests/gate/probes/fixes/e1/p3_inner_scope_tail_c.wf",
+]
+note = "a closure starts a task and gives back its handle (part `ret.tasks`): the `join` of the result ends the task before the write"
+
+[[claim]]
+finding = "E-3"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p3_closure_returns_handle_b.wf",
+    "tests/gate/probes/fixes/e1/p3_two_runs_one_join_b.wf",
+]
+code = "W0405"
+note = "the bad twins of E-3: the write comes before the join, or two runs of the closure start two writers and only the second handle is joined"

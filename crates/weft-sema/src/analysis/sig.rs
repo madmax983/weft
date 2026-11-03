@@ -384,6 +384,9 @@ pub struct Inferred {
     /// The task handle parameters that the body joins on each path
     /// (`Summary::joins`, plan stage F18).
     pub joins: BTreeSet<u32>,
+    /// The task handle parameters that the body joins on each path of an
+    /// abort (`Summary::abort_joins`, follow-up F19.3).
+    pub abort_joins: BTreeSet<u32>,
     /// The effects that a task of the body performs through a handler of a
     /// caller (`Summary::task_effects`, plan stage F19).
     pub task_effects: BTreeSet<String>,
@@ -459,6 +462,9 @@ impl Inferred {
         }
         for &j in &o.joins {
             grew |= self.joins.insert(j);
+        }
+        for &j in &o.abort_joins {
+            grew |= self.abort_joins.insert(j);
         }
         for e in &o.task_effects {
             grew |= self.task_effects.insert(e.clone());
@@ -764,6 +770,7 @@ pub fn build(
     s.gives_frame = inf.gives_frame;
     s.pins = inf.pins;
     s.joins.clone_from(&inf.joins);
+    s.abort_joins.clone_from(&inf.abort_joins);
     s.task_effects.clone_from(&inf.task_effects);
     s.only_self = inf.named.is_empty()
         && inf.runs.is_empty()

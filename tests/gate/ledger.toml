@@ -3390,3 +3390,89 @@ files = ["tests/gate/probes/fixes/c1once/c06_from_closure_b.wf"]
 codes = ["W0502"]
 reason = "class C1-ONCE (follow-up F19.2): the old pipeline reports W0502 two times, at the closure that calls the maker (`let mk = || wrap(|| eat(b))`) and at the run of the made closure (`g()`); the `ir` pipeline reports only the run of the made closure, where the second run of the capture is"
 stage = "F19.2"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.3: the lost-clean rows of group E that the independent
+# review of group E signed (scratchpad ereview/review.md, section 4). The
+# review refused k01, k03, k04, k05, k06 and o39 of fixes/f18/join because
+# of E-1; they stay unsigned until a second review.
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/a02_tuple_two_c.wf",
+    "fixes/f18/join/a02_tuple_two_c.wf",
+]
+reason = "O3-9: the handle comes out of a tuple and is joined before the write; no other value holds a handle of the site (old W0405 false positive). The near variants of the review (L01, 04) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/a03_struct_field_c.wf",
+    "fixes/f18/join/a03_struct_field_c.wf",
+]
+reason = "O3-9: the handle comes out of a struct field and is joined before the write (old W0405 false positive). The near variant of the review (L02) is rejected by the `ir` pipeline"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/a04_option_none_arm_c.wf",
+    "fixes/f18/join/a04_option_none_arm_c.wf",
+]
+reason = "O3-9: the `None` arm of the `match` consumes no handle, and the `Some` arm joins it; no task of the site runs after the `match` (old W0405 false positive). The near variants of the review (L03, 03, 30) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r2/oracle/fp/W0314_p7036.wf",
+    "r2/oracle/fp/W0314_p7036.wf",
+]
+reason = "the `ask` clause does not resume, so the scope of the task never runs (old W0314 false positive). The near variant of the review whose clause resumes (L14) is W0314 in the `ir` pipeline, and its run fails (\"no handler for `Ask.ask` on this task\")"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/oracle/repro/O3-10_fp_spawn_param_multi.wf",
+    "r3/oracle/repro/O3-10_fp_spawn_param_multi.wf",
+]
+reason = "O3-10: a task runs on a stack of its own, so a `multi` resume in it does not run the code of the parent again (old 2xW0503 false positive). The near variants of the review are rejected by the `ir` pipeline (L10: W0503, the run uses a task handle twice; L11: W0314)"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/oracle/repro/O3-12_fp_clause_spawn_self.wf",
+    "r3/oracle/repro/O3-12_fp_clause_spawn_self.wf",
+]
+reason = "O3-12: a clause reads only what its nodes read, and the task that it starts has its own footprint (old W0405 false positive). The near variants of the review (L15, 64, C1, C4) are rejected by the `ir` pipeline; the same shape through a callee stays a false positive of both pipelines (N-1 of the review)"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/verify/partb/p/h1_clause_order.wf",
+    "verify/partb/p/h1_clause_order.wf",
+]
+reason = "the spawn of the clause runs after the resumed handled body ends, so the task does not run at the same time as the body (old W0405 false positive). The near variants of the review (L13: the spawn before the `resume`; C0: a read after the `handle`) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/verify/s5/p/i1_fp_closure_call.wf",
+    "verify/s5/p/i1_fp_closure_call.wf",
+]
+reason = "the task closure takes no linear value, so a cancel of the task loses nothing (old 2xW0602 false positive). The near variant of the review whose task closure takes the `Tx` (L12) is rejected by the `ir` pipeline (the run fails: the `Tx` has no `on abort`)"
+signed_by = "independent review of group E (ereview/review.md)"
+stage = "F19.3"

@@ -359,6 +359,7 @@ pub fn summarize(
     }
     out.pins |= task_pins(facts, fv.code_opaque);
     out.joins.extend(fv.joins.iter().copied());
+    out.abort_joins.extend(fv.abort_joins.iter().copied());
     out.task_effects.extend(fv.task_effects.iter().cloned());
     out
 }
@@ -482,6 +483,9 @@ pub struct FnParts<'a> {
     /// The task handles of the interface that the body joins on each path
     /// (part `joins`, plan stage F18).
     pub joins: &'a [u32],
+    /// The task handles of the interface that the body joins on each path
+    /// of an abort (part `abort_joins`, follow-up F19.3).
+    pub abort_joins: &'a [u32],
     /// How the body runs values of its interface as tasks (plan stage F19).
     pub task_hows: &'a [crate::analysis::tasks::RawHow],
     /// The tasks that are `opaque` only because they run code of a caller:
@@ -1276,6 +1280,7 @@ pub fn closure(
     out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
     out.pins = task_pins(facts, &[]);
     out.joins = fv.joins.iter().copied().collect();
+    out.abort_joins = fv.abort_joins.iter().copied().collect();
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can. A perform
     // through a captured capability is a `multi` point of the node that

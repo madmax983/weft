@@ -862,6 +862,9 @@ pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result
     if !sum.ret.places.is_empty() && sum.ret.uniq {
         top.uniq = true;
     }
+    // The handle of a task that the run starts (follow-up F19.3, E-3).
+    top.tasks
+        .extend(sum.ret.tasks.iter().map(|&s| weft_ir::SpawnId(s)));
     let mut flows = std::collections::BTreeSet::new();
     // A function value can hold references in its environment (stage F12).
     if props.holds_refs || crate::props::ir_has_fns(cx.tys, ret) {

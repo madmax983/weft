@@ -3259,6 +3259,9 @@ fn emit_apps(
     let mut frames = Vec::new();
     let cyclic = em.cycles.has(em.body, block);
     let rebinds = apps.iter().any(|a| !a.rebinds.is_empty());
+    // One run at the node and no task node: no other code of the call runs
+    // while a task of the run runs (E-2, follow-up F19.3).
+    let alone = apps.len() == 1 && em.task_nodes.is_empty();
     for app in apps {
         let n_runs = if app.again {
             vec![Some(main), nodes.ret]
@@ -3292,12 +3295,25 @@ fn emit_apps(
             // (part `tasks`, plan stage F19): they start at `n` too.
             // A late run (a block that a callee runs) starts them at `Main`
             // too: the value that moves into the call goes into the task
-            // there (W0602 of a cancel, corpus 163).
+            // there (W0602 of a cancel, corpus 163), and another run or task
+            // node of the call can run while the task runs. Else the task
+            // does not start at `Main`: it would conflict with its own run
+            // node `n`, whose summary has the writes of the task (E-2,
+            // follow-up F19.3). The closure body checks its own code after
+            // the spawn.
+            let early_start = n != main
+                && (!alone
+                    || em.facts.moved_at.iter().any(|&(v, m)| {
+                        m == main && {
+                            let i = em.facts.var(v);
+                            i.linear && !i.has_on_abort
+                        }
+                    }));
             for &site in &app.summary.tasks {
                 em.started.push(site);
                 if let Some(&t) = em.hx.task_ids.get(&weft_ir::SpawnId(site)) {
                     em.facts.spawned_at.push((t, n));
-                    if n != main && !em.facts.spawned_at.contains(&(t, main)) {
+                    if early_start && !em.facts.spawned_at.contains(&(t, main)) {
                         em.facts.spawned_at.push((t, main));
                     }
                 }
@@ -5154,10 +5170,15 @@ pub fn task_end_lends(
 
 /// The tasks that call `t` ends (O3-9, plan stage F18).
 ///
-/// The part `joins` of the summary of the callee gives the operands:
-/// `joined_at(T, main)` for each task that the operand of a joined handle
-/// must hold; the writes of the task become `lends_mut` at `Ret`. A handle
-/// of a task of a caller goes to the part `joins` of the body.
+/// The part `joins` of the summary of the callee gives the operands. For
+/// each task that the operand of a joined handle must hold: if the callee
+/// also joins the handle on each path of an abort (part `abort_joins`),
+/// `joined_at(T, main)`, and the writes of the task become `lends_mut` at
+/// `Ret`. Else the task ends only on the normal path (follow-up F19.3,
+/// E-1): an abort of the callee before its `join` leaves the task running,
+/// and the abort edge leaves `Main`. Then `joined_at(T, ret)`, and the
+/// `lends_mut` go to the normal `FrameEnd`. A handle of a task of a caller
+/// goes to the part `joins` of the body, with the same node.
 ///
 /// # Errors
 ///
@@ -5168,18 +5189,25 @@ pub fn call_joins(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
         return Ok(());
     }
     let body = em.body;
-    let ops: Vec<Operand> = tasks::joined_ops(&mut em.cx(), body, st, t)
+    let ops: Vec<(Operand, bool)> = tasks::joined_ops(&mut em.cx(), body, st, t)
         .into_iter()
-        .cloned()
+        .map(|(o, early)| (o.clone(), early))
         .collect();
-    let end = nodes.ret.unwrap_or(nodes.main);
-    for op in &ops {
+    for (op, early) in &ops {
+        let (at, end) = if *early {
+            (nodes.main, nodes.ret.unwrap_or(nodes.main))
+        } else {
+            let Some(r) = nodes.ret else {
+                continue;
+            };
+            (r, nodes.frame_end.unwrap_or(r))
+        };
         for site in tasks::must_join(&mut em.cx(), body, st, op)? {
             if let Some(t) = em.hx.task_ids.get(&site).copied() {
-                em.facts.joined_at.push((t, nodes.main));
+                em.facts.joined_at.push((t, at));
                 em.hx.task_ends.push((t, end));
             } else if tasks::iface_index(site).is_some() {
-                em.hx.iface_joins.push((site, nodes.main));
+                em.hx.iface_joins.push((site, at));
             }
         }
     }

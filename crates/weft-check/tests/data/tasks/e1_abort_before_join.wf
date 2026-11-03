@@ -1,0 +1,111 @@
+// E-1 (follow-up F19.3): a callee or a closure that can abort before its
+// `join` ends the task only on the normal path. A handler of the caller
+// stops the abort, so the code after the `handle` runs while the task runs
+// (W0405). A callee or a closure that joins before it can abort ends the
+// task on each path.
+effect Stop { fn stop() }
+fn wait_late(t: Task<()>, c: bool) / fail, async { if c { fail("stop") }; t.join() }
+fn wait_early(t: Task<()>, c: bool) / fail, async { t.join(); if c { fail("stop") } }
+fn stop_late(t: Task<()>) / Stop, async { stop(); t.join() }
+fn chain_late(t: Task<()>, c: bool) / fail, async { wait_late(t, c) }
+
+fn callee_late() / async {
+    let v = Vec.new()
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        handle Fail { fn fail(m) { print(m) } } in { wait_late(t, true) }
+        v.push(3)   //~ W0405
+    }
+}
+
+fn callee_early() / async {
+    let v = Vec.new()
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        handle Fail { fn fail(m) { print(m) } } in { wait_early(t, true) }
+        v.push(3)
+    }
+}
+
+fn clause_late() / async {
+    let v = Vec.new()
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        handle Stop { fn stop() { print("stopped") } } in { stop_late(t) }
+        v.push(3)   //~ W0405
+    }
+}
+
+fn chain() / async {
+    let v = Vec.new()
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        handle Fail { fn fail(m) { print(m) } } in { chain_late(t, true) }
+        v.push(3)   //~ W0405
+    }
+}
+
+fn closure_late() / async {
+    let v = Vec.new()
+    let c = true
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        handle Fail { fn fail(m) { print(m) } } in {
+            let g = || { if c { fail("stop") }; t.join() }
+            g()
+        }
+        v.push(3)   //~ W0405
+    }
+}
+
+fn closure_early() / async {
+    let v = Vec.new()
+    let c = true
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        handle Fail { fn fail(m) { print(m) } } in {
+            let g = || { t.join(); if c { fail("stop") } }
+            g()
+        }
+        v.push(3)
+    }
+}
+
+// With no handler of the caller, the abort leaves the function: the task
+// ends on the normal path, and the write after the call is clean.
+fn no_handler() / async, fail {
+    let v = Vec.new()
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        wait_late(t, false)
+        v.push(3)
+    }
+}
+
+// A loop: the first turn gives the handle to a callee that fails first, the
+// second turn joins its handle. The task of the first turn can still run:
+// it conflicts with the task of the second turn and with the write after
+// the loop.
+fn loop_respawn() / async {
+    let v = Vec.new()
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let t = s.spawn(|| v.push(2))   //~ W0405
+            if i == 0 { handle Fail { fn fail(m) { print(m) } } in { wait_late(t, true) } } else { t.join() }
+            i += 1
+        }
+        v.push(3)   //~ W0405
+    }
+}
+
+fn main() / async, fail {
+    callee_late()
+    callee_early()
+    clause_late()
+    chain()
+    closure_late()
+    closure_early()
+    no_handler()
+    loop_respawn()
+}

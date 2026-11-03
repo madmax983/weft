@@ -46,7 +46,7 @@ impl super::Machine<'_, '_> {
             let uids: Vec<u64> = frames
                 .iter()
                 .filter_map(|f| match f {
-                    Frame::Code(cf) if cf.uid != 0 => Some(cf.uid),
+                    Frame::Code(cf) if crate::oracle::facts::tracked(cf.uid) => Some(cf.uid),
                     _ => None,
                 })
                 .collect();
@@ -179,7 +179,7 @@ impl super::Machine<'_, '_> {
             self.facts.as_mut(),
             self.tasks.get(self.cur).and_then(|t| t.frames.last()),
         ) {
-            if cf.uid != 0 {
+            if crate::oracle::facts::tracked(cf.uid) {
                 fo.wait_begin(cf.uid, &cf.code, &cf.slots, &self.heap, self.cur);
             }
         }
@@ -621,7 +621,7 @@ impl super::Machine<'_, '_> {
         let Some(pad) = pad else {
             return Ok(Some(cf));
         };
-        if cf.uid != 0 && self.facts.is_some() {
+        if crate::oracle::facts::tracked(cf.uid) && self.facts.is_some() {
             let live = self.holds_live_linear(&cf);
             if let Some(Err(m)) = self.facts.as_mut().map(|f| f.check_abort(cf.uid, live)) {
                 return Err(self.fault(m));
@@ -1198,7 +1198,11 @@ impl super::Machine<'_, '_> {
                 Frame::Code(cf) => {
                     // A clause frame that waits at its `resume` waits in the
                     // copy too (A4 of the fact oracle).
-                    let key = if cf.uid == 0 { cf.wait } else { cf.uid };
+                    let key = if crate::oracle::facts::tracked(cf.uid) {
+                        cf.uid
+                    } else {
+                        cf.wait
+                    };
                     let wait = match (key, self.facts.as_mut()) {
                         (0, _) | (_, None) => 0,
                         (k, Some(fo)) => fo.copy_wait(k, map),

@@ -257,6 +257,11 @@ pub struct Ret {
     /// linear closure in a value of a type with a function part (hole H3 of
     /// the review of the ABC preview).
     pub linear: bool,
+    /// The spawn sites of the part `tasks` whose handle the result holds,
+    /// and no other value of the body at a `Return` (follow-up F19.3, E-3):
+    /// a closure that gives back the handle of a task that it starts. A
+    /// `join` of the result can end the task.
+    pub tasks: Vec<u32>,
 }
 
 /// How a value of an argument flows into the pointee of a reference
@@ -322,6 +327,12 @@ pub struct Summary {
     /// `Return` (a must part; plan stage F18, O3-9): a run node ends their
     /// tasks.
     pub joins: BTreeSet<u32>,
+    /// The task handles of the interface that the body joins on each path
+    /// where an abort leaves it (a must part; follow-up F19.3, E-1). A call
+    /// ends the task of a handle of `joins` at its `Main` node only if the
+    /// handle is here too; else at its `Ret` node, because an abort of the
+    /// call can leave the task running.
+    pub abort_joins: BTreeSet<u32>,
     /// The effects that a task of the body (or of a callee) performs
     /// through a handler of a caller (plan stage F19): a call where a
     /// handler of this task handles such an effect is W0314.

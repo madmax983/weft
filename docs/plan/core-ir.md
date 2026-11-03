@@ -1530,6 +1530,19 @@ with the group forced on, report only).
   F19: `scratchpad f19/or3c1.wf`). The run of the made closure now moves its value,
   and the run again uses it (W0502; `transfer::apply_runs` with `made`, docs/ir.md
   6.6). Probes `tests/gate/probes/fixes/c1once/`, claim C1-ONCE.
+- As built (follow-up F19.3, section 5: the independent review of group E, scratchpad
+  `ereview/review.md`): a callee or a closure that joins a handle (part `joins`) ended
+  the task at the `Main` node of the call, and the abort edge leaves `Main` too (E-1).
+  The part `abort_joins` (the handles that the body joins on each path where an abort
+  leaves it) decides: the task ends at `Main` only if the handle is there too, else at
+  `Ret` (`templates::call_joins`), and the abort edge loses the handle
+  (`transfer::lose_given`). The fact oracle has a task check: a task with
+  `joined_at(T, n)` must be joined when the run leaves `n` (it failed on each E-1 hole
+  before the fix). A closure that a callee runs at `Ret` starts its tasks at `Main` only
+  where W0602 or another run of the call needs it (E-2), and a closure that gives back
+  the handle of its task gives the handle its task site (part `ret.tasks`, E-3).
+  Probes `tests/gate/probes/fixes/e1/`, claims E-1, E-2, E-3; the review signed 8
+  `lost-clean` rows of stage F19.
 
 #### F20 Generics; group F on
 
@@ -1735,6 +1748,7 @@ gate and the exit of its parent, limited to its group of differences.
 | F16.4 | F16 | lost-fault W0301 / none in groups A and C, found by the self-attack of stage F16 (class C-RR, scratchpad `f16/open/crr_*.wf`). A closure that holds a reference to a container of references (`kr: &Vec<&i64>`) reads through it; the node that runs the closure used only the variables of the captures, not of the references on the chain, so `v.clear(); g()` was accepted (the old pipeline also missed it through a callee or a returned closure). Fix (docs/ir.md 6.9 "As built (follow-up F16.4)"): the run node follows the chain from σ(`CaptureHeld(k)`) of each such capture, as `deep_uses` of a call argument; the type test also looks into the fields of a struct and the payloads of an enum. Probes `tests/gate/probes/fixes/crr/` (claim C-RR; ledger `open-old` for the group-D probe `crr03_opfn.wf`, `moved` for `crr01_direct.wf`) | done (F16.4) |
 | F19.1 | F19 | open items of group E after stage F19. I3-8 (W0503 for a `multi` operation in a scope body after a spawn statement): the construction verdict of `ir` §10.4 gives eight `new-fp` probes that run clean (the repro has the text of `c4_multi_scope_fail.wf`); decide the verdict or the probes. OR10: a call reads each place of its arguments, so a task that calls `grow_w(&w)` conflicts with a write of `w.score` (needs a precise part `reads`). RR12: W0304 when a closure or a clause gives a local its first value (groups C and D). RR4/V134: a scope capability that leaves its scope (the capability is a plain value in the analysis). Fallbacks: a `scope` in a closure body, a spawn on a scope parameter, a task that runs a value twice or a shared function variable that gets a new value | open |
 | F19.2 | F19 | lost-fault W0502 / none in group C, found at stage F19 (scratchpad `f19/or3c1.wf`; the old pipeline rejects it). A function or a closure makes a closure that runs its capture two times (`fn wrap(f: fn()) -> fn() { \|\| { f(); f() } }`), and the caller gives it a `once` closure and runs the result one time (`let g = wrap(\|\| eat(b)); g()`): the run faults ("a value is used after it was moved"). Root cause: `transfer::apply_runs` gave `once_args` (the move of the value that holds a `once` closure, and the use at the second run) only to a run of a parameter. A `Made` closure holds the values of its captures in its own value (`made_held`), so a run of a capture moved nothing. Fix (docs/ir.md 6.6 "As built (follow-up F19.2)"): a capture of a `Made` closure that runs more than once gives the `once` value the operand of the run node (the value of the made closure) in `once_args`, also when an earlier run of the node applied the value one time (`wrap(wrap1(\|\| eat(b)))`). Probes `tests/gate/probes/fixes/c1once/` (class C1-ONCE, claim C1-ONCE; ledger `moved` for `c07`, `c12`, `changed` for `c06`) | done (F19.2) |
+| F19.3 | F19 | the independent review of group E (scratchpad `ereview/review.md`). E-1 (blocker; lost-fault W0405 / none, the old pipeline rejects each program): a callee, a closure, a chain of callees or a closure in a second local that joins a task handle (part `joins`) ended the task at the `Main` node of the call, and the abort edge of the call leaves `Main` too. If the callee aborts before its `join` (a `fail`, a clause that does not resume, a failed scope of the callee) and a handler of the caller stops the abort, the code after the `handle` races the task. Fix (docs/ir.md 6.4 and 6.9 "As built (follow-up F19.3)"): the must part `abort_joins` of the summary (the handles that the body joins on each path to an `UnwindExit`); a call ends a task at `Main` only if the callee joins the handle on the abort paths too, else at `Ret` with its `lends_mut` at the normal `FrameEnd`; the abort edge of a terminator loses the task sites of the handles that it takes. ORACLE GAP: the fact oracle checks each `joined_at(T, n)`: when the run leaves `n` on any edge, each task of `T` of the run must be joined (`fact oracle (task end)`; the oracle follows the frames of scope bodies for this check). E-2 (FP): a closure that a callee runs at `Ret` starts its tasks at `Main` only if a linear value moves into the call there or another run of the call can run while the task runs. E-3 (FP): the part `ret.tasks` of a closure summary (the spawn sites whose handle `_0` holds). Probes `tests/gate/probes/fixes/e1/` (claims E-1, E-2, E-3); the clean twins of E-1 are lost-clean rows of the old pipeline and stay in `crates/weft-check/tests/data/tasks/e1_twins/` until a reviewer signs them. The review signed 8 `lost-clean` rows of stage F19 (ledger); 6 rows (`fixes/f18/join/k01`, `k03`, `k04`, `k05`, `k06`, `o39_joins`) wait for a second review | done (F19.3) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -1767,6 +1781,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | F19 (tier 1, groups A to E, default) | 3468 of 4227 | 3503 | 180 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 71 (57 signed; 14 group-E rows wait for an independent signature) | 107 | 323 | 42 (open-old) |
 | F19 (tier 2, groups A to E, default) | 6730 of 57393 | 55613 | 51 | 2 (as F17.1) | 49 (44 signed; 5 wait for a signature) | 131 | 1500 | 47 (tier-2 policy) |
 | F19.2 (tier 1, groups A to E, default) | 3500 of 4259 | 3528 | 184 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 71 (57 signed; the 14 group-E rows of F19 wait for a signature) | 109 | 324 | 42 (open-old) |
+| F19.3 (tier 1, groups A to E, default) | 3522 of 4281 | 3551 | 184 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 71 (65 signed; the 6 rows `fixes/f18/join/k01`, `k03`, `k04`, `k05`, `k06`, `o39_joins` wait for a second review) | 109 | 323 | 42 (open-old) |
+| F19.3 (tier 2, groups A to E, default) | 6729 of 57393 | 55614 | 51 | 2 (as F17.1) | 49 (signed) | 131 | 1499 | 47 (tier-2 policy) |
 
 ---
 

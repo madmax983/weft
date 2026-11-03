@@ -1,0 +1,16 @@
+// E-1: a closure that a second local holds fails before it joins the handle that it captures
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    let c = true
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in {
+            let g = || { if c { fail("stop") }; t.join() }
+            let r = g
+            r()
+        }
+        v.push(3)
+    }
+}

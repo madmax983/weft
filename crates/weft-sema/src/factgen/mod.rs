@@ -566,6 +566,9 @@ pub struct Emitted {
     /// The task handle parameters that the entry body joins on each path
     /// (part `joins` of the summary, plan stage F18).
     pub joins: Vec<u32>,
+    /// The task handle parameters that the entry body joins on each path of
+    /// an abort (part `abort_joins` of the summary, follow-up F19.3).
+    pub abort_joins: Vec<u32>,
     /// How the entry body runs each function value of the interface that it
     /// runs as a task (part `runs`, plan stage F19).
     pub task_hows: Vec<crate::analysis::tasks::RawHow>,
@@ -725,6 +728,7 @@ pub fn emit_parts(
     hx.task_ids = task_ids;
     hx.no_runtime = a.bodies.iter().any(|b| b.facts.no_runtime);
     let joins: Vec<u32>;
+    let abort_joins: Vec<u32>;
     let task_hows: Vec<crate::analysis::tasks::RawHow>;
     let task_effects: std::collections::BTreeSet<String>;
     let mut w0314: Vec<(weft_ir::Span, String)>;
@@ -786,6 +790,14 @@ pub fn emit_parts(
             entry_node,
             &exits,
             &em.hx.iface_joins,
+            false,
+        );
+        abort_joins = crate::analysis::tasks::must_joins(
+            &em.facts.cfg_edge,
+            entry_node,
+            &abort_exit_nodes(&table, entry, body),
+            &em.hx.iface_joins,
+            true,
         );
         (
             em.stored,
@@ -1013,6 +1025,7 @@ pub fn emit_parts(
         closures: closure_sums,
         handler_caps,
         joins,
+        abort_joins,
         task_hows,
         code_opaque,
         task_effects,
@@ -1460,6 +1473,14 @@ fn closure_summary(
         en,
         &return_nodes(&table, cb, body),
         &hx.iface_joins,
+        false,
+    );
+    let abort_joins = crate::analysis::tasks::must_joins(
+        &facts.cfg_edge,
+        en,
+        &abort_exit_nodes(&table, cb, body),
+        &hx.iface_joins,
+        true,
     );
     let ret_linear = crate::analysis::summarize::ret_linear(p, &tys, &returns, cb);
     let mut sum = crate::analysis::summarize::closure(
@@ -1479,6 +1500,7 @@ fn closure_summary(
             rebind_nodes: &rebind_nodes,
             cap_performs: &hx.cap_performs,
             joins: &joins,
+            abort_joins: &abort_joins,
             task_hows: &[],
             code_opaque: &[],
             task_effects: &closure_task_effects,
@@ -1490,8 +1512,39 @@ fn closure_summary(
     let mut started = started;
     started.sort_unstable();
     started.dedup();
+    sum.ret.tasks = ret_tasks(&returns, (cb, body.ret), &started);
     sum.tasks = started;
     Ok(sum)
+}
+
+/// The spawn sites of `started` (part `tasks` of a closure body) whose
+/// handle `_0` (`ret`) holds at each state of `returns`, while no other
+/// value holds it and the site is not lost (part `ret.tasks`, follow-up
+/// F19.3, E-3). Each task of such a site that the run starts and that still
+/// runs at the end of the run has its handle in the result.
+fn ret_tasks(
+    returns: &[crate::analysis::State],
+    ret: (weft_ir::BodyId, weft_ir::LocalId),
+    started: &[u32],
+) -> Vec<u32> {
+    use crate::analysis::tasks::held_tasks;
+    if returns.is_empty() {
+        return Vec::new();
+    }
+    started
+        .iter()
+        .copied()
+        .filter(|&s| {
+            let site = weft_ir::SpawnId(s);
+            returns
+                .iter()
+                .any(|st| st.value(ret, &[]).flat().tasks.contains(&site))
+                && returns.iter().all(|st| {
+                    !st.lost_tasks().contains(&site)
+                        && !held_tasks(st, Some((ret, &[]))).contains(&site)
+                })
+        })
+        .collect()
 }
 
 /// The nodes of closure body `cb` where it gives a capture a whole new value
@@ -2777,6 +2830,37 @@ fn return_nodes(
                 phase: nodes::Phase::Main,
                 dest: nodes::NORMAL,
             })
+        })
+        .collect()
+}
+
+/// The `Main` node of each copy of each `UnwindExit` of body `bid` (`b`):
+/// the nodes where an abort leaves the body (follow-up F19.3). An abort of
+/// a handled body or of a scope body goes on through the cleanup chain of
+/// its site, so only the `UnwindExit` of the entry body ends a path.
+fn abort_exit_nodes(
+    table: &nodes::NodeTable,
+    bid: weft_ir::BodyId,
+    b: &weft_ir::Body,
+) -> Vec<weft_facts::NodeId> {
+    b.blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, x)| matches!(x.term.kind, weft_ir::TermKind::UnwindExit))
+        .flat_map(|(i, _)| {
+            let block = weft_ir::BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+            table
+                .copies(bid, block)
+                .into_iter()
+                .filter_map(move |dest| {
+                    table.get(nodes::NodeKey {
+                        body: bid,
+                        block,
+                        at: nodes::TERM,
+                        phase: nodes::Phase::Main,
+                        dest,
+                    })
+                })
         })
         .collect()
 }

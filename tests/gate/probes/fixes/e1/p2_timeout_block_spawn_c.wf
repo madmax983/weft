@@ -1,0 +1,8 @@
+// E-2: a with_timeout block starts a writer in a scope of the caller
+fn main() / async, clock, fail {
+    let v = Vec.new()
+    scope { s =>
+        with_timeout(1.s) { s.spawn(|| v.push(1)); () }
+    }
+    print(v.len())
+}

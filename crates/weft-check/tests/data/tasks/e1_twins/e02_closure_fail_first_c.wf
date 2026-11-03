@@ -1,0 +1,15 @@
+// E-1 (clean twin): the closure joins the handle, then fails
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    let c = true
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in {
+            let g = || { t.join(); if c { fail("stop") } }
+            g()
+        }
+        v.push(3)
+    }
+}

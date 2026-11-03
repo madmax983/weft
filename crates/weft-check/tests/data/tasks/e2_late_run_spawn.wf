@@ -1,0 +1,53 @@
+// E-2 (follow-up F19.3): a callee runs a closure (or a block) that starts a
+// task in a scope of the caller. The task does not conflict with the node
+// that runs the closure. Code after the call and code of the closure after
+// the spawn still conflict with the task.
+struct Stats { count: u64 }
+fn once(g: fn()) { g() }
+fn both(f: fn(), g: fn()) { f(); g() }
+
+fn callee_runs() / async {
+    let st = Stats { count: 0 }
+    scope { s =>
+        once(|| { s.spawn(|| st.count += 1); () })
+    }
+    print(st.count)
+}
+
+fn timeout_block() / async, clock, fail {
+    let v = Vec.new()
+    scope { s =>
+        with_timeout(1.s) { s.spawn(|| v.push(1)); () }
+    }
+    print(v.len())
+}
+
+fn write_after_call() / async {
+    let v = Vec.new()
+    scope { s =>
+        once(|| { s.spawn(|| v.push(1)); () })
+        v.push(2)   //~ W0405
+    }
+}
+
+fn closure_writes_after_spawn() / async {
+    let v = Vec.new()
+    scope { s =>
+        once(|| { s.spawn(|| v.push(1)); v.push(2) })   //~ W0405
+    }
+}
+
+fn two_runs() / async {
+    let v = Vec.new()
+    scope { s =>
+        both(|| { s.spawn(|| v.push(1)); () }, || v.push(2))   //~ W0405
+    }
+}
+
+fn main() / async, clock, fail {
+    callee_runs()
+    timeout_block()
+    write_after_call()
+    closure_writes_after_spawn()
+    two_runs()
+}

@@ -2084,8 +2084,8 @@ Terminators:
 | `Switch` | Main | cfg_edge, reads_at, uses |
 | `Return` | Main | cfg_edge, uses (of `_0`), ref_at, ref_in |
 | `Call` | Main | the operands; the summary parts (points_into, mutates_at, reads_at, performs_at, uses, moved_at, moved_part, rest_linear, releases_at, may_abort, multi_at, spared_at, resumes_at, escapes_at, spawned_at, task_reads, task_writes, captures, mut_through, kept, spawns_in, opaque, call_mut, call_arg, lends_mut); handler, sim_root, sim_run_at (`sim.run`); arg_at, param_in, uniq_param, arg_aliased, fn_arg_effect, param_effect |
-| `Call` | Ret | cfg_edge, points_into, rebound_at, moved_at (held arguments), empty_at; a second apply of a `Many` callback |
-| `Call` | FrameEnd | cfg_edge, scope_end (the callee frame `F(n)`) |
+| `Call` | Ret | cfg_edge, points_into, rebound_at, moved_at (held arguments), empty_at; a second apply of a `Many` callback; joined_at (a task whose handle the callee joins only on the normal path, follow-up F19.3) |
+| `Call` | FrameEnd | cfg_edge, scope_end (the callee frame `F(n)`); lends_mut (the writes of a task that ends at `Ret`, follow-up F19.3) |
 | `Call`, `Join`, `Fork`, `ScopeWait` | AbortValue | cfg_edge, points_into, rebound_at, empty_at (the `dest` of the `Handle`) |
 | `Call`, `Perform`, `Handle` | Copy | cfg_edge, rebound_at, empty_at |
 | `Perform` | Main | as `Call` `Main` without the `sim.run` facts |
@@ -2270,6 +2270,23 @@ or a clause on a scope of the maker starts its task at the node that runs the cl
 (part `tasks`) or the part of the clause with the spawn; the scope ends it. A task
 whose run applies a `multi` summary has no `multi_at` (O3-10). A task that performs
 through a handler of this task is W0314 (6.9).
+
+As built (follow-up F19.3, the review of group E): a call of a callee or a closure
+whose part `joins` holds a handle ends its task at `Main` only if the part
+`abort_joins` (6.7) holds the handle too: the callee joins it on each path where an
+abort leaves it. Else the callee can abort before its `join` (a failure, a clause that
+does not resume, a failed scope of the callee), and the abort edge of `Main` must keep
+the task running: a handler of the caller can stop the abort, and the code after the
+`handle` then runs while the task runs (E-1). The call then has `joined_at(T, Ret)`,
+and the writes of the task are `lends_mut` at the normal `FrameEnd`
+(`templates::call_joins`). The abort edge of a terminator loses the task sites of the
+handles that it takes, unless the callee joins them on each path of an abort
+(`transfer::lose_given`): a later `join` of a handle of the same site does not end such
+a task. A run at `Ret` of a closure that a callee runs (a late run) starts the tasks of
+the part `tasks` at `Main` too only if a linear value with no `on abort` moves into the
+call there (W0602, corpus 163) or another run or task node of the call can run while
+the task runs (E-2): else the task conflicted with its own run node, whose summary has
+the writes of the task.
 
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
@@ -3200,8 +3217,8 @@ the body that leaves it), `Caller` (a place of a caller), `Group(adt)`.
 | `aborts` | the abort destinations (by capability interface), `assert`, failures (`raises`) | `abortive`, `abortive_local`, `raises` |
 | `multi` | the capability interfaces through which the body can resume more than once | `multi`, `reach_repeats` |
 | `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
-| `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9) | `spawns`, `tasks`, `task_effects`, `pins` |
-| `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks, results of code of a caller | `ret`, `RetFn`, `ret_refs` |
+| `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9), and those of them that it joins on each path of an abort too (`abort_joins`, a must part, follow-up F19.3: else `joined_at` at `Ret` of the run node) | `spawns`, `tasks`, `task_effects`, `pins` |
+| `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks (`ret.tasks`, follow-up F19.3: the spawn sites of the part `tasks` whose handle `_0` holds at each `Return`, and no other value), results of code of a caller | `ret`, `RetFn`, `ret_refs` |
 | `stores` | the values that the body writes behind a reference parameter, into an environment field, or into an `rc` object | `stores`, `fn_stores`, `group_stores`, `stored_behind` |
 | `drops`, `holds` | the type parameters (and, for `holds`, each parameter) of values that the body drops, or holds across a node that can abort or resume more than once | `drops`, `holds` |
 | `uses`, `moves` | the environment fields and upvars that the body uses or moves when it runs | `late_join` uses, `moved_captures` |
@@ -4042,6 +4059,22 @@ Tier 2 of stage F8 found two false positives of the facts of group A, fixed in F
   (it gave W0601, because the top of the value of a parameter keeps the whole value). A
   move of an element (`a[0]`) leaves the other elements.
 
+As built (follow-up F19.3, the review of group E): W0405 of a task whose handle goes to
+a callee or a closure that joins it. The `join` of the callee ends the task at the
+`Main` node of the call only if the callee joins the handle on each path where an abort
+leaves it (part `abort_joins`); else at `Ret` (6.4). So a callee that can fail, perform
+an operation whose clause does not resume, or fail in its own scope before its `join`
+leaves the task running on the abort edge, and the code after a `handle` of the caller
+that stops the abort is W0405 (E-1; the old pipeline rejects these programs, and the
+`ir` pipeline of stage F19 accepted them). A callee that joins first and then aborts
+still ends the task at `Main`. A closure that joins two handles ends both at `Ret` if
+an abort can come between the two joins (one `abort_joins` test for the closure value;
+a precision loss that the old pipeline has too). A closure that gives back the handle
+of a task that it starts (part `ret.tasks`, 6.7) gives the handle its task site: a
+`join` of it ends the task (E-3; before, W0405 after the `join`). A task that a closure
+starts, where a callee runs the closure at `Ret`, does not conflict with the run node
+itself (E-2, 6.4).
+
 `diagnose.rs` names a variable by its local and a temporary by its kind and origin
 ("the temporary of `mk_v()` at line 3"). The corpus markers keep their lines: the spans
 come from `Origin`. Where a marker moves (a hidden variable of today becomes a temporary
@@ -4697,6 +4730,18 @@ their clean twins before the fix, and on one program of the gate
 (`probes/r2/interp/repro/holds/ip_lexical.wf`). A closure that runs from a callee (a
 frame of another component) is not checked.
 
+**As built (F19.3): the task check (ORACLE-GAP of the review of group E).** The oracle
+records each task that a frame starts at a node with one `spawned_at(T, _)` as a task of
+`T` of the run of the frame (a handled body and a scope body run in the run of their
+site), and for each task of the run the tasks that it knows are done (a join, the end
+of a scope or of a `fork`, an unwinding that waits for a child, and what its parent
+knew at the spawn). When a frame leaves a node `n` of its own body on any edge, each
+task of `T` of its run with `joined_at(T, n)` must be known done: "fact oracle (task
+end)". The oracle follows the frames of scope bodies for this check only (`LIGHT`):
+the other checks do not run there, as before. The task check failed on each E-1 hole of
+the review (D0, D1, D2, D4, D9, L04 to L07, L09, L16, L17) and on the probes
+`fixes/e1/*_b.wf` before the fix, and on no clean twin.
+
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program
 and a concrete step, found before a review finds it.
@@ -5017,7 +5062,7 @@ a repro of group E uses group C too; the claims file holds the set of groups tha
 | R3RT6 | FP | partly | `from_signature` gives a `mut` place only the held references of the other arguments whose types fit (F5); the flow before the call stays until reference versions (11) | `r3/redteam/repro/R3RT6_ref_arg_flow_fp.wf` | A | P1 |
 | O3-7 | FP | one rule | `call_mut` with the root of the function argument that the change comes from (6.4) | `r3/oracle/repro/O3-7_fp_op_closure_w0312.wf` | C, D | F14 |
 | O3-8 | FP | construction | a handled body inside a closure is spliced into the closure component; its performs do not leave the summary (6.1) | `r3/oracle/repro/O3-8_fp_closure_inner_multi.wf` | C, D | F16.2 |
-| O3-9 | FP | one rule | task sets as abstract values; the must half of the `tasks` part (6.6, 6.7) | `r3/oracle/repro/O3-9_fp_join_not_seen.wf` | C, E | F18 |
+| O3-9 | FP | one rule | task sets as abstract values; the must half of the `tasks` part (6.6, 6.7). Follow-up F19.3 (E-1 of the review of group E): a join of a callee or a closure ends the task at `Main` only if the callee also joins on each path of an abort (`abort_joins`), else at `Ret`; a closure that gives back a handle gives its task site (`ret.tasks`, E-3) | `r3/oracle/repro/O3-9_fp_join_not_seen.wf` | C, E | F18 |
 | O3-10 | FP | construction | a `Spawn` has no `multi_at` (6.4) | `r3/oracle/repro/O3-10_fp_spawn_param_multi.wf` | C, E | F19 |
 | O3-11 | FP | construction | the cell root `C(x)` (5.1.7) | `r3/oracle/repro/O3-11_fp_move_then_refill.wf` | C | F11 |
 | O3-12 | FP | one rule | a clause reads only what its nodes read; a task that it starts has its own footprint (6.7) | `r3/oracle/repro/O3-12_fp_clause_spawn_self.wf` | D, E | F19 |

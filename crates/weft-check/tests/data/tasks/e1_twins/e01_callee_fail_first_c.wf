@@ -1,0 +1,12 @@
+// E-1 (clean twin): the callee joins the handle, then fails
+fn wait(t: Task<()>, c: bool) / fail, async { t.join(); if c { fail("stop") } }
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in { wait(t, true) }
+        v.push(3)
+    }
+}

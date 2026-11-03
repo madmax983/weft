@@ -1417,7 +1417,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             ],
             &[],
         ),
-        "call frame end" => (&["cfg_edge", "scope_end"], &[]),
+        // The writes of a task that a callee joins only on the normal path
+        // end after `Ret` (follow-up F19.3, E-1).
+        "call frame end" => (&["cfg_edge", "scope_end", "lends_mut"], &[]),
         "call frame end (abort)" => (&["cfg_edge", "scope_end", "unwound_at"], &[]),
         // Handlers (plan stage F14, `docs/ir.md` 6.4). `Exit`: the value of
         // the handled body is used and the value of the `handle` binds, as
@@ -3521,4 +3523,80 @@ fn a_function_that_joins_its_handle_parameter_on_each_path_has_part_joins() {
     };
     assert_eq!(f("join_it").joins.iter().copied().collect::<Vec<_>>(), [0]);
     assert!(f("maybe").joins.is_empty());
+}
+
+/// Callees that join a handle before or after they can fail (E-1 of the
+/// review of group E, follow-up F19.3).
+const ABORT_JOINS: &str = "\
+fn early(t: Task<()>, c: bool) / fail, async { t.join(); if c { fail(\"x\") } }
+fn late(t: Task<()>, c: bool) / fail, async { if c { fail(\"x\") }; t.join() }
+fn plain(t: Task<()>) / async { t.join() }
+
+fn caller() / async {
+    let v = Vec.new()
+    scope { s =>
+        let a = s.spawn(|| v.push(1))
+        let b = s.spawn(|| v.push(2))
+        handle Fail { fn fail(m) { print(m) } } in { early(a, true) }
+        handle Fail { fn fail(m) { print(m) } } in { late(b, true) }
+    }
+}
+
+fn main() {}
+";
+
+#[test]
+fn a_join_after_an_abort_of_the_callee_ends_the_task_at_ret_only() {
+    // Part `abort_joins`: `early` and `plain` join their handle on each
+    // path of an abort too (the abort of the `join` itself ends the task);
+    // `late` can fail before its `join`.
+    let (a, b) = built_with(ABORT_JOINS, abcde());
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let f = |name: &str| {
+        let i = b
+            .fns
+            .iter()
+            .find(|(k, _)| a.program.fns.get(k.index()).is_some_and(|d| d.name == name))
+            .map_or_else(|| panic!("no `{name}`"), |(_, v)| *v);
+        sums.get(i)
+            .cloned()
+            .unwrap_or_else(|why| panic!("{name}: {why}"))
+    };
+    let parts = |name: &str| {
+        let s = f(name);
+        (
+            s.joins.iter().copied().collect::<Vec<_>>(),
+            s.abort_joins.iter().copied().collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(parts("early"), (vec![0], vec![0]));
+    assert_eq!(parts("plain"), (vec![0], vec![0]));
+    assert_eq!(parts("late"), (vec![0], vec![]));
+    // The call of `early` ends its task at `Main`; the call of `late` at
+    // `Ret`, so the abort edge of its `Main` keeps the task running.
+    let g = ir_facts_with(ABORT_JOINS, abcde(), "caller");
+    check_templates(&g, "caller");
+    let kinds: Vec<(String, String)> = g
+        .joined_at
+        .iter()
+        .map(|&(_, n)| {
+            (
+                g.nodes[n.index()].label.clone(),
+                g.nodes[n.index()].kind.clone(),
+            )
+        })
+        .filter(|(l, _)| l == "early" || l == "late")
+        .collect();
+    assert!(
+        kinds.contains(&("early".to_string(), "call".to_string())),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.contains(&("late".to_string(), "call ret".to_string())),
+        "{kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&("late".to_string(), "call".to_string())),
+        "{kinds:?}"
+    );
 }

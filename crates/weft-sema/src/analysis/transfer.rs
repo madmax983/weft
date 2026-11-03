@@ -1046,6 +1046,44 @@ pub const fn unwind_kont(
     Ok(())
 }
 
+/// A task handle that goes to a callee, an operation or a continuation
+/// leaves the values of the component (plan stage F18): its sites are lost
+/// in state `st` after terminator `t` of body `body`.
+///
+/// A callee that joins a task handle on each path to its `Return` ends the
+/// task on the normal edges (part `joins`, O3-9): its handle is not lost
+/// there. On the abort edge (`abort`), only a callee that also joins the
+/// handle on each path of an abort (part `abort_joins`) ends the task: an
+/// abort before the `join` leaves the task running, and the handle is lost
+/// (follow-up F19.3, E-1).
+pub fn lose_given(cx: &mut Cx<'_>, body: BodyId, st: &mut State, t: &TermKind, abort: bool) {
+    if cx.p.spawns.is_empty() {
+        return;
+    }
+    let joined = super::tasks::joined_ops(cx, body, st, t);
+    let mut ops: Vec<&Operand> = match t {
+        TermKind::Call { args, .. } | TermKind::Perform { args, .. } => args.iter().collect(),
+        TermKind::Resume { arg, .. } => vec![arg],
+        _ => Vec::new(),
+    };
+    if let TermKind::Call {
+        callee: weft_ir::Callee::Value(f),
+        ..
+    } = t
+    {
+        ops.push(f);
+    }
+    ops.retain(|o| {
+        !joined
+            .iter()
+            .any(|(j, early)| std::ptr::eq(*j, *o) && (*early || !abort))
+    });
+    if !ops.is_empty() {
+        let ts = super::tasks::operand_tasks(cx, body, st, ops).unwrap_or_default();
+        st.lose_tasks(ts);
+    }
+}
+
 /// The transfer of terminator `t` of block `block`, on its normal edges.
 ///
 /// # Errors
@@ -1059,30 +1097,7 @@ pub fn term(
     st: &mut State,
     t: &TermKind,
 ) -> Result<(), AlphaError> {
-    // A task handle that goes to a callee, an operation or a continuation
-    // leaves the values of the component (plan stage F18).
-    if !cx.p.spawns.is_empty() {
-        // A callee that joins a task handle on each path ends the task
-        // (part `joins`, O3-9): its handle is not lost.
-        let joined = super::tasks::joined_ops(cx, body, st, t);
-        let mut ops: Vec<&Operand> = match t {
-            TermKind::Call { args, .. } | TermKind::Perform { args, .. } => args.iter().collect(),
-            TermKind::Resume { arg, .. } => vec![arg],
-            _ => Vec::new(),
-        };
-        if let TermKind::Call {
-            callee: weft_ir::Callee::Value(f),
-            ..
-        } = t
-        {
-            ops.push(f);
-        }
-        ops.retain(|o| !joined.iter().any(|j| std::ptr::eq(*j, *o)));
-        if !ops.is_empty() {
-            let ts = super::tasks::operand_tasks(cx, body, st, ops).unwrap_or_default();
-            st.lose_tasks(ts);
-        }
-    }
+    lose_given(cx, body, st, t, false);
     match t {
         TermKind::Goto(_) => goto(st),
         TermKind::Switch { on, .. } => switch(cx.p, body, st, on),

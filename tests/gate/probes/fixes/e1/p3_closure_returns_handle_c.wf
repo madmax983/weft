@@ -1,0 +1,11 @@
+// E-3: a closure starts a task and gives back its handle; the join ends the task before the write
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h = g()
+        h.join()
+        v.push(3)
+    }
+}

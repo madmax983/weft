@@ -1,0 +1,13 @@
+// E-3 (bad): two runs of the closure start two writers; the join of the second handle does not end the first
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h1 = g()
+        let h2 = g()
+        h2.join()
+        v.push(3)
+        h1.join()
+    }
+}

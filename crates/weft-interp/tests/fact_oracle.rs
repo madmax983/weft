@@ -11,7 +11,9 @@
 //!   the run fail with the check of the broken fact;
 //! - each program of the corpus that the `ir` pipeline checks and accepts,
 //!   and that has a `main`, runs with no failure of the fact oracle;
-//! - `--ir-trace` records the IR location of each step of each frame.
+//! - `--ir-trace` records the IR location of each step of each frame;
+//! - a task that `joined_at(T, n)` ends at node `n` is joined when the run
+//!   leaves `n` on any edge (the task check, follow-up F19.3, E-1).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
@@ -751,4 +753,104 @@ fn the_ir_trace_records_each_location_of_each_frame() {
     for w in o.ir_trace.windows(2) {
         assert_ne!((w[0].block, w[0].stmt), (w[1].block, w[1].stmt));
     }
+}
+
+/// A callee that fails before it joins the handle; a handler of the caller
+/// stops the abort, and the caller writes `v` after it (E-1 of the review
+/// of group E). The `ir` pipeline rejects it (W0405).
+const JOIN_LATE: &str =
+    "fn wait(t: Task<()>, c: bool) / fail, async { if c { fail(\"stop\") }; t.join() }\n\
+    fn main() / async, clock {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    scope { s =>\n\
+    let t = s.spawn(|| v.push(2))\n\
+    sleep(1.ms)\n\
+    handle Fail { fn fail(m) { print(m) } } in { wait(t, true) }\n\
+    v.push(3)\n\
+    }\n\
+    }\n";
+
+/// Moves each `joined_at(T, n)` of the `Ret` node of a call to the `Main`
+/// node of the call: the facts of the hole E-1 before its fix.
+fn joins_at_main(f: &mut FnFacts) {
+    let kind = |n: weft_facts::NodeId| f.nodes.get(n.index()).map(|x| x.kind.clone());
+    let moved: Vec<(weft_facts::TaskId, weft_facts::NodeId)> = f
+        .joined_at
+        .iter()
+        .map(|&(t, n)| {
+            if kind(n).as_deref() != Some("call ret") {
+                return (t, n);
+            }
+            let main = f
+                .cfg_edge
+                .iter()
+                .find(|&&(a, b)| b == n && kind(a).as_deref() == Some("call"))
+                .map_or(n, |&(a, _)| a);
+            (t, main)
+        })
+        .collect();
+    f.joined_at = moved;
+}
+
+/// The task check (follow-up F19.3): the facts of the generator end the
+/// task of a callee that can fail before its `join` at `Ret`, so the abort
+/// path keeps it running, and the run fails only with the data race of the
+/// memory oracle. With the `joined_at` at `Main` (the facts before the fix
+/// of E-1), the fact oracle fails when the run leaves `Main` on the abort
+/// edge.
+#[test]
+fn a_task_that_joined_at_ends_must_be_joined_when_the_run_leaves_the_node() {
+    let c = check(JOIN_LATE);
+    assert!(
+        c.ir.as_ref().is_some_and(|ir| ir
+            .diags
+            .iter()
+            .any(|d| d.code == weft_syntax::diag::Code::W0405)),
+        "{:?}",
+        c.ir.as_ref().map(|ir| &ir.diags)
+    );
+    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the run of the race passes"),
+        Err(e) => e.message,
+    };
+    assert!(!m.contains("fact oracle"), "{m}");
+    let m = match run_main_with_facts(&c, &opts(), joins_at_main) {
+        Ok(_) => panic!("the run of the race passes"),
+        Err(e) => e.message,
+    };
+    assert!(m.starts_with("fact oracle (task end)"), "{m}");
+    assert!(m.contains("`wait`"), "{m}");
+}
+
+/// The probes of E-1: each bad program of `tests/gate/probes/fixes/e1`
+/// with the facts before the fix (the `joined_at` of a call at `Main`)
+/// fails the task check; each clean twin
+/// (`crates/weft-check/tests/data/tasks/e1_twins`) and each probe with the
+/// facts of the generator passes it.
+#[test]
+fn the_probes_of_e1_pass_the_task_check_and_fail_it_with_the_old_facts() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = programs(&root.join("../../tests/gate/probes/fixes/e1"));
+    files.extend(programs(
+        &root.join("../weft-check/tests/data/tasks/e1_twins"),
+    ));
+    assert!(files.len() >= 30, "{}", files.len());
+    let mut bad = 0;
+    for p in files {
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{name}: {:?}", failure(&r));
+        if name.starts_with('e') && name.ends_with("_b.wf") {
+            let m = match run_main_with_facts(&c, &opts(), joins_at_main) {
+                Ok(_) => String::new(),
+                Err(e) => e.message,
+            };
+            assert!(m.starts_with("fact oracle (task end)"), "{name}: {m}");
+            bad += 1;
+        }
+    }
+    assert!(bad >= 12, "{bad}");
 }

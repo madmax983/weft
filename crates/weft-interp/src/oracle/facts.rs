@@ -91,11 +91,11 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use weft_facts::{FnFacts, NodeId, PlaceId, VarId};
+use weft_facts::{FnFacts, NodeId, PlaceId, TaskId, VarId};
 use weft_ir::{BodyId, DerefKind, FieldIdx, LocalId, Proj, VariantIdx};
 use weft_sema::factgen::alpha::{self, Roots};
 use weft_sema::factgen::holders::PartVersions;
-use weft_sema::factgen::nodes::TERM;
+use weft_sema::factgen::nodes::{Phase, NORMAL, TERM};
 use weft_sema::factgen::vars::VarKey;
 use weft_sema::factgen::Component;
 use weft_sema::irbuild::Built;
@@ -250,6 +250,13 @@ struct Comp {
     /// The blocks that end with `Return`, and the local `_0`.
     returns: HashSet<u32>,
     ret: LocalId,
+    /// A scope body (follow-up F19.3): the oracle follows its frames only
+    /// for trace conformance and the task check ([`FactOracle::light_step`]).
+    light: bool,
+    /// The tasks that each node starts (`spawned_at`).
+    spawns: Vec<Vec<TaskId>>,
+    /// The tasks that end after each node (`joined_at`).
+    joins: Vec<Vec<TaskId>>,
 }
 
 /// A target of a reference: a place, or the elements of a buffer (a slice).
@@ -346,6 +353,30 @@ enum Base {
     Anchor(usize),
 }
 
+/// The scope bodies of component `c`, each with the `Main` node of its
+/// `scope` terminator (follow-up F19.3).
+fn scope_entries(built: &Built, c: &Component) -> Vec<(BodyId, NodeId)> {
+    let p = &built.program;
+    let mut out = Vec::new();
+    for (k, &n) in c.emitted.table.iter() {
+        if k.at != TERM || k.phase != Phase::Main || k.dest != NORMAL {
+            continue;
+        }
+        let term = p
+            .bodies
+            .get(k.body.index())
+            .and_then(|b| b.blocks.get(k.block.index()))
+            .map(|blk| &blk.term.kind);
+        let Some(weft_ir::TermKind::Scope { scope, .. }) = term else {
+            continue;
+        };
+        if let Some(d) = p.scopes.get(scope.index()) {
+            out.push((d.body, n));
+        }
+    }
+    out
+}
+
 /// The most projections of the walk of [`owner_of`].
 const OWNER_DEPTH: usize = 128;
 
@@ -382,8 +413,36 @@ pub struct FactOracle {
     wait_cells: HashMap<CellId, Vec<(u64, usize)>>,
     /// The last key of a copy of a waiting frame.
     copy_keys: u64,
+    /// The frames of scope bodies ([`LIGHT`]): the oracle follows them only
+    /// for the task check (follow-up F19.3).
+    light: HashMap<u64, FrameFacts>,
+    /// The frame of the last op, if it is a frame of a scope body.
+    light_last: Option<u64>,
+    /// The run of a function or closure body that each frame is part of
+    /// (the frame of that body): a handled body and a scope body run in the
+    /// run of their site.
+    activation: HashMap<u64, u64>,
+    /// For each task of the run: the tasks that it knows are done (a
+    /// join, the end of a scope, or what its parent knew at the spawn).
+    knows: HashMap<usize, HashSet<usize>>,
+    /// The tasks of the run that each run of a body started at a node with
+    /// `spawned_at(T, _)`: by component, run and `T`.
+    instances: HashMap<(usize, u64, TaskId), Vec<usize>>,
     /// What the run saw.
     pub report: FactReport,
+}
+
+/// The bit of the number of a frame of a scope body.
+///
+/// The oracle follows such a frame only for the task check of `joined_at`
+/// (follow-up F19.3). The machine treats it as a frame that the oracle does
+/// not follow.
+pub const LIGHT: u64 = 1 << 61;
+
+/// True if the fact oracle follows frame `uid` with each check: not 0 and
+/// not a frame of a scope body ([`LIGHT`]).
+pub const fn tracked(uid: u64) -> bool {
+    uid != 0 && uid & LIGHT == 0
 }
 
 /// The cache of [`FactOracle::name`].
@@ -585,6 +644,17 @@ impl Comp {
                 .collect()
         });
         let ret = body.map_or(LocalId(0), |b| b.ret);
+        let per_task = |rel: &[(TaskId, NodeId)]| {
+            let mut out: Vec<Vec<TaskId>> = vec![Vec::new(); n];
+            for &(t, m) in rel {
+                if let Some(x) = out.get_mut(m.index()) {
+                    if !x.contains(&t) {
+                        x.push(t);
+                    }
+                }
+            }
+            out
+        };
         let local_roots = c
             .emitted
             .roots
@@ -632,6 +702,9 @@ impl Comp {
             local_roots,
             returns,
             ret,
+            light: body.is_some_and(|b| matches!(b.kind, weft_ir::BodyKind::Scope(_))),
+            spawns: per_task(&f.spawned_at),
+            joins: per_task(&f.joined_at),
         }
     }
 
@@ -722,6 +795,52 @@ impl Comp {
         out
     }
 
+    /// The nodes that a path from the nodes `from` (at location `at`) to the
+    /// nodes `next` of location `to` leaves (the paths of [`Self::reach`]):
+    /// the nodes `from` and the nodes between them and `next`, with no node
+    /// of `next` and no node of another body.
+    fn left(
+        &self,
+        from: &[NodeId],
+        at: Option<(u32, u32)>,
+        to: (u32, u32),
+        next: &[NodeId],
+    ) -> Vec<NodeId> {
+        let mut seen: Vec<NodeId> = from.to_vec();
+        let mut work: Vec<NodeId> = from.to_vec();
+        let mut edges: Vec<(NodeId, NodeId)> = Vec::new();
+        while let Some(x) = work.pop() {
+            for &y in self.succ.get(x.index()).map_or(&[][..], Vec::as_slice) {
+                let yl = self.loc.get(y.index()).copied().flatten();
+                let inner = yl != Some(to)
+                    && ((at.is_some() && yl == at)
+                        || self.silent.get(y.index()).copied().unwrap_or(false));
+                if yl == Some(to) || inner {
+                    edges.push((x, y));
+                }
+                if inner && !seen.contains(&y) {
+                    seen.push(y);
+                    work.push(y);
+                }
+            }
+        }
+        // Back from `next` over the edges of the paths.
+        let mut on: Vec<NodeId> = next.to_vec();
+        let mut i = 0;
+        while let Some(&y) = on.get(i) {
+            i += 1;
+            for &(a, b) in &edges {
+                if b == y && !on.contains(&a) {
+                    on.push(a);
+                }
+            }
+        }
+        // A node of another body (a handled body, a scope body, a clause
+        // that the frame of another body runs) is that frame's to check.
+        on.retain(|x| !next.contains(x) && self.loc.get(x.index()).copied().flatten().is_some());
+        on
+    }
+
     /// True if fact place `q` is inside the place `d` that a reference
     /// points into: `d` is a wildcard place or a place below one, and `q`
     /// is at or below the base of its outermost wildcard step; or `q` is at
@@ -792,6 +911,17 @@ impl FactOracle {
                         let code = codes.get(cb.index()).map(Rc::as_ref);
                         comps.push(Comp::new(&input.built, (unit, c), code, cb, n));
                     }
+                    // Each scope body, from the `Main` node of its `scope`:
+                    // the oracle follows it only for the task check
+                    // (follow-up F19.3).
+                    for (sb, n) in scope_entries(&input.built, c) {
+                        if by_body.contains_key(&sb.0) {
+                            continue;
+                        }
+                        by_body.insert(sb.0, comps.len());
+                        let code = codes.get(sb.index()).map(Rc::as_ref);
+                        comps.push(Comp::new(&input.built, (unit, c), code, sb, n));
+                    }
                 }
             }
             Err(why) => report.skipped = Some(why.clone()),
@@ -808,8 +938,150 @@ impl FactOracle {
             waits: HashMap::new(),
             wait_cells: HashMap::new(),
             copy_keys: COPY_KEYS,
+            light: HashMap::new(),
+            light_last: None,
+            activation: HashMap::new(),
+            knows: HashMap::new(),
+            instances: HashMap::new(),
             report,
         }
+    }
+
+    /// True if the frames of code `code` are frames of a scope body: the
+    /// oracle follows them only for the task check ([`LIGHT`]).
+    pub fn light_code(&self, code: &Code) -> bool {
+        code.locs
+            .first()
+            .and_then(|l| self.by_body.get(&l.body))
+            .and_then(|&ci| self.comps.get(ci))
+            .is_some_and(|c| c.light)
+    }
+
+    /// Task `parent` starts task `child` from frame `uid`. The child knows
+    /// what its parent knows. If the nodes of the frame start one task `T`
+    /// of the facts (`spawned_at`), the child is a task of `T` of the run
+    /// of the frame.
+    pub fn task_spawned(&mut self, parent: usize, child: usize, uid: u64) {
+        let known = self.knows.get(&parent).cloned().unwrap_or_default();
+        self.knows.insert(child, known);
+        let Some(fr) = self.frames.get(&uid).or_else(|| self.light.get(&uid)) else {
+            return;
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return;
+        };
+        let mut ts: Vec<TaskId> = comp
+            .group(&fr.cur)
+            .iter()
+            .flat_map(|n| comp.spawns.get(n.index()).into_iter().flatten().copied())
+            .collect();
+        ts.sort_unstable();
+        ts.dedup();
+        let [t] = ts.as_slice() else {
+            return;
+        };
+        let run = self.activation.get(&uid).copied().unwrap_or(uid);
+        self.instances
+            .entry((comp.unit, run, *t))
+            .or_default()
+            .push(child);
+    }
+
+    /// Task `cur` knows that task `u` is done (a join, the end of a scope or
+    /// of a `fork`, an unwinding that waits for it), and what `u` knew.
+    pub fn task_joined(&mut self, cur: usize, u: usize) {
+        if cur == u {
+            return;
+        }
+        let theirs = self.knows.get(&u).cloned().unwrap_or_default();
+        let mine = self.knows.entry(cur).or_default();
+        mine.insert(u);
+        mine.extend(theirs);
+    }
+
+    /// The task check (follow-up F19.3): the run of frame `uid`, on task
+    /// `task`, leaves the nodes `left` of component `ci`. For each
+    /// `joined_at(T, n)` of a node `n` of them, each task of `T` that the
+    /// run of the frame started must be done, and task `task` must know it
+    /// (a join orders the end of the task before the code after `n`).
+    fn check_joined(
+        &self,
+        uid: u64,
+        ci: usize,
+        left: &[NodeId],
+        task: usize,
+    ) -> Result<(), String> {
+        let Some(comp) = self.comps.get(ci) else {
+            return Ok(());
+        };
+        let run = self.activation.get(&uid).copied().unwrap_or(uid);
+        let known = self.knows.get(&task);
+        for &n in left {
+            for &t in comp.joins.get(n.index()).into_iter().flatten() {
+                let Some(rs) = self.instances.get(&(comp.unit, run, t)) else {
+                    continue;
+                };
+                if let Some(&r) = rs.iter().find(|&&r| !known.is_some_and(|k| k.contains(&r))) {
+                    return Err(format!(
+                        "fact oracle (task end): in `{}`, the run leaves {} with `joined_at({t}, {n})`, and task {r} of `{t}` is not joined: it can still run",
+                        comp.facts.name,
+                        comp.node_text(n),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One op of the frame `uid` of a scope body ([`LIGHT`]) on task `task`
+    /// runs at the location `block`, `stmt`: the task check of the nodes
+    /// that the run leaves. A location that no path of the facts reaches
+    /// ends the following of the frame (trace conformance is for the
+    /// frames of [`Self::step`]).
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure of the task check.
+    pub fn light_step(
+        &mut self,
+        uid: u64,
+        block: u32,
+        stmt: u32,
+        task: usize,
+    ) -> Result<(), String> {
+        self.light_last = Some(uid);
+        let Some(fr) = self.light.get(&uid) else {
+            return Ok(());
+        };
+        let ci = fr.comp;
+        let Some(comp) = self.comps.get(ci) else {
+            return Ok(());
+        };
+        let n_stmts = self
+            .input
+            .built
+            .program
+            .bodies
+            .get(comp.body.index())
+            .and_then(|b| b.blocks.get(block as usize))
+            .map_or(0, |b| u32_of(b.stmts.len()));
+        let at = if stmt >= n_stmts { TERM } else { stmt };
+        let to = (block, at);
+        if fr.at == Some(to) {
+            return Ok(());
+        }
+        let next = comp.reach(&fr.cur, fr.at, to);
+        if next.is_empty() {
+            self.light.remove(&uid);
+            return Ok(());
+        }
+        let left = comp.left(&fr.cur, fr.at, to, &next);
+        self.check_joined(uid, ci, &left, task)?;
+        if let Some(fr) = self.light.get_mut(&uid) {
+            fr.cur = next;
+            fr.at = Some(to);
+        }
+        Ok(())
     }
 
     /// True if the oracle checks the frames of code `code` (IR body `code`).
@@ -841,6 +1113,43 @@ impl FactOracle {
         let Some(comp) = self.comps.get(ci) else {
             return;
         };
+        // A handled body and a scope body run in the run of their site: the
+        // frame of the last op (follow-up F19.3).
+        let site_run = matches!(
+            self.input
+                .built
+                .program
+                .bodies
+                .get(comp.body.index())
+                .map(|b| b.kind),
+            Some(weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Scope(_))
+        );
+        let prev = self.last.or(self.light_last).filter(|p| {
+            self.frames
+                .get(p)
+                .or_else(|| self.light.get(p))
+                .and_then(|f| self.comps.get(f.comp))
+                .is_some_and(|c| c.unit == comp.unit)
+        });
+        let run = match prev {
+            Some(p) if site_run => self.activation.get(&p).copied().unwrap_or(p),
+            _ => uid,
+        };
+        self.activation.insert(uid, run);
+        if comp.light {
+            self.light.insert(
+                uid,
+                FrameFacts {
+                    comp: ci,
+                    cur: vec![comp.entry],
+                    at: None,
+                    anchors: Vec::new(),
+                    retired: HashMap::new(),
+                    site: None,
+                },
+            );
+            return;
+        }
         let body = self.input.built.program.bodies.get(comp.body.index());
         let mut anchors = Vec::new();
         if let Some(b) = body {
@@ -975,6 +1284,7 @@ impl FactOracle {
     /// no known site.
     pub const fn untracked_op(&mut self) {
         self.last = None;
+        self.light_last = None;
     }
 
     /// The summary oracle (A3) checks the frames below the frame `uid` of
@@ -992,6 +1302,8 @@ impl FactOracle {
     /// The frame `uid` ended.
     pub fn leave(&mut self, uid: u64) {
         self.frames.remove(&uid);
+        self.light.remove(&uid);
+        self.activation.remove(&uid);
         self.drop_wait(uid);
     }
 
@@ -1108,6 +1420,9 @@ impl FactOracle {
         // effect in its row, too).
         let mut escapes: Option<(NodeId, usize)> = None;
         for uid in frames {
+            if !tracked(*uid) {
+                continue;
+            }
             let Some(f) = self.frames.get(uid) else {
                 break;
             };
@@ -1494,11 +1809,12 @@ impl FactOracle {
     /// # Errors
     ///
     /// The message of a failure.
-    pub fn step(&mut self, uid: u64, block: u32, stmt: u32) -> Result<bool, String> {
+    pub fn step(&mut self, uid: u64, block: u32, stmt: u32, task: usize) -> Result<bool, String> {
         let Some(fr) = self.frames.get_mut(&uid) else {
             return Ok(false);
         };
         self.last = Some(uid);
+        self.light_last = None;
         // A clause frame that leaves a `resume`: the handled body ended, and
         // the code after the `resume` runs at `Post` of the `handle` (plan
         // stage F14).
@@ -1540,8 +1856,11 @@ impl FactOracle {
                 if want.is_empty() { "no node".to_string() } else { want.join(", ") },
             ));
         }
+        let left = comp.left(&fr.cur, fr.at, to, &next);
+        let ci = fr.comp;
         fr.cur = next;
         fr.at = Some(to);
+        self.check_joined(uid, ci, &left, task)?;
         Ok(true)
     }
 

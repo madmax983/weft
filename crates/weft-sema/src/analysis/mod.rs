@@ -114,6 +114,10 @@ pub fn edges(
             }
             None => {}
         }
+        // A task handle that the terminator takes leaves the values on the
+        // abort edge too, unless the callee joins it on each path of an
+        // abort (follow-up F19.3, E-1).
+        transfer::lose_given(cx, body, &mut s, term, true);
         out.push((u, s));
     }
     // A perform whose clause has no `resume` does not go on (plan stage

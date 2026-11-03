@@ -184,3 +184,47 @@ fn sim_run_as_a_value_in_a_library_is_w0802() {
 fn a_task_that_performs_through_a_handler_of_this_task_is_w0314() {
     check("w0314_tasks.wf");
 }
+
+/// E-1 (follow-up F19.3): a callee or a closure that can abort before its
+/// `join` ends the task only on the normal path (part `abort_joins`). A
+/// handler of the caller that stops the abort runs the code after it while
+/// the task runs.
+#[test]
+fn a_join_that_an_abort_can_skip_does_not_end_the_task_on_the_abort_path() {
+    check("e1_abort_before_join.wf");
+}
+
+/// E-2 (follow-up F19.3): a task that a closure starts, where a callee runs
+/// the closure, does not conflict with the node that runs it.
+#[test]
+fn a_task_of_a_closure_that_a_callee_runs_starts_at_the_run() {
+    check("e2_late_run_spawn.wf");
+}
+
+/// E-3 (follow-up F19.3): a closure that gives back the handle of its task
+/// (part `ret.tasks`): a `join` of the result ends the task.
+#[test]
+fn a_join_of_a_handle_that_a_closure_gives_back_ends_the_task() {
+    check("e3_returned_handle.wf");
+}
+
+/// The clean twins of the probes of E-1 (`tests/data/tasks/e1_twins`): the
+/// callee or the closure joins before it can abort, or a handler of the
+/// callee stops the abort. The `ir` pipeline accepts each one (the old
+/// pipeline rejects each one: W0405).
+#[test]
+fn a_callee_that_joins_before_it_can_abort_ends_the_task_on_each_path() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tasks/e1_twins");
+    let mut n = 0;
+    for e in fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+        let path = e.map(|e| e.path()).unwrap_or_default();
+        if path.extension().is_none_or(|x| x != "wf") {
+            continue;
+        }
+        let name = path.display().to_string();
+        let src = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(abcde_codes(&name, &src), Vec::new(), "{name}");
+        n += 1;
+    }
+    assert!(n >= 10, "{n}");
+}

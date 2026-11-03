@@ -538,9 +538,16 @@ impl<'r, 'a> Machine<'r, 'a> {
             slots[i] = Some(self.heap.alloc(SlotKind::Local, a));
         }
         let follow = self.facts.as_ref().is_some_and(|f| f.follows(&code));
+        // A frame of a scope body: the fact oracle follows it only for the
+        // task check (follow-up F19.3).
+        let light = follow && self.facts.as_ref().is_some_and(|f| f.light_code(&code));
         let uid = if follow || (self.opts.ir_trace && !code.locs.is_empty()) {
             self.next_uid += 1;
-            self.next_uid
+            if light {
+                self.next_uid | crate::oracle::facts::LIGHT
+            } else {
+                self.next_uid
+            }
         } else {
             0
         };
@@ -1109,9 +1116,14 @@ impl<'r, 'a> Machine<'r, 'a> {
     }
 
     /// With the oracle checks on, the running task sees that task `u` is done.
-    pub(crate) fn oracle_join(&self, u: TaskId) {
+    /// The fact oracle records it too (its task check, follow-up F19.3).
+    pub(crate) fn oracle_join(&mut self, u: TaskId) {
         if let Some(o) = self.heap.oracle() {
             o.borrow_mut().join(u);
+        }
+        let cur = self.cur;
+        if let Some(fo) = self.facts.as_mut() {
+            fo.task_joined(cur, u);
         }
     }
 

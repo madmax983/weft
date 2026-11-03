@@ -199,6 +199,7 @@ fn stated(
     out.gives_frame = body.gives_frame;
     out.pins = body.pins;
     out.joins.clone_from(&body.joins);
+    out.abort_joins.clone_from(&body.abort_joins);
     out.task_effects.clone_from(&body.task_effects);
     out
 }
@@ -244,6 +245,7 @@ fn summary_of(
             sum.gives_frame = inf.gives_frame;
             sum.pins = inf.pins || sig.effects.pins;
             sum.joins.clone_from(&inf.joins);
+            sum.abort_joins.clone_from(&inf.abort_joins);
             sum.task_effects.clone_from(&inf.task_effects);
             sum.only_self &= inf.runs.is_empty()
                 && inf
@@ -527,6 +529,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 lends: &e.own_lends,
                                 cap_performs: &[],
                                 joins: &e.joins,
+                                abort_joins: &e.abort_joins,
                                 task_hows: &e.task_hows,
                                 code_opaque: &e.code_opaque,
                                 task_effects: &e.task_effects,
