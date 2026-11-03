@@ -554,3 +554,19 @@ checks them by default, and their claims are off.
   and class F18-JOIN from the self-attack of stage F18: the handle in a tuple, a
   struct, an `Option`, a closure or a callee; each bad program has a clean twin
   (`_c`) that the old pipeline rejects (W0405).
+
+## Follow-up F19.2: a closure that a callee made runs a `once` capture two times
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the class. They come
+from the fix of the group C hole `f19/or3c1.wf` (scratchpad `c1once/v`).
+
+- `fixes/c1once/*_b.wf`: class C1-ONCE (claim C1-ONCE). A function or a closure makes
+  a closure that runs its capture two times (directly, in a loop, on one path, through
+  a callee, or through another made closure), and the caller gives it a `once`
+  closure. The made closure comes back through a second maker, a closure, a local, a
+  tuple, or a vector or a field that a callee fills; a callee runs it one or two times.
+  The `ir` pipeline accepted most of them, and each one faults ("a value is used after
+  it was moved"). `c01_direct_b.wf` is `f19/or3c1.wf`.
+- `fixes/c1once/*_c.wf`: the clean twins. The made closure runs the capture one time,
+  two captures one time each (`c14`), or the argument is a `many` closure (`*_many_c`).

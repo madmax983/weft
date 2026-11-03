@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2"]
 
 
 # ----------------------------------------------------------------------
@@ -6095,3 +6095,82 @@ repro = [
     "tests/gate/probes/fixes/f18/join/k06_closure_two_handles_one_joined_c.wf",
 ]
 note = "a join through a pattern, a callee or a closure ends the task before the access (O3-9)"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.2: class C1-ONCE, a closure that a callee made runs a
+# `once` capture two times (scratchpad f19/or3c1.wf; probes
+# tests/gate/probes/fixes/c1once).
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c01_direct_b.wf",
+    "tests/gate/probes/fixes/c1once/c03_second_maker_b.wf",
+    "tests/gate/probes/fixes/c1once/c04_made_of_made_b.wf",
+    "tests/gate/probes/fixes/c1once/c05_nested_b.wf",
+    "tests/gate/probes/fixes/c1once/c06_from_closure_b.wf",
+    "tests/gate/probes/fixes/c1once/c07_closure_maker_b.wf",
+    "tests/gate/probes/fixes/c1once/c08_callee_twice_b.wf",
+    "tests/gate/probes/fixes/c1once/c09_linear_b.wf",
+    "tests/gate/probes/fixes/c1once/c10_via_local_b.wf",
+    "tests/gate/probes/fixes/c1once/c11_callee_runs_b.wf",
+    "tests/gate/probes/fixes/c1once/c12_made_calls_twice_b.wf",
+    "tests/gate/probes/fixes/c1once/c13_one_path_b.wf",
+    "tests/gate/probes/fixes/c1once/c15_two_captures_many_b.wf",
+    "tests/gate/probes/fixes/c1once/c16_vec_b.wf",
+    "tests/gate/probes/fixes/c1once/c17_tuple_b.wf",
+    "tests/gate/probes/fixes/c1once/c18_field_b.wf",
+]
+code = "W0502"
+note = "a closure that a callee or a closure made holds a `once` closure in its own value, and runs the capture two times (directly, on one path, through a callee or another made closure); the run moves the value of the made closure and the run again uses it (`transfer::apply_runs` with `made`)"
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c02_loop_b.wf",
+]
+code = "W0502"
+note = "the made closure runs the `once` capture in a loop"
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c01_direct_c.wf",
+    "tests/gate/probes/fixes/c1once/c01_direct_many_c.wf",
+    "tests/gate/probes/fixes/c1once/c03_second_maker_c.wf",
+    "tests/gate/probes/fixes/c1once/c05_nested_c.wf",
+    "tests/gate/probes/fixes/c1once/c06_from_closure_c.wf",
+    "tests/gate/probes/fixes/c1once/c07_closure_maker_many_c.wf",
+    "tests/gate/probes/fixes/c1once/c10_via_local_c.wf",
+    "tests/gate/probes/fixes/c1once/c11_callee_runs_c.wf",
+    "tests/gate/probes/fixes/c1once/c11_callee_runs_many_c.wf",
+    "tests/gate/probes/fixes/c1once/c12_made_calls_twice_c.wf",
+    "tests/gate/probes/fixes/c1once/c14_two_captures_c.wf",
+    "tests/gate/probes/fixes/c1once/c16_vec_c.wf",
+    "tests/gate/probes/fixes/c1once/c17_tuple_c.wf",
+    "tests/gate/probes/fixes/c1once/c18_field_c.wf",
+]
+note = "the clean twins of C1-ONCE: the made closure runs the `once` capture one time, two captures one time each, or the argument is a `many` closure"
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c02_loop_many_c.wf",
+]
+note = "the made closure runs a `many` capture in a loop"

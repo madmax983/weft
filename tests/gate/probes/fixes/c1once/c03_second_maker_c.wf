@@ -1,0 +1,11 @@
+// Follow-up F19.2, class C1-ONCE (a closure that a callee made runs a `once` capture two times): a second maker gives back a closure that runs the capture one time; the clean twin (scratchpad c1once/v/v03_wrapper2_c.wf).
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap1(f: fn()) -> fn() { || f() }
+fn wrap2(f: fn()) -> fn() { wrap1(f) }
+fn once_returned() {
+    let b = Buf { items: Vec.new() }
+    let g = wrap2(|| eat(b))
+    g()
+}
+fn main() { once_returned() }

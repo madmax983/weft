@@ -352,3 +352,17 @@ fn a_value_that_a_body_runs_and_that_no_caller_gives_changes_the_places_of_the_c
     // (no W0312).
     check("unknown_runs.wf");
 }
+
+#[test]
+fn a_closure_that_a_callee_made_and_that_runs_a_once_capture_two_times_is_w0502() {
+    // Group C fix C1-ONCE (scratchpad f19/or3c1.wf): `fn wrap(f: fn()) ->
+    // fn() { || { f(); f() } }` and `let g = wrap(|| eat(b)); g()`. The made
+    // closure holds the `once` closure in its own value, and its run runs the
+    // capture two times, but the run did not move the value of the closure:
+    // the `ir` pipeline accepted it, and the run faults. The run now moves the
+    // value of the closure and the run again uses it (W0502), also in a
+    // loop, through a callee, a second maker, another made closure, a vector
+    // or a field. The controls run the capture one time, or give a `many`
+    // closure.
+    check("made_once_runs.wf");
+}

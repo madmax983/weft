@@ -3369,3 +3369,24 @@ files = [
 ]
 reason = "class F19-SIG-TASKEFF (stage F19, tier 2): the part `task_effects` of the IR (`templates::task_w0314`): a task that W0314 rejects gives no effect, a task of a stored closure is not followed"
 stage = "F19"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.2: class C1-ONCE, a closure that a callee made runs a
+# `once` capture two times (probes tests/gate/probes/fixes/c1once).
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/c1once/c07_closure_maker_b.wf",
+    "tests/gate/probes/fixes/c1once/c12_made_calls_twice_b.wf",
+]
+codes = ["W0502"]
+reason = "class C1-ONCE (follow-up F19.2): the old pipeline reports W0502 where the maker gets the `once` closure (`let g = mk(|| eat(b))`, `let g = wrap(|| eat(b))`); the `ir` pipeline reports the run of the made closure (`g()`), where the second run of the capture is"
+stage = "F19.2"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/c1once/c06_from_closure_b.wf"]
+codes = ["W0502"]
+reason = "class C1-ONCE (follow-up F19.2): the old pipeline reports W0502 two times, at the closure that calls the maker (`let mk = || wrap(|| eat(b))`) and at the run of the made closure (`g()`); the `ir` pipeline reports only the run of the made closure, where the second run of the capture is"
+stage = "F19.2"

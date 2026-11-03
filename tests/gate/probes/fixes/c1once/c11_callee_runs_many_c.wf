@@ -1,0 +1,12 @@
+// Follow-up F19.2, class C1-ONCE (a closure that a callee made runs a `once` capture two times): a callee runs the made closure, and the argument is a `many` closure; the clean twin (scratchpad c1once/v/v11_callee_runs_m.wf).
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap(f: fn()) -> fn() { || {
+    f()
+    f() } }
+fn call0(g: fn()) { g() }
+fn many_given() {
+    let b = Buf { items: Vec.new() }
+    call0(wrap(|| print(b.items.len())))
+}
+fn main() { many_given() }

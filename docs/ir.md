@@ -3114,6 +3114,22 @@ program stayed with the old pipeline ("a function value stored behind a referenc
   each value that it is asked to apply into `Apps::reached`, also a value that it applied
   before, and `apply_runs` gives the app of such a value `again` without `order` (not for
   an item, which has no `once` part).
+  As built (follow-up F19.2, class C1-ONCE): a closure that a callee made (`Made`)
+  holds the values of its captures in its own value (`transfer::made_held`). A run of
+  such a closure that runs a capture more than once (an entry of `runs` with `many`)
+  runs a `once` value of the capture again. `apply_runs` (with `made`) gives the app of
+  the `once` value the operand of the run node, which holds the made closure, in
+  `once_args`: the run moves the value of the made closure, and the run again uses it
+  (W0502; `fn wrap(f: fn()) -> fn() { || { f(); f() } }`, `let g = wrap(|| eat(b));
+  g()`). Before, only a run of a parameter gave `once_args`, and the run of a capture of
+  a `Made` closure moved nothing (the run faulted). A `once` value that an earlier run
+  of the same node applied one time (`wrap(wrap1(|| eat(b)))`: `wrap1` runs it one
+  time) gets the move too. The value of the made closure does not tell which capture
+  holds which value. So a capture that runs more than once counts each `once` value of
+  the made closure (`|| { f(); f(); h() }` with a `once` closure for `h` is W0502, as in
+  the old pipeline), and two captures that run one time each are not a second run
+  (`both(e, e)` of `fn both(f: fn(), h: fn()) -> fn() { || { f(); h() } }` is not
+  W0502; the old pipeline does not see it either).
 - A copy of a function value through a pointer is a copy of the references of its
   environment (`templates::copied_refs`; F13-fix, classes H-S1 and H-RC1): a read back of a
   closure from a heap slot (`let g = cb.f`, `let g = h.f`) uses the variables of the slot.

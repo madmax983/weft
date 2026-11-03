@@ -1293,6 +1293,7 @@ pub fn call_out(
         &summary.runs,
         &sigma,
         &mut |cx, run| param_fns(cx, r, run, given),
+        false,
         0,
         &mut apps,
     )?;
@@ -2485,6 +2486,8 @@ type RunValues<'a> =
 /// (part `runs`): each function value that the parameter or the capture
 /// holds applies its summary with the places of the run (`run.args`). `of`
 /// gives the values of a parameter (`false`) or of a capture (`true`).
+/// `made`: the summary is of a closure that a callee made, and the value of
+/// the closure holds the values of its captures (`made_held`).
 ///
 /// # Errors
 ///
@@ -2496,6 +2499,7 @@ fn apply_runs(
     runs: &[super::summary::Run],
     sigma: &super::apply::Sigma,
     of: &mut RunValues<'_>,
+    made: bool,
     depth: usize,
     apps: &mut Apps,
 ) -> Result<(), AlphaError> {
@@ -2591,9 +2595,32 @@ fn apply_runs(
             }
             // A capture that holds a `once` value moves at the run of the
             // closure (`Applied::once`); a value of a parameter moves here.
-            if fresh && !run.capture && once_value(cx.p, g) {
-                if let Some(a) = apps.out.get_mut(start) {
-                    a.once_args.push((src_body, src.clone()));
+            // A closure that a callee made holds the values of its captures
+            // in its own value (`src`, the operand of the run node): a
+            // capture that it runs more than once runs a `once` value of it
+            // again, so the run moves the value of the closure and the run
+            // again uses it (W0502; `fn wrap(f: fn()) -> fn() { || { f();
+            // f() } }`, `let g = wrap(|| eat(b)); g()`). The value does not
+            // tell which capture holds which value (`made_held`): two
+            // captures that run one time each are not a second run (the old
+            // pipeline does not count them either). A value that an earlier
+            // run of the node applied (a capture of another made closure that
+            // runs it one time) gets the move too: this run is a second run
+            // of it (`wrap(wrap1(|| eat(b)))`, follow-up F19.2).
+            let moves = !run.capture || (made && run.many);
+            if moves && once_value(cx.p, g) {
+                let at = if fresh {
+                    Some(start)
+                } else if made && run.capture {
+                    apps.seen.get(g).copied()
+                } else {
+                    None
+                };
+                let arg = (src_body, src.clone());
+                if let Some(a) = at.and_then(|k| apps.out.get_mut(k)) {
+                    if !a.once_args.contains(&arg) {
+                        a.once_args.push(arg);
+                    }
                 }
             }
             if many {
@@ -2996,6 +3023,7 @@ fn apply_value(
                 &runs,
                 &sigma,
                 &mut |cx, run| param_fns(cx, r, run, given),
+                false,
                 depth,
                 apps,
             )
@@ -3215,6 +3243,7 @@ fn apply_value(
                             param_fns(cx, r, run, given)
                         }
                     },
+                    true,
                     depth,
                     apps,
                 );
@@ -3250,6 +3279,7 @@ fn apply_value(
                     let fns = with_results(cx, r, fns)?;
                     Ok(Some((fns, src, maker)))
                 },
+                false,
                 depth,
                 apps,
             )?;

@@ -1,0 +1,13 @@
+// Follow-up F19.2, class C1-ONCE (a closure that a callee made runs a `once` capture two times): the made closure is in a tuple (scratchpad c1once/v/v18_tuple_b.wf).
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap(f: fn()) -> fn() { || {
+    f()
+    f() } }
+fn once_returned() {
+    let b = Buf { items: Vec.new() }
+    let t = (wrap(|| eat(b)), 1)
+    let g = t.0
+    g()
+}
+fn main() { once_returned() }

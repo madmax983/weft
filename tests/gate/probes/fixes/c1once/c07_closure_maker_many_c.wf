@@ -1,0 +1,14 @@
+// Follow-up F19.2, class C1-ONCE (a closure that a callee made runs a `once` capture two times): a closure is the maker, and the argument is a `many` closure; the clean twin (scratchpad c1once/v/v06b_closure_maker_m.wf).
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn many_returned() {
+    let b = Buf { items: Vec.new() }
+    let mk = |f: fn()| {
+        || {
+            f()
+            f() }
+    }
+    let g = mk(|| print(b.items.len()))
+    g()
+}
+fn main() { many_returned() }

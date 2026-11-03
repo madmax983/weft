@@ -1,0 +1,15 @@
+// Follow-up F19.2, class C1-ONCE (a closure that a callee made runs a `once` capture two times): a callee puts the made closure into a vector (scratchpad c1once/v/v17_vec_callee_b.wf).
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap(f: fn()) -> fn() { || {
+    f()
+    f() } }
+fn put(v: &Vec<fn()>, f: fn()) { v.push(f) }
+fn once_returned() {
+    let b = Buf { items: Vec.new() }
+    let v: Vec<fn()> = Vec.new()
+    put(&v, wrap(|| eat(b)))
+    let g = v[0]
+    g()
+}
+fn main() { once_returned() }
