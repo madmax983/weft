@@ -58,6 +58,12 @@ pub enum Phase {
     /// the branches, or a node of a function value that a callee runs as a
     /// task (`docs/ir.md` 6.7, OR7).
     Task(u32),
+    /// Before `Main` of an assignment that moves a `Box` with a place field
+    /// (follow-up F8.1): the old value of the destination goes away here, so
+    /// the references of the new value, which point into the target of the
+    /// `Box` below the destination now (`transfer::relocate_moved`), stay
+    /// valid at `Main`.
+    Overwrite,
 }
 
 impl Phase {
@@ -73,7 +79,71 @@ impl Phase {
             Self::Landing => "landing",
             Self::Copy => "copy",
             Self::Task(_) => "task",
+            Self::Overwrite => "overwrite",
         }
+    }
+}
+
+/// The statements of body `b` that move a whole local whose type can hold
+/// a place field behind a `Box` (`place = move t`): they get a node of
+/// [`Phase::Overwrite`] (follow-up F8.1). The test is coarse: a program with
+/// a place field, and a type with a `Box` part.
+fn moves_boxed_place_field(tys: &TyTable, b: &Body) -> std::collections::BTreeSet<(BlockId, u32)> {
+    use weft_ir::ty::AdtKind;
+    let mut out = std::collections::BTreeSet::new();
+    let place_fields = tys.adts().iter().any(|d| match &d.kind {
+        AdtKind::Struct(fs) => fs.iter().any(|f| f.place),
+        _ => false,
+    });
+    if !place_fields {
+        return out;
+    }
+    let mut memo: BTreeMap<weft_ir::TyId, bool> = BTreeMap::new();
+    for (bi, blk) in b.blocks.iter().enumerate() {
+        for (si, s) in blk.stmts.iter().enumerate() {
+            let StmtKind::Assign(_, weft_ir::Rvalue::Use(weft_ir::Operand::Move(t))) = &s.kind
+            else {
+                continue;
+            };
+            let Some(ty) = b.local(t.local).map(|d| d.ty).filter(|_| t.proj.is_empty()) else {
+                continue;
+            };
+            if *memo.entry(ty).or_insert_with(|| has_box(tys, ty, 0)) {
+                out.insert((
+                    BlockId(u32::try_from(bi).unwrap_or(u32::MAX)),
+                    u32::try_from(si).unwrap_or(u32::MAX - 1),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// True if type `t` has a `Box` part: the type, a field of a struct, a
+/// payload of an enum, a type argument, a part of a tuple or an element of
+/// an array (not behind a reference). `depth` stops a type that grows.
+fn has_box(tys: &TyTable, t: weft_ir::TyId, depth: u32) -> bool {
+    use weft_ir::ty::{AdtKind, Lang};
+    if depth > 8 {
+        return false;
+    }
+    let go = |x: &weft_ir::TyId| has_box(tys, *x, depth + 1);
+    match tys.try_get(t) {
+        Some(weft_ir::Ty::Adt(a, args)) => {
+            let Some(d) = tys.adts().get(a.index()) else {
+                return false;
+            };
+            d.lang == Some(Lang::Box)
+                || args.iter().any(go)
+                || match &d.kind {
+                    AdtKind::Struct(fs) => fs.iter().any(|f| go(&f.ty)),
+                    AdtKind::Enum(vs) => vs.iter().flat_map(|v| v.fields.iter()).any(go),
+                    AdtKind::Extern { .. } => false,
+                }
+        }
+        Some(weft_ir::Ty::Tuple(ts)) => ts.iter().any(go),
+        Some(weft_ir::Ty::Array(x, _)) => go(x),
+        _ => false,
     }
 }
 
@@ -384,6 +454,9 @@ pub struct NodeTable {
     /// The first node of each copy of a block: the body, the block and the
     /// destination.
     firsts: BTreeMap<(BodyId, BlockId, u32), NodeId>,
+    /// The statements of the body of now that get a node of
+    /// [`Phase::Overwrite`] ([`moves_boxed_place_field`]).
+    overwrites: std::collections::BTreeSet<(BlockId, u32)>,
 }
 
 impl NodeTable {
@@ -419,6 +492,7 @@ impl NodeTable {
             return;
         };
         let names = callee_names(p, tys, body, b);
+        self.overwrites = moves_boxed_place_field(tys, b);
         let copies = cleanup_copies(b, body, frames);
         let copies_of = |block: BlockId, cleanup: bool| -> Vec<u32> {
             if cleanup {
@@ -500,6 +574,15 @@ impl NodeTable {
                 _ => None,
             };
             let label = label.as_deref().unwrap_or(name);
+            let at = u32::try_from(i).unwrap_or(u32::MAX - 1);
+            if self.overwrites.contains(&(block, at)) {
+                let pre = NodeKey {
+                    phase: Phase::Overwrite,
+                    ..key
+                };
+                let o = self.node(facts, pre, stmt_span(b, s), [label, "overwrite", &detail]);
+                self.chain(facts, &mut last, o, body, block, dest);
+            }
             let n = self.node(facts, key, stmt_span(b, s), [label, name, &detail]);
             self.chain(facts, &mut last, n, body, block, dest);
         }

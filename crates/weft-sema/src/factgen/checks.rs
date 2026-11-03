@@ -7,8 +7,9 @@
 //! of its parameter type (F3-3, F3-4). The texts are those of the old
 //! pipeline (`crate::program::on_abort_row`).
 //!
-//! [`item_value`] is the check of a function item as a value with type
-//! arguments (`docs/ir.md` 5.35, `check_item_value` of the old lowering).
+//! The check of a function item as a value with type arguments
+//! (`docs/ir.md` 5.35, `check_item_value` of the old lowering) is
+//! `super::generic::item_values` (plan stage F20).
 //!
 //! [`cap_escapes`] is W0313 for a capability (`docs/ir.md` 6.9, plan stage
 //! F17): a closure that captures the capability of a handler leaves the
@@ -61,33 +62,6 @@ pub fn on_abort_rows(
         out.extend(on_abort_row(&a.program, f, sig, &row, no_runtime));
     }
     out
-}
-
-/// The check of the function item `f` as a value with the type arguments
-/// `targs` (`docs/ir.md` 5.35).
-///
-/// A caller can run the value, so a type argument that the summary of `f`
-/// drops or holds must not be linear (W0601, W0602 at the value in the old
-/// lowering).
-///
-/// Returns a reason if the check finds such a type argument: the facts have
-/// no node for it yet, so the program stays with the old pipeline (its
-/// lowering gives the diagnostic). `None` if the value passes.
-pub fn item_value(
-    sums: &Summaries,
-    tys: &weft_ir::TyTable,
-    f: weft_ir::FnId,
-    targs: &[weft_ir::TyId],
-) -> Option<&'static str> {
-    let sum = sums.get(f).ok()?;
-    let linear = |j: &u32| {
-        targs
-            .get(*j as usize)
-            .is_some_and(|&t| crate::props::ir_maybe_linear(tys, t))
-    };
-    (sum.drops.iter().any(linear) || sum.holds.iter().any(linear)).then_some(
-        "a function item as a value that drops or holds a linear type argument (stage F20)",
-    )
 }
 
 /// W0313 for each handler of `escapes` (`docs/ir.md` 6.9).

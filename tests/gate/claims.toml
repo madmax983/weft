@@ -6475,3 +6475,125 @@ repro = [
     "tests/gate/probes/fixes/f195/r34_branch_pred_c.wf",
 ]
 note = "a task of a late run does not start on the predecessors of the call node (a branch)"
+
+[[claim]]
+finding = "OL-3a"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDEF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_task_hold_b.wf"]
+code = "W0602"
+note = "a generic callee holds a `Task<T>` handle across an abort (part `holds` through `on abort`: the handle has `on abort` only if the type argument has it); the old pipeline misses it"
+
+[[claim]]
+finding = "OL-3a"
+kind = "unsound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_multi_hold_b.wf"]
+code = "W0503"
+note = "a generic callee holds a value of its type parameter across a `multi` operation (part `holds` as a query over its facts)"
+
+[[claim]]
+finding = "OL-3a"
+kind = "sound"
+verdict = "one-rule"
+group = "ACDEF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_task_hold_c.wf"]
+note = "the clean twin of the task shape: the type argument is plain data"
+
+[[claim]]
+finding = "OL-3a"
+kind = "sound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_multi_hold_c.wf"]
+note = "the clean twin of the `multi` shape: the type argument is plain data"
+
+[[claim]]
+finding = "OL-R2c-3"
+kind = "fp"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/olr2c3_rc_wrapper_c.wf"]
+note = "a generic wrapper holds `Rc<T>` across a `multi` operation; `holds` applies with the type argument of the call (`u64`), not the worst case"
+
+[[claim]]
+finding = "F8.1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/f81_box_move_copy_b.wf",
+    "tests/gate/probes/fixes/f20/f81_box_move_old_b.wf",
+]
+code = "W0301"
+note = "a copy of a place-field reference of a `!Move` value behind a `Box` ends where the owner of the `Box` gets a new value (the old pipeline misses the first one)"
+
+[[claim]]
+finding = "F8.1"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/f81_box_move_copy_c.wf",
+    "tests/gate/probes/fixes/f20/f81_box_move_old_c.wf",
+]
+note = "a place-field reference of a `!Move` value behind a `Box` goes with a move of the `Box`, also into a place that had a value (154 `move_set`)"
+
+[[claim]]
+finding = "V056"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/v056_closure_dropped_b.wf",
+    "tests/gate/probes/fixes/f20/ret_keep_closure_b.wf",
+]
+code = "W0601"
+note = "a linear closure goes to a parameter of a type parameter that the callee drops, or comes back from a generic identity and the caller drops it"
+
+[[claim]]
+finding = "V056"
+kind = "sound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/v056_closure_dropped_c.wf",
+    "tests/gate/probes/fixes/f20/ret_keep_closure_c.wf",
+]
+note = "the clean twins: the linear closure comes back from the generic callee and runs"
+
+[[claim]]
+finding = "GEN-DROPS"
+kind = "unsound"
+verdict = "one-rule"
+group = "AF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/drop_behind_ref_b.wf",
+    "tests/gate/probes/fixes/f20/two_params_b.wf",
+]
+code = "W0601"
+note = "part `drops` as a query: a generic body overwrites a value of its type parameter behind a reference; a callee with two type parameters drops the second"
+
+[[claim]]
+finding = "GEN-DROPS"
+kind = "sound"
+verdict = "one-rule"
+group = "AF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/drop_behind_ref_c.wf",
+    "tests/gate/probes/fixes/f20/two_params_c.wf",
+]
+note = "the clean twins: plain data behind the reference; the linear type goes to the type parameter that the callee gives back (the type parameters of `drops` are apart)"

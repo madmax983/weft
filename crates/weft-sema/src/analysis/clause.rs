@@ -1537,7 +1537,7 @@ pub fn has_resume(p: &Program, cb: BodyId) -> bool {
 /// True if a call can run the clauses of handler `h` (plan stage F15).
 ///
 /// No parameter and no result of an operation of a clause of the handler
-/// holds a function value or a value of a type parameter, and a result
+/// holds a function value, and a result
 /// holds no reference if the clause can resume: the values that a clause
 /// gives back to the callee hold no place of the site. A parameter can
 /// hold a reference: it points into the places that the callee gives
@@ -1549,9 +1549,11 @@ pub fn given_ops(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> bool {
     let Some(e) = tys.effects().get(hd.effect.index()) else {
         return false;
     };
+    // An effect has no type parameter, so no type of an operation names one
+    // (the part of follow-up F16.3 for type parameters, plan stage F20).
     let no_fns = |t: weft_ir::TyId| {
         let pr = crate::props::ir_props(tys, t);
-        !pr.generic && !pr.callable && !crate::props::ir_has_fns(tys, t)
+        !pr.callable && !crate::props::ir_has_fns(tys, t)
     };
     hd.clauses.iter().all(|&(op, c)| {
         e.ops.get(op.index()).is_some_and(|o| {

@@ -25,7 +25,7 @@ fn immovable() -> u8 / Choice {
 
 fn scope_binder() / Choice, async {
     scope { s =>
-        let b = choose()   //~ W0503
+        let b = choose()   //~ old: W0503
         s.spawn(|| print(b))
     }
 }

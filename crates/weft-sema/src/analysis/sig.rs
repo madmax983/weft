@@ -352,6 +352,9 @@ pub struct Inferred {
     /// The type parameters of the values that the body holds across a node
     /// that can abort or resume more than once.
     pub holds: BTreeSet<u32>,
+    /// The type parameters of the values that a `fork` branch of the body
+    /// captures (plan stage F20).
+    pub forks: BTreeSet<u32>,
     /// The function values of the interface that the body runs (part
     /// `runs`, stage F12), one entry for each parameter.
     pub runs: Vec<Run>,
@@ -446,6 +449,9 @@ impl Inferred {
         }
         for h in &o.holds {
             grew |= self.holds.insert(*h);
+        }
+        for h in &o.forks {
+            grew |= self.forks.insert(*h);
         }
         if o.raises && !self.raises {
             self.raises = true;
@@ -780,6 +786,7 @@ pub fn build(
     }
     s.drops.clone_from(&inf.drops);
     s.holds.clone_from(&inf.holds);
+    s.forks.clone_from(&inf.forks);
     s.runs.clone_from(&inf.runs);
     s.ret.fns = inf.ret_fns.iter().cloned().collect();
     s.ret.linear = inf.ret_linear;

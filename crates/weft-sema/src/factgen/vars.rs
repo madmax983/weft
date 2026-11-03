@@ -248,6 +248,41 @@ pub struct Vars {
     capture_refs: HashSet<(BodyId, LocalId)>,
 }
 
+/// The flag `linear` of a value of type `t`, and the type parameters that make it linear in
+/// a generic body (`crate::props::GenericBody`).
+///
+/// `strict` is the flag outside a generic body: such a value has no type parameter here.
+pub fn generic_linear(tys: &TyTable, t: TyId, strict: bool) -> (bool, Vec<u32>) {
+    if strict || !crate::props::params_linear() {
+        return (strict, Vec::new());
+    }
+    let ps: Vec<u32> = crate::props::ir_linear_params(tys, t).into_iter().collect();
+    (!ps.is_empty(), ps)
+}
+
+/// The type parameters that give a linear value of type `t` its `on abort`
+/// in a generic body (`Generic::on_abort`): empty outside a generic body.
+pub fn generic_abort(tys: &TyTable, t: TyId) -> Vec<u32> {
+    if !crate::props::params_linear() {
+        return Vec::new();
+    }
+    crate::props::ir_on_abort_params(tys, t)
+        .into_iter()
+        .collect()
+}
+
+/// The type parameters that make a value of type `t` nonportable in a
+/// generic body (`Generic::nonportable`): empty outside a generic body, and
+/// for a value that is nonportable with no type parameter.
+pub fn generic_nonportable(tys: &TyTable, t: TyId) -> Vec<u32> {
+    if !crate::props::params_linear() {
+        return Vec::new();
+    }
+    crate::props::ir_nonportable_params(tys, t)
+        .into_iter()
+        .collect()
+}
+
 /// The span of the facts for an IR span.
 const fn span(s: weft_ir::Span) -> Span {
     Span { lo: s.lo, hi: s.hi }
@@ -524,10 +559,12 @@ impl Vars {
                             }
                         }
                         let pr = ir_props(tys, ret);
-                        (pr.linear, pr.on_abort)
+                        let strict = crate::props::ir_strict_linear(tys, ret);
+                        (generic_linear(tys, ret, strict), pr.on_abort)
                     }
-                    _ => (d.props.linear, d.props.on_abort),
+                    _ => (generic_linear(tys, d.ty, d.props.linear), d.props.on_abort),
                 };
+                let (linear, generic) = linear;
                 let info = VarInfo {
                     name: result_text(&b.kind, d).unwrap_or_else(|| local_text(tys, d)),
                     kind: var_kind(tys, d),
@@ -544,6 +581,15 @@ impl Vars {
                     uniq: d.props.uniq,
                     nonportable: d.props.nonportable,
                     callable: d.props.callable,
+                    generic: weft_facts::Generic {
+                        on_abort: if linear && on_abort && generic.is_empty() {
+                            generic_abort(tys, d.ty)
+                        } else {
+                            Vec::new()
+                        },
+                        nonportable: generic_nonportable(tys, d.ty),
+                        linear: generic,
+                    },
                 };
                 v.add(facts, VarKey::S(bid, l), info);
             }
@@ -772,9 +818,13 @@ impl Vars {
                     ty.map_or_else(String::new, |t| tys.show(t)),
                 );
                 info.kind = VarKind::Temp;
-                info.linear = props.linear;
-                info.has_on_abort = props.linear && props.on_abort;
-                info.once = props.linear;
+                let (linear, generic) = ty.map_or((false, Vec::new()), |t| {
+                    generic_linear(tys, t, crate::props::ir_strict_linear(tys, t))
+                });
+                info.linear = linear;
+                info.has_on_abort = linear && props.on_abort;
+                info.once = linear && generic.is_empty();
+                info.generic.linear = generic;
                 self.add(facts, VarKey::D(bid, block, at), info);
             }
             // `detach` drops the result of the task (ADR 0007, plan stage
@@ -796,9 +846,13 @@ impl Vars {
                     ret.map_or_else(String::new, |t| tys.show(t)),
                 );
                 info.kind = VarKind::Dropped;
-                info.linear = props.linear;
-                info.has_on_abort = props.linear && props.on_abort;
-                info.once = props.linear;
+                let (linear, generic) = ret.map_or((false, Vec::new()), |t| {
+                    generic_linear(tys, t, crate::props::ir_strict_linear(tys, t))
+                });
+                info.linear = linear;
+                info.has_on_abort = linear && props.on_abort;
+                info.once = linear && generic.is_empty();
+                info.generic.linear = generic;
                 self.add(facts, VarKey::D(bid, block, super::nodes::TERM), info);
             }
         }
@@ -887,6 +941,7 @@ impl Vars {
             uniq: false,
             nonportable: false,
             callable: false,
+            generic: weft_facts::Generic::NONE,
         }
     }
 
@@ -1032,9 +1087,16 @@ impl Vars {
                     span(origin),
                     tys.show(t),
                 );
-                info.linear = props.linear;
-                info.has_on_abort = props.linear && props.on_abort;
+                let (linear, generic) =
+                    generic_linear(tys, t, crate::props::ir_strict_linear(tys, t));
+                info.linear = linear;
+                info.has_on_abort = linear && props.on_abort;
                 info.once = props.once || is_task(tys, t);
+                if linear && props.on_abort && generic.is_empty() {
+                    info.generic.on_abort = generic_abort(tys, t);
+                }
+                info.generic.nonportable = generic_nonportable(tys, t);
+                info.generic.linear = generic;
                 info.nonportable = props.nonportable;
                 // A move of the capture in the body moves the value again.
                 info.immovable = props.immovable;

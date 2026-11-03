@@ -113,6 +113,7 @@ files = [
     "tests/gate/probes/r3/fidelity/p/tk6.wf",
     "tests/gate/probes/r3/interp/probe/g14_fork_result_lin.wf",
     "tests/gate/probes/verify/s5/p/g2_generic_task_hold.wf",
+    "tests/gate/probes/fixes/f20/ol3a_task_hold_b.wf",
 ]
 finding = "F3-6"
 reason = "unwinder fault: the runtime drops a linear task result with no `on abort`: a `fork` that a failure or a timeout ends, or an abort while a `Task<T>` handle is live (g2: through a generic T, see also OL-3a)"
@@ -3702,3 +3703,1288 @@ files = [
 ]
 reason = "class F19-SIG-TASKEFF (follow-up F19.5, the probes of R3-3): the part `task_effects` of the IR: the task that the closure starts sleeps through the runtime (`Clock`), and the IR does not give a standard effect of a task with a runtime to the part; the old inference gives `tasks[Clock]`"
 stage = "F19.5"
+
+# Stage F20 (generic bodies, group F). The end of the group-F fallback brings
+# into scope each program with a function with a type parameter. Most of the
+# differences below are in functions with no type parameter: the rules of the
+# groups A to E on programs that the type parameter of another function kept
+# out of scope (class F20-HIDDEN). The probes of `r3/oracle/probes/` share a
+# header with `fn id<T>`.
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/125_multi_values.wf",
+]
+codes = ["W0503"]
+reason = "class F20-HIDDEN (stage F20): `scope_binder` is I3-8 (a `multi` operation in a scope body is not W0503 in the `ir` pipeline, follow-up F19.1); the generic `hold_value` kept the program out of scope. The other markers are the same. Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/45_stored.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt5_variants.wf",
+]
+codes = ["W0301", "W0312", "W0405"]
+reason = "class F20-HIDDEN (stage F20), group C: a read or a run of a stored closure whose capture is invalid is W0301 at the read of the closure too (`let h = v[0]`), and a callee that clears a place and then runs a closure argument that reads it is W0301 at the call next to the W0312 of the old pipeline; the old W0405 of `via_param` (rt5) is not in the `ir` pipeline (code of a caller with no row). Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/72_linear_drops.wf",
+    "tests/gate/probes/verify/partb/S4/p/c1_closure_linear.wf",
+]
+codes = ["W0204", "W0601"]
+reason = "class F20-HIDDEN (stage F20): the `ir` pipeline reports W0601 of a temporary of the tail of a body at the end of the body (one line after the old one), and a linear closure in a field at the end of the scope of the local that owns it (class H-LIN); the closure in a field that the body runs (`closure_in_field`) is not W0601 (the run consumes the capture); a returned closure that moves a local is valid (R3RT5). Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/programs/76_ref_flow.wf",
+    "tests/gate/probes/r3/redteam/p/i3_refholder.wf",
+]
+codes = ["W0301"]
+reason = "class F20-HIDDEN (stage F20): a `match` on an `Option` of a reference reads the reference in the arm that binds it, so W0301 is at the use in the arm (the next line), where the old pipeline reports the `match`. Same fault, same function. Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/78_closure_returns.wf",
+    "tests/gate/probes/partb/s4f/ret3.wf",
+    "tests/gate/probes/r2/redteam/p/f_modes.wf",
+    "tests/gate/probes/r3/oracle/probes/b1_generic_once.wf",
+]
+finding = "R3RT5"
+codes = ["W0204", "W0401", "W0502", "W0601"]
+reason = "class F20-HIDDEN (stage F20), R3RT5: a closure owns its `ByMove` capture, so a closure that a function returns may move a local or a parameter (the old W0204 is a false positive); the caller that drops a linear closure is W0601 and the caller that runs a `once` closure twice is W0502 (F12-fix H3). A `fork` branch that captures an `rc` handle of a nonportable value is W0401 once for each nonportable capture. Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/ir_targets/o3_6_rc_handle_tasks.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-6_task_rc_handle_move.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-9_fp_join_not_seen.wf",
+]
+codes = ["W0405"]
+reason = "class F20-HIDDEN (stage F20), group E: the `ir` pipeline reports W0405 for each move or new value of an `rc` handle that a running task shares (O3-6; the old pipeline misses them, the target has the markers), and no W0405 for a write after a `join` in a helper, a tuple, an `Option` or a closure (O3-9, old false positives). The generic `take` kept the programs out of scope"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r2/oracle/min/v1.wf",
+    "tests/gate/probes/r3/oracle/probes/rh1_closure_move.wf",
+    "tests/gate/probes/r3/oracle/probes/n7_payload_closure.wf",
+]
+codes = ["W0301", "W0302"]
+reason = "class F20-HIDDEN (stage F20), group C: a run of a closure whose capture moved is W0302 (a use of a moved value) in the `ir` pipeline, W0301 in the old one. Same fault, same line"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r2/redteam/p/l_immov.wf",
+    "tests/gate/probes/r3/oracle/probes/z10_vf_task.wf",
+    "tests/gate/probes/r3/oracle/probes/z5_vf_opt.wf",
+    "tests/gate/probes/r3/oracle/probes/z7_vf_handle_tail.wf",
+]
+codes = ["W0301", "W0304", "W0604"]
+reason = "class F20-HIDDEN (stage F20), place-field moves (as the `n?_immov` probes of stage F8): a place-field reference of a `!Move` value that moves (not behind a `Box`) points into the source, so a later read is W0301 where the old pipeline gives W0304; a move of a `!Move` part of a tuple or an element is W0604 once for each move. Both reject with W0604"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r3/oracle/probes/z6_vf_in_vec.wf",
+    "tests/gate/probes/r3/oracle/probes/z8_vf_scope_tail.wf",
+]
+codes = ["W0301"]
+reason = "class F20-HIDDEN (stage F20), place-field moves: W0301 of a place-field reference of a moved `!Move` value at the first read (one line before the old one). Both reject with W0604"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/oracle/probes/y1_rc_store_block.wf",
+    "tests/gate/probes/r3/oracle/probes/y2_rc_store_callee_block.wf",
+    "tests/gate/probes/r3/oracle/probes/y4_rc_store_then_clear.wf",
+    "tests/gate/probes/r3/oracle/probes/y6_rc_store_clone_handle.wf",
+    "tests/gate/probes/r3/oracle/probes/y8_rc_store_via_id.wf",
+    "tests/gate/probes/r3/oracle/probes/y10_rc_store_handler.wf",
+]
+codes = ["W0204", "W0301"]
+reason = "class F20-HIDDEN (stage F20), `rc` objects: a reference into a local that goes into an `rc` object is W0204 at the store and W0301 at the read after the end of the local (heap slots, F13.1); a store in a clause is W0301 at the read only. Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r3/oracle/probes/y5_rc_store_closure_block.wf",
+    "tests/gate/probes/r3/oracle/probes/y7_rc_store_fn_closure.wf",
+]
+codes = ["W0301"]
+reason = "class F20-HIDDEN (stage F20), `rc` objects: W0301 of a reference in an `rc` object at the first read after the end of the local (one line before the old one). Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/oracle/probes/n2_match_payload_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/q3_tmp_match.wf",
+    "tests/gate/probes/r3/oracle/probes/s11_steal_tuple.wf",
+    "tests/gate/probes/r3/oracle/probes/s5_steal_opt_rc.wf",
+    "tests/gate/probes/r3/oracle/probes/p5_opref_clause_local_ret.wf",
+    "tests/gate/probes/r3/oracle/probes/t1_resume_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/t5_clause_value_tmp_clean.wf",
+    "tests/gate/probes/r3/oracle/probes/t6_clause_value_local.wf",
+    "tests/gate/probes/r3/oracle/probes/t7_resume_local.wf",
+    "tests/gate/probes/r3/oracle/probes/ta2_task_returns_new_lin.wf",
+    "tests/gate/probes/r3/oracle/probes/ta4_task_detach_lin.wf",
+    "tests/gate/probes/r3/redteam/p/i1_refs.wf",
+    "tests/gate/probes/redteam/g01_generic.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0601", "W0602"]
+reason = "class F20-HIDDEN (stage F20): the rules of the groups A to E in `main` of probes that the generic `id` of their header (or `take`) kept out of scope: a reference of a clause value or a resume value into a local is W0301 at its uses (not W0204 at the clause), one W0301 for a temporary of a `match` and a statement, two W0302 at one use of a value that a task moved, W0601 and W0602 of a linear task result at the spawn; a block value that points into a local of the block and that nothing reads is not W0301 (g01 `local_id`). Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r3/oracle/probes/p4_opref_clause_local.wf",
+    "tests/gate/probes/r3/oracle/probes/r9_if_tmp_assign.wf",
+    "tests/gate/probes/r3/oracle/probes/t2_resume_tmp_keep.wf",
+    "tests/gate/probes/r3/oracle/probes/t3_clause_value_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/t4_clause_value_tmp2.wf",
+    "tests/gate/probes/r2/redteam/p/a_owner2.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/lin1.wf",
+]
+codes = ["W0204", "W0301", "W0601"]
+reason = "class F20-HIDDEN (stage F20), moved lines: W0301 of a clause value or a block value at its use in the next statement (block-value-line class), W0204 of a closure at its first line, W0601 of a temporary of the tail of a body at the end of the body. Same codes and counts; rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/redteam/p/r2_drops.wf",
+    "tests/gate/probes/r3/redteam/p/r7_empty.wf",
+    "tests/gate/probes/verify/s5/R3a/p/rt1.wf",
+]
+codes = ["W0601"]
+reason = "class F20-HIDDEN (stage F20), W0601 precision of the groups A to D: a `match` that consumes each linear part of an enum payload, an `Option` that a callee sets to `None` and a new value of a local that held `None` are not W0601 (old false positives, the runs are clean there). The markers of the probes stay. Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r2/redteam/p/n_drops2.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_fnval.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_fnval_lock.wf",
+    "tests/gate/probes/verify/s5/diff/p/gen_hold2.wf",
+]
+finding = "V081"
+codes = ["W0601", "W0602"]
+reason = "class F20-ITEM (stage F20, RR9, V081): a generic function item as a value gets the checks of its parts `drops` and `holds` with its type arguments where the value is made (`generic::item_values`, docs/ir.md 5.35). The old pipeline checks it again at a call of the local that holds the value (one more W0601 or W0602 on the next line, ADR 0007 says so). Each call of the value goes through its making, so the check at the value covers it. Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/review_edge/Edge/ptr/ptr_generic_fork.wf",
+]
+finding = "OL-NR-ptrfork"
+codes = ["W0401"]
+reason = "class F20-FORKS (stage F20, OL-NR-ptrfork): a `fork` branch of a generic body captures a value of a type parameter (part `forks`), so a call with a nonportable type argument (a pointer of an extern type, a nonportable extern type) is W0401. The old pipeline misses it"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_variants.wf",
+    "tests/gate/probes/verify/partb/S4/p/c3_generic_closure.wf",
+]
+codes = ["W0503", "W0601"]
+reason = "class F20-GENERIC (stage F20): a linear closure that a generic callee holds across a node that can resume more than once is W0503 and W0601 at the call (the argument moves at `Ret`), where the old pipeline gives one W0503; a linear closure in an `Option` that a `match` copies out is W0601 at the end of the scope of the `Option` (issue 47, precision). Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "new-fp"
+files = ["tests/gate/probes/verify/partb/S4/p/c4_generic_clean.wf"]
+reason_class = "precision"
+issue = 47
+reason = "issue 47 (a precision loss of the groups A and C, as `h6_option_closure.wf`): `closure_in_some` copies a linear closure out of an `Option` payload (`_5 = copy (_2 as #0).0`); the arm `None` does not end the linear value of `o` (no variant test narrows the value), so `o` is W0601 at the end of the function. The generic `gen_keep` of the program kept it out of scope before stage F20; the function with the error has no type parameter"
+stage = "F20"
+
+# Stage F20, tier 2: `open` programs whose groups are all on now. Both
+# pipelines accept them and they fault.
+
+[[entry]]
+class = "open-old"
+files = ["verify/s5/R3t/jc.wf"]
+finding = "F3-6"
+reason = "unwinder fault (tier 2, as entry of fk4/tk6): `bad_ctx_fork_tx` forks two linear `Tx` results in a scope whose other task fails; the failure ends the scope while the results are live, and the runtime drops them. The old pipeline misses it too. Each group of the program is on from stage F20 (`--groups ABCDEF`)"
+stage = "F20"
+
+[[entry]]
+class = "open-old"
+files = [
+    "verify/s5/S5a/d1_callee_mut.wf",
+    "verify/s5/S5a/d1_callee_mut3.wf",
+    "verify/s5/S5a/d1_callee_mut6.wf",
+]
+finding = "unclassified"
+reason = "dangling read (tier 2, follow-up F16.3): the clause of a local handler resumes with a reference into a place of the site (`resume(c)`), and the callee clears it; the reference of the site into the place is stale after the call. The `ir` pipeline keeps these programs with the old pipeline (fallback `GIVES_BACK` of F16.3), and the old pipeline misses them. The groups of the programs are all on from stage F20"
+stage = "F20"
+
+[[entry]]
+class = "new-fp"
+files = ["verify/review_edge/Edge/ptr/generic_rc_fork.wf"]
+reason_class = "stricter"
+finding = "OL-NR-ptrfork"
+reason = "OL-NR-ptrfork (stage F20, tier 2): an `Rc` handle goes to a generic function that forks with its argument; an `Rc` is nonportable (ADR 0006), and the same program with `x: Rc<Node>` is W0401 in both pipelines. The part `forks` of the generic body gives the rule through the type parameter"
+stage = "F20"
+
+[[entry]]
+class = "new-fp"
+files = [
+    "verify/s5/R3x/p2/g6_generic_fork_sink.wf",
+    "verify/s5/R3x/p2/g10_generic_fork_made.wf",
+]
+reason_class = "stricter"
+reason = "stage F20, tier 2 (ADR 0007, spec `abort_unhandled` of a task): a linear value of a type parameter moves into a `fork` branch that a failing sibling can cancel before it runs, and the type has no `on abort`. The same program with `x: Tx` is W0602 in both pipelines; the part `holds` of the generic body gives the rule through the type parameter. The run of the oracle starts the branch before the failure"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f20/ol3a_multi_hold_b.wf",
+]
+codes = ["W0302", "W0503", "W0601", "W0602"]
+reason = "class F20-GENERIC (stage F20, the probe of OL-3a): the `ir` pipeline reports the linear argument that the generic callee holds across the `multi` operation (W0503, W0602 at the call, and W0601 of the copy of the resume); the old pipeline gives W0302 at the call for the second resume. Rejected by both pipelines, and it faults"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/redteam/pkgA",
+    "r3/redteam/pkgA",
+]
+codes = ["W0701"]
+reason = "class F20-HIDDEN (stage F20): the generic `pub fn e<T>` makes a closure that performs `Log` and never runs it; the `ir` summary has no effect for it (as class F19-HIDDEN `f01_w0701`), so the public function needs no stated row. The other W0701 and W0901 are the same. Rejected by both pipelines"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr8_v1.wf",
+]
+finding = "V081"
+codes = ["W0601"]
+reason = "class F20-ITEM (stage F20): `let f = clear_any; f(v)` gets the check of the generic item at the value (line 22), not again at the call of the local (line 23). Rejected by both pipelines"
+stage = "F20"
+
+
+# Stage F20, tier 2: the rows that group F brings into scope (class
+# F20-T2-HIDDEN). Both pipelines reject each program. For most rows the `ir`
+# diagnostics are the diagnostics of the groups A to E (stage F19.5) on the
+# program with the generic identity `id` of the shared header inlined (scratchpad
+# f20/t2cls.tsv); the other rows are tier-2 copies and mutants of the tier-1
+# programs of the F20 entries above, and of the generic classes F20-ITEM and
+# F20-GENERIC (one W0602 for each variable; W0405 and W0601 at more nodes).
+
+[[entry]]
+class = "changed"
+files = [
+    "partb/s4f/ret3.wf",
+]
+codes = ["W0204"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `partb/s4f`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/oracle/min/v1.wf",
+]
+codes = ["W0301", "W0302"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r2/oracle/min`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/oracle/runs/**",
+]
+codes = ["W0204", "W0301", "W0302", "W0312", "W0314", "W0315", "W0403", "W0405", "W0502", "W0503", "W0601", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r2/oracle/runs`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/oracle/t0/**",
+]
+codes = ["W0301", "W0302", "W0312", "W0405", "W0502", "W0503", "W0601", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r2/oracle/t0`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/redteam/p/f_modes.wf",
+    "r2/redteam/p/l_immov.wf",
+    "r2/redteam/p/n_drops2.wf",
+]
+codes = ["W0204", "W0301", "W0304", "W0401", "W0502", "W0601", "W0604"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r2/redteam/p`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/probes/b1_generic_once.wf",
+    "r3/oracle/probes/n2_match_payload_ref.wf",
+    "r3/oracle/probes/n7_payload_closure.wf",
+    "r3/oracle/probes/p5_opref_clause_local_ret.wf",
+    "r3/oracle/probes/q3_tmp_match.wf",
+    "r3/oracle/probes/rh1_closure_move.wf",
+    "r3/oracle/probes/s11_steal_tuple.wf",
+    "r3/oracle/probes/s5_steal_opt_rc.wf",
+    "r3/oracle/probes/t1_resume_tmp.wf",
+    "r3/oracle/probes/t5_clause_value_tmp_clean.wf",
+    "r3/oracle/probes/t6_clause_value_local.wf",
+    "r3/oracle/probes/t7_resume_local.wf",
+    "r3/oracle/probes/ta2_task_returns_new_lin.wf",
+    "r3/oracle/probes/ta4_task_detach_lin.wf",
+    "r3/oracle/probes/y10_rc_store_handler.wf",
+    "r3/oracle/probes/y1_rc_store_block.wf",
+    "r3/oracle/probes/y2_rc_store_callee_block.wf",
+    "r3/oracle/probes/y4_rc_store_then_clear.wf",
+    "r3/oracle/probes/y6_rc_store_clone_handle.wf",
+    "r3/oracle/probes/y8_rc_store_via_id.wf",
+    "r3/oracle/probes/z10_vf_task.wf",
+    "r3/oracle/probes/z5_vf_opt.wf",
+    "r3/oracle/probes/z7_vf_handle_tail.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0304", "W0502", "W0601", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/probes`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/repro/O3-6_task_rc_handle_move.wf",
+    "r3/oracle/repro/O3-9_fp_join_not_seen.wf",
+]
+codes = ["W0405"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/repro`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/runs/**",
+]
+codes = ["W0118", "W0204", "W0301", "W0302", "W0312", "W0313", "W0314", "W0402", "W0403", "W0405", "W0406", "W0502", "W0503", "W0601", "W0602", "W0702", "W0803", "W0805"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/runs`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/sweep1/**",
+]
+codes = ["W0204", "W0301"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/sweep1`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/sweep2/apply__l_unlock__unlock.wf",
+    "r3/oracle/sweep2/apply__t_commit__commit.wf",
+    "r3/oracle/sweep2/apply__t_let__commit.wf",
+    "r3/oracle/sweep2/apply__t_some__commit.wf",
+    "r3/oracle/sweep2/clause__l_tail__none.wf",
+    "r3/oracle/sweep2/clause_after__l_unlock__unlock.wf",
+    "r3/oracle/sweep2/task__l_tail__none.wf",
+    "r3/oracle/sweep2/task__l_tail__unlock.wf",
+    "r3/oracle/sweep2/task__t_tail__commit.wf",
+]
+codes = ["W0601", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/sweep2`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/sweep3/callee__body_opt.wf",
+    "r3/oracle/sweep3/callee__body_struct.wf",
+    "r3/oracle/sweep3/callee__body_tuple.wf",
+    "r3/oracle/sweep3/callee__body_value.wf",
+    "r3/oracle/sweep3/callee__body_value_id.wf",
+    "r3/oracle/sweep3/callee__loop_carry.wf",
+    "r3/oracle/sweep3/callee__outer_calls.wf",
+    "r3/oracle/sweep3/callee__outer_local.wf",
+    "r3/oracle/sweep3/callee__outer_struct.wf",
+    "r3/oracle/sweep3/callee__outer_tuple_part.wf",
+    "r3/oracle/sweep3/callee__outer_vec.wf",
+    "r3/oracle/sweep3/callee__runf_store.wf",
+    "r3/oracle/sweep3/callee__task_outlives.wf",
+]
+codes = ["W0313", "W0805"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/sweep3`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/sweep4/**",
+]
+codes = ["W0405"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/sweep4`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/tmp/g3_5.wf",
+    "r3/oracle/tmp/g3_7.wf",
+    "r3/oracle/tmp/g5.wf",
+]
+codes = ["W0301", "W0312", "W0601"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/tmp`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/125_multi_values.wf",
+]
+codes = ["W0503"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/quality/fuzzcorp`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/redteam/p/i1_refs.wf",
+    "r3/redteam/p/r2_drops.wf",
+    "r3/redteam/p/r7_empty.wf",
+]
+codes = ["W0301", "W0601"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/redteam/p`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/redteam/pkgA",
+]
+codes = ["W0701"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/redteam/pkgA`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "redteam/g01_generic.wf",
+]
+codes = ["W0301"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `redteam/g01_generic.wf`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/partb/S4/p/c1_closure_linear.wf",
+    "verify/partb/S4/p/c3_generic_closure.wf",
+    "verify/partb/S4/run/gen2.wf",
+    "verify/partb/S4/run/gen3.wf",
+]
+codes = ["W0204", "W0302", "W0601"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `verify/partb`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/review_core/Core_S2/probes/rt5_variants.wf",
+]
+codes = ["W0301", "W0405"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `verify/review_core`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/review_edge/Edge/ptr/ptr_generic_fork.wf",
+]
+codes = ["W0401"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `verify/review_edge`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/**",
+]
+codes = ["W0204", "W0301", "W0302", "W0312", "W0405", "W0502", "W0503", "W0601", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `verify/s5`): other codes or counts; the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/oracle/runs/**",
+]
+codes = ["W0301", "W0302", "W0405", "W0601", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r2/oracle/runs`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/oracle/t0/p101.wf",
+    "r2/oracle/t0/p106.wf",
+    "r2/oracle/t0/p155.wf",
+    "r2/oracle/t0/p17.wf",
+    "r2/oracle/t0/p175.wf",
+    "r2/oracle/t0/p182.wf",
+    "r2/oracle/t0/p197.wf",
+    "r2/oracle/t0/p199.wf",
+    "r2/oracle/t0/p30.wf",
+    "r2/oracle/t0/p52.wf",
+    "r2/oracle/t0/p65.wf",
+    "r2/oracle/t0/p66.wf",
+    "r2/oracle/t0/p77.wf",
+    "r2/oracle/t0/p80.wf",
+    "r2/oracle/t0/p92.wf",
+    "r2/oracle/t0/q112.wf",
+    "r2/oracle/t0/q120.wf",
+    "r2/oracle/t0/q122.wf",
+    "r2/oracle/t0/q126.wf",
+    "r2/oracle/t0/q137.wf",
+    "r2/oracle/t0/q142.wf",
+    "r2/oracle/t0/q155.wf",
+    "r2/oracle/t0/q162.wf",
+    "r2/oracle/t0/q173.wf",
+    "r2/oracle/t0/q184.wf",
+    "r2/oracle/t0/q199.wf",
+    "r2/oracle/t0/q2.wf",
+    "r2/oracle/t0/q226.wf",
+    "r2/oracle/t0/q238.wf",
+    "r2/oracle/t0/q256.wf",
+    "r2/oracle/t0/q271.wf",
+    "r2/oracle/t0/q290.wf",
+    "r2/oracle/t0/q300.wf",
+    "r2/oracle/t0/q36.wf",
+    "r2/oracle/t0/q38.wf",
+    "r2/oracle/t0/q43.wf",
+    "r2/oracle/t0/q46.wf",
+    "r2/oracle/t0/q77.wf",
+]
+codes = ["W0301", "W0405", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r2/oracle/t0`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/redteam/p/a_owner2.wf",
+]
+codes = ["W0204", "W0301"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r2/redteam/p`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "r3/oracle/probes/p4_opref_clause_local.wf",
+    "r3/oracle/probes/r9_if_tmp_assign.wf",
+    "r3/oracle/probes/t2_resume_tmp_keep.wf",
+    "r3/oracle/probes/t3_clause_value_tmp.wf",
+    "r3/oracle/probes/t4_clause_value_tmp2.wf",
+    "r3/oracle/probes/y5_rc_store_closure_block.wf",
+    "r3/oracle/probes/y7_rc_store_fn_closure.wf",
+    "r3/oracle/probes/z6_vf_in_vec.wf",
+    "r3/oracle/probes/z8_vf_scope_tail.wf",
+]
+codes = ["W0301"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/probes`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "r3/oracle/runs/**",
+]
+codes = ["W0301", "W0302", "W0314", "W0405", "W0601", "W0602"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/runs`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "r3/oracle/sweep1/**",
+]
+codes = ["W0301"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/oracle/sweep1`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "r3/redteam/p/i3_refholder.wf",
+]
+codes = ["W0301"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `r3/redteam/p`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/partb/S4diff/p/lin1.wf",
+]
+codes = ["W0601"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `verify/partb`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/R2b: closures, function values and stored references/fd3_variants.wf",
+    "verify/s5/S5c/mut/progs/m00108_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m00743_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m00848_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m00877_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m00965_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m01334_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m01381_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m01587_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m01701_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m01708_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m01748_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m02149_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m02212_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m02648_76_ref_flow.wf",
+    "verify/s5/S5c/mut/progs/m02997_76_ref_flow.wf",
+]
+codes = ["W0204", "W0301"]
+reason = "class F20-T2-HIDDEN (stage F20, tier 2, `verify/s5`): moved lines (the same codes and counts); the rules of the groups A to E (and the generic classes of stage F20) on programs that a function with a type parameter kept out of scope before; both pipelines reject each program"
+stage = "F20"
+
+# Stage F20: the signature diff of the groups A to F (tier 1, then tier 2).
+
+[[entry]]
+class = "sig"
+parts = ["drops", "passthrough"]
+files = [
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_variants.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["drops"]
+files = [
+    "tests/gate/probes/fixes/f20/ol3a_multi_hold_b.wf",
+    "tests/gate/probes/fixes/f20/ol3a_multi_hold_c.wf",
+    "tests/gate/probes/fixes/f20/olr2c3_rc_wrapper_c.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["holds", "muts"]
+files = [
+    "tests/gate/probes/verify/s5/p/or2f.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["holds", "task_runs", "tasks"]
+files = [
+    "tests/gate/probes/fixes/f20/ol3a_task_hold_b.wf",
+    "tests/gate/probes/fixes/f20/ol3a_task_hold_c.wf",
+    "tests/gate/probes/verify/review_edge/Edge/ptr/ptr_generic_fork.wf",
+    "tests/gate/probes/verify/s5/p/g2_generic_task_hold.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "reach_repeats", "reaches"]
+files = [
+    "tests/gate/probes/r3/oracle/probes/e1_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e2_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e3_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e4_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/f2_fn_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/f4_block_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/p11_opref_multi_hold.wf",
+    "tests/gate/probes/r3/oracle/probes/p12_opref_multi_prev.wf",
+    "tests/gate/probes/r3/oracle/probes/p6_opref_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/q32_handle_tmp_multi.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "reaches"]
+files = [
+    "tests/gate/probes/r3/oracle/probes/e1_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e2_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e3_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e4_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/f2_fn_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/f4_block_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/p11_opref_multi_hold.wf",
+    "tests/gate/probes/r3/oracle/probes/p12_opref_multi_prev.wf",
+    "tests/gate/probes/r3/oracle/probes/p6_opref_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/q32_handle_tmp_multi.wf",
+    "tests/programs/125_multi_values.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi"]
+files = [
+    "tests/programs/125_multi_values.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["muts"]
+files = [
+    "tests/gate/probes/r3/oracle/lib/pre3.wf",
+    "tests/gate/probes/r3/oracle/probes/e1_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e2_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e3_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/e4_spawn_param_multi_fp.wf",
+    "tests/gate/probes/r3/oracle/probes/f2_fn_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/f4_block_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/g10_method_named.wf",
+    "tests/gate/probes/r3/oracle/probes/g11_item_local_named.wf",
+    "tests/gate/probes/r3/oracle/probes/g12_op_named.wf",
+    "tests/gate/probes/r3/oracle/probes/g13_ctor_named.wf",
+    "tests/gate/probes/r3/oracle/probes/g14_method_ref_named.wf",
+    "tests/gate/probes/r3/oracle/probes/g15_method_path_named.wf",
+    "tests/gate/probes/r3/oracle/probes/g16_method_mixed.wf",
+    "tests/gate/probes/r3/oracle/probes/g17_fn_mixed.wf",
+    "tests/gate/probes/r3/oracle/probes/g18_item_join_named.wf",
+    "tests/gate/probes/r3/oracle/probes/g1_named_order_move.wf",
+    "tests/gate/probes/r3/oracle/probes/g2_named_order_ok.wf",
+    "tests/gate/probes/r3/oracle/probes/g3_named_order_ok2.wf",
+    "tests/gate/probes/r3/oracle/probes/g4_named_order_bad.wf",
+    "tests/gate/probes/r3/oracle/probes/g5_named_order_ok3.wf",
+    "tests/gate/probes/r3/oracle/probes/g6_struct_lit_order.wf",
+    "tests/gate/probes/r3/oracle/probes/g7_struct_lit_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/g8_op_named.wf",
+    "tests/gate/probes/r3/oracle/probes/i1_kept_via_closure.wf",
+    "tests/gate/probes/r3/oracle/probes/i2_kept_spawn_fnval.wf",
+    "tests/gate/probes/r3/oracle/probes/i3_kept_nested_closure.wf",
+    "tests/gate/probes/r3/oracle/probes/i4_kept_hof.wf",
+    "tests/gate/probes/r3/oracle/probes/i6_kept_match_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/i7_kept_tuple_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/i8_kept_ret_closure.wf",
+    "tests/gate/probes/r3/oracle/probes/j1_nested_byvalue.wf",
+    "tests/gate/probes/r3/oracle/probes/j2_nested_byvalue_in_clo.wf",
+    "tests/gate/probes/r3/oracle/probes/j3_byvalue_plain.wf",
+    "tests/gate/probes/r3/oracle/probes/j4_byvalue_in_clo.wf",
+    "tests/gate/probes/r3/oracle/probes/k1_clause_spawn_race.wf",
+    "tests/gate/probes/r3/oracle/probes/k2_plain_race.wf",
+    "tests/gate/probes/r3/oracle/probes/k3_len_vs_elem.wf",
+    "tests/gate/probes/r3/oracle/probes/l10_if_scope_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/l11_scope_tail_box.wf",
+    "tests/gate/probes/r3/oracle/probes/l12_scope_tail_opt.wf",
+    "tests/gate/probes/r3/oracle/probes/l1_for_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/l2_while_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/l3_clause_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/l4_sim_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/l5_scope_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/l6_scope_block_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/l7_nested_scope.wf",
+    "tests/gate/probes/r3/oracle/probes/l8_loop_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/m10_late_loop.wf",
+    "tests/gate/probes/r3/oracle/probes/m11_late_ifclo.wf",
+    "tests/gate/probes/r3/oracle/probes/m12_late_id.wf",
+    "tests/gate/probes/r3/oracle/probes/m13_late_apply_later.wf",
+    "tests/gate/probes/r3/oracle/probes/m14_late_op.wf",
+    "tests/gate/probes/r3/oracle/probes/m1_late_plain.wf",
+    "tests/gate/probes/r3/oracle/probes/m2_late_setter.wf",
+    "tests/gate/probes/r3/oracle/probes/m3_late_clause.wf",
+    "tests/gate/probes/r3/oracle/probes/m4_late_holder.wf",
+    "tests/gate/probes/r3/oracle/probes/m5_late_stored.wf",
+    "tests/gate/probes/r3/oracle/probes/m6_late_struct.wf",
+    "tests/gate/probes/r3/oracle/probes/m7_late_returned.wf",
+    "tests/gate/probes/r3/oracle/probes/m8_late_task.wf",
+    "tests/gate/probes/r3/oracle/probes/m9_late_tuple_part.wf",
+    "tests/gate/probes/r3/oracle/probes/n1_match_payload.wf",
+    "tests/gate/probes/r3/oracle/probes/n2_match_payload_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/n3_match_ref_payload.wf",
+    "tests/gate/probes/r3/oracle/probes/n4_if_let_like.wf",
+    "tests/gate/probes/r3/oracle/probes/n5_nested_payload.wf",
+    "tests/gate/probes/r3/oracle/probes/n6_payload_via_fn.wf",
+    "tests/gate/probes/r3/oracle/probes/n7_payload_closure.wf",
+    "tests/gate/probes/r3/oracle/probes/o10_lin_opt_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o11_lin_rc_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o12_lin_generic_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o1_timeout_lin.wf",
+    "tests/gate/probes/r3/oracle/probes/o2_cancel_task_lin.wf",
+    "tests/gate/probes/r3/oracle/probes/o3_cancel_task_tx.wf",
+    "tests/gate/probes/r3/oracle/probes/o4_task_handle_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o5_lin_in_vec_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o6_lin_in_box_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o7_lin_in_closure_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o8_lin_struct_field_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/o9_lin_tuple_abort.wf",
+    "tests/gate/probes/r3/oracle/probes/p10_opref_task.wf",
+    "tests/gate/probes/r3/oracle/probes/p11_opref_multi_hold.wf",
+    "tests/gate/probes/r3/oracle/probes/p12_opref_multi_prev.wf",
+    "tests/gate/probes/r3/oracle/probes/p1_opref_local.wf",
+    "tests/gate/probes/r3/oracle/probes/p2_opref_other_op.wf",
+    "tests/gate/probes/r3/oracle/probes/p4_opref_clause_local.wf",
+    "tests/gate/probes/r3/oracle/probes/p5_opref_clause_local_ret.wf",
+    "tests/gate/probes/r3/oracle/probes/p6_opref_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/p9_opref_closure_store.wf",
+    "tests/gate/probes/r3/oracle/probes/q10_tmp_opt.wf",
+    "tests/gate/probes/r3/oracle/probes/q11_tmp_method.wf",
+    "tests/gate/probes/r3/oracle/probes/q12_tmp_rc.wf",
+    "tests/gate/probes/r3/oracle/probes/q13_tmp_split.wf",
+    "tests/gate/probes/r3/oracle/probes/q14_tmp_lit.wf",
+    "tests/gate/probes/r3/oracle/probes/q15_tmp_struct_lit.wf",
+    "tests/gate/probes/r3/oracle/probes/q16_tmp_handle.wf",
+    "tests/gate/probes/r3/oracle/probes/q17_tmp_scope.wf",
+    "tests/gate/probes/r3/oracle/probes/q18_tmp_block.wf",
+    "tests/gate/probes/r3/oracle/probes/q1_tmp_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/q20_handle_tmp_local.wf",
+    "tests/gate/probes/r3/oracle/probes/q21_handle_tmp_first.wf",
+    "tests/gate/probes/r3/oracle/probes/q22_handle_tmp_get.wf",
+    "tests/gate/probes/r3/oracle/probes/q23_handle_tmp_noblock.wf",
+    "tests/gate/probes/r3/oracle/probes/q24_handle_tmp_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/q25_handle_tmp_ask.wf",
+    "tests/gate/probes/r3/oracle/probes/q26_handle_tmp_box.wf",
+    "tests/gate/probes/r3/oracle/probes/q27_handle_tmp_vec.wf",
+    "tests/gate/probes/r3/oracle/probes/q28_handle_tmp_fn.wf",
+    "tests/gate/probes/r3/oracle/probes/q29_handle_tmp_opt.wf",
+    "tests/gate/probes/r3/oracle/probes/q2_tmp_id.wf",
+    "tests/gate/probes/r3/oracle/probes/q30_handle_tmp_clo.wf",
+    "tests/gate/probes/r3/oracle/probes/q31_timeout_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/q32_handle_tmp_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/q33_handle_tmp_nested.wf",
+    "tests/gate/probes/r3/oracle/probes/q34_handle_rc_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/q3_tmp_match.wf",
+    "tests/gate/probes/r3/oracle/probes/q4_tmp_if.wf",
+    "tests/gate/probes/r3/oracle/probes/q5_tmp_get.wf",
+    "tests/gate/probes/r3/oracle/probes/q6_tmp_field.wf",
+    "tests/gate/probes/r3/oracle/probes/q7_tmp_box.wf",
+    "tests/gate/probes/r3/oracle/probes/q8_tmp_closure.wf",
+    "tests/gate/probes/r3/oracle/probes/q9_tmp_tuple.wf",
+    "tests/gate/probes/r3/oracle/probes/r10_handle_assign_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/r11_handle_arg_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/r12_handle_keep_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/r1_handle_local_opt.wf",
+    "tests/gate/probes/r3/oracle/probes/r2_handle_local_clo.wf",
+    "tests/gate/probes/r3/oracle/probes/r3_scope_local_first.wf",
+    "tests/gate/probes/r3/oracle/probes/r4_handle_local_first.wf",
+    "tests/gate/probes/r3/oracle/probes/r5_handle_local_tuple.wf",
+    "tests/gate/probes/r3/oracle/probes/r6_handle_local_vec.wf",
+    "tests/gate/probes/r3/oracle/probes/r7_block_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/r8_match_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/r9_if_tmp_assign.wf",
+    "tests/gate/probes/r3/oracle/probes/s10_steal_box_rc.wf",
+    "tests/gate/probes/r3/oracle/probes/s11_steal_tuple.wf",
+    "tests/gate/probes/r3/oracle/probes/s12_steal_handler_clause.wf",
+    "tests/gate/probes/r3/oracle/probes/s13_steal_item.wf",
+    "tests/gate/probes/r3/oracle/probes/s14_steal_struct_rc_param.wf",
+    "tests/gate/probes/r3/oracle/probes/s1_steal_struct_rc.wf",
+    "tests/gate/probes/r3/oracle/probes/s2_steal_ref_struct_rc.wf",
+    "tests/gate/probes/r3/oracle/probes/s4_steal_vec_rc.wf",
+    "tests/gate/probes/r3/oracle/probes/s5_steal_opt_rc.wf",
+    "tests/gate/probes/r3/oracle/probes/s6_steal_generic.wf",
+    "tests/gate/probes/r3/oracle/probes/s7_steal_weak.wf",
+    "tests/gate/probes/r3/oracle/probes/t1_resume_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/t2_resume_tmp_keep.wf",
+    "tests/gate/probes/r3/oracle/probes/t3_clause_value_tmp.wf",
+    "tests/gate/probes/r3/oracle/probes/t4_clause_value_tmp2.wf",
+    "tests/gate/probes/r3/oracle/probes/t5_clause_value_tmp_clean.wf",
+    "tests/gate/probes/r3/oracle/probes/t6_clause_value_local.wf",
+    "tests/gate/probes/r3/oracle/probes/t7_resume_local.wf",
+    "tests/gate/probes/r3/oracle/probes/t8_resume_tmp_after.wf",
+    "tests/gate/probes/r3/oracle/probes/u1_callee_spawn.wf",
+    "tests/gate/probes/r3/oracle/probes/u2_callee_spawn_noh.wf",
+    "tests/gate/probes/r3/oracle/probes/u3_callee_spawn_val.wf",
+    "tests/gate/probes/r3/oracle/probes/u4_callee_spawn_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/u5_callee_spawn_after_scope.wf",
+    "tests/gate/probes/r3/oracle/probes/u6_callee_spawn_moved.wf",
+    "tests/gate/probes/r3/oracle/probes/u7_callee_spawn_local_v.wf",
+    "tests/gate/probes/r3/oracle/probes/u8_callee_spawn_param_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/x1_clause_spawn_unrelated.wf",
+    "tests/gate/probes/r3/oracle/probes/x2_clause_spawn_unrelated2.wf",
+    "tests/gate/probes/r3/oracle/probes/x3_spawn_unrelated.wf",
+    "tests/gate/probes/r3/oracle/probes/x4_tuple_join.wf",
+    "tests/gate/probes/r3/oracle/probes/x5_join_helper.wf",
+    "tests/gate/probes/r3/oracle/probes/x6_opt_join.wf",
+    "tests/gate/probes/r3/oracle/probes/x7_closure_join.wf",
+    "tests/gate/probes/r3/oracle/probes/x8_id_join.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-9_fp_join_not_seen.wf",
+    "tests/gate/probes/r3/redteam/p/r1_drops.wf",
+    "tests/gate/probes/verify/s5/R2c/p/d1.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr8_v1.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["named", "raises"]
+files = [
+    "tests/gate/probes/r3/oracle/probes/q31_timeout_tmp.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["named"]
+files = [
+    "tests/gate/probes/r3/oracle/probes/o1_timeout_lin.wf",
+    "tests/gate/probes/r3/redteam/pkgA",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "tests/gate/probes/r3/oracle/probes/s4_steal_vec_rc.wf",
+    "tests/gate/probes/verify/review_edge/Edge/ptr/ptr_generic_fork.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/r3/oracle/probes/l11_scope_tail_box.wf",
+    "tests/gate/probes/r3/oracle/probes/l12_scope_tail_opt.wf",
+    "tests/gate/probes/r3/oracle/probes/l5_scope_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/l6_scope_block_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/l7_nested_scope.wf",
+    "tests/gate/probes/r3/oracle/probes/q17_tmp_scope.wf",
+    "tests/gate/probes/r3/oracle/probes/r3_scope_local_first.wf",
+    "tests/gate/probes/r3/oracle/probes/z8_vf_scope_tail.wf",
+    "tests/gate/probes/verify/s5/R3a/p/wtfork.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/n6b_variants.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before"
+stage = "F20"
+
+
+[[entry]]
+class = "sig"
+parts = ["drops", "passthrough"]
+files = [
+    "verify/s5/S5a/x/p/f3a_variants.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller) (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["drops", "passthrough", "task_runs", "tasks"]
+files = [
+    "verify/s5/R3t/f36v.wf",
+    "verify/s5/R3t_diff/f36_generic.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller) (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["drops"]
+files = [
+    "verify/s5/S5a/h3a_multi_tx.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller) (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["holds", "muts"]
+files = [
+    "verify/s5/R2b: closures, function values and stored references/or2_test.wf",
+    "verify/s5/p/or2f.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller) (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["holds", "passthrough", "task_runs", "tasks"]
+files = [
+    "verify/s5/R3t_diff/f36_generic.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller) (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["holds", "task_runs", "tasks"]
+files = [
+    "verify/review_edge/Edge/ptr/generic_rc_fork.wf",
+    "verify/review_edge/Edge/ptr/ptr_generic_fork.wf",
+    "verify/s5/R3x/p2/g10_generic_fork_made.wf",
+    "verify/s5/R3x/p2/g2_generic_fork.wf",
+    "verify/s5/R3x/p2/g6_generic_fork_sink.wf",
+    "verify/s5/R3x/p2/g9_generic_spawn_made_inside.wf",
+    "verify/s5/p/g2_generic_task_hold.wf",
+]
+reason = "class F20-SIG-GENERIC (stage F20): the parts `drops` and `holds` of a generic body are queries over its facts (`factgen::generic`): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`; a `Task<T>` handle across an abort and a value that moves into a `fork` branch are in `holds` (OL-3a, OL-NR-ptrfork); a change of a by-value parameter of a type parameter is no `mut` of it; the other parts follow (the tasks of the value, the effects of code of a caller) (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "muts", "named", "passthrough", "pins", "raises", "repeats", "ret", "ret_refs"]
+files = [
+    "r2/oracle/runs/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["muts", "named", "passthrough", "pins", "raises"]
+files = [
+    "r2/oracle/t0/p121.wf",
+    "r2/oracle/t0/p164.wf",
+    "r2/oracle/t0/p172.wf",
+    "r2/oracle/t0/p58.wf",
+    "r2/oracle/t0/p87.wf",
+    "r2/oracle/t0/p98.wf",
+    "r2/oracle/t0/q100.wf",
+    "r2/oracle/t0/q123.wf",
+    "r2/oracle/t0/q127.wf",
+    "r2/oracle/t0/q131.wf",
+    "r2/oracle/t0/q135.wf",
+    "r2/oracle/t0/q146.wf",
+    "r2/oracle/t0/q159.wf",
+    "r2/oracle/t0/q163.wf",
+    "r2/oracle/t0/q181.wf",
+    "r2/oracle/t0/q196.wf",
+    "r2/oracle/t0/q204.wf",
+    "r2/oracle/t0/q206.wf",
+    "r2/oracle/t0/q21.wf",
+    "r2/oracle/t0/q211.wf",
+    "r2/oracle/t0/q217.wf",
+    "r2/oracle/t0/q231.wf",
+    "r2/oracle/t0/q235.wf",
+    "r2/oracle/t0/q237.wf",
+    "r2/oracle/t0/q271.wf",
+    "r2/oracle/t0/q285.wf",
+    "r2/oracle/t0/q294.wf",
+    "r2/oracle/t0/q31.wf",
+    "r2/oracle/t0/q35.wf",
+    "r2/oracle/t0/q39.wf",
+    "r2/oracle/t0/q40.wf",
+    "r2/oracle/t0/q43.wf",
+    "r2/oracle/t0/q65.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["muts", "passthrough"]
+files = [
+    "r2/quality/gen/gdrop.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["muts"]
+files = [
+    "r3/oracle/lib/pre3.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "muts", "named", "pins", "raises", "reach_repeats", "reaches"]
+files = [
+    "r3/oracle/probes/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["muts"]
+files = [
+    "r3/oracle/repro/O3-9_fp_join_not_seen.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["fn_store_refs", "fn_stores", "multi", "muts", "named", "passthrough", "pins", "raises", "reach_repeats", "reaches", "repeats", "ret", "ret_refs", "task_effects", "tasks"]
+files = [
+    "r3/oracle/runs/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "muts", "named", "pins", "raises", "reach_repeats", "reaches"]
+files = [
+    "r3/oracle/seeds3/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["named", "raises", "reaches"]
+files = [
+    "r3/oracle/sweep1/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["named", "raises"]
+files = [
+    "r3/oracle/sweep2/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["named", "reaches"]
+files = [
+    "r3/oracle/sweep3/callee__body_opt.wf",
+    "r3/oracle/sweep3/callee__body_struct.wf",
+    "r3/oracle/sweep3/callee__body_tuple.wf",
+    "r3/oracle/sweep3/callee__body_value.wf",
+    "r3/oracle/sweep3/callee__body_value_id.wf",
+    "r3/oracle/sweep3/callee__loop_carry.wf",
+    "r3/oracle/sweep3/callee__outer_calls.wf",
+    "r3/oracle/sweep3/callee__outer_local.wf",
+    "r3/oracle/sweep3/callee__outer_struct.wf",
+    "r3/oracle/sweep3/callee__outer_tuple_part.wf",
+    "r3/oracle/sweep3/callee__outer_vec.wf",
+    "r3/oracle/sweep3/callee__runf_store.wf",
+    "r3/oracle/sweep3/callee__task_outlives.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "r3/oracle/sweep4/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "muts", "raises", "reach_repeats", "reaches"]
+files = [
+    "r3/oracle/tmp/g3_1.wf",
+    "r3/oracle/tmp/g3_2.wf",
+    "r3/oracle/tmp/g3_3.wf",
+    "r3/oracle/tmp/g3_4.wf",
+    "r3/oracle/tmp/g3_5.wf",
+    "r3/oracle/tmp/g3_7.wf",
+    "r3/oracle/tmp/g3_8.wf",
+    "r3/oracle/tmp/g4_4.wf",
+    "r3/oracle/tmp/g4_6.wf",
+    "r3/oracle/tmp/pre4t.wf",
+    "r3/oracle/tmp/pre_test.wf",
+    "r3/oracle/tmp/pre_test2.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "reaches"]
+files = [
+    "r3/quality/fuzz/o22/slow_22_3661_check.wf",
+    "r3/quality/fuzz/o24/slow_24_1026_check.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "reaches"]
+files = [
+    "r3/quality/fuzzcorp/125_multi_values.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["muts"]
+files = [
+    "r3/redteam/p/r1_drops.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["named"]
+files = [
+    "r3/redteam/pkgA",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "verify/review_edge/Edge/ptr/generic_rc_fork.wf",
+    "verify/review_edge/Edge/ptr/ptr_generic_fork.wf",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "muts", "named", "pins", "raises", "reach_repeats", "reaches"]
+files = [
+    "verify/s5/**",
+]
+reason = "class F20-SIG-HIDDEN (stage F20): the signature differences of the groups A to E (classes F19-SIG-MUTS: a `join` or a `detach` of a handle parameter changes it; F19-SIG-RAISES: a scope or `with_timeout` with a local `Fail` handler raises nothing; `reaches`, `reach_repeats` and `multi` of a callee that runs stored values, which the IR applies at the run node; `pins`; the effects of an uncalled closure and of `with_timeout`; `ret`, `ret_refs`, `passthrough`, `repeats` and `task_effects` of the classes of stages F12 to F19) on functions of programs that a function with a type parameter kept out of scope before (tier 2)"
+stage = "F20"
+

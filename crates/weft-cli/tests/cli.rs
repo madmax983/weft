@@ -1227,10 +1227,10 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         "{}",
         forked.stderr
     );
-    // A program that is not in scope (a type parameter, stage F20): the
-    // oracle checks nothing.
-    let generic = format!("{INTERP}/fork_unit.wf");
-    let out = cmd(&["run", "--fact-oracle", &generic]);
+    // A program that is not in scope (a handler in a closure body, a
+    // fallback of stage F16): the oracle checks nothing.
+    let nested = format!("{INTERP}/abort_block_cells.wf");
+    let out = cmd(&["run", "--fact-oracle", &nested]);
     assert!(
         out.stderr.contains("the oracle checks nothing"),
         "{}",

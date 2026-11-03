@@ -47,6 +47,7 @@ pub mod checks;
 pub mod decls;
 mod exports;
 pub mod frames;
+pub mod generic;
 pub mod handlers;
 pub mod holders;
 pub mod kernel;
@@ -352,9 +353,6 @@ fn check_supported(
                 }
             }
         }
-        if b.locals.iter().any(|d| tys.mentions_param(d.ty)) {
-            return no(Group::F, "a type parameter (stage F20)");
-        }
         for blk in &b.blocks {
             for s in &blk.stmts {
                 // The unwinder runs the `on abort` function: its summary
@@ -586,6 +584,15 @@ pub struct Emitted {
     /// clause of a local handler runs (follow-up F19.5,
     /// `templates::wait_tasks`). The fact oracle reads them.
     pub wait_tasks: Vec<templates::WaitTask>,
+    /// The type parameters of the values that a generic entry body drops
+    /// (part `drops`, plan stage F20, [`generic`]).
+    pub drops: std::collections::BTreeSet<u32>,
+    /// The type parameters of the values that a generic entry body holds
+    /// across a node that can abort or resume more than once (part `holds`).
+    pub holds: std::collections::BTreeSet<u32>,
+    /// The type parameters of the values that a `fork` branch of a generic
+    /// entry body captures (part `forks`).
+    pub forks: std::collections::BTreeSet<u32>,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -606,6 +613,10 @@ pub fn emit_parts(
     let comp = component(built, entry);
     let mut tys = built.tys.clone();
     check_supported(p, &tys, sums, &comp)?;
+    // A generic body: a type parameter is linear while the facts of the
+    // component come (plan stage F20, `generic`).
+    let is_generic = generic::is_generic(p, &tys, &comp);
+    let _generic_body = is_generic.then(crate::props::GenericBody::enter);
     let body = p
         .bodies
         .get(entry.index())
@@ -1014,9 +1025,29 @@ pub fn emit_parts(
     }
     sim_blocks(p, &comp, &table, facts);
     decls::std_effects(facts);
+    // The checks of a generic function item as a value (RR9, V081).
+    let names = |f: weft_ir::FnId, j: u32| -> String {
+        built
+            .fns
+            .iter()
+            .find(|(_, g)| **g == f)
+            .and_then(|(s, _)| a.sigs.get(s.index()))
+            .and_then(|sig| sig.generics.get(j as usize).cloned())
+            .unwrap_or_else(|| format!("T{j}"))
+    };
+    generic::item_values(p, &tys, sums, &comp, &names, facts);
+    // The parts `drops` and `holds` of a generic body.
+    let found = if is_generic {
+        generic::finish(facts)
+    } else {
+        generic::Found::default()
+    };
     facts.normalize();
     let handler_caps = hx.ids.iter().map(|(&h, &(_, c))| (h, c)).collect();
     Ok(Emitted {
+        drops: found.drops,
+        holds: found.holds,
+        forks: found.forks,
         diags,
         roots,
         table,
@@ -2480,7 +2511,22 @@ fn emit_block(
         if let Some(n) = table.get(key) {
             em.at = (block, at);
             em.holders.before(n, &st, em.facts);
+            let mark = em.facts.mutates_at.len();
             templates::stmt(em, n, &st, &s.kind, pair)?;
+            // The change of the destination of an assignment that moves a
+            // `Box` with a place field is at the node before (follow-up
+            // F8.1): the new value binds after it.
+            let over = NodeKey {
+                phase: Phase::Overwrite,
+                ..key
+            };
+            if let Some(o) = table.get(over) {
+                for m in em.facts.mutates_at.iter_mut().skip(mark) {
+                    if m.0 == n {
+                        m.0 = o;
+                    }
+                }
+            }
         }
         let mut cx = em_cx(em);
         transfer::stmt(&mut cx, bid, &mut st, &s.kind)?;

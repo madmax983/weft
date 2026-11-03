@@ -1,0 +1,49 @@
+// Plan stage F20: a value of a type parameter can hold references, function
+// values and nonportable values. References go through a generic callee
+// and a generic container (RT3b, V031); a `fork` branch of a generic body
+// that captures a nonportable type argument is W0401 at the call
+// (OL-NR-ptrfork); a `!Move` value that goes to a parameter of a type
+// parameter moves (W0604).
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+extern type Local { nonportable }
+extern fn local() -> Local
+fn keep<T>(v: &Vec<T>, x: T) { v.push(x) }
+fn id<T>(x: T) -> T { x }
+fn both<T>(x: T) / par {
+    fork(|| x, || 2)
+}
+
+fn ref_through_container() {
+    let a: Vec<u64> = Vec.new()
+    a.push(1)
+    let rs: Vec<&u64> = Vec.new()
+    keep(&rs, &a[0])
+    a.clear()
+    print(rs[0])   //~ W0301
+}
+fn ref_through_id() {
+    let a: Vec<u64> = Vec.new()
+    a.push(1)
+    let r = id(&a[0])
+    a.push(2)
+    print(r)   //~ W0301
+}
+fn nonportable_fork() / par, blocking {
+    both(local())   //~ W0401
+}
+fn immovable_to_param() {
+    let v: Vec<Frame> = Vec.new()
+    keep(&v, Frame { buf: [1, 2, 3, 4] })   //~ W0604
+}
+// Controls.
+fn portable_fork() / par {
+    both(3)
+}
+fn ref_before_change() {
+    let a: Vec<u64> = Vec.new()
+    a.push(1)
+    let r = id(&a[0])
+    print(r)
+    a.push(2)
+}
+fn main() {}

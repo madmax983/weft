@@ -374,6 +374,10 @@ pub struct Summary {
     /// The type parameters of the values that the body holds across a node
     /// that can abort or resume more than once.
     pub holds: BTreeSet<u32>,
+    /// The type parameters of the values that a `fork` branch of the body
+    /// captures (plan stage F20, OL-NR-ptrfork): the branch runs on another
+    /// thread, so a nonportable type argument is W0401 at a call.
+    pub forks: BTreeSet<u32>,
     /// The captures and upvars that the body uses.
     pub uses: BTreeSet<u32>,
     /// The captures and upvars that the body moves.

@@ -1,0 +1,8 @@
+// F20-DROP (stage F20), clean twin: the old value is plain data (the Drop node changes the place: fact oracle C5).
+struct Cell<T> { v: T }
+fn put<T>(r: &Cell<T>, x: T) { r.v = x }
+fn main() {
+    let c = Cell { v: 1 }
+    put(&c, 2)
+    print(c.v)
+}

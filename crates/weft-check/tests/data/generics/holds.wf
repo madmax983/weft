@@ -1,0 +1,65 @@
+// Plan stage F20: the part `holds` of a generic body is a query over its
+// facts: a value of a type parameter that is live at a node that can abort
+// or resume more than once. A caller that gives a linear type is W0602 (and
+// W0503 for a `multi` operation). A `Task<T>` handle that a generic body
+// holds across an abort is a value of the type parameter too (OL-3a): the
+// unwinder drops a linear result with no `on abort`.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t }
+effect Stop { fn stop() }
+effect Choice { multi fn choose() -> bool }
+
+fn hold_fail<T>(x: T, n: u64) -> T / fail { if n > 0 { fail("x") }
+ x }
+fn hold_stop<T>(x: T) -> T / Stop { stop()
+ x }
+fn hold_multi<T>(x: T) -> T / Choice { let b = choose()
+ x }
+fn outer<U>(y: U) -> U / fail { hold_fail(y, 1) }
+fn around<T>(x: T, f: fn()) -> T { f()
+ x }
+fn consume_first<T>(x: T, k: fn(T)) / fail { k(x)
+ fail("x") }
+fn run_bg<T>(mk: fn() -> T, k: fn(T)) / async, Stop, clock {
+    scope { s =>
+        let t = s.spawn(mk)
+        sleep(5.ms)
+        stop()
+        k(t.join())
+    }
+}
+fn wrap<T>(x: Rc<T>) -> Rc<T> / Choice { let b = choose()
+ x }
+fn boom() / fail { fail("b") }
+fn mk1() -> Tx { begin(1) }
+fn mk2() -> u64 { 2 }
+fn show(x: u64) { print(x) }
+
+fn holds_fail() / fail {
+    commit(hold_fail(begin(1), 1))   //~ W0602
+}
+fn holds_stop() / Stop {
+    commit(hold_stop(begin(1)))   //~ W0602
+}
+fn holds_multi() / Choice {
+    commit(hold_multi(begin(1)))   //~ W0503 W0602
+}
+fn holds_nested() / fail {
+    commit(outer(begin(1)))   //~ W0602
+}
+fn holds_across_code() / fail {
+    commit(around(begin(1), boom))   //~ W0602
+}
+fn holds_task() / async, Stop, clock {
+    run_bg(mk1, commit)   //~ W0602
+}
+// Controls: the type argument at the call, not the worst case (OL-R2c-3).
+fn plain_arguments() / fail, Stop, Choice, async, clock {
+    print(hold_fail(5, 1))
+    print(hold_multi(3))
+    consume_first(begin(1), commit)
+    run_bg(mk2, show)
+    let r = wrap(Rc.new(5))
+}
+fn main() {}

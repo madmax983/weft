@@ -1,0 +1,12 @@
+// F20-DROP (stage F20): a generic body overwrites a value of its type parameter behind a reference; the old value is linear.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+struct Cell<T> { v: T }
+fn put<T>(r: &Cell<T>, x: T) { r.v = x }
+fn main() {
+    let c = Cell { v: begin(1) }
+    put(&c, begin(2))
+    let Cell(t) = c
+    commit(t)
+}

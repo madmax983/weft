@@ -24,9 +24,9 @@
 //!
 //! The other parts of the summary of a function with no stated row come from
 //! its signature: the parameters, the reads, the result, the stores, the
-//! `@ uniq` parameters (`super::sig::build`). A body that the fact generator
-//! supports has no type parameter (stage F20), so its parts `drops` and
-//! `holds` are empty.
+//! `@ uniq` parameters (`super::sig::build`). The parts `drops`, `holds`
+//! and `forks` of a generic body come from its facts
+//! (`crate::factgen::generic`, plan stage F20).
 
 use std::collections::BTreeMap;
 
@@ -230,7 +230,9 @@ pub fn summarize(
         .get(entry.index())
         .and_then(|b| b.local(b.ret))
         .map(|d| d.ty);
-    if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t)) {
+    // A result of a type parameter can be a function value too (plan stage
+    // F20): a caller gives the type.
+    if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t) || tys.mentions_param(t)) {
         let (fns, places, caps) = ret_fns_of(ir, fv.returns, fv.made, entry, &place);
         made_effects(sums, sig, (&fns, &caps), &mut changed);
         changed.ret_fns = fns;

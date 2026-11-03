@@ -1,0 +1,28 @@
+// RR9, V081 (plan stage F20): a generic function item as a value gets the
+// checks of a call with the type arguments of the value, where the value
+// is made: code that the body does not follow can run it.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t }
+fn hold<T>(x: T) -> T / fail { fail("x")
+ x }
+fn forget<T>(x: T) { }
+fn apply(x: Tx, f: fn(Tx) -> Tx / fail) -> Tx / fail { f(x) }
+
+fn holds_value() / fail {
+    commit(apply(begin(1), hold))   //~ W0602
+}
+fn drops_value() {
+    let fs: Vec<fn(Tx)> = Vec.new()
+    fs.push(forget)   //~ W0601
+    let g = fs[0]
+    g(begin(1))
+}
+// Controls: a plain type argument.
+fn plain(f: fn(u64) -> u64 / fail) / fail {
+    let g = hold
+    print(g(1))
+    let h: fn(u64) = forget
+    h(2)
+}
+fn main() {}

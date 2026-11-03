@@ -643,3 +643,27 @@ and the self-attack of the fix (scratchpad `f195/att`).
   of a local handler (`P01_c`, `P01_probe`, `P08_c`, `P09_c`, `P12_c` of the review),
   or started on a branch before the call (`P13_c`). The `_b` files are the bad twins
   (`P08`, `P09`, `P12`), which both pipelines reject.
+
+## Stage F20: generic bodies (group F) and follow-up F8.1
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the self-attack of stage F20 (scratchpad `f20/att`).
+
+- `fixes/f20/ol3a_*_b.wf`: OL-3a (claim OL-3a). A generic callee holds a `Task<T>`
+  handle across an abort (the old pipeline misses it), or a value of its type
+  parameter across a `multi` operation; the type argument is linear. `_c.wf`: the type
+  argument is plain data.
+- `fixes/f20/olr2c3_rc_wrapper_c.wf`: OL-R2c-3 (claim OL-R2c-3). A generic wrapper holds
+  `Rc<T>` across a `multi` operation with `T = u64`.
+- `fixes/f20/f81_*.wf`: follow-up F8.1 (claim F8.1). A place-field reference of a
+  `!Move` value behind a `Box` goes with a move of the `Box` (`_c.wf`, also into a place
+  that had a value); a copy of the reference ends where the owner gets a new value
+  (`_b.wf`; the old pipeline misses `f81_box_move_copy_b.wf`).
+- `fixes/f20/v056_*.wf`, `ret_keep_closure_*.wf`: V056 (claim V056). A linear closure
+  goes to a parameter of a type parameter that the callee drops, or comes back from a
+  generic identity and the caller drops it (`_b.wf`); the clean twins run it.
+- `fixes/f20/drop_behind_ref_*.wf`, `two_params_*.wf`: the part `drops` as a query (claim
+  GEN-DROPS): a value of a type parameter behind a reference gets a new value; a callee
+  with two type parameters drops the second. `drop_behind_ref_c.wf` was a failure of the
+  fact oracle (C5) before `Drop` changed its place.

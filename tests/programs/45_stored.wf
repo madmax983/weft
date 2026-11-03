@@ -44,7 +44,7 @@ fn stored_use(world: &World) / mut(world.entities) {
     let r = &world.entities[0]
     let cb = Cb { f: || print(r.hp) }
     world.entities.clear()
-    run_ref(&cb)   //~ W0301
+    run_ref(&cb)   //~ W0301 ir: W0301
 }
 
 // The same when the stored closure comes back from a container with its type.
@@ -53,7 +53,7 @@ fn from_vec(world: &World) / mut(world.entities) {
     let v: Vec<fn()> = Vec.new()
     v.push(|| print(r.hp))
     world.entities.clear()
-    let h = v[0]
+    let h = v[0]   //~ ir: W0301
     h()   //~ W0301
 }
 
@@ -70,11 +70,11 @@ fn clear_then_pair(t: (fn(), u64), w: &World) / mut(w.entities) {
 }
 fn in_struct(world: &World) / mut(world.entities) {
     let r = &world.entities[0]
-    clear_then_cb(Cb { f: || print(r.hp) }, world)   //~ W0312
+    clear_then_cb(Cb { f: || print(r.hp) }, world)   //~ W0312 ir: W0301
 }
 fn in_tuple(world: &World) / mut(world.entities) {
     let r = &world.entities[0]
-    clear_then_pair((|| print(r.hp), 1), world)   //~ W0312
+    clear_then_pair((|| print(r.hp), 1), world)   //~ W0312 ir: W0301
 }
 fn run_pair(t: (fn(), u64)) {
     let (g, n) = t

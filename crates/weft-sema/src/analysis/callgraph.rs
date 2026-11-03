@@ -188,6 +188,7 @@ fn stated(
     out.multi = body.multi;
     out.drops.clone_from(&body.drops);
     out.holds.clone_from(&body.holds);
+    out.forks.clone_from(&body.forks);
     out.runs.clone_from(&body.runs);
     out.ret_fns.clone_from(&body.ret_fns);
     out.ret_places.clone_from(&body.ret_places);
@@ -249,6 +250,7 @@ fn summary_of(
             sum.abort_joins.clone_from(&inf.abort_joins);
             sum.task_effects.clone_from(&inf.task_effects);
             sum.waits = sig::waits_part(inf);
+            sum.forks.clone_from(&inf.forks);
             sum.only_self &= inf.runs.is_empty()
                 && inf
                     .lends
@@ -539,6 +541,10 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 waits: &e.waits,
                             },
                         );
+                        let mut body = body;
+                        body.drops.clone_from(&e.drops);
+                        body.holds.clone_from(&e.holds);
+                        body.forks.clone_from(&e.forks);
                         add_steps(&mut steps, &facts);
                         let new = if sig.declared {
                             stated(sig, decl, tys, &body)

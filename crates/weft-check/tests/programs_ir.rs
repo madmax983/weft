@@ -137,6 +137,25 @@ fn the_corpus_in_scope_of_the_groups_a_to_e_gives_the_markers_of_the_ir_pipeline
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// All groups (plan stage F20 turns group F on): each program of the corpus
+/// is in scope and gives the markers of the `ir` pipeline.
+#[test]
+fn the_corpus_in_scope_of_all_groups_gives_the_markers_of_the_ir_pipeline() {
+    let (mut in_scope, mut failures) = (0, Vec::new());
+    for path in corpus_paths() {
+        if let Some(msg) = run_with(&path, Some(weft_sema::Groups::ALL)) {
+            in_scope += 1;
+            if !msg.is_empty() {
+                failures.push(msg);
+            }
+        }
+    }
+    eprintln!("{in_scope} programs of the corpus are in scope of all groups");
+    // 125 at stage F20: the others keep a fallback of an earlier stage.
+    assert!(in_scope >= 125, "only {in_scope} programs are in scope");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
 #[test]
 fn a_marker_of_one_pipeline_needs_a_ledger_entry() {
     let ledger =

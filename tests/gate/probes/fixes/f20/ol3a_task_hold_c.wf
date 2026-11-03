@@ -1,0 +1,15 @@
+// OL-3a (stage F20), clean twin: the type argument is plain data.
+effect Stop { fn stop() }
+fn run_bg<T>(mk: fn() -> T, k: fn(T)) / async, Stop, clock {
+    scope { s =>
+        let t = s.spawn(mk)
+        sleep(5.ms)
+        stop()
+        k(t.join())
+    }
+}
+fn mk1() -> u64 { 1 }
+fn show(x: u64) { print(x) }
+fn main() / async, clock {
+    handle Stop { fn stop() { print("stopped") } } in run_bg(mk1, show)
+}

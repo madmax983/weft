@@ -521,9 +521,6 @@ pub fn operand(
     match op {
         Operand::Copy(q) | Operand::Move(q) => place_value(cx, body, st, q),
         Operand::Const(Const::Fn(f, targs)) => {
-            if let Some(why) = crate::factgen::checks::item_value(cx.sums, cx.tys, *f, targs) {
-                return Err(AlphaError::Later(why));
-            }
             let mut v = AbsVal::plain();
             v.fns.insert(FnVal::Item(*f, targs.clone()));
             Ok(Tree::leaf(v))
@@ -893,7 +890,8 @@ pub fn assign(
     place: &Place,
     rv: &Rvalue,
 ) -> Result<(), AlphaError> {
-    let v = rvalue(cx, body, st, rv)?;
+    let mut v = rvalue(cx, body, st, rv)?;
+    relocate_moved(cx, body, st, place, rv, &mut v)?;
     let dest = match move_path(cx.p, body, place)? {
         Some(d) => Some(d),
         None => kept_whole(cx, body, st, place)?.map(|k| (k, Vec::new())),
@@ -936,6 +934,107 @@ pub fn assign(
         let refs: Vec<PlaceId> = flat.top.refs.iter().copied().collect();
         store_heap(cx.facts, cx.roots, st, &a.places, &refs, &flat.top.fns);
     }
+    Ok(())
+}
+
+/// Relocates the references behind a `Box` of a whole local that moves.
+///
+/// For `place = move t`, the references of the value `v` that point behind a pointer of
+/// `t` go with the value: the target of a `Box` does not move, and it is a place of the
+/// new owner now (follow-up F8.1, ADR 0007: a place field of a `!Move` value behind a
+/// `Box` points into the value, and it stays valid after a move of the `Box`). Each such reference of the value `v` points into the same place below `place`. A
+/// reference into a part of `t` that is not behind a pointer stays: the move ends that
+/// part.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn relocate_moved(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    place: &Place,
+    rv: &Rvalue,
+    v: &mut Tree,
+) -> Result<(), AlphaError> {
+    let Rvalue::Use(Operand::Move(t)) = rv else {
+        return Ok(());
+    };
+    if !t.proj.is_empty() || place.has_deref() {
+        return Ok(());
+    }
+    let mut refs = BTreeSet::new();
+    v.places(&mut refs);
+    if refs.is_empty() {
+        return Ok(());
+    }
+    let from = cx.roots.local(cx.p, cx.tys, cx.facts, body, t.local)?;
+    let Some(from) = cx.facts.places.get(from.index()).map(|i| i.root) else {
+        return Ok(());
+    };
+    // The references behind a pointer of `t`, with the steps from the root.
+    let mut moved: Vec<(PlaceId, Vec<(weft_facts::Step, String)>)> = Vec::new();
+    for &r in &refs {
+        let Some(info) = cx.facts.places.get(r.index()) else {
+            continue;
+        };
+        if info.root != from
+            || !info
+                .steps
+                .iter()
+                .any(|s| matches!(s.kind, weft_facts::StepKind::Deref))
+        {
+            continue;
+        }
+        let mut chain = Vec::new();
+        let mut at = r;
+        while let Some(parent) = cx.facts.places.get(at.index()).and_then(|i| i.parent) {
+            let Some(i) = cx.facts.places.get(at.index()) else {
+                break;
+            };
+            let Some(&step) = i.steps.last() else {
+                break;
+            };
+            let before = cx
+                .facts
+                .places
+                .get(parent.index())
+                .map_or(0, |x| x.display.len());
+            chain.push((step, i.display.get(before..).unwrap_or("").to_string()));
+            at = parent;
+        }
+        chain.reverse();
+        moved.push((r, chain));
+    }
+    if moved.is_empty() {
+        return Ok(());
+    }
+    let a = alpha(cx, body, st, place)?;
+    let [to] = a.places.as_slice() else {
+        return Ok(());
+    };
+    let mut map: BTreeMap<PlaceId, PlaceId> = BTreeMap::new();
+    for (r, chain) in moved {
+        let mut cur = *to;
+        for (step, text) in &chain {
+            cur = cx.facts.child(cur, *step, text);
+        }
+        map.insert(r, cur);
+    }
+    v.map_refs(&mut |set: &mut BTreeSet<PlaceId>| {
+        let hit: Vec<PlaceId> = set
+            .iter()
+            .filter(|r| map.contains_key(r))
+            .copied()
+            .collect();
+        for r in &hit {
+            set.remove(r);
+            if let Some(&n) = map.get(r) {
+                set.insert(n);
+            }
+        }
+        !hit.is_empty()
+    });
     Ok(())
 }
 
@@ -1336,10 +1435,22 @@ pub fn call_out(
     })?;
     // A result of a type parameter can be a function value of an argument
     // (`Box.new(f)`, `v.pop()`).
+    let mut ret = ret;
     if crate::props::ir_has_fns(cx.tys, ret_ty) && cx.tys.mentions_param(decl.ret) {
-        for a in args {
+        for (i, a) in args.iter().enumerate() {
             fs.0.extend(reach_fns(cx, body, st, a)?);
             fs.1.extend(reach_refs(cx, body, st, a)?);
+            // A linear closure of an argument of a type parameter can come
+            // back (plan stage F20: `keep(|| commit(t))`).
+            if decl
+                .params
+                .get(i)
+                .is_some_and(|&t| cx.tys.mentions_param(t))
+                && operand(cx, body, st, a)?.flat().linear
+            {
+                ret.top.linear = true;
+                ret.top.empty = false;
+            }
         }
     }
     let ret = with_fns(cx, ret, ret_ty, fs);
@@ -1945,7 +2056,10 @@ pub fn reach_fns(
     };
     let v = operand(cx, body, st, op)?.flat();
     let mut out = v.fns;
-    let Some(t) = ty.filter(|&t| crate::props::ir_has_fns(cx.tys, t)) else {
+    // A value of a type parameter can be a function value, or hold one
+    // (V075, plan stage F20): a caller gives the type.
+    let Some(t) = ty.filter(|&t| crate::props::ir_has_fns(cx.tys, t) || cx.tys.mentions_param(t))
+    else {
         return Ok(out);
     };
     // The values that the body stored in an `rc` object that a handle of the

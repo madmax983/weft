@@ -1261,7 +1261,28 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             ],
             &[],
         ),
-        "drop" => (&["cfg_edge", "reads_at", "rebound_at", "uses"], &[]),
+        // `Drop` changes the place (plan stage F20).
+        "drop" => (
+            &["cfg_edge", "mutates_at", "reads_at", "rebound_at", "uses"],
+            &[],
+        ),
+        // The node before an assignment that moves a `Box` with a place
+        // field: the old value of the destination goes (follow-up F8.1).
+        "overwrite" => (&["cfg_edge", "mutates_at"], &[]),
+        // The nodes of their own of a value that a generic callee holds or
+        // drops (plan stage F20, `factgen::generic`).
+        "held" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "may_abort",
+                "multi_at",
+                "uses",
+                "moved_at",
+            ],
+            &[],
+        ),
+        "dropped" => (&["cfg_edge", "rebound_at", "scope_end"], &[]),
         // Not a use: a pattern moved the parts before it.
         // A `Consume` of a value with no handle on this path ends the
         // tasks that only it can hold (O3-9, plan stage F18).

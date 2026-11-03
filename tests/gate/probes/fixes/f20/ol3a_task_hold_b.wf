@@ -1,0 +1,17 @@
+// OL-3a (stage F20): a generic callee holds a Task<T> handle across an abort; the type argument is linear with no on abort.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+effect Stop { fn stop() }
+fn run_bg<T>(mk: fn() -> T, k: fn(T)) / async, Stop, clock {
+    scope { s =>
+        let t = s.spawn(mk)
+        sleep(5.ms)
+        stop()
+        k(t.join())
+    }
+}
+fn mk1() -> Tx { begin(1) }
+fn main() / async, clock {
+    handle Stop { fn stop() { print("stopped") } } in run_bg(mk1, commit)
+}

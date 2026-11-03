@@ -1447,6 +1447,19 @@ the template.
   the body can run gets the summary check of `f` with those type arguments where it is
   made (RR9, V081).
 
+As built (plan stage F20): the fact generator writes the facts of the component of a
+generic body with each type parameter linear (`props::GenericBody`; `once` stays as the
+type says). A variable that is linear only through a type parameter names them
+(`VarInfo::generic`). The queries `drops`, `holds` and `forks` of section 6.7 run over
+these facts (`factgen::generic::finish`), and then such a variable loses `linear`: the
+generic body has no error for it. A value of a type parameter can be a function value
+(`FnVal::Param` of a parameter of a type parameter, `reach_fns`, the result of a type
+parameter; V075, V056). Each `Const::Fn(f, tys)` gets the checks of a call of `f` with
+`tys` in a part of the graph of its own (`generic::item_values`): a variable of a type
+argument in `holds` across a node that can abort or resume more than once, and a dropped
+value of a type argument in `drops`. A call of `f` applies the parts with its type
+arguments (6.4 `Call`).
+
 ### 5.21 Calls of function values [2.20]
 
 ```text
@@ -2162,6 +2175,15 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
   - `rv` holds `Const::Fn(sim.run)`: `sim_run_at(n)` (RT17).
 - `Drop(p)`: `uses` and `reads_at` of `ptr(p)`; `rebound_at` of a new drop-pair variable
   with the props of the old value (its `scope_end` is at the next node, the `Assign`).
+  As built (plan stage F20): `mutates_at(n, α(p))` too (the IR engine clears the cell).
+- As built (plan stage F20, follow-up F8.1): `Assign(place, Use(move t))` of a whole
+  local `t`: the references of the value that point behind a `Box` of `t` point into the
+  same places below `place` (the target of the `Box` does not move,
+  `transfer::relocate_moved`). In a program with a place field, such an assignment of a
+  local with a `Box` part has a node of `Phase::Overwrite` before `Main`: the
+  `mutates_at` of the old value of the destination is there, so the relocated
+  references bind valid at `Main`. A new value of a part rebinds the `H` and `U`
+  variables below it, also behind a pointer of the old value.
 - `Consume(p)`: `uses(S(l), n)` and `moved_at(S(l), n)`: the linear value is finished.
 - `Uninit(p)`: `unset_at(U(p), n)`, or `unset_at(S(l), n)` for a whole local.
 - `Bounds(q, i)`: `reads_at(n, α(q))` (the length and the buffer, OR5) and the operand.
@@ -3269,6 +3291,7 @@ the body that leaves it), `Caller` (a place of a caller), `Group(adt)`.
 | `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks (`ret.tasks`, follow-up F19.3: the spawn sites of the part `tasks` whose handle `_0` holds at each `Return`, and no other value), results of code of a caller | `ret`, `RetFn`, `ret_refs` |
 | `stores` | the values that the body writes behind a reference parameter, into an environment field, or into an `rc` object | `stores`, `fn_stores`, `group_stores`, `stored_behind` |
 | `drops`, `holds` | the type parameters (and, for `holds`, each parameter) of values that the body drops, or holds across a node that can abort or resume more than once | `drops`, `holds` |
+| `forks` | the type parameters of values that a `fork` branch of the body captures (plan stage F20, OL-NR-ptrfork): a nonportable type argument is W0401 at a call | none (the old pipeline misses OL-NR-ptrfork) |
 | `uses`, `moves` | the environment fields and upvars that the body uses or moves when it runs | `late_join` uses, `moved_captures` |
 | `rebinds` | the `ByRef` captures and upvars that the body gives a whole new value on each path to its `Return` (a must part). At the run node they get `rebound_at` at `Ret`, before the `points_into` of the new value from `stores`, so an old place does not stay (F3-11). A path that can abort has no `Ret`, so it needs no new value | none (F3-11 is open today) |
 | `uniq_needs` | interface places that the body gives to a `@ uniq` parameter | `uniq_needs` |
@@ -3368,7 +3391,18 @@ As built (plan stage F6, `crates/weft-sema/src/analysis/`):
   applies nothing). `escapes_at` gives `performs` and `aborts` through `Row`; a callee
   that `raises` gives `raises`; a callee that can resume more than once with no effect
   of its row (an unknown function value) gives `multi`. A body that the fact generator
-  supports has no type parameter, so `drops` and `holds` are empty.
+  supports has no type parameter, so `drops` and `holds` are empty. As built (plan
+  stage F20): a generic body is supported; its parts `drops`, `holds` and `forks` come
+  from its facts with each type parameter linear (5.20, `factgen::generic`). `drops`:
+  a value of a type parameter is live where its variable ends, gets a new value or is
+  overwritten (`unconsumed`, `overwritten` of the spec). `holds`: such a value is live
+  at a node that can abort or resume more than once (`abort_unhandled`, W0503), or it
+  moves into a task; also a linear value whose `on abort` comes from a type argument (a
+  `Task<T>` handle, OL-3a). At a call: a linear type argument in `drops` is a dropped
+  value (also a linear closure in an argument of the type parameter, V056); an argument
+  of a type parameter in `holds` moves at `Ret`, and a type argument in `holds` that no
+  argument gives is a variable of a node of its own that can abort or resume more than
+  once; a nonportable type argument in `forks` is a `fork` branch of its own.
 - The other parts of the summary of a function with no stated row come from its
   signature (`sig::build`): the parameters, the reads (the root of each parameter), the
   result (the stated places and the flows of 6.7 above), the stores and the `@ uniq`

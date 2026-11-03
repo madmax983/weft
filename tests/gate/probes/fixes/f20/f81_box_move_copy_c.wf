@@ -1,0 +1,12 @@
+// F8.1 (stage F20), clean twin: the place-field reference goes with the Box into a place that had a value (154 move_set).
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T, n: u64 }
+fn main() {
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    b.cur = &b.buf[1]
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    w.x.cur = &w.x.buf[0]
+    w.x = b
+    let r = w.x.cur
+    print(r + 0)
+}

@@ -1184,7 +1184,8 @@ pub fn assign(
     };
     em.facts.uses.extend(named.into_iter().map(|v| (v, n)));
     let body = em.body;
-    let v = transfer::rvalue(&mut em.cx(), body, st, rv)?;
+    let mut v = transfer::rvalue(&mut em.cx(), body, st, rv)?;
+    transfer::relocate_moved(&mut em.cx(), body, st, place, rv, &mut v)?;
     let dest = match transfer::move_path(em.p, body, place)? {
         Some(d) => Some(d),
         None => transfer::kept_whole(&mut em.cx(), body, st, place)?.map(|k| (k, Vec::new())),
@@ -1321,11 +1322,23 @@ fn part(
     }
     let tests = em.tests_of(place)?;
     em.facts.uses.extend(tests.into_iter().map(|w| (w, n)));
+    // A part below `path`, also behind a pointer of the old value (the
+    // place below a `Box`, `(*(n.next as Some).0)`): the old value goes,
+    // and the new value gives the part its value (follow-up F8.1, a `None`
+    // with no place field).
     em.facts.rebound_at.extend(
         em.vars
             .parts_of(k.0, k.1)
             .iter()
-            .filter(|(_, proj, _)| steps(proj).is_some_and(|x| is_prefix(path, &x)))
+            .filter(|(_, proj, _)| {
+                let fields = proj
+                    .iter()
+                    .take_while(|p| matches!(p, Proj::Field(_) | Proj::Variant(_)))
+                    .count();
+                proj.get(..fields)
+                    .and_then(steps)
+                    .is_some_and(|x| is_prefix(path, &x))
+            })
             .map(|(_, _, v)| (*v, n)),
     );
     // The places of a part with no variable of its own go to the variable
@@ -1810,20 +1823,23 @@ fn literal_fields(em: &mut Em<'_>, st: &State, n: NodeId, t: TyId, ops: &[Operan
 
 /// `Drop(p)`: the old value of a place behind a pointer goes away.
 ///
-/// It uses and reads the pointers of `p`, and binds the drop pair `pair`
-/// (with the props of the old value). The pair ends at the `Assign` after
-/// it.
+/// It uses and reads the pointers of `p`, changes `p` (the old value goes
+/// away: the IR engine clears the cell, also for a value of a type
+/// parameter that is plain data at run time, plan stage F20), and binds the
+/// drop pair `pair` (with the props of the old value). The pair ends at the
+/// `Assign` after it.
 ///
 /// # Errors
 ///
 /// The errors of α.
 pub fn drop_place(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, pair: Option<VarId>) -> R {
-    let (a, _) = em.access(st, place, false)?;
+    let (a, al) = em.access(st, place, false)?;
     em.apply(
         n,
         Frag {
             uses: a.vars,
             reads: a.ptrs,
+            mutates: al.places,
             ..Frag::default()
         },
     );
@@ -2766,8 +2782,24 @@ pub fn call(
             continue;
         };
         let props = ir_props(em.tys, targ);
+        // A type argument that is not linear by its type, with a linear
+        // closure in an argument of the type parameter (V056): the callee
+        // can drop the closure.
+        let mut by_value = None;
         if !props.linear {
-            continue;
+            for (op, &pt) in args.iter().zip(&decl.params) {
+                if !crate::props::ir_linear_params(em.tys, pt).contains(&j) {
+                    continue;
+                }
+                let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+                if v.linear && !v.fns.is_empty() {
+                    by_value = Some(v);
+                    break;
+                }
+            }
+            if by_value.is_none() {
+                continue;
+            }
         }
         let mut info = weft_facts::VarInfo::plain(
             callee.clone(),
@@ -2777,9 +2809,66 @@ pub fn call(
         );
         info.linear = true;
         info.has_on_abort = props.on_abort;
+        info.generic.linear =
+            super::vars::generic_linear(em.tys, targ, crate::props::ir_strict_linear(em.tys, targ))
+                .1;
+        if let Some(v) = &by_value {
+            info.has_on_abort = closure_on_abort(em, v);
+            info.generic.linear = fns_generic(em, v);
+        }
         let v = em.facts.add_var(info);
         em.facts.rebound_at.push((v, main));
         drops.push(v);
+    }
+    // A value of a type parameter in `holds` that no argument gives: the
+    // callee makes it and holds it across a node that can abort or resume
+    // more than once (a `Task<T>` handle, plan stage F20). A variable of
+    // the type argument is live across a node of its own. An argument that
+    // gives such a value moves at `Ret` (`held`).
+    for &j in &sum.holds {
+        let Some(&targ) = targs.get(j as usize) else {
+            continue;
+        };
+        let given = decl
+            .params
+            .iter()
+            .any(|&t| crate::props::ir_linear_params(em.tys, t).contains(&j));
+        let abort = sum.can_abort() || !sum.performs.is_empty();
+        let multi = sum.multi || sum.unknown_multi;
+        if !given && (abort || multi) {
+            super::generic::held_across(
+                em.facts,
+                em.tys,
+                at,
+                ("temporary".to_string(), &callee),
+                targ,
+                (abort, multi),
+            );
+        }
+    }
+    // A value of a type parameter in `forks`: a `fork` branch of the callee
+    // captures it (OL-NR-ptrfork). A nonportable type argument is W0401: a
+    // branch of its own captures a variable of the type.
+    for &j in &sum.forks {
+        let Some(&targ) = targs.get(j as usize) else {
+            continue;
+        };
+        let nonportable = ir_props(em.tys, targ).nonportable;
+        let generic = super::vars::generic_nonportable(em.tys, targ);
+        if !nonportable && generic.is_empty() {
+            continue;
+        }
+        let mut info = weft_facts::VarInfo::plain(
+            format!("{{value that `{callee}` forks with}}"),
+            weft_facts::VarKind::Temp,
+            at,
+            em.tys.show(targ),
+        );
+        info.nonportable = nonportable;
+        info.generic.nonportable = generic;
+        let v = em.facts.add_var(info);
+        let t = em.facts.add_task(weft_facts::TaskKind::Fork, at);
+        em.facts.captures.push((t, v));
     }
     // A linear closure that goes to a parameter of a type that is not
     // linear, and that the callee does not run (part `runs`): the callee can
@@ -2824,6 +2913,9 @@ pub fn call(
         );
         info.linear = true;
         info.has_on_abort = closure_on_abort(em, &v);
+        if !results {
+            info.generic.linear = fns_generic(em, &v);
+        }
         let var = em.facts.add_var(info);
         em.facts.rebound_at.push((var, main));
         drops.push(var);
@@ -3416,6 +3508,9 @@ fn dropped_fn_args(
         );
         info.linear = true;
         info.has_on_abort = closure_on_abort(em, &v);
+        if !results {
+            info.generic.linear = fns_generic(em, &v);
+        }
         let var = em.facts.add_var(info);
         em.facts.rebound_at.push((var, main));
         out.push(var);
@@ -4382,6 +4477,80 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     Ok(())
 }
 
+/// The type parameters that make the closures of the value `v` linear in a
+/// generic body (`crate::props::GenericBody`, `docs/ir.md` 6.7): empty if
+/// no generic body is live, or if a closure of `v` is linear with no type
+/// parameter (a `ByMove` capture of a linear type, or a capture of a local
+/// whose closures are linear by the builder).
+pub(crate) fn fns_generic(em: &mut Em<'_>, v: &crate::analysis::AbsVal) -> Vec<u32> {
+    if !crate::props::params_linear() {
+        return Vec::new();
+    }
+    let mut out = std::collections::BTreeSet::new();
+    for fv in &v.fns {
+        let (crate::analysis::FnVal::Closure(c) | crate::analysis::FnVal::Made(c)) = fv else {
+            continue;
+        };
+        let Some(decl) = em.p.closures.get(c.index()) else {
+            return Vec::new();
+        };
+        for (k, cap) in decl.captures.iter().enumerate() {
+            if cap.mode != weft_ir::CaptureMode::ByMove {
+                continue;
+            }
+            let k = u32::try_from(k).unwrap_or(u32::MAX);
+            let Some(t) = super::alpha::capture_ty(em.p, em.tys, *c, k) else {
+                return Vec::new();
+            };
+            if crate::props::ir_strict_linear(em.tys, t) {
+                return Vec::new();
+            }
+            if crate::props::ir_has_fns(em.tys, t) {
+                // A function value of the maker: the builder joins the modes
+                // of its closures into the props of the local.
+                let src =
+                    em.p.bodies
+                        .get(decl.maker.index())
+                        .and_then(|b| b.locals.get(cap.source.local.index()));
+                if src.is_some_and(|d| d.props.linear) {
+                    return Vec::new();
+                }
+                if src.is_some_and(|d| d.props.generic) {
+                    out.extend(all_params(em.tys, t));
+                }
+            }
+            out.extend(crate::props::ir_linear_params(em.tys, t));
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Each type parameter that type `t` names.
+fn all_params(tys: &TyTable, t: TyId) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut work = vec![t];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(x) = work.pop() {
+        if !seen.insert(x) {
+            continue;
+        }
+        match tys.try_get(x) {
+            Some(Ty::Param(j)) => out.push(*j),
+            Some(Ty::Tuple(ts) | Ty::Adt(_, ts)) => work.extend(ts.iter().copied()),
+            Some(Ty::Array(y, _) | Ty::Slice(y) | Ty::Ref(y) | Ty::Iter(y)) => work.push(*y),
+            Some(Ty::Cont(a, b)) => work.extend([*a, *b]),
+            Some(Ty::Fn(f)) => {
+                work.extend(f.params.iter().copied());
+                work.push(f.ret);
+            }
+            _ => {}
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// True if each linear closure that the value `v` can be finishes its linear
 /// captures with their `on abort` functions (the props of a closure,
 /// `docs/ir.md` 5.22): `has_on_abort` of a variable that holds it.
@@ -4442,15 +4611,20 @@ fn linear_fn_captures(em: &mut Em<'_>, st: &State, c: weft_ir::ClosureId, ops: &
             continue;
         }
         let on_abort = closure_on_abort(em, &v);
+        let generic = fns_generic(em, &v);
         let Some(e) = em.vars.get(&VarKey::E(decl.body, k)) else {
             continue;
         };
         if let Some(info) = em.facts.vars.get_mut(e.index()) {
             if info.linear {
                 info.has_on_abort &= on_abort;
+                if generic.is_empty() {
+                    info.generic.linear.clear();
+                }
             } else {
                 info.linear = true;
                 info.has_on_abort = on_abort;
+                info.generic.linear = generic;
             }
         }
     }
@@ -4490,12 +4664,22 @@ fn mark_fn_linear_in(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal, insid
     let Some(var) = em.s_var(k) else {
         return;
     };
+    let generic = fns_generic(em, v);
     if let Some(info) = em.facts.vars.get_mut(var.index()) {
         if info.linear {
             info.has_on_abort &= on_abort;
+            // A value that is linear with no type parameter stays so.
+            if generic.is_empty() {
+                info.generic.linear.clear();
+            } else if !info.generic.linear.is_empty() {
+                info.generic.linear.extend(generic);
+                info.generic.linear.sort_unstable();
+                info.generic.linear.dedup();
+            }
         } else {
             info.linear = true;
             info.has_on_abort = on_abort;
+            info.generic.linear = generic;
         }
     }
 }
@@ -4524,7 +4708,8 @@ fn put_linear(
         let Some((k, _)) = em.roots.path_of(em.facts, *q) else {
             continue;
         };
-        let v = crate::analysis::AbsVal::of_type(true);
+        let mut v = crate::analysis::AbsVal::of_type(true);
+        v.fns.clone_from(fns);
         mark_fn_linear(em, k, &v);
     }
 }
