@@ -2398,3 +2398,535 @@ files = [
 codes = ["W0302", "W0601"]
 reason = "class F19-NORET (stage F19): a perform through the capability of a local handler whose clause of the operation has no `resume` does not go on to its next block (`clause::perform_never_returns`), so the code after it is dead in the facts too: `clause_return` (c02, line 17: `take()` never runs) and `clause_tail_twice` (clausetail, line 14: the second `ask()` never runs) have no diagnostic there. The other lines are the same. Rejected by both pipelines"
 stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/redteam/p/h_multi.wf",
+    "r2/redteam/p/t_cap.wf",
+    "r2/redteam/repro/RR7_late_capture.wf",
+    "r3/oracle/probes/se4_field_move_twice_task.wf",
+    "r3/redteam/p/n1_immov.wf",
+    "r3/redteam/p/r9_over.wf",
+    "tests/gate/probes/r2/redteam/p/h_multi.wf",
+    "tests/gate/probes/r2/redteam/p/t_cap.wf",
+    "tests/gate/probes/r2/redteam/repro/RR7_late_capture.wf",
+    "tests/gate/probes/r3/oracle/probes/se4_field_move_twice_task.wf",
+    "tests/gate/probes/r3/redteam/p/n1_immov.wf",
+    "tests/gate/probes/r3/redteam/p/r9_over.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/block_values.wf",
+    "tests/gate/probes/verify/s5/R2c/p/m4.wf",
+    "tests/gate/probes/verify/s5/R3a/p/taskstmt.wf",
+    "tests/gate/probes/verify/s5/R3a/p/temps.wf",
+    "tests/gate/probes/verify/s5/S5b/p/f01_w0701.wf",
+    "tests/gate/probes/verify/s5/p/e1_spawn_shapes.wf",
+    "tests/programs/110_capture_by_value.wf",
+    "tests/programs/111_late_capture.wf",
+    "tests/programs/151_frame_values.wf",
+    "tests/programs/26_eval_order.wf",
+    "verify/review_core/Core_S1/rt1/block_values.wf",
+    "verify/s5/R2c/p/m4.wf",
+    "verify/s5/R3a/p/taskstmt.wf",
+    "verify/s5/R3a/p/temps.wf",
+    "verify/s5/S5b/p/f01_w0701.wf",
+    "verify/s5/p/e1_spawn_shapes.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0304", "W0402", "W0406", "W0503", "W0601", "W0602", "W0604", "W0701", "W0703", "W0805"]
+reason = "class F19-HIDDEN of group E (stage F19): the rules of the groups A to D on programs that the end of the group-E fallbacks (fork, sim.run, with_timeout, tasks of callees and of nested bodies) brings into scope, the same differences as on programs of these groups with no task: W0204 of a returned or stored reference reported as W0301 at the use (110, 151, temps, e1_spawn_shapes), W0301 of a closure that moved a capture (110 line 84) and more W0302 at a later use (110, se4, m4, r9_over), W0402/W0406/W0703 at the declaration of the closure (111, RR7), W0301 instead of W0304/W0604 at a `!Move` value (n1_immov), W0301 of an argument read twice in one call only once (26 line 163), W0805 of a closure in an `rc` cell (t_cap), the W0701 of an uncalled closure (f01_w0701), W0503 of a field closure that is `multi` (h_multi line 67), W0601 of a linear result statement (taskstmt), W0301 of a block value at its use only (block_values). Rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/redteam/p/a_owner.wf",
+    "r2/redteam/p/p_unset.wf",
+    "r2/redteam/p/p_unset_fp.wf",
+    "r2/redteam/repro/RR12_unset_closure.wf",
+    "r3/oracle/probes/h3_scope_tail_linear.wf",
+    "r3/oracle/probes/h3b_scope_tail_tx.wf",
+    "r3/oracle/probes/h3c_scope_tail_tx_leak.wf",
+    "r3/oracle/repro/O3-1_scope_tail_move.wf",
+    "tests/gate/probes/r2/redteam/p/a_owner.wf",
+    "tests/gate/probes/r2/redteam/p/p_unset.wf",
+    "tests/gate/probes/r2/redteam/p/p_unset_fp.wf",
+    "tests/gate/probes/r2/redteam/repro/RR12_unset_closure.wf",
+    "tests/gate/probes/r3/oracle/probes/h3_scope_tail_linear.wf",
+    "tests/gate/probes/r3/oracle/probes/h3b_scope_tail_tx.wf",
+    "tests/gate/probes/r3/oracle/probes/h3c_scope_tail_tx_leak.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-1_scope_tail_move.wf",
+    "tests/gate/probes/verify/partb/S4/p/da1.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/def2.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/scopes.wf",
+    "tests/gate/probes/verify/s5/R2d/p/b1_or8_shapes.wf",
+    "tests/gate/probes/verify/s5/R3a/p/rcval.wf",
+    "tests/programs/112_unset_capture.wf",
+    "tests/programs/150_frame_tails.wf",
+    "tests/programs/60_jumps.wf",
+    "verify/partb/S4/p/da1.wf",
+    "verify/partb/S4diff/p/def2.wf",
+    "verify/review_core/Core_S1/rt1/scopes.wf",
+    "verify/s5/R2d/p/b1_or8_shapes.wf",
+    "verify/s5/R3a/p/rcval.wf",
+]
+codes = ["W0204", "W0301", "W0304", "W0405", "W0601"]
+reason = "class F19-HIDDEN of group E (stage F19), moved lines: the `ir` pipeline reports W0304 of a closure that gives a local its value at the run of the closure (one line after the old one), W0601/W0204 at the first line of a statement that spans two lines, and W0301 at the use in the next statement of a scope or a handled body (scopes, a_owner, rcval). The codes and counts are the same. Rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "fixes/f18/rc/o36_rc_handle.wf",
+    "r2/oracle/probes/f1_par_params.wf",
+    "r2/oracle/probes/f7_spawn_param_parent.wf",
+    "r2/redteam/p/s_scope_escape.wf",
+    "r2/redteam/p/s_scope_escape3.wf",
+    "r2/redteam/p/zz_keep.wf",
+    "r2/redteam/repro/RR4_scope_escape.wf",
+    "r3/oracle/repro/O3-5_task_runs_field_closure.wf",
+    "r3/redteam/p/h2_spawn_stored.wf",
+    "r3/redteam/p/q5_held_task.wf",
+    "r3/redteam/p/y1_kept.wf",
+    "r3/redteam/repro/R3RT3_held_refs_at_call.wf",
+    "tests/gate/probes/fixes/f18/rc/o36_rc_handle.wf",
+    "tests/gate/probes/r2/oracle/probes/f1_par_params.wf",
+    "tests/gate/probes/r2/oracle/probes/f7_spawn_param_parent.wf",
+    "tests/gate/probes/r2/redteam/p/s_scope_escape.wf",
+    "tests/gate/probes/r2/redteam/p/s_scope_escape3.wf",
+    "tests/gate/probes/r2/redteam/p/zz_keep.wf",
+    "tests/gate/probes/r2/redteam/repro/RR4_scope_escape.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-5_task_runs_field_closure.wf",
+    "tests/gate/probes/r3/redteam/p/h2_spawn_stored.wf",
+    "tests/gate/probes/r3/redteam/p/q5_held_task.wf",
+    "tests/gate/probes/r3/redteam/p/y1_kept.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT3_held_refs_at_call.wf",
+    "tests/gate/probes/verify/partb/S3/p/r12c.wf",
+    "tests/gate/probes/verify/partb/S3/p/r12g.wf",
+    "tests/gate/probes/verify/partb/p/c7_scope_escape.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/esc_fork_move.wf",
+    "tests/gate/probes/verify/s5/R2d/p/a1_callee_writes_ref.wf",
+    "tests/gate/probes/verify/s5/R2d/p/a2_variants.wf",
+    "tests/gate/probes/verify/s5/R2d/p/a3_uniq_fork.wf",
+    "tests/gate/probes/verify/s5/R2d/p/e5_scope_vec.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or5_v.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_ret.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/rr4_v.wf",
+    "tests/gate/probes/verify/s5/R3a/p/o313.wf",
+    "tests/gate/probes/verify/s5/R3a/p/o313b.wf",
+    "tests/ir_targets/o3_5_field_closure_tasks.wf",
+    "tests/ir_targets/r3rt3_held_refs_at_call.wf",
+    "tests/programs/34_task_frees.wf",
+    "verify/partb/S3/p/r12c.wf",
+    "verify/partb/S3/p/r12g.wf",
+    "verify/partb/p/c7_scope_escape.wf",
+    "verify/review_core/Core_S1/rt1/esc_fork_move.wf",
+    "verify/s5/R2d/p/a1_callee_writes_ref.wf",
+    "verify/s5/R2d/p/a2_variants.wf",
+    "verify/s5/R2d/p/a3_uniq_fork.wf",
+    "verify/s5/R2d/p/e5_scope_vec.wf",
+    "verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or5_v.wf",
+    "verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_ret.wf",
+    "verify/s5/R2d: tasks, scopes, fork and the scheduler/p/rr4_v.wf",
+    "verify/s5/R3a/p/o313.wf",
+    "verify/s5/R3a/p/o313b.wf",
+]
+codes = ["W0204", "W0301", "W0312", "W0403", "W0405"]
+reason = "class F19-W0405 of group E (stage F19): W0405 at the nodes of the `ir` pipeline. A task of the IR has the footprint of the run of its value at the spawn (`templates::task_start`); a value that a callee runs as a task is a task of the call (`templates::call_tasks`); a spawn in a closure or a clause starts at the node that runs it (part `tasks`). So the `ir` pipeline reports a conflict at each access while the task runs, also where the old pipeline gives W0312 (f1, f7, a1_callee_writes_ref: the W0405 at the same line stays) or W0301 of a reference into a place that the task changes (34 line 35, esc_fork_move: W0301 at the same line instead of W0405), at the borrow of a scope capability that leaves the scope (RR4, rr4_v, s_scope_escape, c7, e5: W0405 of the escaping task instead of W0301; RR4/V134 stay open, plan F19.1), and not at a copy of a reference (o313 line 52) or at a node of the old pipeline that the IR does not have (y1_kept, o313b, r12g, h2, or5_v line 54: the program has a W0405 or W0301 for the same task). Rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "fixes/f18/result/f04_scope_tail_linear_task.wf",
+    "fixes/f18/result/f36_detach.wf",
+    "r3/fidelity/p/fk3.wf",
+    "r3/fidelity/p/tk3.wf",
+    "r3/fidelity/p/tk5.wf",
+    "r3/interp/probe/g11_task_lin_noabort.wf",
+    "tests/gate/probes/fixes/f18/result/f04_scope_tail_linear_task.wf",
+    "tests/gate/probes/fixes/f18/result/f36_detach.wf",
+    "tests/gate/probes/r3/fidelity/p/fk3.wf",
+    "tests/gate/probes/r3/fidelity/p/tk3.wf",
+    "tests/gate/probes/r3/fidelity/p/tk5.wf",
+    "tests/gate/probes/r3/interp/probe/g11_task_lin_noabort.wf",
+    "tests/gate/probes/verify/s5/p/d7_task_handle_via_clause_noabort.wf",
+    "verify/s5/p/d7_task_handle_via_clause_noabort.wf",
+]
+codes = ["W0601", "W0602"]
+reason = "class F19-LINEAR of group E (stage F19): W0601/W0602 of task results. The `ir` pipeline reports one W0602 for each variable (the closure temporary of a `fork` branch, fk3), W0601 for a scope tail whose task result is linear (f04, tk3: ADR 0007), one W0601 and no W0602 for `detach` (f36, tk5: N1 of `r3/issues.md`), two W0602 at line 11 for two variables of one statement (g11: the task closure temporary and its capture), and no W0602 at the spawn of a task whose handle a clause takes (d7 line 7: the spawn cannot abort; the W0602 at the perform stays). Rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/redteam/p/zz_nort.wf",
+    "r2/redteam/p/zz_taskeff.wf",
+    "tests/gate/probes/r2/redteam/p/zz_nort.wf",
+    "tests/gate/probes/r2/redteam/p/zz_taskeff.wf",
+    "tests/gate/probes/verify/partb/p/c10_clause_task.wf",
+    "verify/partb/p/c10_clause_task.wf",
+]
+codes = ["W0314"]
+reason = "class F19-W0314 of group E (stage F19): W0314 is a check of the fact generator (`templates::task_w0314`): it reports a task with no runtime at the spawn of the task (zz_nort, zz_nort2, c9: the old pipeline at the perform), a task of a function that performs a user effect at the spawn and at the call of each such function (zz_taskeff), and a task that runs an operation argument of a clause once (c10_clause_task: at the spawn in the clause). Rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/redteam/p/zz_nort2.wf",
+    "tests/gate/probes/r2/redteam/p/zz_nort2.wf",
+    "tests/gate/probes/verify/partb/p/c9_noruntime_task.wf",
+    "verify/partb/p/c9_noruntime_task.wf",
+]
+codes = ["W0314"]
+reason = "class F19-W0314 of group E (stage F19): W0314 is a check of the fact generator (`templates::task_w0314`): it reports a task with no runtime at the spawn of the task (zz_nort, zz_nort2, c9: the old pipeline at the perform), a task of a function that performs a user effect at the spawn and at the call of each such function (zz_taskeff), and a task that runs an operation argument of a clause once (c10_clause_task: at the spawn in the clause). Rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/redteam/p/o1_fork.wf",
+    "redteam/t02_fork.wf",
+    "tests/gate/probes/r3/redteam/p/o1_fork.wf",
+    "tests/gate/probes/redteam/t02_fork.wf",
+    "tests/gate/probes/verify/partb/S4/p/c10_tuple_np.wf",
+    "tests/gate/probes/verify/partb/S4/p/c5_nonportable.wf",
+    "tests/gate/probes/verify/partb/S4/p/c6_field_launder.wf",
+    "verify/partb/S4/p/c10_tuple_np.wf",
+    "verify/partb/S4/p/c5_nonportable.wf",
+    "verify/partb/S4/p/c6_field_launder.wf",
+]
+codes = ["W0401", "W0403", "W0602"]
+reason = "class F19-PORT of group E (stage F19): W0401/W0403 of `fork` branches. The `ir` pipeline reports W0401 for each nonportable capture of a branch (more than one at a line: c5, c10_tuple_np, c6, t02) and W0602 of a linear closure of a branch (c10_tuple_np line 17), and W0403 for each shared capture that a branch changes a place through (o1_fork line 31: two captures). Rejected by both pipelines"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "reaches"]
+files = [
+    "partb/s4f/npret.wf",
+    "r2/redteam/p/h_multi.wf",
+    "r3/fidelity/p/mv1.wf",
+    "tests/gate/probes/partb/s4f/npret.wf",
+    "tests/gate/probes/r2/redteam/p/h_multi.wf",
+    "tests/gate/probes/r3/fidelity/p/mv1.wf",
+    "tests/gate/probes/verify/partb/S4/p/c6_field_launder.wf",
+    "tests/gate/probes/verify/s5/R2c/p/m1.wf",
+    "verify/partb/S4/p/c6_field_launder.wf",
+    "verify/s5/R2c/p/m1.wf",
+]
+reason = "class F19-SIG-MULTI (stage F19): the old inference gives `multi` to a body that runs a closure out of a field whose effect is `multi`; the IR applies the summary of the closure (its effects resolve where it is made); the old part `reaches` (a body that runs a stored function value) has no part of the IR: the IR applies the values that the arguments reach at the run node (as the `sig` entries of stage F17)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["muts"]
+files = [
+    "fixes/f18/join/k03_callee_detach.wf",
+    "fixes/f18/join/k03_callee_detach_c.wf",
+    "fixes/f18/join/k04_callee_join_one_path.wf",
+    "fixes/f18/join/k04_callee_join_one_path_c.wf",
+    "fixes/f18/join/k05_callee_chain_join.wf",
+    "fixes/f18/join/k05_callee_chain_join_c.wf",
+    "fixes/f18/join/o39_joins.wf",
+    "tests/gate/probes/fixes/f18/join/k03_callee_detach.wf",
+    "tests/gate/probes/fixes/f18/join/k03_callee_detach_c.wf",
+    "tests/gate/probes/fixes/f18/join/k04_callee_join_one_path.wf",
+    "tests/gate/probes/fixes/f18/join/k04_callee_join_one_path_c.wf",
+    "tests/gate/probes/fixes/f18/join/k05_callee_chain_join.wf",
+    "tests/gate/probes/fixes/f18/join/k05_callee_chain_join_c.wf",
+    "tests/gate/probes/fixes/f18/join/o39_joins.wf",
+]
+reason = "class F19-SIG-MUTS (stage F19): a `join` or a `detach` of a handle in a parameter changes the place of the handle (`templates::handle_write`, C5 of the fact oracle), so the row has `mut(t)`"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["muts", "ret", "ret_refs"]
+files = [
+    "tests/gate/probes/verify/review_core/Core_S2/probes/misc_shapes.wf",
+    "verify/review_core/Core_S2/probes/misc_shapes.wf",
+]
+reason = "class F19-SIG-MUTS (stage F19): a `join` or a `detach` of a handle in a parameter changes the place of the handle (`templates::handle_write`, C5 of the fact oracle), so the row has `mut(t)`; the maker of a maker (`mk_mk`): the IR gives the changes of the made closure to the run of the closure, not to the maker (as the `sig` entry of a maker of a maker, follow-up F13.2)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["named"]
+files = [
+    "r2/oracle/fp/W0314_p7036.wf",
+    "tests/gate/probes/r2/oracle/fp/W0314_p7036.wf",
+]
+reason = "class F19-SIG-NAMED (stage F19): the effects of the row of the IR: a closure that a body makes and never calls gives no effect (f01_w0701 `made`); `with_timeout` performs `Fail` (not `Async`), a closure in an `rc` cell performs `Log` where it runs, the effects of a task that W0314 rejects"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["named", "passthrough"]
+files = [
+    "tests/gate/probes/verify/s5/S5b/p/f01_w0701.wf",
+    "verify/s5/S5b/p/f01_w0701.wf",
+]
+reason = "class F19-SIG-NAMED (stage F19): the effects of the row of the IR: a closure that a body makes and never calls gives no effect (f01_w0701 `made`); `with_timeout` performs `Fail` (not `Async`), a closure in an `rc` cell performs `Log` where it runs, the effects of a task that W0314 rejects"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["named", "raises"]
+files = [
+    "r3/oracle/probes/h7_timeout_tail.wf",
+    "r3/oracle/probes/lt2_timeout_stmt.wf",
+    "r3/oracle/probes/st11_timeout_semi.wf",
+    "tests/gate/probes/r3/oracle/probes/h7_timeout_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/lt2_timeout_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/st11_timeout_semi.wf",
+    "tests/programs/120_on_abort_effects.wf",
+]
+reason = "class F19-SIG-NAMED (stage F19): the effects of the row of the IR: a closure that a body makes and never calls gives no effect (f01_w0701 `made`); `with_timeout` performs `Fail` (not `Async`), a closure in an `rc` cell performs `Log` where it runs, the effects of a task that W0314 rejects; class F19-SIG-RAISES (stage F19): the part `raises` of the IR: a scope with no spawn cannot fail at its `ScopeWait` (stage F18), a `with_timeout` performs `Fail` through the row (a local `Fail` handler stops it, 5.31) and does not raise, a `fork` with no local `Fail` handler raises; the old inference gives `raises` to each scope and each `with_timeout`. No check of the `ir` pipeline reads `raises` of these bodies but W0118, whose corpus and probe rows are the same"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["named", "reaches"]
+files = [
+    "r2/redteam/p/t_cap.wf",
+    "tests/gate/probes/r2/redteam/p/t_cap.wf",
+]
+reason = "class F19-SIG-NAMED (stage F19): the effects of the row of the IR: a closure that a body makes and never calls gives no effect (f01_w0701 `made`); `with_timeout` performs `Fail` (not `Async`), a closure in an `rc` cell performs `Log` where it runs, the effects of a task that W0314 rejects; the old part `reaches` (a body that runs a stored function value) has no part of the IR: the IR applies the values that the arguments reach at the run node (as the `sig` entries of stage F17)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "r2/oracle/probes/p3_rc_in_vec_task.wf",
+    "r3/interp/probe/k5_http_timeout.wf",
+    "r3/oracle/probes/sc4_vec_in_task.wf",
+    "r3/oracle/repro/O3-5_task_runs_field_closure.wf",
+    "tests/gate/probes/r2/oracle/probes/p3_rc_in_vec_task.wf",
+    "tests/gate/probes/r3/interp/probe/k5_http_timeout.wf",
+    "tests/gate/probes/r3/oracle/probes/sc4_vec_in_task.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-5_task_runs_field_closure.wf",
+    "tests/gate/probes/verify/partb/S3/p/r12c.wf",
+    "tests/gate/probes/verify/partb/p/c10_clause_task.wf",
+    "tests/gate/probes/verify/s5/R2c/p/m1.wf",
+    "tests/gate/probes/verify/s5/R3a/p/f37.wf",
+    "tests/gate/probes/verify/s5/p/i1_fp_closure_call.wf",
+    "tests/gate/probes/verify/s5/p/i2_fp_closure_call.wf",
+    "tests/gate/probes/verify/s5/p/i4_fp_with_timeout.wf",
+    "tests/gate/probes/verify/s5/p/st1.wf",
+    "tests/ir_targets/o3_5_field_closure_tasks.wf",
+    "tests/programs/163_task_starts.wf",
+    "verify/partb/S3/p/r12c.wf",
+    "verify/partb/p/c10_clause_task.wf",
+    "verify/s5/R2c/p/m1.wf",
+    "verify/s5/R3a/p/f37.wf",
+    "verify/s5/p/i1_fp_closure_call.wf",
+    "verify/s5/p/i2_fp_closure_call.wf",
+    "verify/s5/p/i4_fp_with_timeout.wf",
+    "verify/s5/p/st1.wf",
+]
+reason = "class F19-SIG-PINS (stage F19): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`: an `opaque` task or a task that captures a nonportable value or mutates through a shared capture), not counting a task that is `opaque` only because it runs code of a caller; a task that a closure body starts is `opaque` (its captures are not named). The old inference pins for other reasons (a value from a field that it does not follow)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["pins", "reaches"]
+files = [
+    "r2/oracle/probes/c3_task_stored.wf",
+    "r3/oracle/probes/sc10_field_two_tasks.wf",
+    "r3/oracle/probes/sc1_field_local_task.wf",
+    "r3/oracle/probes/sc2_field_in_task.wf",
+    "r3/oracle/probes/sc8_field_local_task_ref.wf",
+    "r3/oracle/probes/sd1_field_assign.wf",
+    "r3/oracle/probes/sd2_nested_struct.wf",
+    "r3/oracle/probes/sd4_callee_runs_field.wf",
+    "r3/oracle/probes/sd6_fork_field.wf",
+    "r3/oracle/probes/sd7_field_ref_after_join.wf",
+    "r3/oracle/repro/O3-5_task_runs_field_closure.wf",
+    "tests/gate/probes/r2/oracle/probes/c3_task_stored.wf",
+    "tests/gate/probes/r3/oracle/probes/sc10_field_two_tasks.wf",
+    "tests/gate/probes/r3/oracle/probes/sc1_field_local_task.wf",
+    "tests/gate/probes/r3/oracle/probes/sc2_field_in_task.wf",
+    "tests/gate/probes/r3/oracle/probes/sc8_field_local_task_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/sd1_field_assign.wf",
+    "tests/gate/probes/r3/oracle/probes/sd2_nested_struct.wf",
+    "tests/gate/probes/r3/oracle/probes/sd4_callee_runs_field.wf",
+    "tests/gate/probes/r3/oracle/probes/sd6_fork_field.wf",
+    "tests/gate/probes/r3/oracle/probes/sd7_field_ref_after_join.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-5_task_runs_field_closure.wf",
+    "tests/ir_targets/o3_5_field_closure_tasks.wf",
+]
+reason = "class F19-SIG-PINS (stage F19): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`: an `opaque` task or a task that captures a nonportable value or mutates through a shared capture), not counting a task that is `opaque` only because it runs code of a caller; a task that a closure body starts is `opaque` (its captures are not named). The old inference pins for other reasons (a value from a field that it does not follow); the old part `reaches` (a body that runs a stored function value) has no part of the IR: the IR applies the values that the arguments reach at the run node (as the `sig` entries of stage F17)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["pins", "tasks"]
+files = [
+    "tests/gate/probes/verify/partb/p/c10_clause_task.wf",
+    "verify/partb/p/c10_clause_task.wf",
+]
+reason = "class F19-SIG-PINS (stage F19): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`: an `opaque` task or a task that captures a nonportable value or mutates through a shared capture), not counting a task that is `opaque` only because it runs code of a caller; a task that a closure body starts is `opaque` (its captures are not named). The old inference pins for other reasons (a value from a field that it does not follow); the part `tasks` of the old inference (function parameters that a task can call) has no IR part; the IR has `runs` with `task`"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "ir/probes/p15_return_in_scope.wf",
+    "r2/interp/probe/p11_fail_interrupt_join.wf",
+    "r2/interp/probe/p12_fail_interrupt_scope_wait.wf",
+    "r2/interp/probe/p13_fail_interrupt_fork.wf",
+    "r2/interp/repro/holds/ip_scope_return.wf",
+    "r2/interp/repro/ip_fail_resume_fork.wf",
+    "r2/interp/repro/ip_fail_resume_join.wf",
+    "r2/interp/repro/ip_fail_resume_scope.wf",
+    "r2/oracle/fp/W0602_p1020.wf",
+    "r2/oracle/fp/W0602_p1576.wf",
+    "r2/oracle/fp3/W0702_p26.wf",
+    "r2/redteam/p/a_owner.wf",
+    "r2/redteam/p/h_multi.wf",
+    "r2/redteam/p/zz_pending.wf",
+    "r3/fidelity/p/sv2.wf",
+    "r3/oracle/probes/h10_scope_tail_part.wf",
+    "r3/oracle/probes/h12_scope_tail_in_fn.wf",
+    "r3/oracle/probes/h13_scope_tail_immovable.wf",
+    "r3/oracle/probes/h1_scope_tail.wf",
+    "r3/oracle/probes/h2_scope_tail_ref.wf",
+    "r3/oracle/probes/h3_scope_tail_linear.wf",
+    "r3/oracle/probes/h3b_scope_tail_tx.wf",
+    "r3/oracle/probes/h3c_scope_tail_tx_leak.wf",
+    "r3/oracle/probes/h4_scope_tail_linear_leak.wf",
+    "r3/oracle/probes/h5_scope_value_used.wf",
+    "r3/oracle/probes/lt3_scope_stmt.wf",
+    "r3/oracle/probes/mx4_scope_tail_multi.wf",
+    "r3/oracle/probes/st10_index_tail_scope.wf",
+    "r3/oracle/probes/st3_scope_semi.wf",
+    "r3/oracle/probes/st9_field_tail_scope.wf",
+    "r3/oracle/repro/O3-1_scope_tail_move.wf",
+    "r3/oracle/repro/O3-2_handled_body_temporary.wf",
+    "r3/redteam/p/n1_immov.wf",
+    "redteam/a12_nested_ref.wf",
+    "redteam/c03_return_scope.wf",
+    "tests/gate/probes/ir/probes/p15_return_in_scope.wf",
+    "tests/gate/probes/r2/interp/probe/p11_fail_interrupt_join.wf",
+    "tests/gate/probes/r2/interp/probe/p12_fail_interrupt_scope_wait.wf",
+    "tests/gate/probes/r2/interp/probe/p13_fail_interrupt_fork.wf",
+    "tests/gate/probes/r2/interp/repro/holds/ip_scope_return.wf",
+    "tests/gate/probes/r2/interp/repro/ip_fail_resume_fork.wf",
+    "tests/gate/probes/r2/interp/repro/ip_fail_resume_join.wf",
+    "tests/gate/probes/r2/interp/repro/ip_fail_resume_scope.wf",
+    "tests/gate/probes/r2/oracle/fp/W0602_p1020.wf",
+    "tests/gate/probes/r2/oracle/fp/W0602_p1576.wf",
+    "tests/gate/probes/r2/oracle/fp3/W0702_p26.wf",
+    "tests/gate/probes/r2/redteam/p/a_owner.wf",
+    "tests/gate/probes/r2/redteam/p/h_multi.wf",
+    "tests/gate/probes/r2/redteam/p/zz_pending.wf",
+    "tests/gate/probes/r3/fidelity/p/sv2.wf",
+    "tests/gate/probes/r3/oracle/probes/h10_scope_tail_part.wf",
+    "tests/gate/probes/r3/oracle/probes/h12_scope_tail_in_fn.wf",
+    "tests/gate/probes/r3/oracle/probes/h13_scope_tail_immovable.wf",
+    "tests/gate/probes/r3/oracle/probes/h1_scope_tail.wf",
+    "tests/gate/probes/r3/oracle/probes/h2_scope_tail_ref.wf",
+    "tests/gate/probes/r3/oracle/probes/h3_scope_tail_linear.wf",
+    "tests/gate/probes/r3/oracle/probes/h3b_scope_tail_tx.wf",
+    "tests/gate/probes/r3/oracle/probes/h3c_scope_tail_tx_leak.wf",
+    "tests/gate/probes/r3/oracle/probes/h4_scope_tail_linear_leak.wf",
+    "tests/gate/probes/r3/oracle/probes/h5_scope_value_used.wf",
+    "tests/gate/probes/r3/oracle/probes/lt3_scope_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/mx4_scope_tail_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/st10_index_tail_scope.wf",
+    "tests/gate/probes/r3/oracle/probes/st3_scope_semi.wf",
+    "tests/gate/probes/r3/oracle/probes/st9_field_tail_scope.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-1_scope_tail_move.wf",
+    "tests/gate/probes/r3/oracle/repro/O3-2_handled_body_temporary.wf",
+    "tests/gate/probes/r3/redteam/p/n1_immov.wf",
+    "tests/gate/probes/redteam/a12_nested_ref.wf",
+    "tests/gate/probes/redteam/c03_return_scope.wf",
+    "tests/gate/probes/verify/partb/S3/p/rt16d.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/clo2.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/def2.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/block_values.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/scopes.wf",
+    "tests/gate/probes/verify/s1diff/p/v12_rt24.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/fd4_v3_timeout_frame.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/ip1_v1_user_fail.wf",
+    "tests/gate/probes/verify/s5/R3a/p/copytail.wf",
+    "tests/gate/probes/verify/s5/R3a/p/fp.wf",
+    "tests/gate/probes/verify/s5/R3a/p/linstmt.wf",
+    "tests/gate/probes/verify/s5/R3a/p/multi.wf",
+    "tests/gate/probes/verify/s5/R3a/p/multi2.wf",
+    "tests/gate/probes/verify/s5/R3a/p/parttail.wf",
+    "tests/gate/probes/verify/s5/R3a/p/rcval.wf",
+    "tests/gate/probes/verify/s5/R3a/p/rt1b.wf",
+    "tests/gate/probes/verify/s5/R3a/p/temps.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_extern.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_timeout.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/l6a_more.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/l6m_o_apply.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/l6m_o_local_stored.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/l6m_o_scope.wf",
+    "tests/programs/150_frame_tails.wf",
+    "tests/programs/151_frame_values.wf",
+    "tests/programs/49_fip_paths.wf",
+    "tests/programs/60_jumps.wf",
+    "verify/partb/S3/p/rt16d.wf",
+    "verify/partb/S4diff/p/clo2.wf",
+    "verify/partb/S4diff/p/def2.wf",
+    "verify/review_core/Core_S1/rt1/block_values.wf",
+    "verify/review_core/Core_S1/rt1/scopes.wf",
+    "verify/s1diff/p/v12_rt24.wf",
+    "verify/s5/R2c: effects, continuations, on abort and drops/p/fd4_v3_timeout_frame.wf",
+    "verify/s5/R2c: effects, continuations, on abort and drops/p/ip1_v1_user_fail.wf",
+    "verify/s5/R3a/p/copytail.wf",
+    "verify/s5/R3a/p/fp.wf",
+    "verify/s5/R3a/p/linstmt.wf",
+    "verify/s5/R3a/p/multi.wf",
+    "verify/s5/R3a/p/multi2.wf",
+    "verify/s5/R3a/p/parttail.wf",
+    "verify/s5/R3a/p/rcval.wf",
+    "verify/s5/R3a/p/rt1b.wf",
+    "verify/s5/R3a/p/temps.wf",
+    "verify/s5/S5a/x/p/f3a_extern.wf",
+    "verify/s5/S5a/x/p/f3a_timeout.wf",
+    "verify/s5/S5a/x/p/l6a_more.wf",
+    "verify/s5/S5a/x/p/l6m_o_apply.wf",
+    "verify/s5/S5a/x/p/l6m_o_local_stored.wf",
+    "verify/s5/S5a/x/p/l6m_o_scope.wf",
+]
+reason = "class F19-SIG-RAISES (stage F19): the part `raises` of the IR: a scope with no spawn cannot fail at its `ScopeWait` (stage F18), a `with_timeout` performs `Fail` through the row (a local `Fail` handler stops it, 5.31) and does not raise, a `fork` with no local `Fail` handler raises; the old inference gives `raises` to each scope and each `with_timeout`. No check of the `ir` pipeline reads `raises` of these bodies but W0118, whose corpus and probe rows are the same"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["reaches", "task_effects"]
+files = [
+    "r3/redteam/p/h2_spawn_stored.wf",
+    "tests/gate/probes/r3/redteam/p/h2_spawn_stored.wf",
+]
+reason = "the old part `reaches` (a body that runs a stored function value) has no part of the IR: the IR applies the values that the arguments reach at the run node (as the `sig` entries of stage F17); class F19-SIG-TASKEFF (stage F19): the part `task_effects` of the IR (`templates::task_w0314`, `task_effects_at`): a task that is W0314 (no runtime) gives no effect to the part; a user effect of a function item that a task calls goes to the part; a task of a closure in a field or a vector, and a block of `with_timeout` that calls a function with tasks, are not followed (the W0405 of these programs stays)"
+stage = "F19"
+
+[[entry]]
+class = "sig"
+parts = ["task_effects"]
+files = [
+    "r2/redteam/p/zz_nort.wf",
+    "r2/redteam/p/zz_nort2.wf",
+    "r2/redteam/p/zz_taskeff.wf",
+    "r3/fidelity/p/fk4.wf",
+    "r3/redteam/p/h2_spawn_stored.wf",
+    "tests/gate/probes/r2/redteam/p/zz_nort.wf",
+    "tests/gate/probes/r2/redteam/p/zz_nort2.wf",
+    "tests/gate/probes/r2/redteam/p/zz_taskeff.wf",
+    "tests/gate/probes/r3/fidelity/p/fk4.wf",
+    "tests/gate/probes/r3/redteam/p/h2_spawn_stored.wf",
+    "tests/gate/probes/verify/partb/p/c9_noruntime_task.wf",
+    "tests/gate/probes/verify/s5/R2d/p/e5_scope_vec.wf",
+    "tests/ir_targets/r3rt3_held_refs_at_call.wf",
+    "tests/programs/07_scopes.wf",
+    "verify/partb/p/c9_noruntime_task.wf",
+    "verify/s5/R2d/p/e5_scope_vec.wf",
+]
+reason = "class F19-SIG-TASKEFF (stage F19): the part `task_effects` of the IR (`templates::task_w0314`, `task_effects_at`): a task that is W0314 (no runtime) gives no effect to the part; a user effect of a function item that a task calls goes to the part; a task of a closure in a field or a vector, and a block of `with_timeout` that calls a function with tasks, are not followed (the W0405 of these programs stays)"
+stage = "F19"

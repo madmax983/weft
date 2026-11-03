@@ -127,12 +127,18 @@ pub fn compare(old: &EffectSig, ir: &EffectSig) -> Vec<&'static str> {
 fn show(e: &EffectSig) -> String {
     let muts: Vec<&str> = e.muts.iter().map(|m| m.text.as_str()).collect();
     let named: Vec<&str> = e.named.iter().map(String::as_str).collect();
+    let tasks: Vec<&str> = e.task_effects.iter().map(String::as_str).collect();
     format!(
-        "mut({}) [{}]{}{}",
+        "mut({}) [{}]{}{}{}",
         muts.join(", "),
         named.join(", "),
         if e.raises { " raises" } else { "" },
         if e.multi { " multi" } else { "" },
+        if tasks.is_empty() {
+            String::new()
+        } else {
+            format!(" tasks[{}]", tasks.join(", "))
+        },
     )
 }
 

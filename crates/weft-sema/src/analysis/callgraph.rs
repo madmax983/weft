@@ -272,6 +272,7 @@ fn effect_sig(a: &Analysis, sema: crate::FnId, inf: &Inferred, sum: &Summary) ->
             // A stated signature keeps the part `pins` of the old
             // inference too (a callee of the runtime, `http.serve`).
             pins: inf.pins || sig.effects.pins,
+            task_effects: inf.task_effects.clone(),
             ..EffectSig::default()
         },
         _ => sig::to_effect_sig(&a.program, sum),

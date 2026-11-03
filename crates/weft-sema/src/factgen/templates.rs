@@ -3269,7 +3269,8 @@ fn emit_apps(
         } else {
             vec![Some(main)]
         };
-        for n in n_runs.into_iter().flatten() {
+        for (k, n) in n_runs.into_iter().flatten().enumerate() {
+            let first = k == 0;
             let site = crate::analysis::apply::Site {
                 callee: &app.name,
                 spans: spans.to_vec(),
@@ -3284,15 +3285,21 @@ fn emit_apps(
             // The tasks of the run that perform through a handler of a
             // caller (part `task_effects`): a handler of this task there is
             // W0314; else they are tasks of the body too (plan stage F19).
-            if em.in_task.is_none() && n == main && !app.summary.task_effects.is_empty() {
+            if em.in_task.is_none() && first && !app.summary.task_effects.is_empty() {
                 task_effects_at(em, &app.summary.task_effects, &app.name, at);
             }
             // The tasks that the closure starts in a scope of the body
             // (part `tasks`, plan stage F19): they start at `n` too.
+            // A late run (a block that a callee runs) starts them at `Main`
+            // too: the value that moves into the call goes into the task
+            // there (W0602 of a cancel, corpus 163).
             for &site in &app.summary.tasks {
                 em.started.push(site);
                 if let Some(&t) = em.hx.task_ids.get(&weft_ir::SpawnId(site)) {
                     em.facts.spawned_at.push((t, n));
+                    if n != main && !em.facts.spawned_at.contains(&(t, main)) {
+                        em.facts.spawned_at.push((t, main));
+                    }
                 }
             }
             let lent = em.facts.lends_mut.len();
@@ -4703,7 +4710,7 @@ fn task_effects_at(
 /// a local handler of the body handles, an effect of a closure that only a
 /// handler of a caller can handle (an effect that is not standard), and,
 /// with no runtime, each effect: W0314. `Fail` goes to the task that joins
-/// the task, and `Async` to the runtime. Another effect of the row goes to
+/// the task. Another effect of the row goes to
 /// a handler of a caller: part `task_effects` of the body (the caller
 /// checks it at its call).
 fn task_w0314(
@@ -4737,7 +4744,7 @@ fn task_w0314(
                     .map(|e| (e.as_str(), true, true)),
             );
         for (e, through_row, item) in row {
-            if e == FAIL || e == ASYNC {
+            if e == FAIL {
                 continue;
             }
             let std = crate::effects::is_std(e);
@@ -4954,6 +4961,17 @@ fn task_captures(
             if !em.facts.opaque.contains(&t) {
                 em.facts.opaque.push(t);
             }
+            // A `ByMove` capture of the maker is its `E` variable: a linear
+            // value that moves into the task (W0602 of a cancel).
+            for cap in &decl.captures {
+                if let Some((_, k, weft_ir::CaptureMode::ByMove)) =
+                    super::alpha::env_capture(em.p, maker, &cap.source)
+                {
+                    if let Some(v) = em.vars.get(&VarKey::E(maker, k)) {
+                        em.facts.captures.push((t, v));
+                    }
+                }
+            }
             continue;
         }
         for cap in &decl.captures {
@@ -4970,21 +4988,29 @@ fn task_captures(
             em.facts.captures.push((t, v));
             let k = transfer::key(em.p, maker, src.local)?;
             let val = st.value(k, &[]).flat();
-            // A captured closure: its captures are captures of the task.
+            // A captured closure: its captures are captures of the task. A
+            // closure that another function made (`mk_cb(&n)`) has its
+            // captures there: a nonportable one makes the variable that
+            // holds it nonportable for the task (W0401, `npret`, plan stage
+            // F19).
             for f in &val.fns {
                 if let FnVal::Closure(c2) | FnVal::Made(c2) = f {
                     work.push(*c2);
+                    if made_nonportable(em, *c2) {
+                        if let Some(info) = em.facts.vars.get_mut(v.index()) {
+                            info.nonportable = true;
+                        }
+                    }
                 }
             }
             let ty = super::alpha::place_ty(em.p, em.tys, maker, src);
             let is_ref =
                 ty.is_some_and(|t| matches!(em.tys.try_get(t), Some(weft_ir::Ty::Ref(..))));
             let root = em.roots.local(em.p, em.tys, em.facts, k.0, k.1).ok();
-            let mut refs: Vec<PlaceId> = if is_ref {
-                val.refs.iter().copied().collect()
-            } else {
-                Vec::new()
-            };
+            // The references that the value holds: of a reference, or inside
+            // a tuple, a struct, an `Option` or a `Vec` (o1_fork, plan stage
+            // F19), and the root of a value that is not a reference.
+            let mut refs: Vec<PlaceId> = val.refs.iter().copied().collect();
             if !is_ref {
                 refs.extend(root);
             }
@@ -5013,6 +5039,25 @@ fn task_captures(
         }
     }
     Ok(())
+}
+
+/// True if closure `c` was made outside the bodies of the component and a
+/// capture of it holds a nonportable value.
+fn made_nonportable(em: &mut Em<'_>, c: weft_ir::ClosureId) -> bool {
+    let Some(decl) = em.p.closures.get(c.index()) else {
+        return false;
+    };
+    // The maker is in the component if its result has a variable.
+    let outside = em
+        .vars
+        .get(&VarKey::S(decl.maker, weft_ir::LocalId(0)))
+        .is_none();
+    let n = u32::try_from(decl.captures.len()).unwrap_or(0);
+    outside
+        && (0..n).any(|k| {
+            super::alpha::capture_ty(em.p, em.tys, c, k)
+                .is_some_and(|t| ir_props(em.tys, t).nonportable)
+        })
 }
 
 /// `Join` `Main` and `Ret` (`docs/ir.md` 6.4, plan stage F18).

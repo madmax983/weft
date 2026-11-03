@@ -448,12 +448,10 @@ fn check_supported(
                     if (p.closure_of(bid).is_some()
                         || matches!(b.kind, BodyKind::Clause(..)))
                         && handlers::maker_scope(p, *site) => {}
-                TermKind::Scope { .. } if handlers::spliceable(p, bid) => {}
-                // A `fork` starts and ends its tasks at its own nodes: also in
-                // a clause (plan stage F19). In a closure body the captures of
-                // the branches are captures of the closure (no `captures`
-                // facts yet).
-                TermKind::Fork { .. } if handlers::spliceable(p, bid) => {}
+                // A `scope`, and a `fork` (its tasks start and end at its own
+                // nodes; also in a clause, plan stage F19). In a closure body
+                // the captures of the branches are captures of the closure.
+                TermKind::Scope { .. } | TermKind::Fork { .. } if handlers::spliceable(p, bid) => {}
                 TermKind::Spawn { .. } => {
                     return no(Group::E, "a task of a scope that the body does not own (stage F19)")
                 }

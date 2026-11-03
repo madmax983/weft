@@ -2014,7 +2014,8 @@ pub fn value_out_ty(
     args: &[Operand],
     ret_ty: TyId,
 ) -> Result<ValueOut, AlphaError> {
-    let mut fns = operand(cx, body, st, callee)?.flat().fns;
+    let callee_val = operand(cx, body, st, callee)?.flat();
+    let mut fns = callee_val.fns.clone();
     // A local that holds no value here (it moved): the call stops with a
     // fault at run time, and the use of the local is W0302 or W0502. No
     // closure runs.
@@ -2058,7 +2059,13 @@ pub fn value_out_ty(
             });
         }
     }
-    let once = fns.iter().any(|fv| once_value(cx.p, fv));
+    // A linear value that the analysis does not follow (a closure out of a
+    // field of a linear value): a run of it consumes it (plan stage F19,
+    // corpus 120).
+    let unknown = fns
+        .iter()
+        .any(|fv| !matches!(fv, FnVal::Closure(_) | FnVal::Made(_) | FnVal::Item(..)));
+    let once = fns.iter().any(|fv| once_value(cx.p, fv)) || (callee_val.linear && unknown);
     Ok(ValueOut {
         apps: apps.out,
         ret: ret.unwrap_or_else(|| Tree::leaf(AbsVal::plain())),
