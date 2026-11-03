@@ -569,6 +569,9 @@ pub struct Emitted {
     /// The task handle parameters that the entry body joins on each path of
     /// an abort (part `abort_joins` of the summary, follow-up F19.3).
     pub abort_joins: Vec<u32>,
+    /// The values of the interface (index, capture) after whose run the
+    /// entry body can perform or abort (`Run::then`, follow-up F19.4).
+    pub then_runs: Vec<(u32, bool)>,
     /// How the entry body runs each function value of the interface that it
     /// runs as a task (part `runs`, plan stage F19).
     pub task_hows: Vec<crate::analysis::tasks::RawHow>,
@@ -729,6 +732,7 @@ pub fn emit_parts(
     hx.no_runtime = a.bodies.iter().any(|b| b.facts.no_runtime);
     let joins: Vec<u32>;
     let abort_joins: Vec<u32>;
+    let fn_then: Vec<(u32, bool)>;
     let task_hows: Vec<crate::analysis::tasks::RawHow>;
     let task_effects: std::collections::BTreeSet<String>;
     let mut w0314: Vec<(weft_ir::Span, String)>;
@@ -760,6 +764,7 @@ pub fn emit_parts(
             own_lends: Vec::new(),
             task_runs: Vec::new(),
             run_at: Vec::new(),
+            then_runs: Vec::new(),
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
@@ -779,6 +784,7 @@ pub fn emit_parts(
             templates::task_ends(&mut em);
         }
         task_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        fn_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         code_opaque = std::mem::take(&mut em.code_opaque);
         task_effects = std::mem::take(&mut em.task_effects);
         w0314 = std::mem::take(&mut em.w0314);
@@ -1026,6 +1032,7 @@ pub fn emit_parts(
         handler_caps,
         joins,
         abort_joins,
+        then_runs: fn_then,
         task_hows,
         code_opaque,
         task_effects,
@@ -1409,6 +1416,7 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
+    let closure_then: Vec<(u32, bool)>;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
@@ -1434,6 +1442,7 @@ fn closure_summary(
             own_lends: Vec::new(),
             task_runs: Vec::new(),
             run_at: Vec::new(),
+            then_runs: Vec::new(),
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
@@ -1449,6 +1458,7 @@ fn closure_summary(
         };
         templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
+        closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         (
             std::mem::take(&mut em.returns),
             std::mem::take(&mut em.aborts),
@@ -1501,6 +1511,7 @@ fn closure_summary(
             cap_performs: &hx.cap_performs,
             joins: &joins,
             abort_joins: &abort_joins,
+            then_runs: &closure_then,
             task_hows: &[],
             code_opaque: &[],
             task_effects: &closure_task_effects,
@@ -1693,6 +1704,7 @@ fn emit_closure(
         own_lends: Vec::new(),
         task_runs: Vec::new(),
         run_at: Vec::new(),
+        then_runs: Vec::new(),
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
@@ -1871,6 +1883,7 @@ fn emit_clause(
         own_lends: Vec::new(),
         task_runs: Vec::new(),
         run_at: Vec::new(),
+        then_runs: Vec::new(),
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
@@ -2529,6 +2542,14 @@ fn emit_block(
             em.task_nodes = (1..=frames.task_nodes(bid, block))
                 .filter_map(|i| table.get(at(Phase::Task(i), NORMAL)))
                 .collect();
+            // Code of a local handler that can run at the node (follow-up
+            // F19.4, R2-1).
+            let local_code = dests
+                .iter()
+                .any(|d| matches!(d, frames::Dest::Handler { .. }))
+                || !frames::clause_handlers(em.p, em.tys, em.sums, bid, &blk.term.kind).is_empty()
+                || frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind)
+                || copy.is_some();
             let nodes = templates::CallNodes {
                 main: n,
                 ret: table.get(at(Phase::Ret, NORMAL)),
@@ -2536,6 +2557,7 @@ fn emit_block(
                 aborts,
                 may_abort: !dests.is_empty(),
                 values,
+                local_code,
             };
             templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
@@ -2549,6 +2571,7 @@ fn emit_block(
                 aborts: Vec::new(),
                 may_abort: !dests.is_empty(),
                 values,
+                local_code: true,
             };
             match cap {
                 weft_ir::CapOperand::Local(c)
@@ -2572,6 +2595,7 @@ fn emit_block(
                 aborts,
                 may_abort: !dests.is_empty(),
                 values,
+                local_code: true,
             };
             handlers::resume(em, &nodes, &st, &blk.term.kind)?;
         }
@@ -2610,6 +2634,7 @@ fn emit_block(
                 aborts: Vec::new(),
                 may_abort: !dests.is_empty(),
                 values,
+                local_code: true,
             };
             // Branch `i` starts at `Task(i + 1)`; the branches end at
             // `Task(k + 1)` (plan stage F19).
@@ -2636,6 +2661,7 @@ fn emit_block(
                 aborts: Vec::new(),
                 may_abort: !dests.is_empty(),
                 values,
+                local_code: true,
             };
             templates::join(em, &nodes, &st, task, dest)?;
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
@@ -2653,6 +2679,7 @@ fn emit_block(
                 aborts: Vec::new(),
                 may_abort: !dests.is_empty(),
                 values,
+                local_code: true,
             };
             templates::scope_wait(em, &nodes, &st, scope, orphans)?;
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
@@ -2832,6 +2859,62 @@ fn return_nodes(
             })
         })
         .collect()
+}
+
+/// The values of the interface (index, capture) after whose run the body
+/// can perform an operation or abort (`Run::then`, follow-up F19.4): a node
+/// after a run node of `run_at` (not the run node itself, whose aborts are
+/// those of the value) has `may_abort`, `performs_at`, or `escapes_at` of an
+/// effect other than `Async`; and the values of `inherited` (a callee runs
+/// the value with code after it).
+fn then_runs(
+    facts: &FnFacts,
+    run_at: &[(u32, bool, weft_facts::NodeId)],
+    inherited: &[(u32, bool)],
+) -> Vec<(u32, bool)> {
+    let mut acts = vec![false; facts.nodes.len()];
+    let mut mark = |n: weft_facts::NodeId| {
+        if let Some(x) = acts.get_mut(n.index()) {
+            *x = true;
+        }
+    };
+    facts.may_abort.iter().copied().for_each(&mut mark);
+    facts.performs_at.iter().for_each(|&(n, _)| mark(n));
+    facts
+        .escapes_at
+        .iter()
+        .filter(|(_, e)| e != "Async")
+        .for_each(|&(n, _)| mark(n));
+    let mut succ: std::collections::HashMap<weft_facts::NodeId, Vec<weft_facts::NodeId>> =
+        std::collections::HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    let mut out: Vec<(u32, bool)> = inherited.to_vec();
+    for &(j, cap, n) in run_at {
+        if out.contains(&(j, cap)) {
+            continue;
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut work: Vec<weft_facts::NodeId> = succ.get(&n).cloned().unwrap_or_default();
+        let mut hit = false;
+        while let Some(m) = work.pop() {
+            if !seen.insert(m) {
+                continue;
+            }
+            if acts.get(m.index()).copied().unwrap_or(false) {
+                hit = true;
+                break;
+            }
+            work.extend(succ.get(&m).into_iter().flatten().copied());
+        }
+        if hit {
+            out.push((j, cap));
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// The `Main` node of each copy of each `UnwindExit` of body `bid` (`b`):

@@ -46,11 +46,11 @@ impl super::Machine<'_, '_> {
             let uids: Vec<u64> = frames
                 .iter()
                 .filter_map(|f| match f {
-                    Frame::Code(cf) if crate::oracle::facts::tracked(cf.uid) => Some(cf.uid),
+                    Frame::Code(cf) if cf.uid != 0 => Some(cf.uid),
                     _ => None,
                 })
                 .collect();
-            if let Err(m) = fo.clause_run(&uids) {
+            if let Err(m) = fo.clause_run(&uids, self.cur) {
                 return Err(self.fault(m));
             }
         }

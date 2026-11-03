@@ -1634,13 +1634,22 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
 /// its label. Returns the relations of each label.
 fn check_templates(f: &FnFacts, what: &str) -> BTreeMap<String, BTreeSet<&'static str>> {
     let mut seen: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
+    // A task that a call starts while code of a local handler can run at
+    // its `Main` starts on each edge into that node too (follow-up F19.4):
+    // a node with an edge into a `call` node can have `spawned_at`.
+    let before_call = |n: NodeId| {
+        !f.joined_at.iter().any(|&(_, m)| m == n)
+            && f.cfg_edge
+                .iter()
+                .any(|&(a, b)| a == n && f.node(b).kind == "call")
+    };
     for (n, rels) in node_rels(f) {
         let label = f.node(n).kind.clone();
         let (normal, cleanup) =
             template_of(&label).unwrap_or_else(|| panic!("{what}: no template for `{label}`"));
         for r in &rels {
             assert!(
-                normal.contains(r) || cleanup.contains(r),
+                normal.contains(r) || cleanup.contains(r) || (*r == "task" && before_call(n)),
                 "{what}: `{label}` emits {r}"
             );
         }
@@ -3599,4 +3608,44 @@ fn a_join_after_an_abort_of_the_callee_ends_the_task_at_ret_only() {
         !kinds.contains(&("late".to_string(), "call".to_string())),
         "{kinds:?}"
     );
+}
+
+/// Callees that perform before or after they run a function parameter
+/// (R2-1 of the second review of group E, follow-up F19.4).
+const RUN_THEN: &str = "\
+effect Note { fn note() }
+fn run_note(g: fn()) / Note { g(); note() }
+fn note_run(g: fn()) / Note { note(); g() }
+fn run_fail(g: fn()) / fail { g(); fail(\"x\") }
+fn once(g: fn()) { g() }
+fn outer(g: fn()) / Note { once(g); note() }
+fn main() {}
+";
+
+#[test]
+fn a_run_that_the_callee_follows_with_a_perform_or_an_abort_has_then() {
+    // Part `runs`, `then`: after the run of `g`, the body can perform or
+    // abort, so a clause of a caller can run while a task of `g` runs.
+    let (a, b) = built_with(RUN_THEN, abcde());
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let then = |name: &str| {
+        let i = b
+            .fns
+            .iter()
+            .find(|(k, _)| a.program.fns.get(k.index()).is_some_and(|d| d.name == name))
+            .map_or_else(|| panic!("no `{name}`"), |(_, v)| *v);
+        let s = sums
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|why| panic!("{name}: {why}"));
+        s.runs
+            .iter()
+            .find(|r| r.param == 0)
+            .map_or_else(|| panic!("{name}: no run"), |r| r.then)
+    };
+    assert!(then("run_note"));
+    assert!(then("run_fail"));
+    assert!(then("outer"));
+    assert!(!then("note_run"));
+    assert!(!then("once"));
 }

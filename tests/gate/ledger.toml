@@ -3476,3 +3476,202 @@ files = [
 reason = "the task closure takes no linear value, so a cancel of the task loses nothing (old 2xW0602 false positive). The near variant of the review whose task closure takes the `Tx` (L12) is rejected by the `ir` pipeline (the run fails: the `Tx` has no `on abort`)"
 signed_by = "independent review of group E (ereview/review.md)"
 stage = "F19.3"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.4: the lost-clean rows that the second review of group E
+# signed (scratchpad ereview/review_r2.md, section 4): the 6 rows of
+# fixes/f18/join that the first review refused, and 11 clean twins of E-1.
+# The review refused e13_loop_direct_join_c (R2-2): it stays out of the
+# gate (crates/weft-check/tests/data/tasks/e1_twins).
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/k01_closure_join_twice_c.wf",
+    "fixes/f18/join/k01_closure_join_twice_c.wf",
+]
+reason = "O3-9: the closure joins the handle that it captures and cannot abort before the `join` (part `abort_joins`); the task ends before the write (old W0405 false positive). The near variants of the second review (L04, D1, R36, R30) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/k03_callee_detach_c.wf",
+    "fixes/f18/join/k03_callee_detach_c.wf",
+]
+reason = "O3-9: the callee joins its handle parameter and cannot abort before the `join`; the task ends before the write (old W0405 false positive). The near variants of the second review (L05, D0, D2, R37) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/k04_callee_join_one_path_c.wf",
+    "fixes/f18/join/k04_callee_join_one_path_c.wf",
+]
+reason = "O3-9: the callee joins its handle parameter on each path and cannot abort before the `join` (old W0405 false positive). The near variants of the second review (L06, R26) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/k05_callee_chain_join_c.wf",
+    "fixes/f18/join/k05_callee_chain_join_c.wf",
+]
+reason = "O3-9: a chain of callees joins the handle, and no callee can abort before the `join` (old W0405 false positive). The near variants of the second review (L07, R35) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/k06_closure_two_handles_one_joined_c.wf",
+    "fixes/f18/join/k06_closure_two_handles_one_joined_c.wf",
+]
+reason = "O3-9: the closure joins both captured handles; the task ends at `Ret` of the run (a child failure at the first `join` would skip the second), and no handler of the caller stops an abort (old W0405 false positive). The near variants of the second review (L16, R25) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/f18/join/o39_joins.wf",
+    "fixes/f18/join/o39_joins.wf",
+]
+reason = "O3-9: a join through a callee, a tuple, an `Option` and a closure ends the task; the callee and the closure cannot abort before the `join` (old 4xW0405 false positives). The near variants of the second review (L09, L17, L01, L03) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e01_callee_fail_first_c.wf",
+    "fixes/e1/e01_callee_fail_first_c.wf",
+]
+reason = "E-1 clean twin: the callee joins, then fails; the task ends at `Main` of the call (old W0405 false positive). The near variants of the second review (L05, D0) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e02_closure_fail_first_c.wf",
+    "fixes/e1/e02_closure_fail_first_c.wf",
+]
+reason = "E-1 clean twin: the closure joins, then fails (old W0405 false positive). The near variants of the second review (L04, D1) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e03_callee_clause_no_resume_c.wf",
+    "fixes/e1/e03_callee_clause_no_resume_c.wf",
+]
+reason = "E-1 clean twin: the callee joins, then performs an operation whose clause does not resume (old W0405 false positive). The near variant of the second review (D2) is rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e04_callee_inner_scope_fails_c.wf",
+    "fixes/e1/e04_callee_inner_scope_fails_c.wf",
+]
+reason = "E-1 clean twin: the callee joins before its own scope fails (old W0405 false positive). The near variant of the second review (D9) is rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e05_callee_chain_c.wf",
+    "fixes/e1/e05_callee_chain_c.wf",
+]
+reason = "E-1 clean twin: the inner callee joins, then the outer callee fails (old W0405 false positive). The near variants of the second review (R35, L07) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e06_stored_closure_c.wf",
+    "fixes/e1/e06_stored_closure_c.wf",
+]
+reason = "E-1 clean twin: the closure in a second local joins, then fails (old W0405 false positive). The near variant of the second review (R36) is rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e08_loop_respawn_c.wf",
+    "fixes/e1/e08_loop_respawn_c.wf",
+]
+reason = "E-1 clean twin: in each turn the callee joins, then fails (old 2xW0405 false positives). The near variants of the second review (R11, R14, R16) are rejected by the `ir` pipeline; with follow-up F19.4 the fact oracle passes on them too"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e09_callee_loop_fail_c.wf",
+    "fixes/e1/e09_callee_loop_fail_c.wf",
+]
+reason = "E-1 clean twin: the callee joins before the loop that can fail (old W0405 false positive). The near variant of the second review (D4) is rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e10_validate_then_join_c.wf",
+    "fixes/e1/e10_validate_then_join_c.wf",
+]
+reason = "E-1 clean twin: the helper joins, then validates its input and can fail (old W0405 false positive). The near variant of the second review (R37) is rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e11_closure_calls_callee_c.wf",
+    "fixes/e1/e11_closure_calls_callee_c.wf",
+]
+reason = "E-1 clean twin: the callee of the closure joins, then fails (old W0405 false positive). The near variant of the second review (R32) is rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/e1/e12_callee_local_handler_c.wf",
+    "fixes/e1/e12_callee_local_handler_c.wf",
+]
+reason = "E-1 clean twin: a handler of the callee stops the failure before the `join` (old W0405 false positive). The near variants of the second review (R21, R22) are rejected by the `ir` pipeline"
+signed_by = "independent review of group E, round 2 (ereview/review_r2.md)"
+stage = "F19.4"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/e1/r1_callee_task_and_clause_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_then_perform_b.wf",
+    "tests/gate/probes/fixes/e1/r1_reader_task_clause_writes_b.wf",
+    "tests/gate/probes/fixes/e1/r1_reader_task_fail_clause_b.wf",
+]
+codes = ["W0312", "W0405"]
+reason = "class R2-1 (follow-up F19.4): the old pipeline reports W0312 (the callee changes the place that another argument, the closure, points into); the `ir` pipeline reports W0405 at the call: the task that the closure starts runs while the clause of the local handler accesses the place. Both pipelines reject each program, and each one faults"
+stage = "F19.4"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "tests/gate/probes/fixes/e1/r1_reader_task_clause_writes_b.wf",
+    "tests/gate/probes/fixes/e1/r1_reader_task_fail_clause_b.wf",
+]
+reason = "class F19-SIG-PINS (follow-up F19.4): the part `pins` of `main` differs for the reader task that the closure starts; the part of the IR comes from the facts of the body (`summarize::task_pins`), and a task that a closure body starts is `opaque` (its captures are not named), as the other entries of the class"
+stage = "F19.4"

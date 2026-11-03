@@ -191,6 +191,12 @@ pub struct Run {
     /// passes no run node (hole H5 of the review of the ABC preview). A
     /// linear closure that goes there can go away with no run.
     pub maybe: bool,
+    /// After a run of it, the body can perform an operation or abort (a
+    /// node after a run node has `escapes_at` of an effect other than
+    /// `Async`, `performs_at` or `may_abort`; follow-up F19.4, R2-1): a
+    /// clause of a handler of a caller can run while a task that the value
+    /// starts runs.
+    pub then: bool,
 }
 
 /// How a body runs a function value of its interface as a task.

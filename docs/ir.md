@@ -2086,6 +2086,7 @@ Terminators:
 | `Call` | Main | the operands; the summary parts (points_into, mutates_at, reads_at, performs_at, uses, moved_at, moved_part, rest_linear, releases_at, may_abort, multi_at, spared_at, resumes_at, escapes_at, spawned_at, task_reads, task_writes, captures, mut_through, kept, spawns_in, opaque, call_mut, call_arg, lends_mut); handler, sim_root, sim_run_at (`sim.run`); arg_at, param_in, uniq_param, arg_aliased, fn_arg_effect, param_effect |
 | `Call` | Ret | cfg_edge, points_into, rebound_at, moved_at (held arguments), empty_at; a second apply of a `Many` callback; joined_at (a task whose handle the callee joins only on the normal path, follow-up F19.3) |
 | `Call` | FrameEnd | cfg_edge, scope_end (the callee frame `F(n)`); lends_mut (the writes of a task that ends at `Ret`, follow-up F19.3) |
+| any | (a node with an edge into `Main` of a call) | spawned_at of a task that the call starts while code of a local handler can run at `Main` (follow-up F19.4) |
 | `Call`, `Join`, `Fork`, `ScopeWait` | AbortValue | cfg_edge, points_into, rebound_at, empty_at (the `dest` of the `Handle`) |
 | `Call`, `Perform`, `Handle` | Copy | cfg_edge, rebound_at, empty_at |
 | `Perform` | Main | as `Call` `Main` without the `sim.run` facts |
@@ -2287,6 +2288,24 @@ the part `tasks` at `Main` too only if a linear value with no `on abort` moves i
 call there (W0602, corpus 163) or another run or task node of the call can run while
 the task runs (E-2): else the task conflicted with its own run node, whose summary has
 the writes of the task.
+
+As built (follow-up F19.4, the second review of group E): the code of a local handler
+that a call runs (a clause of an operation that the callee performs, the `Fail` clause of
+an abort of the callee, the code after the call again for a `multi` resume:
+`CallNodes::local_code`) is at the `Main` node of the call, and a task is active only
+after the node that starts it. So a task that a late run starts, and that can still run
+when such code runs, starts on each edge into `Main` too (`templates::preds`), and at
+`Main` (R2-1). That is the case when the callee can perform or abort after the run (the
+new field `Run::then` of the part `runs`: a node after a run node has `may_abort`,
+`performs_at`, or `escapes_at` of an effect other than `Async`; `factgen::then_runs`), or
+when the value itself can (its summary performs or aborts). A callee that performs only
+before the run (`note(); g()`) keeps the start at `Ret`. A task of a value that a callee
+runs as a task (its `Task` start node) starts on the edges into `Main` too when the call
+runs code of a local handler. A clause that ends the callee with no `resume` starts from
+the state after the call with the task sites of the handles that the call takes lost,
+unless the callee joins them on each path of an abort (`clause::call_clauses`,
+`transfer::given_tasks`; R2-2): a later `join` of a handle of the same site does not end
+the task of the turn that failed.
 
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
@@ -3216,7 +3235,7 @@ the body that leaves it), `Caller` (a place of a caller), `Group(adt)`.
 | `performs` | the operations and their capability interface, with their arguments | `performs`, `op_args`, `cap_runs`, `callee_ops` |
 | `aborts` | the abort destinations (by capability interface), `assert`, failures (`raises`) | `abortive`, `abortive_local`, `raises` |
 | `multi` | the capability interfaces through which the body can resume more than once | `multi`, `reach_repeats` |
-| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
+| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), and if the body can perform or abort after the run (`then`, follow-up F19.4) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
 | `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9), and those of them that it joins on each path of an abort too (`abort_joins`, a must part, follow-up F19.3: else `joined_at` at `Ret` of the run node) | `spawns`, `tasks`, `task_effects`, `pins` |
 | `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks (`ret.tasks`, follow-up F19.3: the spawn sites of the part `tasks` whose handle `_0` holds at each `Return`, and no other value), results of code of a caller | `ret`, `RetFn`, `ret_refs` |
 | `stores` | the values that the body writes behind a reference parameter, into an environment field, or into an `rc` object | `stores`, `fn_stores`, `group_stores`, `stored_behind` |
@@ -4075,6 +4094,12 @@ of a task that it starts (part `ret.tasks`, 6.7) gives the handle its task site:
 starts, where a callee runs the closure at `Ret`, does not conflict with the run node
 itself (E-2, 6.4).
 
+As built (follow-up F19.4): a task that a callee or a closure starts at a call
+conflicts with the code of a clause of a local handler that the call runs after the
+start (the callee performs, fails, or calls code that does, after the run of the
+closure; R2-1), and a handle that a callee joins only on the normal path is lost after a
+clause that ends the callee (R2-2): both gave no W0405 before.
+
 `diagnose.rs` names a variable by its local and a temporary by its kind and origin
 ("the temporary of `mk_v()` at line 3"). The corpus markers keep their lines: the spans
 come from `Origin`. Where a marker moves (a hidden variable of today becomes a temporary
@@ -4741,6 +4766,18 @@ end)". The oracle follows the frames of scope bodies for this check only (`LIGHT
 the other checks do not run there, as before. The task check failed on each E-1 hole of
 the review (D0, D1, D2, D4, D9, L04 to L07, L09, L16, L17) and on the probes
 `fixes/e1/*_b.wf` before the fix, and on no clean twin.
+
+**As built (F19.4): the task start check (R2-5 of the second review of group E).** A
+task of the run also belongs to the run of each frame below the frame of the spawn
+whose nodes start it (a call that runs a closure that spawns, or a callee that runs a
+value as a task). When a clause of a local handler runs, the frames of the component of
+the handled body wait at their nodes; for each task of such a run that can still run (no
+join ordered its end before), the innermost frame that has it must have the task active
+(`active` of the spec over its facts) at the node that runs the clause, or at its
+current nodes for a frame that does not run it: "fact oracle (task start)". The frames
+of scope bodies count for this check. It failed on R04, R05, R07 and R08 of the review
+and on the probes `fixes/e1/r1_*_b.wf` with the facts of follow-up F19.3, and on no
+clean twin.
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

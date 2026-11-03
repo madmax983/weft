@@ -117,6 +117,10 @@ pub struct Em<'a> {
     /// The nodes where the body runs a function value of the interface (a
     /// parameter, or a capture with `true`) as code that is not a task.
     pub run_at: Vec<(u32, bool, NodeId)>,
+    /// The values of the interface (index, capture) that a callee runs at a
+    /// node of the body and after whose run the callee can perform or abort
+    /// (`Run::then` of the callee, follow-up F19.4).
+    pub then_runs: Vec<(u32, bool)>,
     /// The task whose run `emit_apps` emits now, and if it is a `fork`
     /// branch: a run of a function value of the interface there is a run
     /// as a task (`task_runs`).
@@ -2374,6 +2378,11 @@ pub struct CallNodes {
     /// gives a value: the value of the `handle` binds there (plan stage
     /// F14, `super::handlers`).
     pub values: Vec<(u32, NodeId)>,
+    /// Code of the component other than the callee can run at the node
+    /// while the callee runs (follow-up F19.4, R2-1): a clause of a local
+    /// handler, the destination of an abort at a local handler, or the code
+    /// after the node again (a `multi` resume).
+    pub local_code: bool,
 }
 
 /// True if type `t` names type parameter `j`.
@@ -2839,6 +2848,26 @@ fn places_since(
     (writes, reads)
 }
 
+/// True if a run of summary `s` can perform an operation other than
+/// `Async`, or abort: a clause of a handler of a caller can run.
+fn acts(s: &crate::analysis::Summary) -> bool {
+    use crate::analysis::summary::Abort;
+    s.performs.iter().any(|p| p.effect != ASYNC)
+        || s.aborts
+            .iter()
+            .any(|a| !matches!(a, Abort::Perform(p) if p.effect == ASYNC))
+}
+
+/// The nodes with an edge into node `n` (`cfg_edge`).
+fn preds(em: &Em<'_>, n: NodeId) -> Vec<NodeId> {
+    em.facts
+        .cfg_edge
+        .iter()
+        .filter(|&&(_, b)| b == n)
+        .map(|&(a, _)| a)
+        .collect()
+}
+
 /// The function values that a callee runs as tasks, at the task nodes
 /// of a call (`docs/ir.md` 6.7, plan stage F19; OR7, V126, V127, V132).
 ///
@@ -2900,6 +2929,17 @@ fn call_tasks(
         let span_of = spans.get(run.param as usize).copied().unwrap_or(at);
         let t = em.facts.add_task(kind, span_of);
         em.facts.spawned_at.push((t, s));
+        // Code of a local handler at the node runs at `Main` while the task
+        // can run (a clause of an operation of a value that the callee runs
+        // with the task): the task starts on each edge into `Main` too
+        // (follow-up F19.4).
+        if nodes.local_code {
+            for p in preds(em, nodes.main) {
+                if !em.facts.spawned_at.contains(&(t, p)) {
+                    em.facts.spawned_at.push((t, p));
+                }
+            }
+        }
         let mine: Vec<transfer::Applied> = apps
             .iter()
             .filter(|a| a.task_run == Some(idx))
@@ -2918,6 +2958,7 @@ fn call_tasks(
             aborts: nodes.aborts.clone(),
             may_abort: false,
             values: Vec::new(),
+            local_code: true,
         };
         em.in_task = Some((t, run.how.thread));
         let frames = emit_apps(em, &at_s, st, block, &[], &mine, at, &[], &[]);
@@ -3260,7 +3301,10 @@ fn emit_apps(
     let cyclic = em.cycles.has(em.body, block);
     let rebinds = apps.iter().any(|a| !a.rebinds.is_empty());
     // One run at the node and no task node: no other code of the call runs
-    // while a task of the run runs (E-2, follow-up F19.3).
+    // while a task of the run runs (E-2, follow-up F19.3), but the code of a
+    // local handler that the callee or the value runs after the run (R2-1,
+    // follow-up F19.4). An abort past the function unwinds the scope of the
+    // task first.
     let alone = apps.len() == 1 && em.task_nodes.is_empty();
     for app in apps {
         let n_runs = if app.again {
@@ -3301,20 +3345,40 @@ fn emit_apps(
             // node `n`, whose summary has the writes of the task (E-2,
             // follow-up F19.3). The closure body checks its own code after
             // the spawn.
+            // Code of a local handler at the node can run after the run and
+            // while its task runs: the callee performs or aborts after the
+            // run (`Run::then`), or the value itself does (R2-1, follow-up
+            // F19.4).
+            let after = nodes.local_code && (app.then || acts(&app.summary));
             let early_start = n != main
                 && (!alone
+                    || after
                     || em.facts.moved_at.iter().any(|&(v, m)| {
                         m == main && {
                             let i = em.facts.var(v);
                             i.linear && !i.has_on_abort
                         }
                     }));
+            // Code of a local handler at the node (a clause, the destination
+            // of an abort) runs at `Main`, and a late run can start the task
+            // before it: the task starts on each edge into `Main` too, so it
+            // runs at `Main` and on the abort edges (R2-1, follow-up F19.4).
+            let before: Vec<NodeId> = if n != main && after {
+                preds(em, main)
+            } else {
+                Vec::new()
+            };
             for &site in &app.summary.tasks {
                 em.started.push(site);
                 if let Some(&t) = em.hx.task_ids.get(&weft_ir::SpawnId(site)) {
                     em.facts.spawned_at.push((t, n));
                     if early_start && !em.facts.spawned_at.contains(&(t, main)) {
                         em.facts.spawned_at.push((t, main));
+                    }
+                    for &p in &before {
+                        if !em.facts.spawned_at.contains(&(t, p)) {
+                            em.facts.spawned_at.push((t, p));
+                        }
                     }
                 }
             }
@@ -3452,6 +3516,9 @@ fn emit_apps(
                 };
                 em.run_at
                     .extend(at.into_iter().flatten().map(|n| (r.param, r.capture, n)));
+                if app.then {
+                    em.then_runs.push((r.param, r.capture));
+                }
             }
             em.runs.push((r, (app.again && !app.order) || cyclic));
             if app.code {
@@ -4865,6 +4932,7 @@ fn task_start(
         aborts: Vec::new(),
         may_abort: false,
         values: Vec::new(),
+        local_code: true,
     };
     let thread = em.p.spawns.get(site.index()).is_some_and(|d| d.fork);
     em.in_task = em.hx.task_ids.get(&site).map(|&t| (t, thread));

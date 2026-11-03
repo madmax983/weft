@@ -587,11 +587,33 @@ from the fix of the findings of the independent review of group E (scratchpad
   each one faults (a data race). `e07_closure_two_handles_c.wf` is a control: the closure joins
   both handles before it fails, and both pipelines reject it (an abort of the first
   `join` leaves the second task running). The clean twins of the other `e*_b.wf`
-  files are lost-clean rows of the old pipeline (W0405): they are in
-  `crates/weft-check/tests/data/tasks/e1_twins/` until a reviewer signs them.
+  files are lost-clean rows of the old pipeline (W0405): they were in
+  `crates/weft-check/tests/data/tasks/e1_twins/` until the second review signed them
+  (follow-up F19.4).
 - `fixes/e1/p2_*.wf`: class E-2 (claim E-2). A callee or `with_timeout` runs a closure
   that starts a writer in a scope of the caller (`_c`, clean), and the bad twins (the
   callee runs the closure two times, or the caller writes the place after the call).
 - `fixes/e1/p3_*.wf`: class E-3 (claim E-3). A closure starts a task and gives back
   its handle; the `join` of the result ends the task (`_c`), and the bad twins (the
   write before the `join`, two runs and one `join`).
+
+## Follow-up F19.4: the second review of group E
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They come from the second review of group E (scratchpad
+`ereview/review_r2.md`, `variants_r2/`) and the self-attack of the fix (scratchpad
+`e1fix/r2`).
+
+- `fixes/e1/r1_*_b.wf`: class R2-1 (claim R2-1). A callee runs a closure that starts a
+  task (a writer or a reader) in a scope of the caller, then performs, fails, or the
+  outer callee of a chain performs; or a callee runs a value as a task and another value
+  that performs while it runs. A clause of a local handler of the caller accesses the
+  place of the task. `r1_late_run_then_perform_b`, `_read_b`, `r1_late_run_chain_b` and
+  `r1_late_run_fail_clause_b` are R04, R05, R07 and R08 of the review.
+- `fixes/e1/r1_*_c.wf`: the clean twins (R05, R07, R08 of the review): the callee
+  performs or fails before it runs the closure, not after.
+- `fixes/e1/r2_loop_fail_then_join_reader_b.wf` and `_c.wf`: class R2-2 (claim R2-2),
+  R13 of the review and its clean twin.
+- `fixes/e1/e*_c.wf` (but `e07`): the clean twins of E-1 that the second review signed
+  (they were in `crates/weft-check/tests/data/tasks/e1_twins/`). `e13_loop_direct_join_c`
+  stays there.

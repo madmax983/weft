@@ -242,6 +242,7 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     args: args.clone(),
                     multi: fn_multi(tys, t),
                     maybe: false,
+                    then: true,
                 },
             );
             inf.ret_fns.insert(RetFn::Param(u(i)));
@@ -288,6 +289,8 @@ pub fn intrinsic(decl: &FnDecl, tys: &TyTable, i: weft_ir::Intrinsic) -> Summary
                 args: Vec::new(),
                 multi: false,
                 maybe: false,
+                // `with_timeout` can fail after the block started (5.31).
+                then: i == weft_ir::Intrinsic::WithTimeout,
             });
         }
     }
@@ -555,11 +558,13 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         x.task,
         x.multi,
         x.maybe,
+        x.then,
         x.args.len(),
         x.how.clone(),
     );
     x.many |= r.many;
     x.task |= r.task;
+    x.then |= r.then;
     x.how.thread |= r.how.thread;
     x.how.foreign |= r.how.foreign;
     x.how.twice |= r.how.twice;
@@ -590,6 +595,7 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
             x.task,
             x.multi,
             x.maybe,
+            x.then,
             x.args.len(),
             x.how.clone(),
         )

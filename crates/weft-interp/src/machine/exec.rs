@@ -1666,12 +1666,20 @@ impl super::Machine<'_, '_> {
         }
         let frame = self.task_frame(f)?;
         let parent = self.cur;
-        let uid = self.fr().map_or(0, |cf| cf.uid);
+        let uids: Vec<u64> = self.tasks[parent]
+            .frames
+            .iter()
+            .rev()
+            .filter_map(|f| match f {
+                Frame::Code(cf) if cf.uid != 0 => Some(cf.uid),
+                _ => None,
+            })
+            .collect();
         // The task runs in the simulation of its spawn site.
         let sim = self.sim_of(parent);
         let t = self.add_task(frame, Some(parent), stealable, Some(sid), sim);
         if let Some(fo) = self.facts.as_mut() {
-            fo.task_spawned(parent, t, uid);
+            fo.task_spawned(parent, t, &uids);
         }
         if let Some(s) = self.scopes.get_mut(sid) {
             s.children.push(t);

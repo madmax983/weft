@@ -208,23 +208,49 @@ fn a_join_of_a_handle_that_a_closure_gives_back_ends_the_task() {
     check("e3_returned_handle.wf");
 }
 
-/// The clean twins of the probes of E-1 (`tests/data/tasks/e1_twins`): the
-/// callee or the closure joins before it can abort, or a handler of the
-/// callee stops the abort. The `ir` pipeline accepts each one (the old
-/// pipeline rejects each one: W0405).
+/// The clean twins of the probes of E-1 (`tests/gate/probes/fixes/e1/e*_c.wf`
+/// but `e07`, and `tests/data/tasks/e1_twins`): the callee or the closure
+/// joins before it can abort, or a handler of the callee stops the abort.
+/// The `ir` pipeline accepts each one (the old pipeline rejects each one:
+/// W0405).
 #[test]
 fn a_callee_that_joins_before_it_can_abort_ends_the_task_on_each_path() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/tasks/e1_twins");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dirs = [
+        root.join("tests/data/tasks/e1_twins"),
+        root.join("../../tests/gate/probes/fixes/e1"),
+    ];
     let mut n = 0;
-    for e in fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
-        let path = e.map(|e| e.path()).unwrap_or_default();
-        if path.extension().is_none_or(|x| x != "wf") {
-            continue;
+    for dir in dirs {
+        for e in fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = e.map(|e| e.path()).unwrap_or_default();
+            let file = path
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if !file.starts_with('e') || !file.ends_with("_c.wf") || file.starts_with("e07") {
+                continue;
+            }
+            let name = path.display().to_string();
+            let src = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(abcde_codes(&name, &src), Vec::new(), "{name}");
+            n += 1;
         }
-        let name = path.display().to_string();
-        let src = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(abcde_codes(&name, &src), Vec::new(), "{name}");
-        n += 1;
     }
-    assert!(n >= 10, "{n}");
+    assert!(n >= 12, "{n}");
+}
+
+/// R2-1 (follow-up F19.4): a clause of a local handler, or the destination
+/// of an abort, runs at a call while a task that the call starts can run:
+/// the task starts before the node of the call.
+#[test]
+fn a_task_of_a_call_conflicts_with_a_clause_that_the_call_runs() {
+    check("r2_late_run_clause.wf");
+}
+
+/// R2-2 (follow-up F19.4): a clause with no `resume` ends the callee, so a
+/// handle that the callee joins only on the normal path is lost there.
+#[test]
+fn a_clause_that_ends_the_callee_loses_its_task_handle() {
+    check("r2_clause_loses_handle.wf");
 }

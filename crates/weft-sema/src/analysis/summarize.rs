@@ -181,6 +181,9 @@ pub fn summarize(
         })
     };
     let mut runs = runs_of(fv.runs, false, &run_place, ir.body(entry));
+    for r in &mut runs {
+        r.then = fv.then_runs.contains(&(r.param, r.capture));
+    }
     // How the body runs a value of its interface as a task (plan stage F19):
     // the places of a parameter only (a caller gives the others).
     let iface =
@@ -486,6 +489,9 @@ pub struct FnParts<'a> {
     /// The task handles of the interface that the body joins on each path
     /// of an abort (part `abort_joins`, follow-up F19.3).
     pub abort_joins: &'a [u32],
+    /// The values of the interface (index, capture) after whose run the
+    /// body can perform or abort (`Run::then`, follow-up F19.4).
+    pub then_runs: &'a [(u32, bool)],
     /// How the body runs values of its interface as tasks (plan stage F19).
     pub task_hows: &'a [crate::analysis::tasks::RawHow],
     /// The tasks that are `opaque` only because they run code of a caller:
@@ -535,6 +541,7 @@ fn runs_of(
             args,
             multi: r.multi,
             maybe: body.is_none_or(|b| returns_without(b, &blocks)),
+            then: false,
         };
         // A second run node of the value runs it again.
         if let Some(x) = out
@@ -1319,6 +1326,9 @@ pub fn closure(
         &|q| closure_place(ir, facts, roots, body, q, true).map(|x| x.0),
         Some(b),
     );
+    for r in &mut out.runs {
+        r.then = fv.then_runs.contains(&(r.param, r.capture));
+    }
     out.uses = decl
         .captures
         .iter()

@@ -1,0 +1,72 @@
+// R2-1 (follow-up F19.4): code of a local handler (a clause, the
+// destination of an abort) runs at the node of a call while a task that the
+// call starts can run. A callee runs a closure that starts a task, then
+// performs, fails, or runs a value while the task runs: the task starts
+// before the call node, so it conflicts with the code of the clause. A
+// callee that performs only before the run does not.
+effect Note { fn note() }
+fn run_note(g: fn()) / Note { g(); note() }
+fn run_fail(g: fn()) / fail { g(); fail("x") }
+fn note_run(g: fn()) / Note { note(); g() }
+fn once(g: fn()) { g() }
+fn both(f: fn(), g: fn() / Note) / async, Note {
+    scope { s =>
+        let t = s.spawn(f)
+        g()
+        t.join()
+    }
+}
+
+fn clause_writes() / async {
+    let v = Vec.new()
+    scope { s =>
+        handle Note { fn note() { v.push(3); resume(()) } } in {
+            run_note(|| { s.spawn(|| print(v.len())); () })   //~ W0405
+        }
+    }
+}
+
+fn fail_clause_writes() / async {
+    let v = Vec.new()
+    scope { s =>
+        handle Fail { fn fail(m) { v.push(3) } } in {
+            run_fail(|| { s.spawn(|| print(v.len())); () })   //~ W0405
+        }
+    }
+}
+
+fn task_and_clause() / async {
+    let v = Vec.new()
+    handle Note { fn note() { v.push(3); resume(()) } } in {   //~ W0405
+        both(|| print(v.len()), || note())
+    }
+}
+
+// The callee performs before it runs the closure, and not after: the
+// clause runs before the task starts (`Run::then` is false).
+fn clause_before_run() / async {
+    let v = Vec.new()
+    scope { s =>
+        handle Note { fn note() { v.push(3); resume(()) } } in {
+            note_run(|| { s.spawn(|| print(v.len())); () })
+        }
+    }
+}
+
+// No code of a local handler at the call: the task does not conflict with
+// the node that runs the closure (E-2).
+fn no_handler() / async {
+    let v = Vec.new()
+    scope { s =>
+        once(|| { s.spawn(|| v.push(1)); () })
+    }
+    print(v.len())
+}
+
+fn main() / async {
+    clause_writes()
+    fail_clause_writes()
+    task_and_clause()
+    clause_before_run()
+    no_handler()
+}

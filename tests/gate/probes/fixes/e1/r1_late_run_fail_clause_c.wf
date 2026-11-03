@@ -1,0 +1,11 @@
+// R2-1 (clean twin): the callee can fail before it runs the closure, not after
+struct Stats { count: u64 }
+fn run_fail(g: fn()) / fail { fail("x"); g() }
+fn main() / async {
+    let st = Stats { count: 0 }
+    scope { s =>
+        handle Fail { fn fail(m) { print(st.count) } } in {
+            run_fail(|| { s.spawn(|| st.count += 1); () })
+        }
+    }
+}

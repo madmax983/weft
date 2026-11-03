@@ -1,0 +1,11 @@
+// R2-1: a callee runs a closure that starts a writer, then fails; the Fail clause of the caller reads the place
+struct Stats { count: u64 }
+fn run_fail(g: fn()) / fail { g(); fail("x") }
+fn main() / async {
+    let st = Stats { count: 0 }
+    scope { s =>
+        handle Fail { fn fail(m) { print(st.count) } } in {
+            run_fail(|| { s.spawn(|| st.count += 1); () })
+        }
+    }
+}

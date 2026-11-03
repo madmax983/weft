@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4"]
 
 
 # ----------------------------------------------------------------------
@@ -6267,3 +6267,92 @@ repro = [
 ]
 code = "W0405"
 note = "the bad twins of E-3: the write comes before the join, or two runs of the closure start two writers and only the second handle is joined"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.4: the second review of group E (scratchpad
+# ereview/review_r2.md). R2-1: a task that a call starts runs while a
+# clause of a local handler runs at the call (the callee performs or fails
+# after it runs the closure, or runs a value while its task runs). R2-2: a
+# clause that ends the callee loses the handle that the callee joins only
+# on the normal path. The clean twins of E-1 that the review signed.
+
+[[claim]]
+finding = "R2-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/r1_callee_task_and_clause_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_chain_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_fail_clause_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_then_perform_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_then_perform_read_b.wf",
+    "tests/gate/probes/fixes/e1/r1_reader_task_clause_writes_b.wf",
+    "tests/gate/probes/fixes/e1/r1_reader_task_fail_clause_b.wf",
+]
+code = "W0405"
+note = "a callee runs a closure that starts a task (or runs a value as a task), then performs, fails or calls code that does, while the task runs; the clause of the caller accesses the place of the task"
+
+[[claim]]
+finding = "R2-1"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/r1_late_run_chain_c.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_fail_clause_c.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_then_perform_read_c.wf",
+]
+note = "the clean twins of R2-1: the callee performs or fails before it runs the closure, not after (`Run::then` is false)"
+
+[[claim]]
+finding = "R2-2"
+kind = "unsound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.4"
+repro = ["tests/gate/probes/fixes/e1/r2_loop_fail_then_join_reader_b.wf"]
+code = "W0405"
+note = "turn 0 gives a handle to a callee that fails before its join; a local handler stops the failure through its clause; turn 1 joins its own handle of the same site and writes what the task of turn 0 reads"
+
+[[claim]]
+finding = "R2-2"
+kind = "sound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.4"
+repro = ["tests/gate/probes/fixes/e1/r2_loop_fail_then_join_reader_c.wf"]
+note = "the clean twin of R2-2: the callee joins, then fails"
+
+[[claim]]
+finding = "E-1"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/e01_callee_fail_first_c.wf",
+    "tests/gate/probes/fixes/e1/e02_closure_fail_first_c.wf",
+    "tests/gate/probes/fixes/e1/e03_callee_clause_no_resume_c.wf",
+    "tests/gate/probes/fixes/e1/e04_callee_inner_scope_fails_c.wf",
+    "tests/gate/probes/fixes/e1/e05_callee_chain_c.wf",
+    "tests/gate/probes/fixes/e1/e06_stored_closure_c.wf",
+    "tests/gate/probes/fixes/e1/e10_validate_then_join_c.wf",
+    "tests/gate/probes/fixes/e1/e11_closure_calls_callee_c.wf",
+    "tests/gate/probes/fixes/e1/e12_callee_local_handler_c.wf",
+]
+note = "the clean twins of E-1 (signed by the second review of group E): the callee or the closure joins before it can abort, or a handler of the callee stops the abort"
+
+[[claim]]
+finding = "E-1"
+kind = "sound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/e08_loop_respawn_c.wf",
+    "tests/gate/probes/fixes/e1/e09_callee_loop_fail_c.wf",
+]
+note = "the clean twins of E-1 with a loop (signed by the second review of group E)"

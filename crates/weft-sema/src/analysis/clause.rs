@@ -1949,8 +1949,18 @@ pub fn call_clauses(
     if hs.is_empty() {
         return Ok(());
     }
-    let start = st.clone();
+    let mut start = st.clone();
     let gv = given(cx, body, block, before.unwrap_or(&start), t)?;
+    // A clause runs while the callee waits, and a clause with no `resume`
+    // ends the callee: a task handle that the call takes is lost there,
+    // unless the callee joins it on each path of an abort (part
+    // `abort_joins`; R2-2, follow-up F19.4).
+    if let Some(b) = before {
+        let ts = transfer::given_tasks(cx, body, b, t, true);
+        if !ts.is_empty() {
+            start.lose_tasks(ts);
+        }
+    }
     let mut abort: Option<State> = None;
     for h in hs {
         handler(p, h)?;

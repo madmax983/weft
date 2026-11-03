@@ -1057,8 +1057,27 @@ pub const fn unwind_kont(
 /// abort before the `join` leaves the task running, and the handle is lost
 /// (follow-up F19.3, E-1).
 pub fn lose_given(cx: &mut Cx<'_>, body: BodyId, st: &mut State, t: &TermKind, abort: bool) {
+    let ts = given_tasks(cx, body, st, t, abort);
+    if !ts.is_empty() {
+        st.lose_tasks(ts);
+    }
+}
+
+/// The task sites that [`lose_given`] loses.
+///
+/// They are the sites of the handles that terminator `t` takes in state
+/// `st` (before it): on the normal edges (`abort` false) the handles that
+/// the callee does not join on each path to its `Return`, on an abort
+/// (`abort`) the handles that it does not join on each path of an abort.
+pub fn given_tasks(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    t: &TermKind,
+    abort: bool,
+) -> std::collections::BTreeSet<weft_ir::SpawnId> {
     if cx.p.spawns.is_empty() {
-        return;
+        return std::collections::BTreeSet::new();
     }
     let joined = super::tasks::joined_ops(cx, body, st, t);
     let mut ops: Vec<&Operand> = match t {
@@ -1078,10 +1097,10 @@ pub fn lose_given(cx: &mut Cx<'_>, body: BodyId, st: &mut State, t: &TermKind, a
             .iter()
             .any(|(j, early)| std::ptr::eq(*j, *o) && (*early || !abort))
     });
-    if !ops.is_empty() {
-        let ts = super::tasks::operand_tasks(cx, body, st, ops).unwrap_or_default();
-        st.lose_tasks(ts);
+    if ops.is_empty() {
+        return std::collections::BTreeSet::new();
     }
+    super::tasks::operand_tasks(cx, body, st, ops).unwrap_or_default()
 }
 
 /// The transfer of terminator `t` of block `block`, on its normal edges.
@@ -1692,6 +1711,10 @@ pub struct Applied {
     /// place before it runs the value, which then reads a reference into
     /// it).
     pub late: bool,
+    /// With `late`: after the run, the callee can perform or abort
+    /// (`Run::then`, follow-up F19.4): code of a handler of the caller can
+    /// run at the node while a task that the value starts runs.
+    pub then: bool,
     /// A run of a function value of the interface: code of a caller here,
     /// and an entry of the part `runs` of the summary of the body.
     pub run: Option<RunOf>,
@@ -2585,6 +2608,7 @@ fn apply_runs(
             for a in apps.out.iter_mut().skip(start) {
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
+                a.then |= run.then;
                 // The callee runs the value as a task: the run node applies
                 // it at its task nodes (plan stage F19).
                 if run.task {
@@ -2903,6 +2927,7 @@ fn apply_value(
                 again: false,
                 order: false,
                 late: false,
+                then: false,
                 run,
                 code: true,
                 lends: env,
@@ -3023,6 +3048,7 @@ fn apply_value(
                 again: false,
                 order: false,
                 late: false,
+                then: false,
                 run: None,
                 code: false,
                 lends: Vec::new(),
@@ -3221,6 +3247,7 @@ fn apply_value(
                 again: false,
                 order: false,
                 late: false,
+                then: false,
                 run: None,
                 code: false,
                 lends: Vec::new(),

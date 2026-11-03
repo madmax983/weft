@@ -823,11 +823,11 @@ fn a_task_that_joined_at_ends_must_be_joined_when_the_run_leaves_the_node() {
     assert!(m.contains("`wait`"), "{m}");
 }
 
-/// The probes of E-1: each bad program of `tests/gate/probes/fixes/e1`
-/// with the facts before the fix (the `joined_at` of a call at `Main`)
-/// fails the task check; each clean twin
-/// (`crates/weft-check/tests/data/tasks/e1_twins`) and each probe with the
-/// facts of the generator passes it.
+/// The probes of E-1: each bad program `e*_b.wf` of
+/// `tests/gate/probes/fixes/e1` with the facts before the fix (the
+/// `joined_at` of a call at `Main`) fails the task check; each clean twin
+/// (there and in `crates/weft-check/tests/data/tasks/e1_twins`) and each
+/// probe with the facts of the generator passes it.
 #[test]
 fn the_probes_of_e1_pass_the_task_check_and_fail_it_with_the_old_facts() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -843,7 +843,11 @@ fn the_probes_of_e1_pass_the_task_check_and_fail_it_with_the_old_facts() {
         let c = check(&src);
         let r = run_main(&c, &opts());
         assert!(failure(&r).is_none(), "{name}: {:?}", failure(&r));
-        if name.starts_with('e') && name.ends_with("_b.wf") {
+        // `e08`, `e13`: the handle of turn 0 is lost at the head of the
+        // loop (the clause that ends the callee loses it, R2-2), so no call
+        // ends the task, and the edit moves nothing.
+        let looped = name.starts_with("e08") || name.starts_with("e13");
+        if name.starts_with('e') && name.ends_with("_b.wf") && !looped {
             let m = match run_main_with_facts(&c, &opts(), joins_at_main) {
                 Ok(_) => String::new(),
                 Err(e) => e.message,
@@ -852,5 +856,66 @@ fn the_probes_of_e1_pass_the_task_check_and_fail_it_with_the_old_facts() {
             bad += 1;
         }
     }
-    assert!(bad >= 12, "{bad}");
+    assert!(bad >= 10, "{bad}");
+}
+
+/// Removes the starts of each task of a call before its `Ret` or task nodes
+/// (a `spawned_at` at the `Main` node of a call, or at a node with an edge
+/// into it): the facts of the hole R2-1 before the fix (the task of a late
+/// run starts at `Ret` only, or the task of a callee at its task node only).
+fn late_starts(f: &mut FnFacts) {
+    let kind = |n: weft_facts::NodeId| f.nodes.get(n.index()).map_or("", |x| x.kind.as_str());
+    let mains: Vec<weft_facts::NodeId> = (0..f.nodes.len())
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .filter(|&n| kind(n) == "call")
+        .collect();
+    let late: Vec<weft_facts::TaskId> = f
+        .spawned_at
+        .iter()
+        .filter(|&&(_, n)| kind(n) == "call ret" || kind(n) == "call task")
+        .map(|&(t, _)| t)
+        .collect();
+    let before = |n: weft_facts::NodeId| {
+        mains.contains(&n)
+            || f.cfg_edge
+                .iter()
+                .any(|&(a, b)| a == n && mains.contains(&b))
+    };
+    let kept: Vec<(weft_facts::TaskId, weft_facts::NodeId)> = f
+        .spawned_at
+        .iter()
+        .copied()
+        .filter(|&(t, n)| !(late.contains(&t) && before(n)))
+        .collect();
+    f.spawned_at = kept;
+}
+
+/// The task start check (follow-up F19.4, R2-5): a clause of a local
+/// handler runs while a task that the call started can run, so the task
+/// must be active at the node that runs the clause. The facts of the
+/// generator start the task before the call node: the run of each probe of
+/// R2-1 fails only with the data race of the memory oracle. With the starts
+/// of the task at `Ret` or at its task node only (the facts before the
+/// fix), the fact oracle fails when the clause runs.
+#[test]
+fn a_task_that_runs_with_a_clause_must_be_active_at_its_node() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/e1");
+    let mut n = 0;
+    for p in programs(&dir) {
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        if !name.starts_with("r1_") || !name.ends_with("_b.wf") {
+            continue;
+        }
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{name}: {:?}", failure(&r));
+        let m = match run_main_with_facts(&c, &opts(), late_starts) {
+            Ok(_) => String::new(),
+            Err(e) => e.message,
+        };
+        assert!(m.starts_with("fact oracle (task start)"), "{name}: {m}");
+        n += 1;
+    }
+    assert!(n >= 7, "{n}");
 }

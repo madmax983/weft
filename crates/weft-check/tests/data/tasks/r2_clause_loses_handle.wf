@@ -1,0 +1,50 @@
+// R2-2 (follow-up F19.4): a failure of a callee that a local handler
+// stops goes through the clause. The clause starts from the state after the
+// call, where a handle that the callee joins only on the normal path must be
+// lost: a later `join` of a handle of the same site does not end the task
+// of the turn that failed.
+fn wait_late(t: Task<()>, c: bool) / fail, async { if c { fail("stop") }; t.join() }
+fn wait_early(t: Task<()>, c: bool) / fail, async { t.join(); if c { fail("stop") } }
+
+fn late() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let t = s.spawn(|| print(v.len()))
+            sleep(1.ms)
+            if i == 0 {
+                handle Fail { fn fail(m) { print(m) } } in { wait_late(t, true) }
+            } else {
+                t.join()
+                v.push(3)   //~ W0405
+            }
+            i += 1
+        }
+    }
+}
+
+fn early() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let t = s.spawn(|| print(v.len()))
+            sleep(1.ms)
+            if i == 0 {
+                handle Fail { fn fail(m) { print(m) } } in { wait_early(t, true) }
+            } else {
+                t.join()
+                v.push(3)
+            }
+            i += 1
+        }
+    }
+}
+
+fn main() / async, clock {
+    late()
+    early()
+}

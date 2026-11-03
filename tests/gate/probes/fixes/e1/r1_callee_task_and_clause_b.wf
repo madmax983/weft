@@ -1,0 +1,16 @@
+// R2-1: a callee runs f as a task and g while it runs; g performs; the clause of the caller writes what f reads
+effect Note { fn note() }
+fn both(f: fn(), g: fn() / Note) / async, Note {
+    scope { s =>
+        let t = s.spawn(f)
+        g()
+        t.join()
+    }
+}
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    handle Note { fn note() { v.push(3); resume(()) } } in {
+        both(|| print(v.len()), || note())
+    }
+}
