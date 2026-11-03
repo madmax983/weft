@@ -177,6 +177,8 @@ pub struct Run {
     pub many: bool,
     /// The body runs it as a task.
     pub task: bool,
+    /// How the body runs it as a task (plan stage F19, OR7).
+    pub how: TaskHow,
     /// The interface places that the body gives to the runs (the places of
     /// their arguments): the run node gives each parameter of the value
     /// that runs these places.
@@ -189,6 +191,31 @@ pub struct Run {
     /// passes no run node (hole H5 of the review of the ABC preview). A
     /// linear closure that goes there can go away with no run.
     pub maybe: bool,
+}
+
+/// How a body runs a function value of its interface as a task.
+///
+/// It is in the part `runs` (`docs/ir.md` 6.7, plan stage F19; the
+/// `task_runs` part of the old inference). A run node applies the value as
+/// a task with these facts (OR7, V126, V127, V132).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TaskHow {
+    /// The task is a branch of a `fork`: it runs on another thread
+    /// (`fork_task`: W0401, W0403).
+    pub thread: bool,
+    /// Two tasks of the value can run at the same time (a spawn in a loop,
+    /// two spawns): each run of the task conflicts with the other one.
+    pub twice: bool,
+    /// The function values of the interface (by parameter, or by capture
+    /// for a closure body) that the body runs while the task runs.
+    pub with: BTreeSet<u32>,
+    /// The interface places that the body changes while the task runs.
+    pub writes: Vec<IPlace>,
+    /// The interface places that the body reads while the task runs.
+    pub reads: Vec<IPlace>,
+    /// The body is code of a caller with no body (a foreign function): it
+    /// runs the value in the worst way.
+    pub foreign: bool,
 }
 
 /// A function value that the result can be (part `ret`, stage F12).
@@ -295,6 +322,10 @@ pub struct Summary {
     /// `Return` (a must part; plan stage F18, O3-9): a run node ends their
     /// tasks.
     pub joins: BTreeSet<u32>,
+    /// The effects that a task of the body (or of a callee) performs
+    /// through a handler of a caller (plan stage F19): a call where a
+    /// handler of this task handles such an effect is W0314.
+    pub task_effects: BTreeSet<String>,
     /// The value of `_0`.
     pub ret: Ret,
     /// The values that the body writes behind a reference parameter.

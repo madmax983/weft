@@ -441,8 +441,19 @@ fn check_supported(
                             && !matches!(blk.term.kind, TermKind::ScopeWait { .. })) => {}
                 TermKind::Spawn { site, .. }
                     if handlers::spliceable(p, bid) && handlers::own_spawn(p, bid, *site) => {}
+                // A spawn in a closure body on a scope of its maker (plan
+                // stage F19): a node that runs the closure starts the task
+                // (part `tasks`), and the scope ends it.
+                TermKind::Spawn { site, .. }
+                    if (p.closure_of(bid).is_some()
+                        || matches!(b.kind, BodyKind::Clause(..)))
+                        && handlers::maker_scope(p, *site) => {}
                 TermKind::Scope { .. } if handlers::spliceable(p, bid) => {}
-                TermKind::Fork { .. } => return no(Group::E, "a `fork` (stage F19)"),
+                // A `fork` starts and ends its tasks at its own nodes: also in
+                // a clause (plan stage F19). In a closure body the captures of
+                // the branches are captures of the closure (no `captures`
+                // facts yet).
+                TermKind::Fork { .. } if handlers::spliceable(p, bid) => {}
                 TermKind::Spawn { .. } => {
                     return no(Group::E, "a task of a scope that the body does not own (stage F19)")
                 }
@@ -557,6 +568,14 @@ pub struct Emitted {
     /// The task handle parameters that the entry body joins on each path
     /// (part `joins` of the summary, plan stage F18).
     pub joins: Vec<u32>,
+    /// How the entry body runs each function value of the interface that it
+    /// runs as a task (part `runs`, plan stage F19).
+    pub task_hows: Vec<crate::analysis::tasks::RawHow>,
+    /// The tasks that are `opaque` only because they run code of a caller.
+    pub code_opaque: Vec<weft_facts::TaskId>,
+    /// The effects that a task of the entry body performs through a
+    /// handler of a caller (part `task_effects`, plan stage F19).
+    pub task_effects: std::collections::BTreeSet<String>,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -708,6 +727,12 @@ pub fn emit_parts(
     hx.task_ids = task_ids;
     hx.no_runtime = a.bodies.iter().any(|b| b.facts.no_runtime);
     let joins: Vec<u32>;
+    let task_hows: Vec<crate::analysis::tasks::RawHow>;
+    let task_effects: std::collections::BTreeSet<String>;
+    let mut w0314: Vec<(weft_ir::Span, String)>;
+    let mut task_end_list: Vec<(weft_facts::TaskId, weft_facts::NodeId)>;
+    let mut task_frames: Vec<(weft_facts::TaskId, weft_facts::VarId)>;
+    let code_opaque: Vec<weft_facts::TaskId>;
     let stored = {
         let mut em = templates::Em {
             p,
@@ -731,6 +756,16 @@ pub fn emit_parts(
             code_multi: false,
             run_nodes: Vec::new(),
             own_lends: Vec::new(),
+            task_runs: Vec::new(),
+            run_at: Vec::new(),
+            in_task: None,
+            code_opaque: Vec::new(),
+            task_nodes: Vec::new(),
+            started: Vec::new(),
+            task_effects: std::collections::BTreeSet::new(),
+            w0314: Vec::new(),
+            task_end_list: Vec::new(),
+            task_frames: Vec::new(),
             last: (!closures.is_empty()).then(crate::analysis::State::new),
             aborts: std::collections::BTreeSet::new(),
             union: (!closures.is_empty()).then(crate::analysis::State::new),
@@ -741,6 +776,12 @@ pub fn emit_parts(
         if has_tasks {
             templates::task_ends(&mut em);
         }
+        task_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        code_opaque = std::mem::take(&mut em.code_opaque);
+        task_effects = std::mem::take(&mut em.task_effects);
+        w0314 = std::mem::take(&mut em.w0314);
+        task_end_list = std::mem::take(&mut em.task_end_list);
+        task_frames = std::mem::take(&mut em.task_frames);
         let exits = return_nodes(&table, entry, body);
         joins = crate::analysis::tasks::must_joins(
             &em.facts.cfg_edge,
@@ -783,6 +824,7 @@ pub fn emit_parts(
     // that run an inner clause are in the facts before it. The clauses come
     // before the closures: a closure that a clause makes starts from the
     // states of the clause.
+    let task_ids_all = hx.task_ids.clone();
     let mut clause_entries = Vec::new();
     let mut clause_stored: Vec<(weft_ir::BodyId, templates::Stored)> = Vec::new();
     let mut clause_bodies: Vec<weft_ir::BodyId> = comp
@@ -803,6 +845,7 @@ pub fn emit_parts(
                 cycles: &cycles,
                 seed: crate::analysis::State::new(),
                 escapes: &[],
+                task_ids: &task_ids_all,
             },
             &mut ClosureOut {
                 tys: &mut tys,
@@ -815,6 +858,9 @@ pub fn emit_parts(
                 stored: &mut stored,
                 runs: &mut closure_runs,
                 escapes: &mut closure_escapes,
+                w0314: &mut w0314,
+                task_ends: &mut task_end_list,
+                task_frames: &mut task_frames,
             },
             (&mut hx, &frames, &comp),
             cb,
@@ -841,6 +887,7 @@ pub fn emit_parts(
                     .cloned()
                     .unwrap_or_default(),
                 escapes: &escapes,
+                task_ids: &task_ids_all,
             },
             &mut ClosureOut {
                 tys: &mut tys,
@@ -853,6 +900,9 @@ pub fn emit_parts(
                 stored: &mut stored,
                 runs: &mut closure_runs,
                 escapes: &mut closure_escapes,
+                w0314: &mut w0314,
+                task_ends: &mut task_end_list,
+                task_frames: &mut task_frames,
             },
             cb,
         )
@@ -861,6 +911,11 @@ pub fn emit_parts(
         unions.insert(cb, st);
     }
     hx.runs.append(&mut closure_runs);
+    templates::task_end_lends(facts, &task_end_list, &task_frames);
+    facts.task_reads.sort();
+    facts.task_reads.dedup();
+    facts.task_writes.sort();
+    facts.task_writes.dedup();
     handlers::project(
         &handlers::Tables {
             p,
@@ -895,6 +950,7 @@ pub fn emit_parts(
         }
     }
     diags.extend(checks::cap_escapes(p, &tys, &escapes));
+    diags.extend(checks::w0314(&w0314));
     // Each local with a root owns it, and the cell of a local that a closure
     // captures `ByRef` is owned by `C` of the local.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
@@ -928,6 +984,7 @@ pub fn emit_parts(
         v.uniq = uniq.get(&id).copied().unwrap_or(false);
         v.once |= v.uniq;
     }
+    sim_blocks(p, &comp, &table, facts);
     decls::std_effects(facts);
     facts.normalize();
     let handler_caps = hx.ids.iter().map(|(&h, &(_, c))| (h, c)).collect();
@@ -958,7 +1015,85 @@ pub fn emit_parts(
         closures: closure_sums,
         handler_caps,
         joins,
+        task_hows,
+        code_opaque,
+        task_effects,
     })
+}
+
+/// The block of each `sim.run` of the bodies `comp` runs with the root
+/// handlers of the simulation (`docs/ir.md` 5.30, plan stage F19): no
+/// standard effect leaves a node of the closure body of the block, or of a
+/// body inside it (`escapes_at`). The block is the closure that the
+/// function argument of the call holds.
+fn sim_blocks(
+    p: &weft_ir::Program,
+    comp: &[weft_ir::BodyId],
+    table: &nodes::NodeTable,
+    facts: &mut FnFacts,
+) {
+    let mut blocks: std::collections::BTreeSet<weft_ir::BodyId> = std::collections::BTreeSet::new();
+    for &bid in comp {
+        let Some(b) = p.body(bid) else {
+            continue;
+        };
+        for blk in &b.blocks {
+            let weft_ir::TermKind::Call {
+                callee: weft_ir::Callee::Fn(f, _),
+                args,
+                ..
+            } = &blk.term.kind
+            else {
+                continue;
+            };
+            if p.fns.get(f.index()).and_then(|d| d.intrinsic) != Some(weft_ir::Intrinsic::SimRun) {
+                continue;
+            }
+            let locals: Vec<weft_ir::LocalId> = args
+                .iter()
+                .filter_map(|a| match a {
+                    weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) if q.proj.is_empty() => {
+                        Some(q.local)
+                    }
+                    _ => None,
+                })
+                .collect();
+            for s in b.blocks.iter().flat_map(|x| &x.stmts) {
+                if let weft_ir::StmtKind::Assign(
+                    q,
+                    weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(c), _),
+                ) = &s.kind
+                {
+                    if q.proj.is_empty() && locals.contains(&q.local) {
+                        blocks.extend(p.closures.get(c.index()).map(|d| d.body));
+                    }
+                }
+            }
+        }
+    }
+    if blocks.is_empty() {
+        return;
+    }
+    let inside = |mut b: weft_ir::BodyId| {
+        for _ in 0..=p.bodies.len() {
+            if blocks.contains(&b) {
+                return true;
+            }
+            match p.body(b).and_then(|x| x.parent) {
+                Some(up) => b = up,
+                None => return false,
+            }
+        }
+        false
+    };
+    let nodes: std::collections::BTreeSet<weft_facts::NodeId> = table
+        .iter()
+        .filter(|(k, _)| inside(k.body))
+        .map(|(_, &n)| n)
+        .collect();
+    facts
+        .escapes_at
+        .retain(|(n, e)| !(nodes.contains(n) && crate::effects::is_std(e)));
 }
 
 /// The run nodes that the analysis found whose function values can resume
@@ -1043,6 +1178,9 @@ struct ClosureCx<'a> {
     /// the `handle` (W0313 at the `handle`, plan stage F17): a run of such
     /// a closure is not checked.
     escapes: &'a [(weft_ir::HandlerId, crate::analysis::clause::Escape)],
+    /// The task of each spawn site of the component (plan stage F19): a
+    /// spawn in a closure body on a scope of its maker.
+    task_ids: &'a std::collections::BTreeMap<weft_ir::SpawnId, weft_facts::TaskId>,
 }
 
 /// What the facts of a closure body write into ([`emit_closure`]): the
@@ -1053,6 +1191,12 @@ struct ClosureOut<'a, 'b> {
     /// The capabilities that leave their handler that a closure body found
     /// (W0313, plan stage F17).
     escapes: &'b mut Vec<(weft_ir::HandlerId, crate::analysis::clause::Escape)>,
+    /// W0314 of the bodies (plan stage F19).
+    w0314: &'b mut Vec<(weft_ir::Span, String)>,
+    /// The ends of the tasks of the bodies (`templates::task_end_lends`).
+    task_ends: &'b mut Vec<(weft_facts::TaskId, weft_facts::NodeId)>,
+    /// The frame variables of the tasks of the bodies.
+    task_frames: &'b mut Vec<(weft_facts::TaskId, weft_facts::VarId)>,
     /// The facts of the component.
     facts: &'b mut FnFacts,
     /// The roots of the component.
@@ -1254,7 +1398,7 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
-    let (returns, aborts, runs, made, (run_nodes, own_lends)) = {
+    let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
             sema: &a.program,
@@ -1277,6 +1421,16 @@ fn closure_summary(
             code_multi: false,
             run_nodes: Vec::new(),
             own_lends: Vec::new(),
+            task_runs: Vec::new(),
+            run_at: Vec::new(),
+            in_task: None,
+            code_opaque: Vec::new(),
+            task_nodes: Vec::new(),
+            started: Vec::new(),
+            task_effects: std::collections::BTreeSet::new(),
+            w0314: Vec::new(),
+            task_end_list: Vec::new(),
+            task_frames: Vec::new(),
             last: Some(crate::analysis::State::new()),
             aborts: std::collections::BTreeSet::new(),
             union: Some(crate::analysis::State::new()),
@@ -1297,6 +1451,8 @@ fn closure_summary(
             (
                 std::mem::take(&mut em.run_nodes),
                 std::mem::take(&mut em.own_lends),
+                std::mem::take(&mut em.started),
+                std::mem::take(&mut em.task_effects),
             ),
         )
     };
@@ -1325,9 +1481,18 @@ fn closure_summary(
             rebind_nodes: &rebind_nodes,
             cap_performs: &hx.cap_performs,
             joins: &joins,
+            task_hows: &[],
+            code_opaque: &[],
+            task_effects: &closure_task_effects,
         },
     );
     sum.ret.linear = ret_linear;
+    // The tasks that the body starts in a scope of its maker (part
+    // `tasks`, plan stage F19): a node that runs the closure starts them.
+    let mut started = started;
+    started.sort_unstable();
+    started.dedup();
+    sum.tasks = started;
     Ok(sum)
 }
 
@@ -1452,6 +1617,7 @@ fn emit_closure(
         out.table.row_reentry_edges(p, out.facts, cb, &new);
         hx = fresh_handlers(&mut hx);
     };
+    hx.task_ids = cx.task_ids.clone();
     let mut em = templates::Em {
         p,
         sema: &cx.a.program,
@@ -1474,6 +1640,16 @@ fn emit_closure(
         code_multi: false,
         run_nodes: Vec::new(),
         own_lends: Vec::new(),
+        task_runs: Vec::new(),
+        run_at: Vec::new(),
+        in_task: None,
+        code_opaque: Vec::new(),
+        task_nodes: Vec::new(),
+        started: Vec::new(),
+        task_effects: std::collections::BTreeSet::new(),
+        w0314: Vec::new(),
+        task_end_list: Vec::new(),
+        task_frames: Vec::new(),
         last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),
@@ -1481,6 +1657,14 @@ fn emit_closure(
     };
     templates::closure_entry(&mut em, en, &params.entry, &env)?;
     emit_blocks(&mut em, out.table, &frames, &states, body)?;
+    // The tasks that the closure body starts in a scope of its maker (plan
+    // stage F19): their later values and the end of their kept variables.
+    if !em.hx.task_ids.is_empty() {
+        templates::task_ends(&mut em);
+    }
+    out.w0314.append(&mut em.w0314);
+    out.task_ends.append(&mut em.task_end_list);
+    out.task_frames.append(&mut em.task_frames);
     out.stored.append(&mut em.stored);
     let union = em.union.take().unwrap_or_default();
     // The runs of clauses at the performs of the body through a captured
@@ -1634,6 +1818,16 @@ fn emit_clause(
         code_multi: false,
         run_nodes: Vec::new(),
         own_lends: Vec::new(),
+        task_runs: Vec::new(),
+        run_at: Vec::new(),
+        in_task: None,
+        code_opaque: Vec::new(),
+        task_nodes: Vec::new(),
+        started: Vec::new(),
+        task_effects: std::collections::BTreeSet::new(),
+        w0314: Vec::new(),
+        task_end_list: Vec::new(),
+        task_frames: Vec::new(),
         last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),
@@ -1646,6 +1840,9 @@ fn emit_clause(
     // (`handlers::map_stored`).
     let stored = std::mem::take(&mut em.stored);
     let union = em.union.take().unwrap_or_default();
+    out.w0314.append(&mut em.w0314);
+    out.task_ends.append(&mut em.task_end_list);
+    out.task_frames.append(&mut em.task_frames);
     // The runs of function values of the interface in the clause: the
     // function runs them at each perform of the operation, so more than
     // once (class D-CLAUSE-RUNS of stage F17).
@@ -2276,6 +2473,11 @@ fn emit_block(
     em.at = (block, TERM);
     match &blk.term.kind {
         weft_ir::TermKind::Call { .. } => {
+            // The task nodes of a callee that runs a value as a task (plan
+            // stage F19).
+            em.task_nodes = (1..=frames.task_nodes(bid, block))
+                .filter_map(|i| table.get(at(Phase::Task(i), NORMAL)))
+                .collect();
             let nodes = templates::CallNodes {
                 main: n,
                 ret: table.get(at(Phase::Ret, NORMAL)),
@@ -2343,6 +2545,37 @@ fn emit_block(
                 (*site, scope, task, dest.as_ref()),
                 blk.term.origin.span,
             )?;
+        }
+        weft_ir::TermKind::Fork {
+            sites,
+            branches,
+            dest: d,
+            ..
+        } => {
+            let nodes = templates::CallNodes {
+                main: n,
+                ret: table.get(at(Phase::Ret, NORMAL)),
+                frame_end: None,
+                aborts: Vec::new(),
+                may_abort: !dests.is_empty(),
+                values,
+            };
+            // Branch `i` starts at `Task(i + 1)`; the branches end at
+            // `Task(k + 1)` (plan stage F19).
+            let k = u32::try_from(branches.len()).unwrap_or(u32::MAX);
+            let starts: Vec<weft_facts::NodeId> = (1..=k)
+                .filter_map(|i| table.get(at(Phase::Task(i), NORMAL)))
+                .collect();
+            let end = table.get(at(Phase::Task(k.saturating_add(1)), NORMAL));
+            templates::fork(
+                em,
+                (&nodes, &starts, end),
+                &st,
+                block,
+                (sites, branches, d),
+                blk.term.origin.span,
+            )?;
+            handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
         }
         weft_ir::TermKind::Join { task, dest, .. } => {
             let nodes = templates::CallNodes {

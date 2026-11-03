@@ -1,0 +1,31 @@
+// V132, O3-10 (plan stage F19): a callee that spawns a function parameter
+// runs it as a task (part `runs`). The callee writes through its reference
+// parameter while the task runs: the caller's value conflicts with it. Two
+// spawns of two parameters with a `multi` effect in the program: a spawn
+// is no resume point of this task (no W0503).
+effect Pick { multi fn pick() -> bool }
+
+fn bg_writes(v: &Vec<u64>, f: fn()) / mut(v), async {
+    scope { s =>
+        s.spawn(f)
+        v.push(1)
+    }
+}
+
+fn both(f: fn(), g: fn()) / async {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(g)
+    }
+}
+
+fn reads_while_callee_writes() / async {
+    let v = Vec.new()
+    v.push(0)
+    bg_writes(&v, || print(v.len()))   //~ W0405
+}
+
+fn main() / async {
+    reads_while_callee_writes()
+    both(|| print(1), || print(2))
+}

@@ -199,6 +199,7 @@ fn stated(
     out.gives_frame = body.gives_frame;
     out.pins = body.pins;
     out.joins.clone_from(&body.joins);
+    out.task_effects.clone_from(&body.task_effects);
     out
 }
 
@@ -243,6 +244,7 @@ fn summary_of(
             sum.gives_frame = inf.gives_frame;
             sum.pins = inf.pins || sig.effects.pins;
             sum.joins.clone_from(&inf.joins);
+            sum.task_effects.clone_from(&inf.task_effects);
             sum.only_self &= inf.runs.is_empty()
                 && inf
                     .lends
@@ -348,9 +350,8 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
         else {
             continue;
         };
-        if decl.intrinsic.is_some() {
-            out.sums
-                .insert(f, Err("a call of `sim.run` or `with_timeout` (stage F19)"));
+        if let Some(i) = decl.intrinsic {
+            out.sums.insert(f, Ok(sig::intrinsic(decl, tys, i)));
             continue;
         }
         let entry =
@@ -525,6 +526,9 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 lends: &e.own_lends,
                                 cap_performs: &[],
                                 joins: &e.joins,
+                                task_hows: &e.task_hows,
+                                code_opaque: &e.code_opaque,
+                                task_effects: &e.task_effects,
                             },
                         );
                         add_steps(&mut steps, &facts);

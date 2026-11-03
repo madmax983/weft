@@ -259,13 +259,57 @@ fn is_task(tys: &TyTable, t: TyId) -> bool {
 }
 
 /// True if a spawn of body `b` gives its handle to local `l`.
-fn spawn_dest(b: &weft_ir::Body, l: LocalId) -> bool {
-    b.blocks.iter().any(|blk| {
-        matches!(
-            &blk.term.kind,
-            TermKind::Spawn { dest: Some(d), .. } if d.local == l && d.proj.is_empty()
-        )
+fn spawn_dest(p: &Program, b: &weft_ir::Body, l: LocalId) -> bool {
+    b.blocks.iter().any(|blk| match &blk.term.kind {
+        TermKind::Spawn { dest: Some(d), .. } => d.local == l && d.proj.is_empty(),
+        // A call of a closure of the body whose value is the handle of a
+        // spawn on a scope of its maker (plan stage F19): the scope keeps
+        // that task too.
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(Operand::Copy(f) | Operand::Move(f)),
+            dest,
+            ..
+        } if dest.local == l && dest.proj.is_empty() => closures_of(b, f.local)
+            .into_iter()
+            .filter_map(|c| p.closures.get(c.index()).and_then(|d| p.body(d.body)))
+            .any(|cb| spawn_dest(p, cb, cb.ret)),
+        // A scope whose value is such a handle.
+        TermKind::Scope { scope, dest, .. } if dest.local == l && dest.proj.is_empty() => p
+            .scopes
+            .get(scope.index())
+            .and_then(|d| p.body(d.body))
+            .is_some_and(|sb| spawn_dest(p, sb, sb.ret)),
+        _ => false,
     })
+}
+
+/// The closures that body `b` makes into local `l` (or into a temporary
+/// that copies into it).
+fn closures_of(b: &weft_ir::Body, l: LocalId) -> Vec<weft_ir::ClosureId> {
+    let mut srcs = vec![l];
+    let mut out = Vec::new();
+    for _ in 0..4 {
+        for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+            let StmtKind::Assign(q, rv) = &s.kind else {
+                continue;
+            };
+            if !q.proj.is_empty() || !srcs.contains(&q.local) {
+                continue;
+            }
+            match rv {
+                Rvalue::Aggregate(weft_ir::AggKind::Closure(c), _) => out.push(*c),
+                Rvalue::Use(Operand::Copy(x) | Operand::Move(x))
+                    if x.proj.is_empty() && !srcs.contains(&x.local) =>
+                {
+                    srcs.push(x.local);
+                }
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The name of the variable of `_0` of a body of kind `kind`: the
@@ -454,25 +498,32 @@ impl Vars {
                 }
                 let l = LocalId(u32::try_from(li).unwrap_or(u32::MAX));
                 let task = is_task(tys, d.ty);
-                let once = d.props.once
-                    || task
-                    || matches!(
-                        d.kind,
-                        LocalKind::TaskResult(_) | LocalKind::ScopeCap | LocalKind::Kont(false)
-                    );
+                // The scope capability and the `TaskResult` local of a spawn
+                // statement are not once values (plan stage F19): the IR
+                // engine runs each copy of a scope body that a `multi`
+                // resume copies, with its children, as the old lowering
+                // (I3-8 stays open; `docs/ir.md` 5.29).
+                let once = d.kind != LocalKind::ScopeCap
+                    && (d.props.once || task || matches!(d.kind, LocalKind::Kont(false)));
                 // The handle of a spawn in a discarded temporary (the tail
                 // of a block statement): the scope keeps the task, as for a
                 // spawn statement, and the end of the temporary drops only
                 // the result (plan stage F18, as the old lowering). A bound
                 // handle that moves there is dropped (W0601).
-                let spawned = task && spawn_dest(b, l);
+                let spawned = task && spawn_dest(p, b, l);
                 let (linear, on_abort) = match (spawned, d.kind) {
                     (true, LocalKind::Temp(TempKind::Discarded)) => {
-                        let ret = match tys.lang(d.ty) {
-                            Some((Lang::Task, args)) => args.first().copied(),
-                            _ => None,
-                        };
-                        let pr = ret.map(|t| ir_props(tys, t)).unwrap_or_default();
+                        // A result that is a handle again (a task whose value
+                        // is the handle of a spawn on the scope) drops only
+                        // its own result (plan stage F19).
+                        let mut ret = d.ty;
+                        while let Some((Lang::Task, args)) = tys.lang(ret) {
+                            match args.first() {
+                                Some(&t) => ret = t,
+                                None => break,
+                            }
+                        }
+                        let pr = ir_props(tys, ret);
                         (pr.linear, pr.on_abort)
                     }
                     _ => (d.props.linear, d.props.on_abort),

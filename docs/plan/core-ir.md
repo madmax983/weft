@@ -1452,6 +1452,75 @@ with the group forced on, report only).
 - Do: the code above; then the gate for groups A to E (rules of F8).
 - Gate: the common gates; the common exit; tier 2.
 - Exit: the common exit on the scope of groups A to E.
+- As built (group E goes on in a separate last commit, "IR F19: group E on"):
+  - `Fork`: the nodes `Main`, one `Task(i)` node for each branch, a `Task`
+    node where the branches end, and `Ret` (`nodes::phases_with`). Branch
+    `i` starts at its node (`templates::task_start`, the code that a spawn
+    and a branch share), so a branch that starts later runs at the same time
+    as the branches before it (W0405); each branch is a `fork_task` (W0401,
+    W0403); `Ret` binds the tuple of the results (IP6). The abort edge of
+    `Main` has no task that runs. A child failure raises past the function
+    with no local `Fail` handler (`raises`).
+  - `sim.run` and `with_timeout` have summaries (`sig::intrinsic`): they run
+    their block once. `with_timeout` performs `Fail` through the row, so a
+    local `Fail` handler stops it (5.31). A call of `sim.run` gives
+    `sim_run_at`, a root handler of the simulation for each standard effect,
+    and no standard effect of the block leaves the call or a node of the
+    block (`factgen::sim_blocks`). `sim.run` as a value applies its summary
+    (RT17: W0802 at the value).
+  - A value that a callee runs as a task (OR7, V126, V127, V132): the summary
+    part `runs` has `task` and `TaskHow` (`thread`, `twice`, `with`, the
+    places that the callee writes and reads while the task runs;
+    `tasks::task_hows` over the facts of the callee). A call of such a
+    callee has four `Task` nodes for each such run (`frames::TASK_NODES`):
+    the start (the values of the argument apply there as a task of the
+    call), a second start (`twice`), the code that runs at the same time
+    (`with`, the places of the callee), and the end
+    (`templates::call_tasks`). A task of the callee that runs a function
+    parameter is `opaque` in the callee, and the body does not pin for it.
+    A value that a callee can run as a task in the worst way (a foreign
+    function, code of a caller: `TaskHow::foreign`) keeps the fallback of
+    stage F18 (group C) when it changes places.
+  - A spawn in a closure body or in a clause on a scope of the maker (part
+    `tasks`): the node that runs the closure, or the node that runs the part
+    of the clause with the spawn (`handlers::project`), starts the task too;
+    the scope ends it. A spawn as the value of a closure or a scope gives a
+    handle whose discarded temporary drops only the result
+    (`vars::spawn_dest`). A scope in a clause splices into the clause
+    (`handlers::spliceable`), and so does a `fork`. A task that a closure
+    body starts is `opaque` (the facts do not name the captures of a
+    closure made in a closure body).
+  - W0314 (`templates::task_w0314`): an operation of a task through a
+    captured capability, through a local handler of the body, of an effect
+    that is not standard (from a closure), or of any effect with no runtime.
+    Another effect of the row goes to the summary part `task_effects`; a
+    call of a callee whose `task_effects` a local handler handles is W0314
+    at the call (`templates::task_effects_at`).
+  - Precision: an access of a part of a variable reads the part, not the
+    root (OR8 keeps the root read for a whole variable; corpus 136
+    `field_part`); a perform through a local handler whose clause has no
+    `resume` has no normal successor (`clause::perform_never_returns`;
+    `abort_handle_given.wf`); a perform of a clause through a local handler
+    outside it is `clause_performs` (W0801, corpus 15 `nested`); a task
+    whose run applies a `multi` summary has no `multi_at` (O3-10); the
+    writes of a task that a task starts are no `lends_mut` at the end of the
+    outer task; the scope capability and a `TaskResult` local are not once
+    values.
+  - The tier-1 baseline changed for four probes (one W0405 for each task
+    and span: a node whose span is inside the span of another node of the
+    same conflict folds into its error, in both pipelines).
+  - Fallbacks that stay (group E): a `scope` or a `fork` in a closure body, a task that
+    runs a function value that runs another value twice (`again`), a task
+    that runs a shared function variable that gets a new value, a value
+    that a function value (not an item) runs as a task, and a spawn on a
+    scope parameter.
+  - Deviations: I3-8 (a `multi` operation in a scope body after a spawn
+    statement) is not W0503: the probes of the shape (`multi_scope.wf`,
+    `c3`, `c4`, `fd4_*`, `ms1`) run clean, the I3-8 repro is the same text
+    as `c4_multi_scope_fail.wf`, and W0503 there gives eight `new-fp` probes
+    (more than the 0.1 % share of §2.5). The claims I3-8, OR10 (a call reads
+    each place of an argument) and RR12 (W0304 of a closure and a clause
+    that give a local its value) move to follow-up F19.1.
 
 #### F20 Generics; group F on
 
@@ -1655,6 +1724,7 @@ gate and the exit of its parent, limited to its group of differences.
 | F17.1 | F17 | lost-clean / group D: group D on, after the second independent review of group D (scratchpad `dreview2/review.md`). Fixed first: ORACLE-GAP-2 (A4 of copied callee and closure frames), D-MULTI-MID (a `multi` clause changes a place between two `resume`s while a copied callee or closure frame holds a reference into it; the copy of the frame is used at the `Copy` node), D-COPY-WAIT-CALL (the caller changes the place after the call, an old hole), FP-W0313-RUN (`clause::performs_cap`). The reviewer signed the 12 `lost-clean` rows; the `new-fp` `h6_option_closure.wf` is a precision loss of the groups A and C (issue to file). Then the default groups are A to D (`DEFAULT_GROUPS`), `done` gets F14 to F17.1, the 15 `open-old` entries of the old holes that group D closes go, the signature differences of the new bodies have `sig` entries, and the tests of the default groups change | done (F17.1) |
 | F17.2 | F17 | lost-fault W0312, W0301, W0302 / group D, after the third independent review of group D (scratchpad `dreview3/review.md`). ORACLE-GAP-3: the clause cover A5 of the fact oracle. D-FNVAL-ROW: a function item or a function parameter that runs in the handled body of a local handler of its row runs the clauses of the handler (`frames::value_effects`); a call in a closure body through a captured capability runs the clauses of its handler (`handlers::captured_calls`, also FP-W0805-FNVAL). D-ROW-MID (an old hole): a known callee of a `multi` re-entry through the row gets the copy of its frame. Probes `fixes/f17/fnval_row`, `fixes/f17/row_mid` | done (F17.2) |
 | F16.4 | F16 | lost-fault W0301 / none in groups A and C, found by the self-attack of stage F16 (class C-RR, scratchpad `f16/open/crr_*.wf`). A closure that holds a reference to a container of references (`kr: &Vec<&i64>`) reads through it; the node that runs the closure used only the variables of the captures, not of the references on the chain, so `v.clear(); g()` was accepted (the old pipeline also missed it through a callee or a returned closure). Fix (docs/ir.md 6.9 "As built (follow-up F16.4)"): the run node follows the chain from σ(`CaptureHeld(k)`) of each such capture, as `deep_uses` of a call argument; the type test also looks into the fields of a struct and the payloads of an enum. Probes `tests/gate/probes/fixes/crr/` (claim C-RR; ledger `open-old` for the group-D probe `crr03_opfn.wf`, `moved` for `crr01_direct.wf`) | done (F16.4) |
+| F19.1 | F19 | open items of group E after stage F19. I3-8 (W0503 for a `multi` operation in a scope body after a spawn statement): the construction verdict of `ir` §10.4 gives eight `new-fp` probes that run clean (the repro has the text of `c4_multi_scope_fail.wf`); decide the verdict or the probes. OR10: a call reads each place of its arguments, so a task that calls `grow_w(&w)` conflicts with a write of `w.score` (needs a precise part `reads`). RR12: W0304 when a closure or a clause gives a local its first value (groups C and D). RR4/V134: a scope capability that leaves its scope (the capability is a plain value in the analysis). Fallbacks: a `scope` in a closure body, a spawn on a scope parameter, a task that runs a value twice or a shared function variable that gets a new value | open |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays

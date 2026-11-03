@@ -1157,7 +1157,12 @@ pub fn term(
             super::clause::call_clauses(cx, (body, block), before.as_ref(), st, t)
         }
         TermKind::Detach { task, .. } => super::tasks::detach(cx, body, st, task),
-        TermKind::Fork { .. } => Err(AlphaError::Later("a `fork` (stage F19)")),
+        TermKind::Fork { branches, dest, .. } => {
+            // A child failure runs the `fail` clause of a local handler.
+            let before = super::clause::runs_clauses(cx, body, t).then(|| st.clone());
+            super::tasks::fork(cx, (body, block), st, branches, dest)?;
+            super::clause::call_clauses(cx, (body, block), before.as_ref(), st, t)
+        }
     }
 }
 
@@ -1674,6 +1679,13 @@ pub struct Applied {
     /// A run of a function value of the interface: code of a caller here,
     /// and an entry of the part `runs` of the summary of the body.
     pub run: Option<RunOf>,
+    /// The callee runs the value as a task: the index of its entry of the
+    /// part `runs` of the summary of the callee (plan stage F19). The run
+    /// node applies it at its task nodes.
+    pub task_run: Option<usize>,
+    /// The parameter of the callee whose value the run is (part `runs` of
+    /// the summary of the callee), for a run that a callee does.
+    pub callee_param: Option<u32>,
     /// The summary is code of a caller (map N2): the value that the caller
     /// gives applies its own aborts where the caller runs it.
     pub code: bool,
@@ -2489,7 +2501,7 @@ fn apply_runs(
     // The values that the runs of each key reach, also through the values
     // that a value runs (`Apps::reached`).
     let mut reached: BTreeMap<(u32, bool), BTreeSet<FnVal>> = BTreeMap::new();
-    for run in runs {
+    for (index, run) in runs.iter().enumerate() {
         let first = apps.reached.len();
         let many = run.many || two;
         let Some((fns, src, src_body)) = of(cx, run)? else {
@@ -2527,7 +2539,9 @@ fn apply_runs(
             .copied()
             .collect();
         for g in &fns {
-            if run.task && task_unsafe(cx, g) {
+            // A foreign function that runs a value on another thread: the
+            // old pipeline checks it (the class of stage F18 stays).
+            if run.task && run.how.foreign && task_unsafe(cx, g) {
                 return Err(AlphaError::Later(TASK_RUN));
             }
             let start = apps.out.len();
@@ -2545,6 +2559,14 @@ fn apply_runs(
             for a in apps.out.iter_mut().skip(start) {
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
+                // The callee runs the value as a task: the run node applies
+                // it at its task nodes (plan stage F19).
+                if run.task {
+                    a.task_run = Some(index);
+                }
+                if !run.capture {
+                    a.callee_param = Some(run.param);
+                }
                 a.sigma.others.clone_from(&others);
                 // A value that the closure runs through a capture changes
                 // the places of the environment through the environment.
@@ -2838,6 +2860,8 @@ fn apply_value(
                 put_fns: Vec::new(),
                 reads: caller_reads(cx, body)?,
                 deep: Vec::new(),
+                task_run: None,
+                callee_param: None,
             });
             let places = match given {
                 Given::Args(args) => {
@@ -2900,11 +2924,8 @@ fn apply_value(
                 .fns
                 .get(f.index())
                 .ok_or_else(|| AlphaError::BadPlace(format!("no function f{}", f.0)))?;
-            if decl.intrinsic.is_some() {
-                return Err(AlphaError::Later(
-                    "a call of `sim.run` or `with_timeout` as a value (stage F19)",
-                ));
-            }
+            // An intrinsic as a value (RT17) applies its summary: it runs
+            // its block once (`super::sig::intrinsic`, plan stage F19).
             let pairs: Vec<(TyId, TyId)> = decl
                 .params
                 .iter()
@@ -2959,6 +2980,8 @@ fn apply_value(
                 put_fns,
                 reads: Vec::new(),
                 deep: Vec::new(),
+                task_run: None,
+                callee_param: None,
             });
             apply_runs(
                 cx,
@@ -3154,6 +3177,8 @@ fn apply_value(
                 put_fns,
                 reads: Vec::new(),
                 deep,
+                task_run: None,
+                callee_param: None,
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: a run of a capture runs each value of the callee

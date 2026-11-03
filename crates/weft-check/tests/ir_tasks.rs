@@ -7,8 +7,10 @@
 //! `join` ends a task only if the handle must hold it, and `ScopeWait` and
 //! the cleanup chain of the scope body end each task of the scope.
 //!
-//! Group E stays off until stage F19. Each test checks a program of
-//! `tests/data/tasks/` with `--facts=ir` and the groups A to E on. The
+//! Stage F19 adds `fork`, `sim.run`, `with_timeout`, a value that a callee
+//! runs as a task (part `runs`), a spawn in a closure body or a clause on a
+//! scope of the maker (part `tasks`), and W0314. Each test checks a program
+//! of `tests/data/tasks/` with `--facts=ir` and the groups A to E on. The
 //! program must be in scope, and the `//~ CODE` markers are the diagnostics
 //! of the `ir` pipeline.
 
@@ -128,4 +130,57 @@ fn a_join_through_a_callee_a_tuple_an_option_or_a_closure_ends_the_task() {
 #[test]
 fn detach_drops_a_linear_result_with_one_w0601_and_no_w0602() {
     check("f36_detach.wf");
+}
+
+/// IP6: a `fork` of units gives a tuple of units.
+#[test]
+fn a_fork_gives_a_tuple_also_of_units() {
+    check("ip6_fork_units.wf");
+}
+
+/// The branches of a `fork` run at the same time (W0405) and on other
+/// threads (W0403).
+#[test]
+fn the_branches_of_a_fork_run_at_the_same_time_on_other_threads() {
+    check("fork_branches.wf");
+}
+
+/// OR7, V126, V127: a callee runs a function parameter as a task or a fork
+/// branch; the caller applies the value as a task at the task nodes of the
+/// call.
+#[test]
+fn a_value_that_a_callee_runs_as_a_task_is_a_task_of_the_call() {
+    check("or7_params.wf");
+}
+
+/// V132 and O3-10: the callee writes while the task of its parameter runs;
+/// a spawn is no resume point of this task.
+#[test]
+fn a_callee_that_writes_while_its_task_runs_conflicts_with_the_value() {
+    check("caller_code.wf");
+}
+
+/// A spawn in a closure body or a clause on a scope of the maker (part
+/// `tasks`), O3-12 and V055 accepted.
+#[test]
+fn a_spawn_in_a_closure_or_a_clause_starts_at_the_node_that_runs_it() {
+    check("nested_spawns.wf");
+}
+
+/// `sim.run` and `with_timeout` run their blocks once (5.30, 5.31).
+#[test]
+fn sim_run_and_with_timeout_run_their_block_once() {
+    check("sim_timeout.wf");
+}
+
+/// RT17: `sim.run` as a value in a library is W0802.
+#[test]
+fn sim_run_as_a_value_in_a_library_is_w0802() {
+    check("rt17_sim_value.wf");
+}
+
+/// W0314 over the tasks of the body and the part `task_effects`.
+#[test]
+fn a_task_that_performs_through_a_handler_of_this_task_is_w0314() {
+    check("w0314_tasks.wf");
 }

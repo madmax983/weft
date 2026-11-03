@@ -398,14 +398,29 @@ fn the_phases_of_each_terminator_follow_ir_6_2() {
                 &[Main, AbortValue, FrameEnd],
                 &[],
             ),
-            "perform" | "join" | "fork" => (&[Main, Ret], &[Main], &[Main, AbortValue], &[]),
+            "perform" | "join" => (&[Main, Ret], &[Main], &[Main, AbortValue], &[]),
+            // A `Task` node for each branch and one where they end (plan
+            // stage F19).
+            "fork" => {
+                let k = match &t {
+                    TermKind::Fork { branches, .. } => u32::try_from(branches.len()).unwrap_or(0),
+                    _ => 0,
+                };
+                let mut v = vec![Main];
+                v.extend((1..=k + 1).map(Phase::Task));
+                v.push(Ret);
+                assert_eq!(normal, v, "{name}: normal path");
+                (&[Main, Ret], &[Main], &[Main, AbortValue], &[])
+            }
             "handle" => (&[Main, Exit, Post], &[Main], &[Main], &[Landing]),
             "scope" => (&[Main, Exit, FrameEnd], &[Main], &[Main], &[]),
             "scope wait" => (&[Main], &[Main], &[Main, AbortValue], &[]),
             "assert" => (&[Main], &[Main], &[Main], &[]),
             _ => (&[Main], &[], &[], &[]),
         };
-        assert_eq!(normal, want.0, "{name}: normal path");
+        if name != "fork" {
+            assert_eq!(normal, want.0, "{name}: normal path");
+        }
         assert_eq!(abort, want.1, "{name}: abort path");
         assert_eq!(valued, want.2, "{name}: abort path with a value");
         assert_eq!(landing, want.3, "{name}: landing");
@@ -803,7 +818,8 @@ fn each_local_with_storage_has_an_owner_variable_with_its_flags() {
         .find(|(_, cap)| cap.mode == weft_ir::CaptureMode::ByRef)
         .expect("a capture by reference");
     assert_eq!(var(VarKey::C(c.maker, cap.source.local)).name, "k (cell)");
-    // The task handle is `once`; the scope capability too.
+    // The task handle is `once`; the scope capability is not (plan stage
+    // F19: a `multi` resume runs a copy of the scope body).
     let scope_body = comp
         .iter()
         .copied()
@@ -811,7 +827,7 @@ fn each_local_with_storage_has_an_owner_variable_with_its_flags() {
         .expect("a scope body");
     let sb = &p.bodies[scope_body.index()];
     let cap = sb.params[0];
-    assert!(var(VarKey::S(scope_body, cap)).once);
+    assert!(!var(VarKey::S(scope_body, cap)).once);
     let h = sb
         .locals
         .iter()
@@ -1171,8 +1187,10 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
 /// The relations that the code of a clause gives to a node that runs it
 /// (plan stage F14, `factgen::handlers::project`), and `spared_at` (`Post`
 /// of a `multi` handler, plan stage F16).
-const CLAUSE_PART: [&str; 16] = [
+const CLAUSE_PART: [&str; 17] = [
     "cfg_edge",
+    // A task that the clause starts in a scope of the site (plan stage F19).
+    "task",
     "uses",
     "moved_at",
     "rest_linear",
@@ -1317,6 +1335,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "performs_at",
                 "releases_at",
                 "unset_at",
+                // A call of `sim.run`, and a run of a closure that starts a
+                // task in a scope of its maker (plan stage F19).
+                "sim_run_at",
+                "task",
             ],
             &[],
         ),
@@ -1327,6 +1349,8 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // F14) has the code of the clause before its resume points too.
         "perform" => (
             &[
+                // A clause that starts a task (plan stage F19).
+                "task",
                 "cfg_edge",
                 "reads_at",
                 "uses",
@@ -1388,6 +1412,8 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "lends_mut",
                 "multi_at",
                 "escapes_at",
+                // A closure that runs again starts its tasks again (F19).
+                "task",
             ],
             &[],
         ),
@@ -1496,6 +1522,40 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "empty_at",
                 "overwrites",
                 "task",
+            ],
+            &[],
+        ),
+        // `Main` of a `fork` (plan stage F19): its abort; a branch starts
+        // at its `Task` node as a spawn, and the last `Task` node ends the
+        // branches; `Ret` binds the tuple of the results.
+        "fork" => (&["cfg_edge", "may_abort"], &[]),
+        "fork task" | "call task" => (
+            &[
+                "cfg_edge",
+                "empty_at",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "lends_mut",
+                "call",
+                "rebound_at",
+                "overwrites",
+                "task",
+            ],
+            &[],
+        ),
+        "fork ret" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "uses",
+                "moved_at",
+                "overwrites",
+                "unset_at",
             ],
             &[],
         ),

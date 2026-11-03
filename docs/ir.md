@@ -1655,7 +1655,10 @@ I3-1). Its `TaskResult` local is a once value of the scope body from the `Spawn`
 `Spawn` gives it `rebound_at` and `empty_at` (no linear value yet), and `ScopeWait`
 gives it the result. So a `multi` node of the scope body between the spawn and
 `ScopeWait` is W0503: a `multi` resume cannot copy a scope that has children (I3-8). A
-task handle `h` is a once value too (`once_var`).
+task handle `h` is a once value too (`once_var`). As built (plan stage F19): the
+`TaskResult` local and the scope capability are not once values; the IR engine runs
+each copy of the scope body with its children, and the probes of the shape run clean.
+I3-8 is open (plan follow-up F19.1).
 
 As built (`irbuild/task.rs`, plan stage B11):
 
@@ -2250,9 +2253,23 @@ scope body. The end of a `TaskResult` local has the span of its spawn. A `join` 
 its place (`mutates_at`, C5 of the fact oracle). A spawn as the tail of a scope body
 gives a handle of an ended task: with a result that cannot be linear, the value is
 not linear. A discarded temporary that a spawn gives a handle to drops only the
-result. The spawn performs `Async`; a task that performs another effect through a
-handler of a caller, or through a local capability other than `Fail`, is not in scope
-(F19).
+result. The spawn performs `Async`.
+
+As built (plan stage F19): `Fork` has the nodes `Main`, a `Task(i)` node for each
+branch, a `Task` node where the branches end (`joined_at`), and `Ret` (the tuple of
+the results, IP6). Branch `i` starts at its node with the facts of a spawn
+(`templates::task_start`): a later branch runs at the same time as the earlier ones
+(W0405), and each branch is a `fork_task` (W0401, W0403). The abort edge of `Main` has
+no task that runs. A call of a callee whose part `runs` runs a value as a task has four
+`Task` nodes for each such run between `Main` and `Ret`: the start of a task of the
+call (the values of the argument apply there), a second start if two tasks of the
+value can run at the same time, a node that changes and reads the places of the values
+that the callee runs at the same time and the places that the callee itself changes
+and reads while the task runs (`TaskHow`, 6.7), and the end. A spawn in a closure body
+or a clause on a scope of the maker starts its task at the node that runs the closure
+(part `tasks`) or the part of the clause with the spawn; the scope ends it. A task
+whose run applies a `multi` summary has no `multi_at` (O3-10). A task that performs
+through a handler of this task is W0314 (6.9).
 
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
@@ -3773,7 +3790,7 @@ the IR and the analysis, not a surface walk:
 | --- | --- |
 | W0313 (capability) | At the end of the capability root of handler `h` (the `Dead` of the `Cap` local at the frame end of the handled body, and on each cleanup copy of its chain), a value that holds that root leaves: `_0` of the handled body, the value of a clause, a variable of the site that has a cell, a heap slot that a site variable or a parameter reaches, or a `stores` entry. Each leak is W0313 at the span of the `handle` expression, as today. An `error(R, P)` of the spec whose evidence free is a capability root folds into that diagnostic as a note (its fact key goes into `Diagnostic::facts`). This keeps the escape rule of `codes.rs` and the 61 corpus markers (feasibility judge, 3.2). |
 | W0313 (continuation) | The same at the end of the continuation root (the frame end of the clause): a value that holds the root leaves through an upvar, `_0` of the clause, a store, or an argument of `resume`. The span is the leaking statement, as today. |
-| W0314 | A task (a `Spawn`, a `Fork` branch, or the `tasks` and `runs` parts at a run node) holds or uses a capability or a continuation of a handler that is on the stack of another task. A query over the `tasks` part and the abstract values. |
+| W0314 | A task (a `Spawn`, a `Fork` branch, or the `tasks` and `runs` parts at a run node) holds or uses a capability or a continuation of a handler that is on the stack of another task. A query over the `tasks` part and the abstract values. As built (F19, `templates::task_w0314`): an operation of the summaries that the task runs through a captured capability, an effect of the row that a local handler of the body handles, an effect that is not standard of a closure, or (with no runtime) any effect, except `Fail` and `Async`, is W0314 at the task; another effect goes to the summary part `task_effects`, and a call whose callee has a `task_effects` effect that a local handler handles is W0314 at the call. |
 | W0204 (local forms) | Not a Rust check any more: `uses(S(_0), Return)` makes the spec derive `error(_0, Return)`. `diagnose.rs` reports an `error` of `_0` at a `Return` node as W0204 for a function or a closure, at the span of the `Return` origin (the returned expression, V18). In a handled body, a scope body or a clause, the same `error` is W0301 with the text "the value leaves after its place ends". |
 | W0204 (store forms) | A `stores` entry of a reference into a root that ends at an exit, behind a reference parameter or into an `rc` object. A query over the summary of each body, also of closures and clauses (V087, V108, FD3). |
 | W0204 (signature) | A returned reference must state its place. A signature check. |
@@ -4979,7 +4996,7 @@ a repro of group E uses group C too; the claims file holds the set of groups tha
 
 | Id | Kind | Verdict | Mechanism | Repro | Group | Claim |
 | --- | --- | --- | --- | --- | --- | --- |
-| I3-8 | U (edge) | construction | the `TaskResult` local of a spawn statement is a once value from the `Spawn` on (5.29): W0503 | `r3/interp/repro/i3_8_multi_scope_fail.wf` | D, E | F19 |
+| I3-8 | U (edge) | construction | the `TaskResult` local of a spawn statement is a once value from the `Spawn` on (5.29): W0503. Open (plan F19.1): the IR engine runs the copies of the scope clean, and W0503 there gives eight `new-fp` probes | `r3/interp/repro/i3_8_multi_scope_fail.wf` | D, E | F19.1 |
 | R3RT5 | FP | construction | a `ByMove` field has no tie to the variable (5.1.7) | `r3/redteam/repro/R3RT5_byvalue_capture_scope.wf` | C | F11 |
 | R3RT6 | FP | partly | `from_signature` gives a `mut` place only the held references of the other arguments whose types fit (F5); the flow before the call stays until reference versions (11) | `r3/redteam/repro/R3RT6_ref_arg_flow_fp.wf` | A | P1 |
 | O3-7 | FP | one rule | `call_mut` with the root of the function argument that the change comes from (6.4) | `r3/oracle/repro/O3-7_fp_op_closure_w0312.wf` | C, D | F14 |

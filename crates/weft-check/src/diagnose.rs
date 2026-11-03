@@ -1108,16 +1108,24 @@ fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
     };
     conflicts.sort_by_key(|c| {
         let s = f.node(c.at).span;
-        (c.task, s.lo, s.hi, std::cmp::Reverse(depth(c)))
+        (
+            c.task,
+            s.lo,
+            std::cmp::Reverse(s.hi),
+            std::cmp::Reverse(depth(c)),
+        )
     });
     // One error for each task and span. It reports the conflict of each node
-    // with that span.
+    // with that span, and of each node whose span is inside it (a part of
+    // one expression, such as the bounds check of an index in a call).
     let mut groups: Vec<(&Conflict, Vec<String>)> = Vec::new();
     for c in conflicts {
         let key = fact_key("task_conflict", &[&c.task, &c.at]);
         let s = f.node(c.at).span;
         match groups.last_mut() {
-            Some((g, keys)) if g.task == c.task && f.node(g.at).span == s => keys.push(key),
+            Some((g, keys)) if g.task == c.task && inside(s, f.node(g.at).span) => {
+                keys.push(key);
+            }
             _ => groups.push((c, vec![key])),
         }
     }
@@ -1160,6 +1168,11 @@ fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
             .with_facts(keys),
         );
     }
+}
+
+/// True if span `inner` is inside span `outer` (or equal to it).
+const fn inside(inner: weft_facts::Span, outer: weft_facts::Span) -> bool {
+    inner.lo >= outer.lo && inner.hi <= outer.hi
 }
 
 /// W0401: a `fork` branch that captures a nonportable value

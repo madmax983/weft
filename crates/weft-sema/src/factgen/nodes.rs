@@ -53,6 +53,11 @@ pub enum Phase {
     /// A `multi` resume runs the code after a suspension point again: the
     /// locals of the copied frames get their copies.
     Copy,
+    /// A node of the tasks of a terminator, between `Main` and `Ret` (plan
+    /// stage F19): a branch of a `fork` after the first one, the join of
+    /// the branches, or a node of a function value that a callee runs as a
+    /// task (`docs/ir.md` 6.7, OR7).
+    Task(u32),
 }
 
 impl Phase {
@@ -67,6 +72,7 @@ impl Phase {
             Self::Post => "post",
             Self::Landing => "landing",
             Self::Copy => "copy",
+            Self::Task(_) => "task",
         }
     }
 }
@@ -260,12 +266,32 @@ const fn stmt_name(s: &StmtKind) -> &'static str {
 /// The nodes of terminator `t` on the normal path, in order. The handled body
 /// (`handle`) and the scope body (`scope`) run between `Main` and `Exit`.
 pub fn normal_phases(t: &TermKind) -> Vec<Phase> {
-    use Phase::{Exit, FrameEnd, Main, Post, Ret};
+    phases_with(t, 0)
+}
+
+/// The nodes of terminator `t` on the normal path, with `tasks` task nodes.
+///
+/// The [`Phase::Task`] nodes of a call come after `Main`. A `fork` has a node
+/// for each branch and a node where the branches end, between `Main` and
+/// `Ret` (plan stage F19): the abort edge of `Main` has no task that runs.
+pub fn phases_with(t: &TermKind, tasks: u32) -> Vec<Phase> {
+    use Phase::{Exit, FrameEnd, Main, Post, Ret, Task};
     match t {
-        TermKind::Call { .. } | TermKind::Resume { .. } => vec![Main, Ret, FrameEnd],
-        TermKind::Perform { .. } | TermKind::Join { .. } | TermKind::Fork { .. } => {
-            vec![Main, Ret]
+        TermKind::Call { .. } => {
+            let mut v = vec![Main];
+            v.extend((1..=tasks).map(Task));
+            v.extend([Ret, FrameEnd]);
+            v
         }
+        TermKind::Resume { .. } => vec![Main, Ret, FrameEnd],
+        TermKind::Fork { branches, .. } => {
+            let k = u32::try_from(branches.len()).unwrap_or(u32::MAX);
+            let mut v = vec![Main];
+            v.extend((1..=k.saturating_add(1)).map(Task));
+            v.push(Ret);
+            v
+        }
+        TermKind::Perform { .. } | TermKind::Join { .. } => vec![Main, Ret],
         TermKind::Handle { .. } => vec![Main, Exit, Post],
         TermKind::Scope { .. } => vec![Main, Exit, FrameEnd],
         _ => vec![Main],
@@ -408,7 +434,12 @@ impl NodeTable {
         for (bi, blk) in b.blocks.iter().enumerate() {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
             for dest in copies_of(block, blk.cleanup) {
-                self.block_nodes(body, b, block, dest, names.get(&block), facts);
+                let tasks = if dest == NORMAL {
+                    frames.task_nodes(body, block)
+                } else {
+                    0
+                };
+                self.block_nodes(body, b, block, dest, names.get(&block), tasks, facts);
             }
         }
         // The edges between blocks.
@@ -416,14 +447,24 @@ impl NodeTable {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
             for dest in copies_of(block, blk.cleanup) {
                 let dests = frames.dests(body, block);
-                self.block_edges(body, b, block, dest, dests, names.get(&block), facts);
+                let open = !frames.no_return(body, block);
+                self.block_edges(
+                    body,
+                    b,
+                    block,
+                    (dest, open),
+                    dests,
+                    names.get(&block),
+                    facts,
+                );
             }
         }
     }
 
     /// Adds the nodes of copy `dest` of block `block` and the edges between them.
     /// `callee` is the name of the callee of the terminator: the label of
-    /// each of its nodes.
+    /// each of its nodes. A call has `tasks` nodes of [`Phase::Task`].
+    #[allow(clippy::too_many_arguments)]
     fn block_nodes(
         &mut self,
         body: BodyId,
@@ -431,6 +472,7 @@ impl NodeTable {
         block: BlockId,
         dest: u32,
         callee: Option<&String>,
+        tasks: u32,
         facts: &mut FnFacts,
     ) {
         let Some(blk) = b.blocks.get(block.index()) else {
@@ -469,7 +511,7 @@ impl NodeTable {
             blk.term.kind,
             TermKind::Handle { .. } | TermKind::Scope { .. }
         );
-        for phase in normal_phases(&blk.term.kind) {
+        for phase in phases_with(&blk.term.kind, tasks) {
             if handle && phase == Phase::Exit {
                 last = None;
             }
@@ -543,14 +585,15 @@ impl NodeTable {
 
     /// Adds the edges from copy `dest` of block `block` to its successors, and
     /// the paths of its aborts. `callee` is the name of the callee of the
-    /// terminator (see [`Self::block_nodes`]).
+    /// terminator (see [`Self::block_nodes`]). With `open` false the
+    /// terminator has no normal successor.
     #[allow(clippy::too_many_arguments)]
     fn block_edges(
         &mut self,
         body: BodyId,
         b: &Body,
         block: BlockId,
-        dest: u32,
+        (dest, open): (u32, bool),
         dests: &[Dest],
         callee: Option<&String>,
         facts: &mut FnFacts,
@@ -566,9 +609,12 @@ impl NodeTable {
             phase,
             dest,
         };
+        // A perform whose clause has no `resume` does not go on (plan stage
+        // F19).
         let last = normal_phases(kind)
             .last()
-            .and_then(|ph| self.get(at(*ph, dest)));
+            .and_then(|ph| self.get(at(*ph, dest)))
+            .filter(|_| open);
         // The `Landing` of a `handle` goes on with the next block too.
         let landing = self.get(at(Phase::Landing, dest));
         for from in last.into_iter().chain(landing) {

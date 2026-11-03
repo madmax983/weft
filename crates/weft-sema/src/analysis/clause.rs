@@ -312,7 +312,8 @@ pub fn spliced_into(p: &Program, b: BodyId, hb: BodyId) -> bool {
             return false;
         };
         match (x.kind, x.parent) {
-            (BodyKind::Handled(_), Some(site)) => at = site,
+            // A scope body splices into its site too (plan stage F19).
+            (BodyKind::Handled(_) | BodyKind::Scope(_), Some(site)) => at = site,
             _ => return false,
         }
     }
@@ -350,6 +351,26 @@ pub fn cap_handler(p: &Program, body: BodyId, place: &Place) -> Option<HandlerId
         (BodyKind::Handled(h), LocalKind::Cap(_)) => Some(h),
         _ => None,
     }
+}
+
+/// True if terminator `t` of body `body` never goes on to its next block.
+///
+/// It is a perform through the capability of a local handler whose clause
+/// of the operation has no `resume` (plan stage F19), such as `fail` of a
+/// local `Fail` handler.
+pub fn perform_never_returns(p: &Program, body: BodyId, t: &TermKind) -> bool {
+    let TermKind::Perform {
+        cap: weft_ir::CapOperand::Local(cap),
+        op,
+        ..
+    } = t
+    else {
+        return false;
+    };
+    cap_handler(p, body, cap)
+        .and_then(|h| p.handlers.get(h.index()))
+        .and_then(|d| d.clauses.iter().find(|(o, _)| o == op).map(|(_, c)| *c))
+        .is_some_and(|c| !has_resume(p, c))
 }
 
 /// The capture index and the effect of a captured capability.
@@ -1490,7 +1511,7 @@ pub fn call_handlers(cx: &Cx<'_>, body: BodyId, t: &TermKind) -> Vec<HandlerId> 
 
 /// True if clause body `cb` has a resume point (a `Resume` of its own
 /// blocks).
-fn has_resume(p: &Program, cb: BodyId) -> bool {
+pub fn has_resume(p: &Program, cb: BodyId) -> bool {
     p.body(cb).is_some_and(|b| {
         b.blocks
             .iter()
@@ -1973,7 +1994,10 @@ pub const GIVES_BACK: &str = "a call that runs a clause of a local handler whose
 pub fn runs_clauses(cx: &Cx<'_>, body: BodyId, t: &TermKind) -> bool {
     matches!(
         t,
-        TermKind::Call { .. } | TermKind::Join { .. } | TermKind::ScopeWait { .. }
+        TermKind::Call { .. }
+            | TermKind::Join { .. }
+            | TermKind::ScopeWait { .. }
+            | TermKind::Fork { .. }
     ) && !call_handlers(cx, body, t).is_empty()
 }
 

@@ -153,10 +153,10 @@ fn unsupported(sig: &FnSig, body: bool) -> Option<&'static str> {
     {
         return Some("a call of a function that runs or keeps function values (stage F12)");
     }
-    // A body gives the parts `pins` and `task_effects` (plan stage F18).
-    if (!body && (e.pins || !e.task_effects.is_empty()))
-        || !e.tasks.is_empty()
-        || !e.task_runs.is_empty()
+    // A body gives the parts `pins` and `task_effects` (plan stage F18),
+    // and the part `runs` with its tasks (plan stage F19).
+    if !body
+        && (e.pins || !e.task_effects.is_empty() || !e.tasks.is_empty() || !e.task_runs.is_empty())
     {
         return Some("a call of a function that starts tasks (stage F19)");
     }
@@ -203,8 +203,33 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
         }
     }
     args.sort();
+    // Code of a caller runs each function value as a task, two times at
+    // once, at the same time as the others, and while it changes and reads
+    // each place that it gets (the worst way, plan stage F19). The runtime
+    // pins such a task (`opaque`), as the old lowering.
+    let fns: BTreeSet<u32> = decl
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, &t)| crate::props::ir_has_fns(tys, t))
+        .map(|(i, _)| u(i))
+        .collect();
+    let mut access: Vec<IPlace> = args
+        .iter()
+        .filter(|a| a.root != IRoot::Caller)
+        .cloned()
+        .collect();
+    access.sort();
     for (i, &t) in decl.params.iter().enumerate() {
         if crate::props::ir_has_fns(tys, t) {
+            let how = super::summary::TaskHow {
+                thread: false,
+                twice: true,
+                with: fns.iter().copied().filter(|&j| j != u(i)).collect(),
+                writes: access.clone(),
+                reads: access.clone(),
+                foreign: true,
+            };
             join_run(
                 &mut inf.runs,
                 &Run {
@@ -213,6 +238,7 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     result: false,
                     many: true,
                     task: true,
+                    how,
                     args: args.clone(),
                     multi: fn_multi(tys, t),
                     maybe: false,
@@ -225,6 +251,58 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
         inf.ret_fns.insert(RetFn::Unknown);
         inf.ret_places.extend(args);
     }
+}
+
+/// The summary of the intrinsic `i` with the declaration `decl`
+/// (`docs/ir.md` 5.30, 5.31; plan stage F19).
+///
+/// It runs its function parameter (the block) once, with no argument.
+/// `with_timeout` can fail (the block fails, or the deadline passes): it
+/// performs `Fail` through the row, and can abort there. `sim.run` runs the block with the root handlers
+/// of the simulation: the call node gives the facts of these handlers
+/// (`crate::factgen::templates`), and its abort edges are those of a call
+/// of an intrinsic (`crate::factgen::frames`).
+pub fn intrinsic(decl: &FnDecl, tys: &TyTable, i: weft_ir::Intrinsic) -> Summary {
+    let mut s = Summary {
+        params: decl
+            .params
+            .iter()
+            .enumerate()
+            .map(|(k, _)| ParamIface {
+                name: format!("parameter {k}"),
+                root: u32_of(k),
+                in_place: None,
+            })
+            .collect(),
+        ..Summary::default()
+    };
+    for (k, &t) in decl.params.iter().enumerate() {
+        if crate::props::ir_has_fns(tys, t) {
+            s.runs.push(Run {
+                param: u32_of(k),
+                capture: false,
+                result: false,
+                many: false,
+                task: false,
+                how: super::summary::TaskHow::default(),
+                args: Vec::new(),
+                multi: false,
+                maybe: false,
+            });
+        }
+    }
+    // A failure of the block and a timeout perform `Fail` through the
+    // capabilities of the call (5.31): a local `Fail` handler there stops
+    // it.
+    if i == weft_ir::Intrinsic::WithTimeout {
+        let fail = Perform {
+            effect: "Fail".to_string(),
+            cap: CapIface::Row,
+        };
+        s.performs.insert(fail.clone());
+        s.aborts.insert(Abort::Perform(fail));
+    }
+    s
 }
 
 /// True if an operation of the effect with identity `e` takes a reference
@@ -306,6 +384,9 @@ pub struct Inferred {
     /// The task handle parameters that the body joins on each path
     /// (`Summary::joins`, plan stage F18).
     pub joins: BTreeSet<u32>,
+    /// The effects that a task of the body performs through a handler of a
+    /// caller (`Summary::task_effects`, plan stage F19).
+    pub task_effects: BTreeSet<String>,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -378,6 +459,9 @@ impl Inferred {
         }
         for &j in &o.joins {
             grew |= self.joins.insert(j);
+        }
+        for e in &o.task_effects {
+            grew |= self.task_effects.insert(e.clone());
         }
         for r in &o.runs {
             grew |= join_run(&mut self.runs, r);
@@ -460,9 +544,32 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         runs.sort();
         return true;
     };
-    let before = (x.many, x.task, x.multi, x.maybe, x.args.len());
+    let before = (
+        x.many,
+        x.task,
+        x.multi,
+        x.maybe,
+        x.args.len(),
+        x.how.clone(),
+    );
     x.many |= r.many;
     x.task |= r.task;
+    x.how.thread |= r.how.thread;
+    x.how.foreign |= r.how.foreign;
+    x.how.twice |= r.how.twice;
+    x.how.with.extend(r.how.with.iter().copied());
+    for w in &r.how.writes {
+        if !x.how.writes.contains(w) {
+            x.how.writes.push(w.clone());
+        }
+    }
+    for w in &r.how.reads {
+        if !x.how.reads.contains(w) {
+            x.how.reads.push(w.clone());
+        }
+    }
+    x.how.writes.sort();
+    x.how.reads.sort();
     x.multi |= r.multi;
     x.maybe |= r.maybe;
     for a in &r.args {
@@ -471,7 +578,15 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         }
     }
     x.args.sort();
-    before != (x.many, x.task, x.multi, x.maybe, x.args.len())
+    before
+        != (
+            x.many,
+            x.task,
+            x.multi,
+            x.maybe,
+            x.args.len(),
+            x.how.clone(),
+        )
 }
 
 /// True if code of a caller of the function values of type `t` can resume
@@ -649,6 +764,7 @@ pub fn build(
     s.gives_frame = inf.gives_frame;
     s.pins = inf.pins;
     s.joins.clone_from(&inf.joins);
+    s.task_effects.clone_from(&inf.task_effects);
     s.only_self = inf.named.is_empty()
         && inf.runs.is_empty()
         && !inf.multi
@@ -770,6 +886,7 @@ pub fn to_effect_sig(prog: &crate::Program, sum: &Summary) -> EffectSig {
     }
     out.raises = sum.aborts.contains(&Abort::Raises);
     out.multi = sum.unknown_multi;
+    out.task_effects.clone_from(&sum.task_effects);
     out.drops = sum.drops.iter().map(|&j| j as usize).collect();
     out.holds = sum.holds.iter().map(|&j| j as usize).collect();
     out

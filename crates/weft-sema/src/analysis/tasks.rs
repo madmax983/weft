@@ -240,8 +240,11 @@ pub fn scope_run(cx: &mut Cx<'_>, st: &State, k: ScopeId) -> Result<ScopeOut, Al
             Tree::leaf(AbsVal::plain()),
         );
     }
-    let (states, ends) =
-        super::run_from(cx, sb, vec![(sbody.entry, init)], super::Mode::default())?;
+    // The re-entry states of a `multi` handler outside the scope at the
+    // nodes of the scope body (`Handlers::extra`, plan stage F19).
+    let mut seeds = vec![(sbody.entry, init)];
+    seeds.extend(cx.hx.extra.get(&sb).into_iter().flatten().cloned());
+    let (states, ends) = super::run_from(cx, sb, seeds, super::Mode::default())?;
     let mut exit: Option<State> = None;
     for s in ends.returns.values() {
         match &mut exit {
@@ -594,4 +597,157 @@ pub fn must_join(
         .into_iter()
         .filter(|t| !others.contains(t) && !st.lost_tasks().contains(t))
         .collect())
+}
+
+/// `Fork`: the run of each branch as a task (as a spawn, in written order),
+/// then the destination gets the tuple of the results of the branches
+/// (IP6: also a tuple of units).
+///
+/// # Errors
+///
+/// The errors of the transfer functions.
+pub fn fork(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, weft_ir::BlockId),
+    st: &mut State,
+    branches: &[Operand],
+    dest: &Place,
+) -> Result<(), AlphaError> {
+    let mut tuple = Tree::none();
+    for (i, br) in branches.iter().enumerate() {
+        let ret_ty = task_ret(cx, body, br)?;
+        let out = transfer::value_out_ty(cx, (body, block), st, br, &[], ret_ty)?;
+        transfer::apply_apps(cx, st, &out.apps, true);
+        lose_operands(cx, body, st, [br])?;
+        let i = u32::try_from(i).unwrap_or(u32::MAX);
+        tuple
+            .kids
+            .insert(PathStep::Field(i), task_result(cx, ret_ty, &out.ret));
+    }
+    transfer::bind_result(cx, body, st, branches, dest, tuple)
+}
+
+/// How a body runs one function value of its interface as a task, in the
+/// places of the facts of the body (`super::summary::TaskHow` before the
+/// interface map, plan stage F19).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RawHow {
+    /// The parameter, or the capture of a closure body.
+    pub param: u32,
+    /// True for a capture.
+    pub capture: bool,
+    /// The task is a branch of a `fork`.
+    pub thread: bool,
+    /// Two tasks of the value can run at the same time.
+    pub twice: bool,
+    /// The values of the interface that the body runs while the task runs.
+    pub with: BTreeSet<u32>,
+    /// The places that the body changes or lends while the task runs.
+    pub writes: BTreeSet<weft_facts::PlaceId>,
+    /// The places that the body reads while the task runs.
+    pub reads: BTreeSet<weft_facts::PlaceId>,
+}
+
+/// How the body of the facts `facts` runs the values of its interface as
+/// tasks (part `runs`, plan stage F19; `task_runs` of the old inference).
+///
+/// `task_runs` has each task that runs a value of the interface (the task,
+/// the parameter or capture, true for a capture, true for a `fork`
+/// branch), and `run_at` each node that runs such a value as plain code.
+/// A task runs from the nodes after its `spawned_at` node to its
+/// `joined_at` nodes (the rule `active` of the spec). While it runs: a
+/// second start of a task of the value is `twice`; a run of another value
+/// of the interface, plain or as a task, is in `with`; the changes and
+/// lends of the body are `writes`, and its reads are `reads`.
+pub fn task_hows(
+    facts: &weft_facts::FnFacts,
+    task_runs: &[(weft_facts::TaskId, u32, bool, bool)],
+    run_at: &[(u32, bool, weft_facts::NodeId)],
+) -> Vec<RawHow> {
+    use std::collections::{BTreeMap, HashMap};
+    use weft_facts::NodeId;
+    if task_runs.is_empty() {
+        return Vec::new();
+    }
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    let spawns_of = |t: weft_facts::TaskId| -> Vec<NodeId> {
+        facts
+            .spawned_at
+            .iter()
+            .filter(|(u, _)| *u == t)
+            .map(|(_, n)| *n)
+            .collect()
+    };
+    let mut out: BTreeMap<(u32, bool), RawHow> = BTreeMap::new();
+    for &(t, param, capture, thread) in task_runs {
+        let ends: BTreeSet<NodeId> = facts
+            .joined_at
+            .iter()
+            .filter(|(u, _)| *u == t)
+            .map(|(_, n)| *n)
+            .collect();
+        let starts = spawns_of(t);
+        let mut active: BTreeSet<NodeId> = BTreeSet::new();
+        let mut work: Vec<NodeId> = starts
+            .iter()
+            .flat_map(|n| succ.get(n).into_iter().flatten().copied())
+            .collect();
+        while let Some(q) = work.pop() {
+            if !active.insert(q) || ends.contains(&q) {
+                continue;
+            }
+            work.extend(succ.get(&q).into_iter().flatten().copied());
+        }
+        let how = out.entry((param, capture)).or_insert_with(|| RawHow {
+            param,
+            capture,
+            ..RawHow::default()
+        });
+        how.thread |= thread;
+        for &(u, p2, c2, _) in task_runs {
+            if spawns_of(u).iter().any(|n| active.contains(n)) {
+                if (p2, c2) == (param, capture) {
+                    how.twice = true;
+                } else if c2 == capture {
+                    how.with.insert(p2);
+                }
+            }
+        }
+        for &(p2, c2, n) in run_at {
+            if active.contains(&n) && c2 == capture {
+                // A run of the value itself while its task runs: two runs
+                // at the same time.
+                if p2 == param {
+                    how.twice = true;
+                } else {
+                    how.with.insert(p2);
+                }
+            }
+        }
+        for &(n, q) in facts.mutates_at.iter().chain(&facts.lends_mut) {
+            if active.contains(&n) {
+                how.writes.insert(q);
+            }
+        }
+        for &(n, q) in &facts.reads_at {
+            if active.contains(&n) {
+                how.reads.insert(q);
+            }
+        }
+    }
+    // Two tasks that run at the same time conflict both ways: the second
+    // one runs while the first one runs, and the other way.
+    let pairs: Vec<((u32, bool), u32)> = out
+        .iter()
+        .flat_map(|(k, h)| h.with.iter().map(move |&j| (*k, j)))
+        .collect();
+    for ((i, c), j) in pairs {
+        if let Some(h) = out.get_mut(&(j, c)) {
+            h.with.insert(i);
+        }
+    }
+    out.into_values().collect()
 }

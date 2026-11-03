@@ -138,14 +138,30 @@ pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
     at
 }
 
-/// True if body `b` splices into a function or a test body.
+/// True if body `b` splices into a function body, a test body or a clause.
 ///
 /// `b` is such a body, or a handled body or a scope body whose site is one (through each
 /// such body on the way). A scope and the task terminators are in scope
-/// only there (plan stage F18).
+/// only there (plan stage F18; a clause from plan stage F19: the facts of
+/// a clause body splice its scope bodies too).
 pub fn spliceable(p: &Program, b: BodyId) -> bool {
-    p.body(splice_root(p, b))
-        .is_some_and(|r| matches!(r.kind, BodyKind::Fn(_) | BodyKind::Test(_)))
+    p.body(splice_root(p, b)).is_some_and(|r| {
+        matches!(
+            r.kind,
+            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Clause(..)
+        )
+    })
+}
+
+/// True if the spawn site `site` starts its task in a scope whose scope
+/// body splices into a function or a test body (plan stage F19): the
+/// facts of the component see the scope and end the task there.
+pub fn maker_scope(p: &Program, site: weft_ir::SpawnId) -> bool {
+    p.spawns
+        .get(site.index())
+        .and_then(|d| d.scope)
+        .and_then(|k| p.scopes.get(k.index()))
+        .is_some_and(|d| spliceable(p, d.body))
 }
 
 /// True if the spawn site `site` of body `b` starts its task in a scope
@@ -1681,6 +1697,22 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .or_insert_with(|| clause_nodes(p, &ix, r.clause));
     }
     let param_runs = param_run_nodes(p, t.table, regions.keys().copied());
+    // A task that a clause starts in a scope of the site (plan stage F19,
+    // O3-12): it starts at each node that runs the part of the clause with
+    // its spawn (the perform for the part before the first resume point,
+    // `Post` for the part after it).
+    let mut starts = Vec::new();
+    for &(task, n) in &facts.spawned_at {
+        for r in &hx.runs {
+            let Some((pre, post)) = regions.get(&r.clause) else {
+                continue;
+            };
+            if (!r.post && pre.contains(&n)) || (r.post && post.contains(&n)) {
+                starts.push((task, r.node));
+            }
+        }
+    }
+    facts.spawned_at.extend(starts);
     let mut owned: HashMap<BodyId, HashSet<VarId>> = HashMap::new();
     // The rows of the facts at the nodes of each clause: each run of the
     // clause reads these, and a run node in a clause adds its rows to the
@@ -1809,13 +1841,32 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         let Some(&(hid, _)) = hx.ids.get(&h) else {
             continue;
         };
-        let escapes: BTreeSet<String> = parts
+        let mut escapes: BTreeSet<String> = parts
             .get(c)
             .into_iter()
             .flat_map(|x| x.escapes_at.iter())
             .filter(|(n, _)| pre.contains(n) || post.contains(n))
             .map(|(_, e)| e.clone())
             .collect();
+        // A perform through the capability of a local handler outside the
+        // clause (not a handler that the clause itself installs) forwards
+        // the effect too (corpus 15, `nested`; plan stage F19).
+        escapes.extend(
+            parts
+                .get(c)
+                .into_iter()
+                .flat_map(|x| x.performs_at.iter())
+                .filter(|(n, _)| pre.contains(n) || post.contains(n))
+                .filter_map(|(_, cap)| {
+                    hx.ids
+                        .iter()
+                        .find(|(_, &(_, k))| k == *cap)
+                        .and_then(|(&h2, _)| p.handlers.get(h2.index()))
+                        .filter(|d| !crate::analysis::clause::inside(p, d.site, *c))
+                        .and_then(|d| t.tys.effects().get(d.effect.index()))
+                        .map(|e| e.identity.clone())
+                }),
+        );
         facts
             .clause_performs
             .extend(escapes.into_iter().map(|e| (hid, e)));

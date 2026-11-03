@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19"]
 
 
 # ----------------------------------------------------------------------
@@ -603,7 +603,7 @@ finding = "I3-8"
 kind = "unsound"
 verdict = "construction"
 group = "ACDE"
-stage = "F19"
+stage = "F19.1"
 repro = ["tests/gate/probes/r3/interp/repro/i3_8_multi_scope_fail.wf"]
 code = "W0503"
 note = "the oracle does not see it; the TaskResult local is a once value (W0503)"
@@ -2279,7 +2279,7 @@ finding = "OR10"
 kind = "fp"
 verdict = "one-rule"
 group = "ACE"
-stage = "F19"
+stage = "F19.1"
 repro = ["tests/gate/probes/r2/oracle/repro/OR10_fp_call_reads_all.wf"]
 note = "A call reads all of its reference arguments (W0405)"
 
@@ -2288,7 +2288,7 @@ finding = "RR12"
 kind = "fp"
 verdict = "construction"
 group = "ACDE"
-stage = "F19"
+stage = "F19.1"
 repro = ["tests/gate/probes/r2/redteam/repro/RR12_unset_closure.wf"]
 note = "W0304 for a local that a closure, a clause or a task sets"
 

@@ -141,3 +141,24 @@ pub fn cap_escapes(
     }
     out
 }
+
+/// W0314 (`docs/ir.md` 6.9, plan stage F19): one error for each span and
+/// text of `found` (`templates::task_w0314`).
+pub fn w0314(found: &[(weft_ir::Span, String)]) -> Vec<Diagnostic> {
+    use weft_syntax::diag::Code;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (sp, msg) in found {
+        if !seen.insert((sp.unit, sp.lo, sp.hi, msg.clone())) {
+            continue;
+        }
+        let span = weft_syntax::ast::Span {
+            lo: sp.lo,
+            hi: sp.hi,
+        };
+        let mut diag = Diagnostic::error(Code::W0314, msg.clone(), span);
+        diag.unit = sp.unit as usize;
+        out.push(diag);
+    }
+    out
+}

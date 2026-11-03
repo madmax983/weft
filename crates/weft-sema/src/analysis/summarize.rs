@@ -180,7 +180,44 @@ pub fn summarize(
             }
         })
     };
-    let runs = runs_of(fv.runs, false, &run_place, ir.body(entry));
+    let mut runs = runs_of(fv.runs, false, &run_place, ir.body(entry));
+    // How the body runs a value of its interface as a task (plan stage F19):
+    // the places of a parameter only (a caller gives the others).
+    let iface =
+        |q: &PlaceId| place(*q).filter(|ip| matches!(ip.root, IRoot::Param(_) | IRoot::Held(_)));
+    // A run that code of a caller can do on another thread (a value that
+    // an unknown function value reaches, `task` with no task of the body):
+    // the worst way, as a foreign function.
+    for r in &mut runs {
+        if r.task
+            && !fv
+                .task_hows
+                .iter()
+                .any(|h| h.param == r.param && h.capture == r.capture)
+        {
+            r.how.foreign = true;
+        }
+    }
+    for h in fv.task_hows {
+        let Some(r) = runs
+            .iter_mut()
+            .find(|r| r.param == h.param && r.capture == h.capture && !r.result)
+        else {
+            continue;
+        };
+        r.task = true;
+        r.how.thread |= h.thread;
+        r.how.twice |= h.twice;
+        r.how.with.extend(h.with.iter().copied());
+        let mut ws: Vec<IPlace> = h.writes.iter().filter_map(iface).collect();
+        let mut rs: Vec<IPlace> = h.reads.iter().filter_map(iface).collect();
+        ws.sort();
+        ws.dedup();
+        rs.sort();
+        rs.dedup();
+        r.how.writes = ws;
+        r.how.reads = rs;
+    }
     changed.multi |= fv.code_multi;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
@@ -267,11 +304,12 @@ pub fn summarize(
             if let TermKind::Assert { .. } = blk.term.kind {
                 out.assert = true;
             }
-            // A child failure at a `join` or at `ScopeWait` that no local
-            // `Fail` handler stops raises past the function (plan stage F18).
+            // A child failure at a `join`, at `ScopeWait` or at a `fork`
+            // that no local `Fail` handler stops raises past the function
+            // (plan stages F18 and F19).
             if matches!(
                 blk.term.kind,
-                TermKind::Join { .. } | TermKind::ScopeWait { .. }
+                TermKind::Join { .. } | TermKind::ScopeWait { .. } | TermKind::Fork { .. }
             ) && !blk.cleanup
             {
                 let ds = crate::factgen::frames::destinations(ir, tys, sums, b, &blk.term.kind);
@@ -319,8 +357,9 @@ pub fn summarize(
             }
         }
     }
-    out.pins |= task_pins(facts);
+    out.pins |= task_pins(facts, fv.code_opaque);
     out.joins.extend(fv.joins.iter().copied());
+    out.task_effects.extend(fv.task_effects.iter().cloned());
     out
 }
 
@@ -329,8 +368,8 @@ pub fn summarize(
 /// The rule `pinned` of `spec/weft.dl` (plan stage F18): a task captures a nonportable value, writes
 /// through a captured reference that is not `@ uniq`, or runs code that the
 /// analysis does not follow.
-pub fn task_pins(facts: &FnFacts) -> bool {
-    !facts.opaque.is_empty()
+pub fn task_pins(facts: &FnFacts, skip: &[weft_facts::TaskId]) -> bool {
+    facts.opaque.iter().any(|t| !skip.contains(t))
         || facts.captures.iter().any(|&(t, v)| {
             let info = facts.var(v);
             info.nonportable || (facts.mut_through.contains(&(t, v)) && !info.uniq)
@@ -443,6 +482,14 @@ pub struct FnParts<'a> {
     /// The task handles of the interface that the body joins on each path
     /// (part `joins`, plan stage F18).
     pub joins: &'a [u32],
+    /// How the body runs values of its interface as tasks (plan stage F19).
+    pub task_hows: &'a [crate::analysis::tasks::RawHow],
+    /// The tasks that are `opaque` only because they run code of a caller:
+    /// they do not make the body pin.
+    pub code_opaque: &'a [weft_facts::TaskId],
+    /// The effects that a task of the body performs through a handler of a
+    /// caller (part `task_effects`, plan stage F19).
+    pub task_effects: &'a std::collections::BTreeSet<String>,
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -480,6 +527,7 @@ fn runs_of(
             result: r.result,
             many: *many,
             task: r.task,
+            how: super::summary::TaskHow::default(),
             args,
             multi: r.multi,
             maybe: body.is_none_or(|b| returns_without(b, &blocks)),
@@ -1226,7 +1274,7 @@ pub fn closure(
             .any(|&(m, q, _)| m == n && place(q).is_none())
     });
     out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
-    out.pins = task_pins(facts);
+    out.pins = task_pins(facts, &[]);
     out.joins = fv.joins.iter().copied().collect();
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can. A perform

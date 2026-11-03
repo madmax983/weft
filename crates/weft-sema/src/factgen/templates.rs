@@ -110,6 +110,41 @@ pub struct Em<'a> {
     /// that a callee made, a callee or a closure that lends. The summary of
     /// the body gets their interface places (part `lends`, follow-up F13.2).
     pub own_lends: Vec<(NodeId, PlaceId)>,
+    /// The tasks of the body that run a function value of the interface
+    /// (code of a caller, plan stage F19): the task, the parameter (or
+    /// capture) and if it is a capture, and if the task is a `fork` branch.
+    pub task_runs: Vec<(weft_facts::TaskId, u32, bool, bool)>,
+    /// The nodes where the body runs a function value of the interface (a
+    /// parameter, or a capture with `true`) as code that is not a task.
+    pub run_at: Vec<(u32, bool, NodeId)>,
+    /// The task whose run `emit_apps` emits now, and if it is a `fork`
+    /// branch: a run of a function value of the interface there is a run
+    /// as a task (`task_runs`).
+    pub in_task: Option<(weft_facts::TaskId, bool)>,
+    /// The tasks that are `opaque` only because they run code of a caller:
+    /// the body does not pin for them (`Summary::pins`), as the caller
+    /// checks the value that it gives.
+    pub code_opaque: Vec<weft_facts::TaskId>,
+    /// The [`super::nodes::Phase::Task`] nodes of the call that the
+    /// template emits now (plan stage F19).
+    pub task_nodes: Vec<NodeId>,
+    /// The spawn sites (`SpawnId`) whose tasks the body starts, also
+    /// through the closures that it runs (part `tasks` of a closure
+    /// summary, plan stage F19).
+    pub started: Vec<u32>,
+    /// The effects that a task of the body performs through a handler of a
+    /// caller (part `task_effects`, plan stage F19).
+    pub task_effects: std::collections::BTreeSet<String>,
+    /// W0314 (`docs/ir.md` 6.9, plan stage F19): the span and the text of
+    /// each task that performs through a handler of this task.
+    pub w0314: Vec<(weft_ir::Span, String)>,
+    /// The ends of the tasks (`Handlers::task_ends`): [`task_end_lends`]
+    /// gives their `lends_mut` when the facts of the component are whole.
+    pub task_end_list: Vec<(weft_facts::TaskId, NodeId)>,
+    /// The frame variables of the runs of each task (a local of the task
+    /// body that a reference of the task holds): they end where the task
+    /// ends ([`task_end_lends`]).
+    pub task_frames: Vec<(weft_facts::TaskId, VarId)>,
     /// The join of the states before each `Dead` of the body, if it has
     /// closures: the last value of a variable that a closure keeps (`Kept`)
     /// when the body gives the closure back (stage F12).
@@ -378,7 +413,7 @@ impl Em<'_> {
     }
 
     /// What a template knows about an access of `place` in state `st`.
-    /// With `root`, the access reads the root of a source local.
+    /// With `root`, an access of a whole source local reads its root.
     fn access(
         &mut self,
         st: &State,
@@ -414,7 +449,11 @@ impl Em<'_> {
         ptrs.sort();
         ptrs.dedup();
         let k = self.key(place.local)?;
-        let root = if root && self.source_local(k) {
+        // A use of a whole variable reads its root (OR8). An access of a
+        // part reads the places of the part only: a task that changes
+        // another part of the variable runs at the same time with no
+        // conflict (corpus 136, `field_part`; plan stage F19).
+        let root = if root && place.proj.is_empty() && self.source_local(k) {
             Some(self.root_of(place.local)?)
         } else {
             None
@@ -2587,8 +2626,53 @@ pub fn call(
         crate::analysis::apply::RunKind::Item,
     )?;
     slot_reads(em, main, read);
-    // The function values that the callee runs (part `runs`, stage F12).
-    let run_frames = emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?;
+    // The function values that the callee runs (part `runs`, stage F12). A
+    // value that the callee runs as a task applies at the task nodes; a
+    // value that it runs while a task runs gives its places to them (plan
+    // stage F19).
+    let tasks = out.apps.iter().any(|a| a.task_run.is_some());
+    let mut plain = std::collections::BTreeMap::new();
+    let run_frames = if tasks {
+        let mut frames = Vec::new();
+        for app in out.apps.iter().filter(|a| a.task_run.is_none()) {
+            let marks = (
+                em.facts.mutates_at.len(),
+                em.facts.lends_mut.len(),
+                em.facts.reads_at.len(),
+            );
+            let one = std::slice::from_ref(app);
+            frames.extend(emit_apps(
+                em, nodes, st, block, args, one, at, &spans, &bases,
+            )?);
+            if let Some(j) = app.callee_param {
+                let e: &mut (Vec<PlaceId>, Vec<PlaceId>) = plain.entry(j).or_default();
+                let (w, rd) = places_since(em.facts, marks, |_| true);
+                e.0.extend(w);
+                e.1.extend(rd);
+            }
+        }
+        frames
+    } else {
+        emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?
+    };
+    if tasks {
+        call_tasks(
+            em,
+            nodes,
+            st,
+            block,
+            (sum, &out.sigma, &out.apps),
+            args,
+            &plain,
+            (&spans, at, origin, &callee),
+        )?;
+    }
+    if decl.intrinsic == Some(weft_ir::Intrinsic::SimRun) {
+        sim_run(em, nodes, at);
+    }
+    if !sum.task_effects.is_empty() {
+        task_effects_at(em, &sum.task_effects, &callee, at);
+    }
     let ptys: Vec<weft_ir::TyId> = out.sigma.tys.clone();
     fn_arg_effects(em, main, st, &ptys, args, &spans)?;
     // A callee that runs function values has the abort edges of each way
@@ -2653,10 +2737,13 @@ pub fn call(
         {
             continue;
         }
+        // A value that the callee runs as a task can go away with no run:
+        // the scope or the `fork` can cancel the task first (plan stage
+        // F19).
         let runs = sum
             .runs
             .iter()
-            .any(|r| !r.capture && r.param as usize == i && !r.maybe);
+            .any(|r| !r.capture && r.param as usize == i && !r.maybe && !r.task);
         // A maker whose result is linear: the callee does not know that
         // the result is linear, so it can drop it also when it runs the
         // maker (hole H3b of the second review of the ABC preview).
@@ -2726,6 +2813,197 @@ pub fn call(
     Ok(())
 }
 
+/// The places that the facts change or lend (first) and read (second)
+/// from the marks `marks` (the lengths of `mutates_at`, `lends_mut` and
+/// `reads_at`) on, that `keep` keeps.
+fn places_since(
+    facts: &FnFacts,
+    marks: (usize, usize, usize),
+    keep: impl Fn(PlaceId) -> bool,
+) -> (Vec<PlaceId>, Vec<PlaceId>) {
+    let mut writes: Vec<PlaceId> = facts.mutates_at[marks.0..]
+        .iter()
+        .chain(&facts.lends_mut[marks.1..])
+        .map(|(_, q)| *q)
+        .filter(|&q| keep(q))
+        .collect();
+    writes.sort();
+    writes.dedup();
+    let mut reads: Vec<PlaceId> = facts.reads_at[marks.2..]
+        .iter()
+        .map(|(_, q)| *q)
+        .filter(|&q| keep(q))
+        .collect();
+    reads.sort();
+    reads.dedup();
+    (writes, reads)
+}
+
+/// The function values that a callee runs as tasks, at the task nodes
+/// of a call (`docs/ir.md` 6.7, plan stage F19; OR7, V126, V127, V132).
+///
+/// For each entry of the part `runs` of the summary `sum` that runs as a
+/// task, four [`super::nodes::Phase::Task`] nodes (`Em::task_nodes`):
+///
+/// - the start: a task of the call (`fork_task` for a `fork` branch of the
+///   callee) starts there (`spawned_at`), and the values of the argument
+///   (`apps`) apply there; their changes and reads are the footprint of
+///   the task (`task_writes`, `task_reads`), with `captures`,
+///   `mut_through` and `kept` of the closures of the argument, and
+///   `opaque` for code of a caller and a callee that pins;
+/// - the second start, if the callee can run two tasks of the value at the
+///   same time (`twice`): the task starts again, and the node changes and
+///   reads the footprint of the task;
+/// - the code that runs at the same time: the node changes (`lends_mut`)
+///   and reads the places of each value that the callee runs while the
+///   task runs (`with`: a task of the call, or a value that runs as plain
+///   code, `plain`), and the places of the callee itself (`TaskHow::writes`,
+///   `TaskHow::reads`);
+/// - the end (`joined_at`).
+///
+/// # Errors
+///
+/// The errors of α.
+#[allow(clippy::too_many_arguments)]
+fn call_tasks(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    (sum, sigma, apps): (
+        &crate::analysis::Summary,
+        &crate::analysis::apply::Sigma,
+        &[transfer::Applied],
+    ),
+    args: &[Operand],
+    plain: &std::collections::BTreeMap<u32, (Vec<PlaceId>, Vec<PlaceId>)>,
+    (spans, at, origin, callee): (&[Span], Span, weft_ir::Span, &str),
+) -> R {
+    let task_nodes = std::mem::take(&mut em.task_nodes);
+    let body = em.body;
+    let mut places = plain.clone();
+    let mut started = Vec::new();
+    for (k, (idx, run)) in super::frames::task_runs(sum).enumerate() {
+        let base = k.saturating_mul(super::frames::TASK_NODES);
+        let get = |o: usize| task_nodes.get(base.saturating_add(o)).copied();
+        let (Some(s), Some(d), Some(x), Some(e)) = (get(0), get(1), get(2), get(3)) else {
+            continue;
+        };
+        for n in [s, d, x, e] {
+            em.holders.before(n, st, em.facts);
+        }
+        let kind = if run.how.thread {
+            weft_facts::TaskKind::Fork
+        } else {
+            weft_facts::TaskKind::Spawn
+        };
+        let span_of = spans.get(run.param as usize).copied().unwrap_or(at);
+        let t = em.facts.add_task(kind, span_of);
+        em.facts.spawned_at.push((t, s));
+        let mine: Vec<transfer::Applied> = apps
+            .iter()
+            .filter(|a| a.task_run == Some(idx))
+            .cloned()
+            .collect();
+        task_w0314(em, &mine, origin, Some(callee));
+        let marks = (
+            em.facts.mutates_at.len(),
+            em.facts.lends_mut.len(),
+            em.facts.reads_at.len(),
+        );
+        let at_s = CallNodes {
+            main: s,
+            ret: None,
+            frame_end: nodes.frame_end,
+            aborts: nodes.aborts.clone(),
+            may_abort: false,
+            values: Vec::new(),
+        };
+        em.in_task = Some((t, run.how.thread));
+        let frames = emit_apps(em, &at_s, st, block, &[], &mine, at, &[], &[]);
+        em.in_task = None;
+        let frames = frames?;
+        end_frames(em, &at_s, &frames);
+        let roots = &*em.roots;
+        let shared = |q: PlaceId| {
+            em.facts.places.get(q.index()).is_none_or(|i| {
+                !matches!(
+                    roots.role(i.root),
+                    Some(super::alpha::Role::Caller | super::alpha::Role::Frame(_))
+                )
+            })
+        };
+        let (writes, reads) = places_since(em.facts, marks, shared);
+        em.facts.task_writes.extend(writes.iter().map(|&q| (t, q)));
+        em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
+        let fns = match args.get(run.param as usize) {
+            Some(op @ (Operand::Copy(_) | Operand::Move(_))) => {
+                transfer::operand(&mut em.cx(), body, st, op)?.flat().fns
+            }
+            _ => std::collections::BTreeSet::new(),
+        };
+        task_captures(em, st, t, &fns, &writes)?;
+        let code = mine.iter().any(|a| a.code);
+        let pins = mine.iter().any(|a| a.summary.pins);
+        if code || pins {
+            em.facts.opaque.push(t);
+        }
+        if code && !pins {
+            em.code_opaque.push(t);
+        }
+        places.insert(run.param, (writes.clone(), reads.clone()));
+        started.push((run.clone(), t, (d, x, e), writes, reads));
+    }
+    for (run, t, (d, x, e), writes, reads) in started {
+        if run.how.twice {
+            em.facts.spawned_at.push((t, d));
+            em.facts.lends_mut.extend(writes.iter().map(|&q| (d, q)));
+            em.facts
+                .reads_at
+                .extend(writes.iter().chain(&reads).map(|&q| (d, q)));
+        }
+        for j in &run.how.with {
+            if let Some((w, r)) = places.get(j) {
+                em.facts.lends_mut.extend(w.iter().map(|&q| (x, q)));
+                em.facts.reads_at.extend(w.iter().chain(r).map(|&q| (x, q)));
+            }
+        }
+        for ip in &run.how.writes {
+            for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
+                em.facts.lends_mut.push((x, q));
+                em.facts.reads_at.push((x, q));
+            }
+        }
+        for ip in &run.how.reads {
+            for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
+                em.facts.reads_at.push((x, q));
+            }
+        }
+        em.facts.joined_at.push((t, e));
+    }
+    Ok(())
+}
+
+/// The facts of a call of `sim.run` at its nodes `nodes` (`docs/ir.md`
+/// 5.30, plan stage F19): `sim_run_at(Main)` (W0802 in a library); a root
+/// handler of the simulation for each standard effect (`handler`,
+/// `sim_root`); the block runs with these handlers, so no standard effect
+/// of the block leaves the call (`escapes_at`).
+fn sim_run(em: &mut Em<'_>, nodes: &CallNodes, at: Span) {
+    em.facts.sim_run_at.push(nodes.main);
+    for e in crate::effects::STD_EFFECTS {
+        em.facts.handlers.push(weft_facts::HandlerInfo {
+            effect: e.to_string(),
+            sim_root: true,
+            span: at,
+        });
+    }
+    let here = |x: NodeId| x == nodes.main || Some(x) == nodes.ret;
+    em.facts
+        .escapes_at
+        .retain(|(x, e)| !(here(*x) && crate::effects::is_std(e)));
+}
+
 /// A `Call` of a function value (stage F11): its nodes `Main`, `Ret` and
 /// `FrameEnd`, with the summary of each value that the callee can be
 /// (`crate::analysis::transfer::value_out`, `docs/ir.md` 6.7).
@@ -2759,6 +3037,11 @@ fn call_value(
 ) -> R {
     let body = em.body;
     let out = transfer::value_out(&mut em.cx(), body, block, st, callee, args, dest)?;
+    // A function value whose code runs a value of its arguments as a task:
+    // the node has no task nodes (plan stage F19).
+    if out.apps.iter().any(|a| a.task_run.is_some()) {
+        return Err(AlphaError::Later(VALUE_TASKS));
+    }
     let main = nodes.main;
     let at = span(origin);
     operand_moves(em, main, st, callee, false, true)?;
@@ -2998,8 +3281,23 @@ fn emit_apps(
                 }
                 k => k,
             };
+            // The tasks of the run that perform through a handler of a
+            // caller (part `task_effects`): a handler of this task there is
+            // W0314; else they are tasks of the body too (plan stage F19).
+            if em.in_task.is_none() && n == main && !app.summary.task_effects.is_empty() {
+                task_effects_at(em, &app.summary.task_effects, &app.name, at);
+            }
+            // The tasks that the closure starts in a scope of the body
+            // (part `tasks`, plan stage F19): they start at `n` too.
+            for &site in &app.summary.tasks {
+                em.started.push(site);
+                if let Some(&t) = em.hx.task_ids.get(&weft_ir::SpawnId(site)) {
+                    em.facts.spawned_at.push((t, n));
+                }
+            }
             let lent = em.facts.lends_mut.len();
             let read = em.facts.reads_at.len();
+            let multi = em.facts.multi_at.len();
             let changed = crate::analysis::apply::main(
                 &mut em.cx(),
                 n,
@@ -3008,6 +3306,13 @@ fn emit_apps(
                 &site,
                 kind,
             )?;
+            // A task runs on a stack of its own: a `multi` resume there does
+            // not run the code of this task again (W0314 rejects a task that
+            // performs through a handler of this task; O3-10, plan stage
+            // F19).
+            if em.in_task.is_some() {
+                em.facts.multi_at.truncate(multi);
+            }
             slot_reads(em, n, read);
             // Code of a caller reads the places behind the parameters of the
             // body and the `rc` groups that they reach (no slot use: the
@@ -3108,8 +3413,24 @@ fn emit_apps(
             }
         }
         if let Some(r) = &app.run {
-            em.runs
-                .push((r.clone(), (app.again && !app.order) || cyclic));
+            let mut r = r.clone();
+            // A run of a value of the interface in a task: the body runs it
+            // as a task (part `runs`, plan stage F19).
+            if let Some((t, thread)) = em.in_task {
+                r.task = true;
+                em.task_runs.push((t, r.param, r.capture, thread));
+            } else {
+                let at = if app.again {
+                    vec![Some(main), nodes.ret]
+                } else if app.late {
+                    vec![nodes.ret.or(Some(main))]
+                } else {
+                    vec![Some(main)]
+                };
+                em.run_at
+                    .extend(at.into_iter().flatten().map(|n| (r.param, r.capture, n)));
+            }
+            em.runs.push((r, (app.again && !app.order) || cyclic));
             if app.code {
                 em.run_nodes.push(main);
                 em.run_nodes.extend(nodes.ret);
@@ -4142,21 +4463,63 @@ const ASYNC: &str = "Async";
 /// The identity of the standard effect `Fail`.
 const FAIL: &str = "Fail";
 
-/// Why a task whose code performs through a capability of a local handler
-/// is not in scope (plan stage F19: the operation runs on the task).
-const TASK_OPS: &str = "a task that performs an operation of an enclosing `handle` (stage F19)";
+/// Why a task that runs a function value more than once is not in scope:
+/// a spawn has no node for the second run (plan stage F19).
+const TASK_AGAIN: &str = "a task that runs a callback more than once";
+
+/// Why a task that runs the function value of a shared variable that gets
+/// a new value is not in scope (plan stage F19).
+const TASK_LATE: &str = "a task that runs a function variable that gets a new value";
+
+/// True if the closure value `f` runs a capture that is a shared cell (a
+/// `ByRef` or a `Kept` capture) of a variable that more than one statement
+/// gives a whole value: a task that runs `f` runs the value of the cell at
+/// that time.
+fn runs_rebound_cell(p: &weft_ir::Program, f: &FnVal, sums: &crate::analysis::Summaries) -> bool {
+    let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
+        return false;
+    };
+    let (Some(decl), Ok(sum)) = (p.closures.get(c.index()), sums.closure(*c)) else {
+        return false;
+    };
+    sum.runs.iter().filter(|r| r.capture).any(|r| {
+        let Some(cap) = decl.captures.get(r.param as usize) else {
+            return true;
+        };
+        if !matches!(
+            cap.mode,
+            weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
+        ) || !cap.source.proj.is_empty()
+        {
+            return !cap.source.proj.is_empty();
+        }
+        let Ok(owner) = super::alpha::owner_local(p, decl.maker, cap.source.local) else {
+            return true;
+        };
+        let mut sets = 0usize;
+        for (bi, b) in p.bodies.iter().enumerate() {
+            let bid = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
+            for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+                if let weft_ir::StmtKind::Assign(q, _) = &s.kind {
+                    if q.proj.is_empty()
+                        && super::alpha::owner_local(p, bid, q.local).ok() == Some(owner)
+                    {
+                        sets += 1;
+                    }
+                }
+            }
+        }
+        sets > 1
+    })
+}
+
+/// Why a call of a function value that runs a value of its arguments as a
+/// task is not in scope (plan stage F19).
+const VALUE_TASKS: &str = "a function value that runs a value of its arguments as a task";
 
 /// Why a task that runs code of a caller is not in scope (plan stage F19:
 /// the caller checks the value as a task).
 const TASK_CODE: &str = "a task that runs code of a caller (stage F19)";
-
-/// Why a task that performs an operation of a handler of a caller is not
-/// in scope (W0314, plan stage F19).
-const TASK_ROW: &str = "a task that performs an operation of a caller (stage F19)";
-
-/// Why a task that runs a function value more than once is not in scope
-/// (plan stage F19: a spawn has no `Ret` node for the second run).
-const TASK_AGAIN: &str = "a task that runs a callback more than once (stage F19)";
 
 /// True if fact place `inner` is at or below fact place `outer`.
 fn at_or_below(facts: &FnFacts, inner: PlaceId, outer: PlaceId) -> bool {
@@ -4196,52 +4559,276 @@ pub fn spawn(
 ) -> R {
     use crate::analysis::tasks;
     let body = em.body;
-    let at = span(origin);
     operand(em, n, st, scope)?;
+    let (ret_ty, out_ret) = task_start(em, n, st, block, site, task, origin)?;
+    em.facts.escapes_at.push((n, ASYNC.to_string()));
+    em.started.push(site.0);
+    // The value after the spawn: the handle, or the `TaskResult` local.
+    let mut after = st.clone();
+    tasks::spawn(&mut em.cx(), (body, block), &mut after, site, task, dest)?;
+    if let Some(d) = dest {
+        let v = if let Some((k, path)) = transfer::move_path(em.p, body, d)? {
+            after.value(k, &path)
+        } else {
+            let result = tasks::task_result(&em.cx(), ret_ty, &out_ret);
+            let t = em
+                .place_ty(d)
+                .ok_or_else(|| AlphaError::BadPlace("a handle with no type".to_string()))?;
+            tasks::handle_value(&em.cx(), t, site, &result)
+        };
+        return bind_dest(em, n, st, d, &v);
+    }
+    let orphan = em.p.body(body).and_then(|b| {
+        b.locals
+            .iter()
+            .position(|d| d.kind == LocalKind::TaskResult(site))
+            .and_then(|i| u32::try_from(i).ok())
+    });
+    if let Some(l) = orphan {
+        let k = em.key(LocalId(l))?;
+        whole(em, n, st, k, &Tree::leaf(crate::analysis::AbsVal::plain()));
+    }
+    Ok(())
+}
+
+/// `Fork` (`docs/ir.md` 6.4, plan stage F19): the nodes `Main`, a
+/// [`super::nodes::Phase::Task`] node for each branch, the node where the
+/// branches end, and `Ret`.
+///
+/// `Main`: `escapes_at(Main, Par)`; `may_abort(Main)` (a cancel, a child
+/// failure). Branch `i` starts at its node (`branch_nodes[i]`): the start
+/// of its task (`task_start`), so a branch that starts later runs at the
+/// same time as the branches before it (W0405 between two branches). Each
+/// task is a `fork_task` (W0401, W0403). The node `end` ends each task
+/// (`joined_at`). `Ret`: the destination gets the tuple of the results of
+/// the branches, also of units (IP6).
+///
+/// # Errors
+///
+/// The errors of `task_start` and of α.
+pub fn fork(
+    em: &mut Em<'_>,
+    (nodes, branch_nodes, end): (&CallNodes, &[NodeId], Option<NodeId>),
+    st: &State,
+    block: weft_ir::BlockId,
+    (sites, branches, dest): (&[weft_ir::SpawnId], &[Operand], &Place),
+    origin: weft_ir::Span,
+) -> R {
+    let body = em.body;
+    let main = nodes.main;
+    let mut tasks = Vec::new();
+    for (i, (site, br)) in sites.iter().zip(branches).enumerate() {
+        let n = branch_nodes.get(i).copied().unwrap_or(main);
+        if n != main {
+            em.holders.before(n, st, em.facts);
+        }
+        let at =
+            em.p.spawns
+                .get(site.index())
+                .map_or(origin, |d| d.origin.span);
+        task_start(em, n, st, block, *site, br, at)?;
+        tasks.extend(em.hx.task_ids.get(site).copied());
+    }
+    em.facts.escapes_at.push((main, "Par".to_string()));
+    if nodes.may_abort {
+        em.facts.may_abort.push(main);
+    }
+    if let Some(e) = end {
+        em.holders.before(e, st, em.facts);
+    }
+    let end = end.or(nodes.ret).unwrap_or(main);
+    em.facts.joined_at.extend(tasks.iter().map(|&t| (t, end)));
+    if let Some(r) = nodes.ret {
+        let mut after = st.clone();
+        crate::analysis::tasks::fork(&mut em.cx(), (body, block), &mut after, branches, dest)?;
+        let v = match transfer::move_path(em.p, body, dest)? {
+            Some((k, path)) => after.value(k, &path),
+            None => Tree::none(),
+        };
+        bind_dest(em, r, st, dest, &v)?;
+    }
+    Ok(())
+}
+
+/// The part `task_effects` (`effects`) of the summary of the callee `name`
+/// at a run node of span
+/// `at` (plan stage F19): an effect that a local handler of the body
+/// handles is W0314 (the handler is on the stack of this task, and the
+/// task of the callee runs on another one); another effect goes to the part
+/// `task_effects` of the body.
+fn task_effects_at(
+    em: &mut Em<'_>,
+    effects: &std::collections::BTreeSet<String>,
+    name: &str,
+    at: Span,
+) {
+    let Some(b) = em.p.body(em.body) else {
+        return;
+    };
+    let env = b.cap_env;
+    let unit = b.origin.span.unit;
+    let mut bad = false;
+    for e in effects {
+        let local = matches!(
+            super::frames::resolve(em.p, em.tys, env, e, true),
+            super::frames::Dest::Handler { .. }
+        );
+        if local {
+            bad = true;
+        } else {
+            em.task_effects.insert(e.clone());
+        }
+    }
+    if bad {
+        let name = name.rsplit('.').next().unwrap_or(name);
+        em.w0314.push((
+            weft_ir::Span {
+                unit,
+                lo: at.lo,
+                hi: at.hi,
+            },
+            format!(
+                "a task of `{name}` performs through a handler of this task: the handler runs on another task"
+            ),
+        ));
+    }
+}
+
+/// W0314 for a task that runs the summaries `apps` (`docs/ir.md` 6.9, plan
+/// stage F19): an operation of the task goes to a handler on the stack of
+/// another task. The task starts at `origin`; `callee` names a callee that
+/// starts it.
+///
+/// An operation through a captured capability, an effect of the row that
+/// a local handler of the body handles, an effect of a closure that only a
+/// handler of a caller can handle (an effect that is not standard), and,
+/// with no runtime, each effect: W0314. `Fail` goes to the task that joins
+/// the task, and `Async` to the runtime. Another effect of the row goes to
+/// a handler of a caller: part `task_effects` of the body (the caller
+/// checks it at its call).
+fn task_w0314(
+    em: &mut Em<'_>,
+    apps: &[transfer::Applied],
+    origin: weft_ir::Span,
+    callee: Option<&str>,
+) {
+    use crate::analysis::summary::CapIface;
+    let env = em.p.body(em.body).map(|b| b.cap_env);
+    let local = |em: &Em<'_>, e: &str| {
+        env.is_some_and(|env| {
+            matches!(
+                super::frames::resolve(em.p, em.tys, env, e, true),
+                super::frames::Dest::Handler { .. }
+            )
+        })
+    };
+    let mut bad = false;
+    for app in apps {
+        let item = app.kind == crate::analysis::apply::RunKind::Item;
+        let row = app
+            .summary
+            .performs
+            .iter()
+            .map(|pf| (pf.effect.as_str(), pf.cap == CapIface::Row, item))
+            .chain(
+                app.summary
+                    .task_effects
+                    .iter()
+                    .map(|e| (e.as_str(), true, true)),
+            );
+        for (e, through_row, item) in row {
+            if e == FAIL || e == ASYNC {
+                continue;
+            }
+            let std = crate::effects::is_std(e);
+            if !through_row || local(em, e) || (em.hx.no_runtime && std) || (!std && !item) {
+                bad = true;
+            } else {
+                em.task_effects.insert(e.to_string());
+            }
+        }
+    }
+    if bad {
+        let msg = match callee {
+            Some(name) => format!(
+                "a task of `{name}` performs through a handler of this task: the handler runs on another task"
+            ),
+            None => "a task cannot perform through a handler of this task: the handler runs on another task".to_string(),
+        };
+        em.w0314.push((origin, msg));
+    }
+}
+
+/// The start of the task of site `site` at node `n`: the run of the task
+/// operand `task` (a spawn, or a branch of a `fork`) in state `st`
+/// (`docs/ir.md` 6.4, plan stages F18 and F19).
+///
+/// The operand moves; the run of the task body at `n` as a run of a
+/// closure with no arguments (`emit_apps`), whose changes and lends become
+/// `task_writes(T, _)` and whose reads become `task_reads(T, _)` (they stay
+/// at `n` too: the task can run before the next node); `spawned_at(T, n)`;
+/// `captures(T, v)` of the variable of each capture of the closure,
+/// `mut_through(T, v)` if the task changes a place that the capture
+/// reaches, `kept(T, root(x))` of each `Kept` capture; `opaque(T)` for a
+/// value that the analysis does not follow. Returns the result type of the
+/// task and the value of its result.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a task that the fact generator does
+/// not support yet, and the errors of α.
+fn task_start(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    block: weft_ir::BlockId,
+    site: weft_ir::SpawnId,
+    task: &Operand,
+    origin: weft_ir::Span,
+) -> Result<(weft_ir::TyId, Tree), AlphaError> {
+    use crate::analysis::tasks;
+    let body = em.body;
+    let at = span(origin);
     let ret_ty = tasks::task_ret(&mut em.cx(), body, task)?;
     let fns = transfer::operand(&mut em.cx(), body, st, task)?.flat().fns;
     let out = transfer::value_out_ty(&mut em.cx(), (body, block), st, task, &[], ret_ty)?;
     // A failure of the task is a child failure: `join` and `ScopeWait` run
-    // the `fail` clause of a local handler (`clause::runs_clauses`).
-    if out.apps.iter().any(|a| {
-        a.summary.performs.iter().any(|pf| {
-            !matches!(pf.cap, crate::analysis::summary::CapIface::Row) && pf.effect != FAIL
-        })
-    }) {
-        return Err(AlphaError::Later(TASK_OPS));
-    }
-    // A run again at `Ret` (a value that runs another value more than once,
-    // OR3): a spawn has no `Ret` node.
-    if out.apps.iter().any(|a| a.again || a.late) {
+    // the `fail` clause of a local handler (`clause::runs_clauses`). An
+    // operation of another handler of this task is W0314.
+    task_w0314(em, &out.apps, origin, None);
+    // A late run (a value that the task body runs through a capture)
+    // applies at `n`: the whole run of the task is at `n` (plan stage F19).
+    // A run again (a value that runs another value more than once, OR3)
+    // needs a second node after the first run: a spawn has none.
+    if out.apps.iter().any(|a| a.again && !a.order) {
         return Err(AlphaError::Later(TASK_AGAIN));
     }
-    // Code of a caller that runs as a task (a parameter, a value that the
-    // analysis does not follow, a closure that runs one): the caller must
-    // check it as a task (OR7, V132, plan stage F19).
-    let known = fns
-        .iter()
-        .all(|f| matches!(f, FnVal::Closure(_) | FnVal::Made(_) | FnVal::Item(..)));
-    if !known
-        || out
-            .apps
-            .iter()
-            .any(|a| a.code || !a.summary.runs.is_empty())
-    {
+    // A task runs the value that a shared cell (a `ByRef` or `Kept`
+    // capture) holds when it runs: a variable that gets a new function value
+    // after the spawn gives the task code that the run at `n` does not
+    // apply (`zz_late`, `late_task`).
+    if fns.iter().any(|f| runs_rebound_cell(em.p, f, em.sums)) {
+        return Err(AlphaError::Later(TASK_LATE));
+    }
+    // Code of a caller that runs as a task (a parameter, a closure that
+    // runs one): the caller checks the value that it gives as a task (part
+    // `runs`, OR7, V132, plan stage F19). A value that the analysis does
+    // not follow and that no caller gives stays with the old pipeline.
+    let known = fns.iter().all(|f| {
+        matches!(
+            f,
+            FnVal::Closure(_)
+                | FnVal::Made(_)
+                | FnVal::Item(..)
+                | FnVal::Param(_)
+                | FnVal::ParamResult(_)
+                | FnVal::Capture(_)
+        )
+    });
+    if !known || out.apps.iter().any(|a| a.code && a.run.is_none()) {
         return Err(AlphaError::Later(TASK_CODE));
     }
-    // An operation of a handler of a caller on the task: no runtime root
-    // handler serves it there (W0314, plan stage F19).
-    let no_runtime = em.hx.no_runtime;
-    if out.apps.iter().any(|a| {
-        a.summary.performs.iter().any(|pf| {
-            matches!(pf.cap, crate::analysis::summary::CapIface::Row)
-                && pf.effect != ASYNC
-                && pf.effect != FAIL
-                && (no_runtime || !crate::effects::is_std(&pf.effect))
-        })
-    }) {
-        return Err(AlphaError::Later(TASK_ROW));
-    }
+    let caller_code = out.apps.iter().any(|a| a.code);
     operand_moves(em, n, st, task, false, true)?;
     let marks = (
         em.facts.mutates_at.len(),
@@ -4256,10 +4843,18 @@ pub fn spawn(
         may_abort: false,
         values: Vec::new(),
     };
-    let frames = emit_apps(em, &nodes, st, block, &[], &out.apps, at, &[], &[])?;
+    let thread = em.p.spawns.get(site.index()).is_some_and(|d| d.fork);
+    em.in_task = em.hx.task_ids.get(&site).map(|&t| (t, thread));
+    let frames = emit_apps(em, &nodes, st, block, &[], &out.apps, at, &[], &[]);
+    em.in_task = None;
+    let frames = frames?;
     apps_at_ret(em, n, st, &out.apps, at)?;
     end_frames(em, &nodes, &frames);
-    em.facts.escapes_at.push((n, ASYNC.to_string()));
+    // The frame of the task ends where the task ends (a reference that the
+    // task puts into a capture points into it: `zz_keep`, plan stage F19).
+    if let Some(&t) = em.hx.task_ids.get(&site) {
+        em.task_frames.extend(frames.iter().map(|&v| (t, v)));
+    }
     if let Some(t) = em.hx.task_ids.get(&site).copied() {
         em.facts.spawned_at.push((t, n));
         // A place of a caller (code of a caller, an operation of a caller)
@@ -4307,37 +4902,17 @@ pub fn spawn(
         em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
         task_captures(em, st, t, &fns, &writes)?;
         // A callee that can start a pinned task: work stealing cannot check
-        // the task (`pinned`).
-        if out.apps.iter().any(|a| a.summary.pins) {
+        // the task (`pinned`). Code of a caller: the body does not know it
+        // (the caller checks the value that it gives, part `runs`).
+        let pins = out.apps.iter().any(|a| a.summary.pins);
+        if pins || caller_code {
             em.facts.opaque.push(t);
         }
+        if caller_code && !pins {
+            em.code_opaque.push(t);
+        }
     }
-    // The value after the spawn: the handle, or the `TaskResult` local.
-    let mut after = st.clone();
-    tasks::spawn(&mut em.cx(), (body, block), &mut after, site, task, dest)?;
-    if let Some(d) = dest {
-        let v = if let Some((k, path)) = transfer::move_path(em.p, body, d)? {
-            after.value(k, &path)
-        } else {
-            let result = tasks::task_result(&em.cx(), ret_ty, &out.ret);
-            let t = em
-                .place_ty(d)
-                .ok_or_else(|| AlphaError::BadPlace("a handle with no type".to_string()))?;
-            tasks::handle_value(&em.cx(), t, site, &result)
-        };
-        return bind_dest(em, n, st, d, &v);
-    }
-    let orphan = em.p.body(body).and_then(|b| {
-        b.locals
-            .iter()
-            .position(|d| d.kind == LocalKind::TaskResult(site))
-            .and_then(|i| u32::try_from(i).ok())
-    });
-    if let Some(l) = orphan {
-        let k = em.key(LocalId(l))?;
-        whole(em, n, st, k, &Tree::leaf(crate::analysis::AbsVal::plain()));
-    }
-    Ok(())
+    Ok((ret_ty, out.ret))
 }
 
 /// The facts of the captures of the closures `fns` that task `t` runs, in
@@ -4372,8 +4947,13 @@ fn task_captures(
         };
         let maker = decl.maker;
         // A capture of a closure body is a capture of the closure that
-        // made it: the variables are in its maker.
+        // made it: the variables are in its maker. The facts do not name
+        // them, so the task is pinned (`opaque`, plan stage F19: a spawn
+        // in a closure body on a scope of the maker).
         if em.p.closure_of(maker).is_some() {
+            if !em.facts.opaque.contains(&t) {
+                em.facts.opaque.push(t);
+            }
             continue;
         }
         for cap in &decl.captures {
@@ -4476,6 +5056,55 @@ pub fn join(em: &mut Em<'_>, nodes: &CallNodes, st: &State, task: &Operand, dest
         bind_dest(em, r, st, dest, &v)?;
     }
     Ok(())
+}
+
+/// The writes of each task that ends at a node of `ends` become `lends_mut`.
+///
+/// They go there (plan stage F18) when the facts of the component are whole: the
+/// tasks that the task starts in a closure body (part `tasks`) have their
+/// facts then. A task that a task starts begins at the same node and runs
+/// on after the end of the outer task: its writes are not writes that end
+/// there (plan stage F19).
+pub fn task_end_lends(
+    facts: &mut FnFacts,
+    ends: &[(weft_facts::TaskId, NodeId)],
+    frames: &[(weft_facts::TaskId, VarId)],
+) {
+    let ended: Vec<(VarId, NodeId)> = frames
+        .iter()
+        .flat_map(|&(t, v)| {
+            facts
+                .joined_at
+                .iter()
+                .filter(move |(u, _)| *u == t)
+                .map(move |(_, n)| (v, *n))
+        })
+        .collect();
+    facts.scope_end.extend(ended);
+    let mut writes: BTreeMap<weft_facts::TaskId, Vec<PlaceId>> = BTreeMap::new();
+    for &(t, m) in &facts.task_writes {
+        writes.entry(t).or_default().push(m);
+    }
+    // A task that a task starts (a spawn in the code of the task, part
+    // `tasks`) starts at the same node and runs on after the end of the
+    // outer task: its writes are not writes that end there (plan stage F19).
+    let mut starts: BTreeMap<weft_facts::TaskId, Vec<NodeId>> = BTreeMap::new();
+    for &(t, n) in &facts.spawned_at {
+        starts.entry(t).or_default().push(n);
+    }
+    for (t, e) in ends.iter().copied() {
+        let mine = starts.get(&t).cloned().unwrap_or_default();
+        let inner: Vec<PlaceId> = starts
+            .iter()
+            .filter(|(u, ns)| **u != t && ns.iter().any(|n| mine.contains(n)))
+            .flat_map(|(u, _)| writes.get(u).into_iter().flatten().copied())
+            .collect();
+        for &m in writes.get(&t).into_iter().flatten() {
+            if !inner.contains(&m) {
+                facts.lends_mut.push((e, m));
+            }
+        }
+    }
 }
 
 /// The tasks that call `t` ends (O3-9, plan stage F18).
@@ -4749,15 +5378,8 @@ pub fn task_ends(em: &mut Em<'_>) {
             }
         }
     }
-    let mut writes: BTreeMap<weft_facts::TaskId, Vec<PlaceId>> = BTreeMap::new();
-    for &(t, m) in &em.facts.task_writes {
-        writes.entry(t).or_default().push(m);
-    }
-    for (t, e) in std::mem::take(&mut em.hx.task_ends) {
-        for &m in writes.get(&t).into_iter().flatten() {
-            em.facts.lends_mut.push((e, m));
-        }
-    }
+    let ends = std::mem::take(&mut em.hx.task_ends);
+    em.task_end_list.extend(ends);
     // A task does not keep a variable that a reference of the task points
     // into (a captured reference): the reference is invalid after the end
     // of the variable (as the old lowering, `borrowed_roots`).

@@ -1212,10 +1212,19 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         "{}",
         looped.stderr
     );
-    // A program that is not in scope (a task, stage F18): the oracle checks
-    // nothing.
+    // A `fork` (plan stage F19): the oracle checks the program.
     let task = format!("{INTERP}/fork.wf");
-    let out = cmd(&["run", "--fact-oracle", &task]);
+    let forked = cmd(&["run", "--fact-oracle", &task]);
+    assert_eq!(forked.code, 0, "{}", forked.stderr);
+    assert!(
+        forked.stderr.contains("note: --fact-oracle: 16 frame(s)"),
+        "{}",
+        forked.stderr
+    );
+    // A program that is not in scope (a type parameter, stage F20): the
+    // oracle checks nothing.
+    let generic = format!("{INTERP}/fork_unit.wf");
+    let out = cmd(&["run", "--fact-oracle", &generic]);
     assert!(
         out.stderr.contains("the oracle checks nothing"),
         "{}",

@@ -770,6 +770,21 @@ fn cap_effect<'t>(
     }
 }
 
+/// The number of [`super::nodes::Phase::Task`] nodes of a call for each
+/// value that the callee runs as a task (plan stage F19).
+pub const TASK_NODES: usize = 4;
+
+/// The entries of the part `runs` of summary `s` that the body runs as a
+/// task, in order: a run node applies each at its task nodes.
+pub fn task_runs(
+    s: &crate::analysis::Summary,
+) -> impl Iterator<Item = (usize, &crate::analysis::summary::Run)> {
+    s.runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.task && !r.capture)
+}
+
 /// The destinations of each terminator of some bodies.
 #[derive(Clone, Debug, Default)]
 pub struct Frames {
@@ -784,15 +799,71 @@ pub struct Frames {
     /// The nodes of the handled body of each `multi` handler that run a
     /// clause that can resume more than once ([`Frames::reentries`]).
     reentry: BTreeMap<HandlerId, Vec<(BodyId, BlockId)>>,
+    /// The number of [`super::nodes::Phase::Task`] nodes of the call of
+    /// each block whose callee runs a function value as a task (plan stage
+    /// F19, `docs/ir.md` 6.7).
+    tasks: BTreeMap<(BodyId, BlockId), u32>,
+    /// The performs through the capability of a local handler whose clause
+    /// has no `resume` (plan stage F19): they do not go on to their next
+    /// block (`fail` of a local `Fail` handler).
+    noreturn: std::collections::BTreeSet<(BodyId, BlockId)>,
 }
 
 impl Frames {
+    /// The number of [`super::nodes::Phase::Task`] nodes of the call of
+    /// block `block` of body `body`.
+    pub fn task_nodes(&self, body: BodyId, block: BlockId) -> u32 {
+        self.tasks.get(&(body, block)).copied().unwrap_or(0)
+    }
+
+    /// True if the terminator of block `block` of body `body` is a perform
+    /// whose clause has no `resume`: it has no normal successor.
+    pub fn no_return(&self, body: BodyId, block: BlockId) -> bool {
+        self.noreturn.contains(&(body, block))
+    }
+
     /// The destinations of each terminator of body `body`, with the
     /// summaries `sums` of the callees ([`destinations`]).
     pub fn of_body(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId) -> Self {
         let mut f = Self::default();
         f.add(body, p, |t| destinations(p, tys, sums, body, t));
+        f.add_tasks(p, sums, &[body]);
         f
+    }
+
+    /// The [`super::nodes::Phase::Task`] nodes of each call of the bodies
+    /// `bodies` whose callee runs a function value as a task: four for each
+    /// such entry of the part `runs` of the summary of the callee (the
+    /// start of the task, its second start, the code that runs at the same
+    /// time, its end; plan stage F19, `docs/ir.md` 6.7).
+    fn add_tasks(&mut self, p: &Program, sums: &Summaries, bodies: &[BodyId]) {
+        for &body in bodies {
+            let Some(b) = p.bodies.get(body.index()) else {
+                continue;
+            };
+            for (i, blk) in b.blocks.iter().enumerate() {
+                if blk.cleanup {
+                    continue;
+                }
+                if crate::analysis::clause::perform_never_returns(p, body, &blk.term.kind) {
+                    let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+                    self.noreturn.insert((body, block));
+                }
+                let TermKind::Call {
+                    callee: Callee::Fn(f, _),
+                    ..
+                } = &blk.term.kind
+                else {
+                    continue;
+                };
+                let k = sums.get(*f).map_or(0, |s| task_runs(s).count());
+                if k > 0 {
+                    let block = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+                    let n = u32::try_from(k.saturating_mul(TASK_NODES)).unwrap_or(u32::MAX);
+                    self.tasks.insert((body, block), n);
+                }
+            }
+        }
     }
 
     /// The destinations of each terminator of the bodies `bodies` of a
@@ -849,6 +920,7 @@ impl Frames {
                 }
             }
         }
+        f.add_tasks(p, sums, &order);
         f.clause_aborts(p, &order);
         f.twice = f.twice_of(p);
         for (&(body, block), hs) in &f.runs {

@@ -2386,3 +2386,15 @@ files = [
 reason = "class D-RAISES (follow-up F17.1): the summary of `main` has the part `raises` (the runtime can raise a failure at a `join`, a scope or a read in the code of a handled body); the old inference does not give it for these bodies. No check of the `ir` pipeline reads `raises` of `main`"
 stage = "F17.1"
 
+
+[[entry]]
+class = "changed"
+files = [
+    "redteam/c02_return_handle.wf",
+    "tests/gate/probes/redteam/c02_return_handle.wf",
+    "tests/gate/probes/verify/s5/R3a/p/clausetail.wf",
+    "verify/s5/R3a/p/clausetail.wf",
+]
+codes = ["W0302", "W0601"]
+reason = "class F19-NORET (stage F19): a perform through the capability of a local handler whose clause of the operation has no `resume` does not go on to its next block (`clause::perform_never_returns`), so the code after it is dead in the facts too: `clause_return` (c02, line 17: `take()` never runs) and `clause_tail_twice` (clausetail, line 14: the second `ask()` never runs) have no diagnostic there. The other lines are the same. Rejected by both pipelines"
+stage = "F19"

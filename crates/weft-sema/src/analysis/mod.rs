@@ -116,8 +116,12 @@ pub fn edges(
         }
         out.push((u, s));
     }
-    for s in term.normal_successors() {
-        out.push((s, st.clone()));
+    // A perform whose clause has no `resume` does not go on (plan stage
+    // F19).
+    if !clause::perform_never_returns(cx.p, body, term) {
+        for s in term.normal_successors() {
+            out.push((s, st.clone()));
+        }
     }
     Ok(out)
 }
