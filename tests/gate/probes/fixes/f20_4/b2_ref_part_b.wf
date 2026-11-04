@@ -1,0 +1,13 @@
+// F20.4 B-2 (b04p): a reference to a part of the moved argument (W0301).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+struct Msg { body: Vec<u64>, n: u64 }
+fn eat_fail(m: Msg) / fail { print(m.body.len())
+ fail("x") }
+fn main() {
+    let m = Msg { body: mkv(), n: 1 }
+    let r = &m.body
+    handle Fail { fn fail(e) { print(r.len()) } } in { eat_fail(m) }
+}

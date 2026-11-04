@@ -955,7 +955,7 @@ pub fn emit_parts(
     facts.task_reads.dedup();
     facts.task_writes.sort();
     facts.task_writes.dedup();
-    handlers::project(
+    let late = handlers::project(
         &handlers::Tables {
             p,
             tys: &tys,
@@ -1039,6 +1039,9 @@ pub fn emit_parts(
             .unwrap_or_else(|| format!("T{j}"))
     };
     generic::copy_held(facts, &held);
+    // The uses of the clauses after the moves of their run nodes (follow-up
+    // F20.3, F20.4).
+    handlers::late_uses(facts, &late);
     generic::item_values(p, &tys, sums, &comp, &names, facts);
     // The parts `drops` and `holds` of a generic body.
     let found = if is_generic {

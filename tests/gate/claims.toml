@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4"]
 
 
 # ----------------------------------------------------------------------
@@ -6940,3 +6940,92 @@ group = "ACF"
 stage = "F20.3"
 repro = ["tests/gate/probes/fixes/f20_3/i2_ctl_twice_c.wf"]
 note = "control: the closure runs at two nodes, one time each"
+
+# Follow-up F20.4: B-2 and I-8 of the third review of group F.
+
+[[claim]]
+finding = "F20.4-B2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/b2_ref_generic_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_multi_generic_b.wf",
+]
+code = "W0301"
+note = "a clause reads a reference into an argument that a generic call moved"
+
+[[claim]]
+finding = "F20.4-B2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/b2_ref_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_resume_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_part_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_closure_b.wf",
+]
+code = "W0301"
+note = "a clause reads a reference into an argument that a call moved: the whole value, a part, through a closure, a clause that resumes"
+
+[[claim]]
+finding = "F20.4-B2"
+kind = "sound"
+verdict = "one-rule"
+group = "AD"
+stage = "F20.4"
+repro = ["tests/gate/probes/fixes/f20_4/b2_ref_other_c.wf"]
+note = "control: the reference points into another value"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/i8_part_b.wf",
+    "tests/gate/probes/fixes/f20_4/i8_capture_b.wf",
+]
+code = "W0302"
+note = "one place moved two times at one node: a part of a tuple, a capture in a closure body"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/i8_part_generic_b.wf",
+    "tests/gate/probes/fixes/f20_4/i8_part_args_generic_b.wf",
+    "tests/gate/probes/fixes/f20_4/i8_capture_generic_b.wf",
+]
+code = "W0302"
+note = "the same with a generic call"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F20.4"
+repro = ["tests/gate/probes/fixes/f20_4/i8_perform_b.wf"]
+code = "W0502"
+note = "one `once` closure in two arguments of a perform"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "sound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/i8_ctl_copy_c.wf",
+    "tests/gate/probes/fixes/f20_4/i8_ctl_ref_c.wf",
+    "tests/gate/probes/fixes/f20_4/i8_ctl_param_c.wf",
+]
+note = "controls: `Copy` values, a shared reference and a function parameter two times"

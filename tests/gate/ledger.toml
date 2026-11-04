@@ -7686,6 +7686,7 @@ parts = ["drops"]
 files = [
     "tests/gate/probes/fixes/f20_2/f1_once_multi_b.wf",
     "tests/gate/probes/fixes/f20_2/f1_rc_multi_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_multi_generic_b.wf",
 ]
 reason = "class F20-SIG-GENERIC (stage F20, the probes of follow-up F20.2): a value of a type parameter that a `multi` resume runs again is in `holds`, not in `drops`"
 stage = "F20.2"
@@ -7858,3 +7859,16 @@ files = [
 ]
 reason = "group N4 of the second review of group F: p21648, a closure that a callee makes from a linear argument is linear, but it does not hold the value (W0601); p6221, W0405 at the end of a scope after a `join`. Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
 stage = "F20"
+
+# ----------------------------------------------------------------------------
+# Follow-up F20.4: B-2 and I-8 of the third review of group F.
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f20_4/i8_capture_b.wf",
+    "tests/gate/probes/fixes/f20_4/i8_capture_generic_b.wf",
+]
+codes = ["W0302", "W0502"]
+reason = "class F20.4-CAPTURE-TWICE (follow-up F20.4, I-8 of the third review of group F): one `once` closure, a `Kept` capture of a closure body, in two operands of one node. The `ir` pipeline moves the variable of the source of the capture two times and gives W0302 for it; the old pipeline gives W0502 for the closure. Same line, same fault"
+stage = "F20.4"

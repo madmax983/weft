@@ -1517,6 +1517,24 @@ As built (follow-up F20.3, the second review of group F at b6a417f): two changes
   (`templates::dup_moves`): W0502 (W0302 for a value that is not a closure). A closure
   that moves nothing is plain data and can go two times.
 
+As built (follow-up F20.4, the third review of group F at d1ddac6): two changes.
+
+- B-2. A clause that reads a reference into an argument that the call moved got no
+  W0301: the fix of B-1 looked only at a use of the moved variable. The check of the
+  uses of a clause now runs after the owners and the versions of the parts are in the
+  facts (`handlers::late_uses`). A use of the clause also goes to each successor of the
+  run node if the run node moves the variable (all of it, or a part that the clause
+  reads, changes or lends), or if the variable points into a place that a move of the
+  run node frees (the root of a variable that moves, or a part that moves). A closure
+  that captures the reference points there too. The use must see the value of the site:
+  a clause that gives the variable a new value on each path to the use does not use the
+  moved value (`handlers::exposed`). So the false W0302 of I-10 (a new value first, or
+  another field than the moved part) is gone too.
+- I-8. `templates::dup_moves` compares the whole place of each operand (the local and
+  its projection, no index step), so `(p.0, p.0)` is two moves. A capture of a closure
+  body is the variable of the capture (`E`, or the source of a `Kept` capture). A
+  perform calls it for its arguments.
+
 ### 5.21 Calls of function values [2.20]
 
 ```text

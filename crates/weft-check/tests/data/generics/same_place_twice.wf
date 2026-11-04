@@ -1,0 +1,47 @@
+// Follow-up F20.4 (I-8 of the third review of group F): one place moved two
+// times at one node: a part of a tuple (`(p.0, p.0)`), a capture in a
+// closure body, and two arguments of a perform. `Copy` values, a closure
+// that moves nothing and a shared reference can go two times.
+effect Keep { fn keep2(a: fn(), b: fn()) }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn part_two_times() {
+    let v = mkv()
+    let p = (|| consume(v), 1)
+    let q = (p.0, p.0)   //~ W0302
+    let (g, h) = q
+    g()
+    h()
+}
+fn capture_two_times() {
+    let v = mkv()
+    let f = || consume(v)
+    let g = || { let p = (f, f)   //~ W0302
+ let (a, b) = p
+ a()
+ b() }
+    g()
+}
+fn perform_two_times() {
+    let v = mkv()
+    let f = || consume(v)
+    handle Keep { fn keep2(a, b) { a()
+ b()
+ resume(()) } } in { keep2(f, f) }   //~ W0502
+}
+// Clean.
+fn copies_two_times() {
+    let p = (1, 2)
+    let q = (p.0, p.0)
+    print(q.0 + q.1)
+    let f = || print(1)
+    let r = &p
+    let s = (f, f, r, r)
+    let (a, b, c, d) = s
+    a()
+    b()
+    print(c.0 + d.1)
+}
+fn main() {}

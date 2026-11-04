@@ -175,3 +175,21 @@ fn a_join_of_a_picked_handle_ends_only_a_task_that_one_argument_gives() {
 fn a_clause_that_uses_an_argument_moved_at_the_call_is_w0302() {
     check("clause_moved_arg.wf");
 }
+
+/// Follow-up F20.4 (B-2 of the third review of group F): a clause that reads
+/// a reference into an argument that the call moved is W0301. A clause that
+/// gives the variable a new value first, or that reads another field, is no
+/// error (I-10).
+#[test]
+fn a_clause_that_reads_a_reference_into_an_argument_moved_at_the_call_is_w0301() {
+    check("clause_ref_moved_arg.wf");
+}
+
+/// Follow-up F20.4 (I-8 of the third review of group F): one place moved two
+/// times at one node (a part, a capture in a closure body, two arguments of
+/// a perform). `Copy` values, a closure that moves nothing and a shared
+/// reference are no error.
+#[test]
+fn a_place_moved_two_times_at_one_node_is_a_second_move() {
+    check("same_place_twice.wf");
+}

@@ -409,6 +409,9 @@ pub fn perform_local(
         let refs = named_refs(em, v.flat().refs);
         deep_uses(em, n, st, a, &refs)?;
     }
+    // One value in two arguments of the perform (I-8, follow-up F20.4).
+    let at = em.facts.node(n).span;
+    super::templates::dup_moves(em, st, &args.iter().collect::<Vec<_>>(), at)?;
     let params: Vec<(weft_ir::TyId, weft_ir::TyId)> =
         em.p.body(out.clause)
             .map(|b| {
@@ -1655,7 +1658,7 @@ fn clause_depth(p: &Program, b: BodyId) -> usize {
 /// The facts of the clauses at the nodes that run them (see the module
 /// text): the `pre` part at each perform, the `post` part at `Post`, then
 /// the rest of the handled body at each `Resume`.
-pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
+pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
     let p = t.p;
     let _ = t.tys;
     let ix = Index::new(p, t.table);
@@ -1704,11 +1707,11 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
     let mut parts: HashMap<BodyId, FnFacts> = clause_rows(facts, &clause_of);
     // The moves of the run nodes before the clauses come: the arguments that
     // a call or a perform moves at its `Main` node (follow-up F20.3, B-1).
-    let arg_moves: HashSet<(VarId, NodeId)> = facts.moved_at.iter().copied().collect();
-    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-    for &(a, b) in &facts.cfg_edge {
-        succ.entry(a).or_default().push(b);
-    }
+    let mut late = LateUses {
+        moves: facts.moved_at.iter().copied().collect(),
+        parts: facts.moved_part.iter().copied().collect(),
+        uses: Vec::new(),
+    };
     // The `Main` nodes of the `Resume`s (their aborts are of the handled
     // body), and the variables that `spared_at` can matter for: a linear
     // or `!Move` value (W0602, W0503).
@@ -1804,23 +1807,14 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
                     .extend(changes.into_iter().map(|q| (back, q)));
             }
         }
+        // The clause runs after the run node moves its arguments
+        // ([`late_uses`], follow-up F20.3 and F20.4).
+        late.uses
+            .extend(clause_uses(facts, (part, nodes), &new.uses));
         add_rows(facts, &new);
         if let Some(c) = clause_of.get(&r.node) {
             add_rows(parts.entry(*c).or_default(), &new);
         }
-        // The clause runs after the run node moves its arguments: a use of a
-        // moved argument in the clause is a use after the move (W0302;
-        // follow-up F20.3, B-1 of the second review of group F). The spec
-        // gives `moved` only after the node of the move, and the operand use
-        // of the argument is at that node too. So the use of the clause also
-        // goes to each successor of the run node.
-        let late: Vec<(VarId, NodeId)> = new
-            .uses
-            .iter()
-            .filter(|u| arg_moves.contains(u))
-            .flat_map(|&(v, n)| succ.get(&n).into_iter().flatten().map(move |&x| (v, x)))
-            .collect();
-        facts.uses.extend(late);
         if let (Some(hs), false) = (&r.spares, abort) {
             spare(p, facts, &cands, (r.node, hs));
         }
@@ -1896,6 +1890,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .clause_performs
             .extend(escapes.into_iter().map(|e| (hid, e)));
     }
+    late
 }
 
 /// The nodes of the clauses `clauses` that call a function value of a
@@ -2166,6 +2161,171 @@ fn copy_part(
         new.multi_at.push(n);
     }
     new
+}
+
+/// The uses of the clauses at their run nodes ([`project`]), for
+/// [`late_uses`].
+#[derive(Debug, Default)]
+pub struct LateUses {
+    /// The moves of the run nodes before the clauses come: the arguments
+    /// that a call or a perform moves at its `Main` node.
+    moves: HashSet<(VarId, NodeId)>,
+    /// The parts that these moves move.
+    parts: HashSet<(PlaceId, NodeId)>,
+    /// Each use `(v, n)` of a clause at its run node `n` that can see the
+    /// value of `v` from the site, with the places that the clause reads,
+    /// changes or lends.
+    uses: Vec<(VarId, NodeId, Vec<PlaceId>)>,
+}
+
+/// The uses `uses` of a clause at its run node that can see the value of
+/// their variable from the site ([`exposed`]), each with the places that the
+/// clause (rows `part`, nodes `nodes`) reads, changes or lends.
+fn clause_uses(
+    facts: &FnFacts,
+    (part, nodes): (&FnFacts, &HashSet<NodeId>),
+    uses: &[(VarId, NodeId)],
+) -> Vec<(VarId, NodeId, Vec<PlaceId>)> {
+    let places: Vec<PlaceId> = part
+        .reads_at
+        .iter()
+        .chain(&part.mutates_at)
+        .chain(&part.lends_mut)
+        .filter(|(x, _)| nodes.contains(x))
+        .map(|&(_, q)| q)
+        .collect();
+    uses.iter()
+        .filter(|&&(v, _)| exposed(facts, (part, nodes), v))
+        .map(|&(v, n)| (v, n, places.clone()))
+        .collect()
+}
+
+/// The uses of the clauses that the run nodes see after the moves of their
+/// arguments.
+///
+/// B-1 of the second review of group F (follow-up F20.3) and B-2 of the
+/// third review (follow-up F20.4). It runs when the facts have their owners
+/// and the versions of the parts.
+///
+/// A clause runs while the call waits, after the call moved its arguments
+/// at the run node. The spec gives `moved` and `invalid` only at a node after
+/// the node of the move, and the operand use of an argument is at that node
+/// too. So a use `(v, n)` of a clause also goes to each successor of the
+/// run node `n`, if:
+///
+/// - the run node moves `v`: all of `v`, or a part of `v` that the clause
+///   reads, changes or lends (W0302); or
+/// - `v` points into a place that a move of the run node frees: the root of
+///   a variable that moves, or a part that moves (W0301).
+///
+/// A clause that gives `v` a new value on each path to the use does not use
+/// the value of the site (`exposed`, I-10 of the third review).
+pub fn late_uses(facts: &mut FnFacts, late: &LateUses) {
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    let roots_of = |facts: &FnFacts, w: VarId| -> Vec<PlaceId> {
+        facts
+            .owner
+            .iter()
+            .filter(|(_, x)| *x == w)
+            .map(|(r, _)| *r)
+            .collect()
+    };
+    let mut out = Vec::new();
+    for (v, n, places) in &late.uses {
+        let (v, n) = (*v, *n);
+        let parts_at: Vec<PlaceId> = late
+            .parts
+            .iter()
+            .filter(|(_, x)| *x == n)
+            .map(|(m, _)| *m)
+            .collect();
+        // The places that the moves of the run node free.
+        let mut freed: Vec<PlaceId> = parts_at.clone();
+        for &(w, x) in &late.moves {
+            if x != n {
+                continue;
+            }
+            for r in roots_of(facts, w) {
+                if !parts_at.iter().any(|&m| at_or_below(facts, m, r)) {
+                    freed.push(r);
+                }
+            }
+        }
+        let moved = late.moves.contains(&(v, n)) && {
+            let roots = roots_of(facts, v);
+            let mine: Vec<PlaceId> = parts_at
+                .iter()
+                .copied()
+                .filter(|&m| roots.iter().any(|&r| at_or_below(facts, m, r)))
+                .collect();
+            // A move of a part: the clause must access that part.
+            mine.is_empty()
+                || places.iter().any(|&q| {
+                    mine.iter()
+                        .any(|&m| at_or_below(facts, q, m) || at_or_below(facts, m, q))
+                })
+        };
+        let into = facts
+            .points_into
+            .iter()
+            .any(|&(x, q)| x == v && freed.iter().any(|&f| at_or_below(facts, q, f)));
+        if moved || into {
+            out.extend(succ.get(&n).into_iter().flatten().map(|&x| (v, x)));
+        }
+    }
+    facts.uses.extend(out);
+}
+
+/// True if a use of variable `v` in the clause with the rows `part` and the
+/// nodes `nodes` can see the value of `v` from the site: a path from a node
+/// of the clause with no predecessor in the clause to the use has no new
+/// value of `v` (`rebound_at`) before the use.
+fn exposed(facts: &FnFacts, (part, nodes): (&FnFacts, &HashSet<NodeId>), v: VarId) -> bool {
+    let rebound: HashSet<NodeId> = part
+        .rebound_at
+        .iter()
+        .filter(|(x, n)| *x == v && nodes.contains(n))
+        .map(|(_, n)| *n)
+        .collect();
+    let mut preds: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        if nodes.contains(&a) && nodes.contains(&b) {
+            preds.entry(b).or_default().push(a);
+        }
+    }
+    let uses: Vec<NodeId> = part
+        .uses
+        .iter()
+        .filter(|(x, n)| *x == v && nodes.contains(n))
+        .map(|(_, n)| *n)
+        .collect();
+    // A use with no use row in the clause (a run node of a nested clause):
+    // the value can come from the site.
+    if uses.is_empty() {
+        return true;
+    }
+    // The use node itself can give `v` a new value: its use comes first.
+    let mut work: Vec<NodeId> = Vec::new();
+    for u in uses {
+        match preds.get(&u) {
+            None => return true,
+            Some(ps) => work.extend(ps.iter().copied()),
+        }
+    }
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    while let Some(n) = work.pop() {
+        if rebound.contains(&n) || !seen.insert(n) {
+            continue;
+        }
+        match preds.get(&n) {
+            None => return true,
+            Some(ps) => work.extend(ps.iter().copied()),
+        }
+    }
+    false
 }
 
 /// True if place `q` is place `b` or a place below it; a wildcard place `b`

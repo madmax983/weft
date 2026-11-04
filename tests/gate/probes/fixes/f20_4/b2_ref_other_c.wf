@@ -1,0 +1,13 @@
+// F20.4 B-2 control (b04c): the reference points into another value.
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn eat_fail(v: Vec<u64>) / fail { print(v.len())
+ fail("x") }
+fn main() {
+    let v = mkv()
+    let w = mkv()
+    let r = &w
+    handle Fail { fn fail(e) { print(r.len()) } } in { eat_fail(v) }
+}

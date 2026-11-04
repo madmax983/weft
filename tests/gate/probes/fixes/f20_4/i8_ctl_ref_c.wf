@@ -1,0 +1,12 @@
+// F20.4 I-8 control (i12): a shared reference two times.
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn both(a: &Vec<u64>, b: &Vec<u64>) { print(a.len() + b.len()) }
+fn main() {
+    let v = mkv()
+    let r = &v
+    both(r, r)
+    let p = (r, r)
+}

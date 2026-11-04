@@ -857,24 +857,28 @@ pub(super) fn operand_moves(
     }
 }
 
-/// Two operands of one node that move the same whole local (`(f, f)`,
-/// `pair(f, f)`; I-2 of the second review of group F, follow-up F20.3).
+/// Two operands of one node that move the same place (`(f, f)`,
+/// `pair(f, f)`, `(p.0, p.0)`, a capture of a closure body, the arguments of
+/// a perform; I-2 of the second review of group F, follow-up F20.3; I-8 of
+/// the third review, follow-up F20.4).
 ///
 /// The spec gives `moved` only after the node of a move, so the second move
 /// at the node is not a use after the first. For each such second move, the
-/// variable of the local moves and then is used in a part of the graph of
-/// its own (W0302, or W0502 for a `once` closure), with the span `at`.
+/// variable of the place moves and then is used in a part of the graph of
+/// its own (W0302, or W0502 for a `once` closure), with the span `at`. A
+/// place with an index step is not compared: two indexes can name two
+/// elements.
 ///
 /// # Errors
 ///
 /// The errors of α.
-fn dup_moves(em: &mut Em<'_>, st: &State, ops: &[&Operand], at: Span) -> R {
-    let mut seen: Vec<LocalId> = Vec::new();
+pub(super) fn dup_moves(em: &mut Em<'_>, st: &State, ops: &[&Operand], at: Span) -> R {
+    let mut seen: Vec<&Place> = Vec::new();
     for op in ops {
         let (Operand::Copy(q) | Operand::Move(q)) = op else {
             continue;
         };
-        if !q.proj.is_empty() {
+        if q.proj.iter().any(|x| matches!(x, Proj::Index(_))) {
             continue;
         }
         let plain = em.place_ty(q).is_some_and(|t| !em.tys.not_copy(t));
@@ -885,12 +889,18 @@ fn dup_moves(em: &mut Em<'_>, st: &State, ops: &[&Operand], at: Span) -> R {
         if !moves {
             continue;
         }
-        if !seen.contains(&q.local) {
-            seen.push(q.local);
+        if !seen.contains(&q) {
+            seen.push(q);
             continue;
         }
         let body = em.body;
-        let Some(v) = em.base_var(body, q)? else {
+        // The variable of the place: `S` of its local, `E` of a `ByMove`
+        // capture, the variable of the source of a `Kept` capture.
+        let v = match em.base_var(body, q)? {
+            Some(v) => Some(v),
+            None => em.vars_with(q, false)?.first().copied(),
+        };
+        let Some(v) = v else {
             continue;
         };
         let a = em.facts.add_ir_node(at, "first move", "moved twice", "");

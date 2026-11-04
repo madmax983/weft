@@ -733,3 +733,23 @@ two controls `b1_ctl_*`.
   of one node: a tuple (`o1`), a call that is not generic (`f1j2`; the old pipeline
   misses it), generic calls (`f1j3`, `f1j`, `o6`, `o3`, `o7`). W0502. `i2_ctl_twice_c.wf`
   (`o2`) is the clean control.
+
+## Follow-up F20.4: B-2 and I-8 of the third review of group F
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the variants of the third review of group F (scratchpad `freview3/v/`, the review
+`freview3/review.md`). Before the fix the `ir` pipeline accepted each `_b.wf`.
+
+- `fixes/f20_4/b2_*.wf` (claims F20.4-B2): a clause reads a reference into an argument
+  that the call moved, while the call waits: a generic callee (`b04g`, `b28`), a callee
+  that is not generic (`b04`), a clause that resumes (`b04r`), a reference to a part
+  (`b04p`), a closure that captures the reference (`b27`). W0301. `b2_ref_other_c.wf`
+  (`b04c`) is the clean control.
+- `fixes/f20_4/i8_*.wf` (claims F20.4-I8): one place moved two times at one node: a
+  part of a tuple (`i21u`, `i21t`, `i21g`), a capture in a closure body (`i22`, `i22g`;
+  W0302, the old pipeline says W0502), two arguments of a perform (`i15`). The controls
+  `i8_ctl_*` (`i08`, `i12`, `i13`) are clean.
+- Not in the gate (I-10 of the review; the old pipeline gives a false W0302, so each one
+  is `lost-clean`): `c03`, `c03g` and `c05` of `freview3/v`. The `ir` pipeline accepts
+  them now.
