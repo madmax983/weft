@@ -1043,8 +1043,8 @@ pub fn copy_node(
             held_linear.insert(*k);
         }
     }
-    // The locals that the node moves at `Main` (its callee value, and its
-    // arguments but the ones that a callee holds to `Ret`): the frames are
+    // The locals that the node moves at `Main` (its callee value and its
+    // arguments): the frames are
     // copied while the node waits, after these moves, so the copies do not
     // hold them.
     let moved = moved_at_main(em, t);
@@ -1228,40 +1228,18 @@ pub fn copy_node(
 }
 
 /// The whole locals that terminator `t` of the body of `em` moves at its
-/// `Main` node: a moved callee value, and each moved argument but those of a
-/// type parameter that the callee holds (they move at `Ret`).
+/// `Main` node: a moved callee value and each moved argument (also an
+/// argument of a type parameter that the callee holds, follow-up F20.2).
 fn moved_at_main(em: &Em<'_>, t: &TermKind) -> HashSet<(BodyId, weft_ir::LocalId)> {
     let p = em.p;
     let body = em.body;
     let mut ops: Vec<&weft_ir::Operand> = Vec::new();
     match t {
         TermKind::Call { callee, args, .. } => {
-            let held: Vec<bool> = match callee {
-                weft_ir::Callee::Fn(f, _) => {
-                    let sum = em.sums.get(*f).ok();
-                    let decl = p.fns.get(f.index());
-                    (0..args.len())
-                        .map(|i| match (sum, decl) {
-                            (Some(s), Some(d)) => d.params.get(i).is_some_and(|&ty| {
-                                s.holds
-                                    .iter()
-                                    .any(|&j| super::templates::mentions_index(em.tys, ty, j, 0))
-                            }),
-                            _ => false,
-                        })
-                        .collect()
-                }
-                weft_ir::Callee::Value(f) => {
-                    ops.push(f);
-                    vec![false; args.len()]
-                }
-            };
-            ops.extend(
-                args.iter()
-                    .enumerate()
-                    .filter(|(i, _)| !held.get(*i).copied().unwrap_or(false))
-                    .map(|(_, a)| a),
-            );
+            if let weft_ir::Callee::Value(f) = callee {
+                ops.push(f);
+            }
+            ops.extend(args.iter());
         }
         TermKind::Perform { args, .. } => ops.extend(args.iter()),
         _ => {}

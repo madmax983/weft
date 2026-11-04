@@ -1,0 +1,14 @@
+// F20.2 F-1 (m01): clean twin.
+effect Choice { fn choose() -> bool }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn hold<T>(x: T) -> T / Choice { let b = choose()
+ x }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    handle Choice { fn choose() { resume(true) } } in { let g = hold(f)
+ g() }
+}

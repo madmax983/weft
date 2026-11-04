@@ -1,0 +1,58 @@
+// Follow-up F20.2 (P-1 of the review of group F): a move of a `ByMove`
+// capture in a closure body frees the value in the environment. A
+// reference into it is invalid after the move (W0301): a move in the body,
+// in a closure that the body makes and runs, and on one path.
+fn take_v(v: Vec<u64>) { print(v.len()) }
+fn apply(f: fn()) { f() }
+fn moved_in_the_body() {
+    let v = Vec.new()
+    v.push(1)
+    apply(|| {
+        let r = &v[0]
+        take_v(v)
+        print(r)   //~ W0301
+    })
+}
+fn moved_in_an_inner_closure() {
+    let v = Vec.new()
+    v.push(1)
+    apply(|| {
+        let r = &v[0]
+        let g = || take_v(v)
+        g()
+        print(r)   //~ W0301
+    })
+}
+fn moved_on_one_path() {
+    let v = Vec.new()
+    v.push(1)
+    let c = false
+    apply(|| {
+        let r = &v[0]
+        if c { print(0) } else { let g = || take_v(v)
+ g() }
+        print(r)   //~ W0301
+    })
+}
+// Clean: the read comes before the move.
+fn read_then_moved() {
+    let v = Vec.new()
+    v.push(1)
+    apply(|| {
+        let r = &v[0]
+        print(r)
+        take_v(v)
+    })
+}
+fn read_then_moved_in_an_inner_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let c = false
+    apply(|| {
+        let r = &v[0]
+        print(r)
+        if c { print(0) } else { let g = || take_v(v)
+ g() }
+    })
+}
+fn main() {}

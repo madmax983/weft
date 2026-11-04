@@ -2316,21 +2316,36 @@ fn writes_via_at_a_method_call_through_one_reference() {
     assert!(g.writes_via.is_empty(), "{:?}", g.writes_via);
 }
 
+/// Follow-up F20.2 (F-1 of the review of group F): a held argument moves at
+/// `Main`, as each argument. A variable of the type argument stands for the
+/// held value: it is live across a node of its own that has the abort of
+/// `Main`.
 #[test]
-fn a_held_argument_moves_at_ret() {
+fn a_held_argument_moves_at_main_and_a_held_value_is_live_across_a_node_of_its_own() {
     let f = call_facts("holds");
     let t = var_named(&f, "t");
     let main = call_phase(&f, "call", 0);
     let ret = call_phase(&f, "call ret", 0);
     assert!(has(&f.uses, t, main), "the call reads its argument");
-    assert!(
-        !has(&f.moved_at, t, main),
-        "a held argument stays live at `Main`"
-    );
-    assert!(has(&f.moved_at, t, ret), "{:?}", f.moved_at);
-    // The callee can abort (`log`), so the value is live across an abort.
+    assert!(has(&f.moved_at, t, main), "{:?}", f.moved_at);
+    assert!(!has(&f.moved_at, t, ret), "{:?}", f.moved_at);
+    // The callee can abort (`log`).
     assert!(f.may_abort.contains(&main));
     assert!(f.escapes_at.iter().any(|(n, e)| *n == main && e == "Log"));
+    // The held value: `held by the callee`, the node of the callee, and
+    // `given back by the callee`. The node of the callee can abort, as
+    // `Main` can.
+    let held = nodes_labelled(&f, "held");
+    assert_eq!(held.len(), 3, "{held:?}");
+    let (b, a, r) = (held[0], held[1], held[2]);
+    assert!(f.cfg_edge.contains(&(b, a)) && f.cfg_edge.contains(&(a, r)));
+    assert!(f.may_abort.contains(&a), "{:?}", f.may_abort);
+    let v = (0..f.vars.len())
+        .map(|i| VarId(id(i)))
+        .find(|&v| has(&f.rebound_at, v, b))
+        .unwrap_or_else(|| panic!("no held variable: {:?}", f.rebound_at));
+    assert!(f.vars[v.0 as usize].linear);
+    assert!(has(&f.uses, v, r) && has(&f.moved_at, v, r));
     // `keep` can drop a value of its type parameter: a linear type argument
     // goes away at the call (W0601).
     let dropped: Vec<VarId> = (0..f.vars.len())

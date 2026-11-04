@@ -1,0 +1,8 @@
+// F20.2 F-1 (h07): a closure reads a held linear argument during the call; the argument moves at Main (W0302).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t; print("rollback {i}") }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn hold_call<T>(x: T, f: fn()) -> T { f(); x }
+fn main() { let t = begin(1); let f = || print(t.id); let u = hold_call(t, f); commit(u) }

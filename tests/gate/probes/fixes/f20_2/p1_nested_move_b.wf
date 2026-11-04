@@ -1,0 +1,12 @@
+// F20.2 P-1 (x08): a move of a ByMove capture in a closure body invalidates a reference into it (W0301).
+fn take_v(v: Vec<u64>) { print(v.len()) }
+fn apply(f: fn()) { f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    apply(|| {
+        let r = &v[0]
+        take_v(v)
+        print(r)
+    })
+}

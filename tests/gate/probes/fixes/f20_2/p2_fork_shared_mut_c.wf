@@ -1,0 +1,11 @@
+// F20.2 P-2 (x09): clean twin; the branches only read.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn apply(f: fn()) { f() }
+fn fork_it(f: fn(), g: fn()) / par { let _ = fork(f, g) }
+fn main() / par {
+    let v1 = mk_v()
+    let n2 = 0
+    apply(|| {
+        fork_it(|| { print(v1[0]) }, || { print(n2) })
+    })
+}

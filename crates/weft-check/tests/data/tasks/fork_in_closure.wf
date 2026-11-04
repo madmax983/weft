@@ -1,0 +1,40 @@
+// Follow-up F20.2 (P-2 of the review of group F): a `fork` that a closure
+// body starts through a callee is checked as a `fork` of a function body. A
+// branch that captures an `Rc` is W0401, and a branch that changes a place
+// that the other branch or the body can see is W0403.
+struct R { items: Vec<u64>, n: u64 }
+fn mk_r() -> Rc<R> { Rc.new(R { items: Vec.new(), n: 0 }) }
+fn mk_v() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn apply(f: fn()) { f() }
+fn fork_it(f: fn(), g: fn()) / par { let _ = fork(f, g) }
+fn rc_in_a_branch() / par {
+    let rc1 = mk_r()
+    apply(|| {
+        fork_it(|| { print(rc1.items) }, || { print(0) })   //~ W0401
+    })
+}
+fn shared_mut_in_the_branches() / par {
+    let v1 = mk_v()
+    let n2 = 0
+    apply(|| {
+        fork_it(|| { v1[0] = 5 }, || { n2 += 1 })   //~ W0403 W0403
+    })
+}
+// Clean: the branches only read, and the `Rc` stays in the body.
+fn rc_in_the_body() / par {
+    let rc1 = mk_r()
+    print(rc1.items)
+    apply(|| {
+        fork_it(|| { print(1) }, || { print(0) })
+    })
+}
+fn reads_in_the_branches() / par {
+    let v1 = mk_v()
+    let n2 = 0
+    apply(|| {
+        fork_it(|| { print(v1[0]) }, || { print(n2) })
+    })
+}
+fn main() {}

@@ -1,0 +1,28 @@
+// Follow-up F20.2 (F-1 of the review of group F, m01): a `once` closure that
+// a generic callee holds across a `multi` operation moves into the callee
+// at `Main`. A variable of its own is live across the call: W0503.
+effect Choice { multi fn choose() -> bool }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn hold_multi<T>(x: T) -> T / Choice { let b = choose()
+ x }
+
+fn once_held_across_multi() {
+    let v = mkv()
+    let f = || consume(v)
+    handle Choice { fn choose() { resume(true)
+ resume(false) } } in { let g = hold_multi(f)   //~ W0503
+ g() }
+}
+fn many_held_across_multi() {
+    let f = || print(1)
+    handle Choice { fn choose() { resume(true)
+ resume(false) } } in { let g = hold_multi(f)
+ g() }
+}
+fn main() {
+    once_held_across_multi()
+    many_held_across_multi()
+}

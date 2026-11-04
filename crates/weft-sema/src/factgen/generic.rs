@@ -282,7 +282,7 @@ pub fn item_values(
 
 /// A variable of a value of type `t`, if the value can be linear (also
 /// through a type parameter of a generic body).
-fn linear_var(
+pub(super) fn linear_var(
     facts: &mut FnFacts,
     tys: &weft_ir::TyTable,
     span: weft_facts::Span,
@@ -309,6 +309,33 @@ fn linear_var(
     Some(facts.add_var(info))
 }
 
+/// A variable of a value of type `t` that a callee holds and that an
+/// argument gives (follow-up F20.2): a linear value ([`linear_var`]) if the
+/// argument can hold one (`linear`; `None` holds none), or a value that is
+/// not `many` (W0503 across a `multi` node): a `once` type (`Rc`, `Task`),
+/// or a `!Move` value (a resume copies it).
+pub(super) fn held_var(
+    facts: &mut FnFacts,
+    tys: &weft_ir::TyTable,
+    span: weft_facts::Span,
+    (name, linear): (String, bool),
+    t: weft_ir::TyId,
+) -> Option<VarId> {
+    if linear {
+        if let Some(v) = linear_var(facts, tys, span, name.clone(), weft_facts::VarKind::Temp, t) {
+            return Some(v);
+        }
+    }
+    let props = crate::props::ir_props(tys, t);
+    if !props.once && !props.immovable {
+        return None;
+    }
+    let mut info = weft_facts::VarInfo::plain(name, weft_facts::VarKind::Temp, span, tys.show(t));
+    info.once = true;
+    info.nonportable = props.nonportable;
+    Some(facts.add_var(info))
+}
+
 /// A value of type `t` that a callee holds across a node of its own.
 ///
 /// The node can abort (`abort`) or resume more than once (`multi`), and it is in a
@@ -326,20 +353,68 @@ pub fn held_across(
     let Some(v) = linear_var(facts, tys, span, name.0, weft_facts::VarKind::Temp, t) else {
         return;
     };
-    let b = facts.add_ir_node(span, "held by the callee", "held", "");
-    let a = facts.add_ir_node(span, name.1, "held", "");
-    let r = facts.add_ir_node(span, "given back by the callee", "held", "");
-    facts.cfg_edge.push((b, a));
-    facts.cfg_edge.push((a, r));
-    facts.rebound_at.push((v, b));
+    let a = held_node(facts, span, v, name.1);
     if abort {
         facts.may_abort.push(a);
     }
     if multi {
         facts.multi_at.push(a);
     }
+}
+
+/// The part of the graph of its own of a value of variable `v` that the
+/// callee `callee` holds: the variable binds, the node of the callee comes,
+/// and the callee gives the value back. Returns the node of the callee: the
+/// caller gives it the abort and the `multi` of the callee.
+pub(super) fn held_node(
+    facts: &mut FnFacts,
+    span: weft_facts::Span,
+    v: VarId,
+    callee: &str,
+) -> NodeId {
+    let b = facts.add_ir_node(span, "held by the callee", "held", "");
+    let a = facts.add_ir_node(span, callee, "held", "");
+    let r = facts.add_ir_node(span, "given back by the callee", "held", "");
+    facts.cfg_edge.push((b, a));
+    facts.cfg_edge.push((a, r));
+    facts.rebound_at.push((v, b));
     facts.uses.push((v, r));
     facts.moved_at.push((v, r));
+    a
+}
+
+/// Gives each node `a` of a held value the abort and the `multi` of its
+/// call node `main` (each pair `(a, main)` of `like`, follow-up F20.2).
+///
+/// The facts of `main` are complete only after the clauses of the local
+/// handlers (`super::handlers::project`). A node that can resume more than
+/// once is a node of `multi_at`, or a perform or a resume of a capability
+/// whose clause or handled body is `multi` (the rules of the spec).
+pub fn copy_held(facts: &mut FnFacts, like: &[(NodeId, NodeId)]) {
+    if like.is_empty() {
+        return;
+    }
+    let caps = |rel: &[(NodeId, weft_facts::CapId)], m: NodeId| -> Vec<weft_facts::CapId> {
+        rel.iter()
+            .filter(|(x, _)| *x == m)
+            .map(|(_, c)| *c)
+            .collect()
+    };
+    for &(a, main) in like {
+        if facts.may_abort.contains(&main) {
+            facts.may_abort.push(a);
+        }
+        let performs = caps(&facts.performs_at, main);
+        let resumes = caps(&facts.resumes_at, main);
+        let multi = facts.multi_at.contains(&main)
+            || performs.iter().any(|c| facts.clause_multi.contains(c))
+            || resumes
+                .iter()
+                .any(|c| facts.clause_multi.contains(c) || facts.body_multi.contains(c));
+        if multi {
+            facts.multi_at.push(a);
+        }
+    }
 }
 
 /// A value of type `t` that the function item `item` drops, in a part of

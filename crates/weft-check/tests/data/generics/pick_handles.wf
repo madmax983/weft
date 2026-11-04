@@ -1,0 +1,65 @@
+// Follow-up F20.2 (F-2 of the review of group F): a `join` of a result of a
+// type parameter ends a task only if exactly one argument of a type
+// parameter gives a handle, of one task site. `pick` gives one of two
+// handles back and the other to `k` or into `sink`: the `join` of the
+// result does not end both tasks, so a write after it can race with the
+// other task (W0405). A generic identity still gives its one handle back
+// (O3-9). A `Vec` of handles is linear: the loop does not consume it
+// (W0601 in both pipelines).
+fn mk_v() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn id<T>(x: T) -> T { x }
+fn pick<T>(a: T, b: T, c: bool, k: fn(T)) -> T { if c { k(b)
+ a } else { k(a)
+ b } }
+fn pick_sink<T>(a: T, b: T, c: bool, sink: &Vec<T>) -> T / mut(sink) { if c { sink.push(b)
+ a } else { sink.push(a)
+ b } }
+
+fn other_handle_detached() / async {
+    let v = mk_v()
+    scope { s =>
+        let t1 = s.spawn(|| v.push(1))
+        let t2 = s.spawn(|| print(1))
+        let h = pick(t1, t2, false, |t: Task<()>| t.detach())
+        h.join()
+        v.push(2)   //~ W0405
+    }
+}
+fn other_handle_in_a_sink() / async {
+    let v = mk_v()
+    scope { s =>
+        let hs = Vec.new()
+        let t1 = s.spawn(|| v.push(1))
+        let t2 = s.spawn(|| print(1))
+        let h = pick_sink(t1, t2, false, &hs)
+        h.join()
+        v.push(2)   //~ W0405
+        while hs.len() > 0 { match hs.pop() { Some(o) => o.join(), None => {} } }
+    }   //~ W0601
+}
+
+// Clean: the identity gives its one handle back (x8_id_join, O3-9).
+fn one_handle_through_id() / async {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        let u = id(t)
+        u.join()
+        v.push(2)
+    }
+}
+// Clean: the write comes after the join of each handle.
+fn both_joined() / async {
+    let v = mk_v()
+    scope { s =>
+        let t1 = s.spawn(|| v.push(1))
+        let t2 = s.spawn(|| print(1))
+        let h = pick(t1, t2, false, |t: Task<()>| t.join())
+        h.join()
+        print(1)
+    }
+    v.push(2)
+}
+fn main() {}

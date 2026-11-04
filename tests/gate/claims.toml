@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2"]
 
 
 # ----------------------------------------------------------------------
@@ -6692,3 +6692,169 @@ stage = "F20.1"
 repro = ["tests/gate/probes/fixes/f47/a13_linear_type_b.wf"]
 code = "W0601"
 note = "control: `Option<Tx>`, the arm `Some(_)` drops the linear value (no change)"
+
+# Follow-up F20.2: the blockers of the review of group F (F-1, F-2, FP-1, P-1, P-2).
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_held_linear_read_b.wf",
+    "tests/gate/probes/fixes/f20_2/f1_held_vec_read_b.wf",
+]
+code = "W0302"
+note = "a closure reads an argument that a generic callee holds, during the call: the argument moves at `Main`"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_once_held_twice_b.wf",
+    "tests/gate/probes/fixes/f20_2/f1_extern_once_b.wf",
+]
+code = "W0502"
+note = "a `once` closure that a generic callee holds moves into it: a later call is a second call"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_once_multi_b.wf",
+    "tests/gate/probes/fixes/f20_2/f1_rc_multi_b.wf",
+]
+code = "W0503"
+note = "a `once` closure or an `Rc` that a generic callee holds across a `multi` operation: a held variable of its own"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "sound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_held_linear_read_c.wf",
+    "tests/gate/probes/fixes/f20_2/f1_held_vec_read_c.wf",
+    "tests/gate/probes/fixes/f20_2/f1_once_held_twice_c.wf",
+]
+note = "clean twins: the closure does not read the held argument, the `once` closure runs once"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "sound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_once_multi_c.wf",
+    "tests/gate/probes/fixes/f20_2/f1_rc_multi_c.wf",
+]
+note = "clean twins: a `many` value held across a `multi` operation"
+
+[[claim]]
+finding = "F20.2-FP1"
+kind = "fp"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/fp1_held_part_c.wf"]
+code = "W0602"
+note = "the callee holds `B = i64` of a tuple `(Tx, i64)`: the variable comes from the type argument, not from the type of the argument"
+
+[[claim]]
+finding = "F20.2-FP1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/fp1_held_part_b.wf"]
+code = "W0602"
+note = "the bad twin: the callee holds `B = Tx` across an abort"
+
+[[claim]]
+finding = "F20.2-F2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACEF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f2_pick_handle_b.wf",
+    "tests/gate/probes/fixes/f20_2/f2_pick_sink_b.wf",
+]
+code = "W0405"
+note = "a callee with two handle arguments gives one back and the other away: the `join` of the result ends no task"
+
+[[claim]]
+finding = "F20.2-F2"
+kind = "sound"
+verdict = "one-rule"
+group = "ABCEF"
+stage = "F20.2"
+repro = ["tests/gate/probes/r3/oracle/probes/x8_id_join.wf"]
+note = "control: one handle through a generic identity; its `join` ends the task (O3-9)"
+
+[[claim]]
+finding = "F20.2-P1"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/p1_nested_move_b.wf",
+    "tests/gate/probes/fixes/f20_2/p1_inner_closure_move_b.wf",
+    "tests/gate/probes/fixes/f20_2/p1_one_path_move_b.wf",
+]
+code = "W0301"
+note = "a move of a `ByMove` capture in a closure body frees the value in the environment"
+
+[[claim]]
+finding = "F20.2-P1"
+kind = "sound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/p1_inner_closure_move_c.wf",
+    "tests/gate/probes/fixes/f20_2/p1_one_path_move_c.wf",
+]
+note = "clean twins: the read comes before the move"
+
+[[claim]]
+finding = "F20.2-P2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/p2_fork_rc_b.wf"]
+code = "W0401"
+note = "a `fork` that a closure body starts through a callee captures an `Rc` of the maker"
+
+[[claim]]
+finding = "F20.2-P2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/p2_fork_shared_mut_b.wf"]
+code = "W0403"
+note = "the `fork` branches change a `ByRef` and a `Kept` capture of the maker"
+
+[[claim]]
+finding = "F20.2-P2"
+kind = "sound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/p2_fork_rc_c.wf",
+    "tests/gate/probes/fixes/f20_2/p2_fork_shared_mut_c.wf",
+]
+note = "clean twins: the `Rc` stays in the body, the branches only read"

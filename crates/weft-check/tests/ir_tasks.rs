@@ -290,3 +290,11 @@ fn a_task_of_a_callee_conflicts_with_a_clause_of_a_caller() {
     }
     assert!(n >= 20, "{n}");
 }
+
+/// Follow-up F20.2 (P-2 of the review of group F): a `fork` that a closure
+/// body starts through a callee checks its branches: W0401 for an `Rc`
+/// capture, W0403 for a change of a shared place.
+#[test]
+fn a_fork_that_a_closure_body_starts_checks_its_branches() {
+    check("fork_in_closure.wf");
+}

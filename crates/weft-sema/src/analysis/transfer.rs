@@ -1458,16 +1458,33 @@ pub fn call_out(
         }
     }
     // A task handle of an argument of a type parameter can come back in a
-    // result of a type parameter (`let u = id(t); u.join()`, O3-9).
+    // result of a type parameter (`let u = id(t); u.join()`, O3-9). A `join`
+    // of the result ends the task of the handle: so the handle must be the
+    // only one that can come back (F-2 of the review of group F, follow-up
+    // F20.2). Only one parameter names a type parameter, it is not a
+    // reference, and the argument holds the handle of one task site. A
+    // callee with two such arguments can give one back and the other away
+    // (`pick(t1, t2, k)`), and a callee with a reference to a container can
+    // give back a handle of the container.
     let mut back_tasks = BTreeSet::new();
     if cx.tys.mentions_param(decl.ret) {
-        for (i, a) in args.iter().enumerate() {
-            if decl
+        let given: Vec<usize> = decl
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(_, &t)| cx.tys.mentions_param(t))
+            .map(|(i, _)| i)
+            .collect();
+        if let &[i] = given.as_slice() {
+            let by_value = decl
                 .params
                 .get(i)
-                .is_some_and(|&t| cx.tys.mentions_param(t))
-            {
-                back_tasks.extend(operand(cx, body, st, a)?.flat().tasks);
+                .is_some_and(|&t| !super::sig::is_ref(cx.tys, t));
+            if let (true, Some(a)) = (by_value, args.get(i)) {
+                let tasks = operand(cx, body, st, a)?.flat().tasks;
+                if tasks.len() == 1 {
+                    back_tasks = tasks;
+                }
             }
         }
         ret.top.tasks.extend(back_tasks.iter().copied());

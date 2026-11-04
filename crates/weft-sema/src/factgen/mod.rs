@@ -978,6 +978,9 @@ pub fn emit_parts(
         (&hx, &mut holders),
         clause_stored,
     ));
+    // The values that callees hold get the abort and the `multi` of their
+    // call nodes (follow-up F20.2).
+    let held = holders.held().to_vec();
     let (parts, slots) = holders.finish(facts);
     let handled_entries = handled_entries(p, &comp, &table);
     let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored)?;
@@ -1035,6 +1038,7 @@ pub fn emit_parts(
             .and_then(|sig| sig.generics.get(j as usize).cloned())
             .unwrap_or_else(|| format!("T{j}"))
     };
+    generic::copy_held(facts, &held);
     generic::item_values(p, &tys, sums, &comp, &names, facts);
     // The parts `drops` and `holds` of a generic body.
     let found = if is_generic {

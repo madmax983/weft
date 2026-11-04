@@ -293,3 +293,12 @@ fn an_arm_of_a_variant_with_no_payload_consumes_a_linear_closure_in_an_enum() {
     // not call is still W0601.
     check("option_payload.wf");
 }
+
+/// Follow-up F20.2 (P-1 of the review of group F): a move of a `ByMove`
+/// capture in a closure body (or in a closure that the body makes and runs)
+/// frees the value in the environment: a reference into it is W0301 after
+/// the move.
+#[test]
+fn a_move_of_a_capture_in_a_closure_body_invalidates_references_into_it() {
+    check("nested_move.wf");
+}

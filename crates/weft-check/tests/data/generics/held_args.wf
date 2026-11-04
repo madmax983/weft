@@ -1,0 +1,80 @@
+// Follow-up F20.2 (F-1, FP-1 of the review of group F): an argument that a
+// generic callee holds (part `holds`) moves at `Main`, as each argument. A
+// closure that reads it during the call reads a moved value, and a `once`
+// closure that the callee holds moves into it. A variable of the type
+// argument of its own is live across the call (W0602, W0503). A `once`
+// closure gets such a variable too. The type argument, not the type of the
+// argument, gives the variable: a tuple `(Tx, u64)` with `B = u64` held is
+// no error.
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lk { id: u64 }
+fn rollback(t: Tx) { let Tx(i) = t
+ print(i) }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t
+ print(i) }
+fn lock(n: u64) -> Lk { Lk { id: n } }
+fn unlock(l: Lk) { let Lk(i) = l
+ print(i) }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn hold_call<T>(x: T, f: fn()) -> T { f()
+ x }
+fn hold<T>(x: T, n: u64) -> T / fail { if n > 5 { fail("big") }
+ x }
+fn hold_part<A, B>(p: (A, B), k: fn(A)) -> B / fail { let (a, b) = p
+ k(a)
+ fail("x")
+ b }
+
+// A closure reads the held value during the call (h07, h01): the callee
+// runs `f` after the move of `x` (W0302, as a call of a function that is not
+// generic; the old pipeline says W0301 for `f`).
+fn linear_read_during_call() {
+    let t = begin(1)
+    let f = || print(t.id)
+    let u = hold_call(t, f)   //~ W0302
+    commit(u)
+}
+fn vec_read_during_call() {
+    let v = mkv()
+    let f = || print(v.len())
+    let w = hold_call(v, f)   //~ W0302
+    print(w.len())
+}
+// A `once` closure that the callee holds moves into it (m06).
+fn once_held_then_called() / fail {
+    let v = mkv()
+    let f = || consume(v)
+    let g = hold(f, 1)
+    g()
+    f()   //~ W0502
+}
+// A linear value with no `on abort` held across an abort (FP-1 bad twin).
+fn held_part_linear() / fail {
+    let t = hold_part((1, lock(2)), |n: u64| print(n))   //~ W0602
+    unlock(t)
+}
+
+// Clean twins.
+fn linear_read_before_call() {
+    let t = begin(1)
+    print(t.id)
+    let f = || print(1)
+    let u = hold_call(t, f)
+    commit(u)
+}
+fn once_held_called_once() / fail {
+    let v = mkv()
+    let f = || consume(v)
+    let g = hold(f, 1)
+    g()
+}
+// FP-1: the callee holds `B = u64` only; the linear part is consumed.
+fn held_part_plain() / fail {
+    let t = hold_part((lock(2), 1), unlock)
+    print(t)
+}

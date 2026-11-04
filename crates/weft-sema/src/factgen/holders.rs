@@ -141,6 +141,9 @@ pub struct Holders {
     /// the order of [`Holders::slots`]. A slot after the end of the list
     /// holds nothing there.
     slot_before: BTreeMap<NodeId, Vec<BTreeSet<PlaceId>>>,
+    /// The node of each value that a callee holds, with its call node
+    /// (`super::generic::copy_held`, follow-up F20.2).
+    held: Vec<(NodeId, NodeId)>,
 }
 
 /// The versions of one part, as [`Holders::finish`] makes them: what the
@@ -285,6 +288,18 @@ impl Holders {
             });
         }
         true
+    }
+
+    /// Notes the node `a` of a value that a callee holds at the call node
+    /// `main` (follow-up F20.2): `a` gets the abort and the `multi` of
+    /// `main` when the facts of the component are complete.
+    pub fn held_like(&mut self, a: NodeId, main: NodeId) {
+        self.held.push((a, main));
+    }
+
+    /// The pairs of [`Holders::held_like`].
+    pub fn held(&self) -> &[(NodeId, NodeId)] {
+        &self.held
     }
 
     /// Makes the versions and writes their facts (see the module comment).

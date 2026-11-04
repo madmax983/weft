@@ -142,3 +142,28 @@ fn a_task_handle_comes_back_from_a_generic_identity() {
 fn a_linear_closure_in_an_option_from_a_generic_callee_is_consumed_by_the_none_arm() {
     check("option_payload.wf");
 }
+
+/// Follow-up F20.2 (F-1, FP-1 of the review of group F): an argument that a
+/// generic callee holds moves at `Main`. A closure that reads it during the
+/// call is W0301, a `once` closure that the callee holds is moved (W0502).
+/// A variable of the type argument stands for the held value (W0602). A
+/// part of a tuple argument that the callee does not hold is no error.
+#[test]
+fn an_argument_that_a_generic_callee_holds_moves_at_the_call() {
+    check("held_args.wf");
+}
+
+/// Follow-up F20.2 (F-1, m01): a `once` closure that a generic callee holds
+/// across a `multi` operation is W0503.
+#[test]
+fn a_once_closure_that_a_generic_callee_holds_across_a_multi_operation_is_w0503() {
+    check("held_multi.wf");
+}
+
+/// Follow-up F20.2 (F-2 of the review of group F): a `join` of a result of
+/// a type parameter ends a task only if one argument gives one handle. A
+/// callee that gives the other handle away does not end its task.
+#[test]
+fn a_join_of_a_picked_handle_ends_only_a_task_that_one_argument_gives() {
+    check("pick_handles.wf");
+}

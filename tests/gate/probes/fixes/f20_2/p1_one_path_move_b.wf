@@ -1,0 +1,13 @@
+// F20.2 P-1 (x05): the capture moves on one path (W0301).
+fn take_v(v: Vec<u64>) { print(v.len()) }
+fn apply(f: fn()) { f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = false
+    apply(|| {
+        let r = &v[0]
+        if c { print(0) } else { let g = || take_v(v); g() }
+        print(r)
+    })
+}

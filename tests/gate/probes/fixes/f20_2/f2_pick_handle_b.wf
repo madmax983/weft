@@ -1,0 +1,13 @@
+// F20.2 F-2 (q01): pick gives one handle back and the other to k; the join of the result does not end the other task (W0405).
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn pick<T>(a: T, b: T, c: bool, k: fn(T)) -> T { if c { k(b); a } else { k(a); b } }
+fn main() / async {
+    let v = mk_v()
+    scope { s =>
+        let t1 = s.spawn(|| v.push(1))
+        let t2 = s.spawn(|| print(1))
+        let h = pick(t1, t2, false, |t: Task<()>| t.detach())
+        h.join()
+        v.push(2)
+    }
+}

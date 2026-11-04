@@ -691,3 +691,27 @@ from the self-attack of follow-up F20.1 (scratchpad `f47/att`).
   the gate: the pair `a11` (a closure captures the `Option` and copies the payload; a
   new case of the class `closure-copy` of `exports_parity.rs`, which needs a review).
   They are in scratchpad `f47/att`.
+
+## Follow-up F20.2: the blockers of the review of group F
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the variants of the review of group F (scratchpad `freview/variants/`, the review
+`freview/review.md`). Before the fix the `ir` pipeline accepted each `_b.wf` but
+`fp1_held_part_b.wf`, and rejected `fp1_held_part_c.wf`.
+
+- `fixes/f20_2/f1_*.wf` (claims F20.2-F1): an argument that a generic callee holds
+  moves at `Main`. A closure that reads it during the call (`h07`, `h01`: W0302, the
+  old pipeline says W0301), a `once` closure that the callee holds and a later call
+  (`m06`, and `e04` with an `extern` callee: W0502), a `once` closure or an `Rc` held
+  across a `multi` operation (`m01`, `m03`: W0503). The `_c.wf` twins are clean.
+- `fixes/f20_2/fp1_*.wf` (claims F20.2-FP1): the callee holds one part of a tuple. The
+  type argument gives the held variable (`g10`).
+- `fixes/f20_2/f2_*.wf` (claim F20.2-F2): a callee with two handle arguments gives one
+  back and the other to a closure or into a `Vec` (`q01`, `q05`): W0405 after the `join`
+  of the result. The control is `r3/oracle/probes/x8_id_join.wf` (accepted).
+- `fixes/f20_2/p1_*.wf` (claims F20.2-P1, not of group F): a move of a `ByMove` capture
+  in a closure body, in an inner closure, on one path (`x08`, `x07`, `x05`): W0301.
+- `fixes/f20_2/p2_*.wf` (claims F20.2-P2, not of group F): a `fork` through a callee in
+  a closure body. The branch captures an `Rc` (`x01`: W0401) or changes a `ByRef` and a
+  `Kept` capture of the maker (`x09`: 2 x W0403).

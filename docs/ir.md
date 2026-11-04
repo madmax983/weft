@@ -1472,6 +1472,36 @@ argument in `holds` across a node that can abort or resume more than once, and a
 value of a type argument in `drops`. A call of `f` applies the parts with its type
 arguments (6.4 `Call`).
 
+As built (follow-up F20.2, the review of group F at a813be3): five changes.
+
+- F-1. An argument that the callee holds (part `holds`) moves at `Main`, as each
+  argument. Before the fix it moved at `Ret`, so a closure that the callee ran during
+  the call could read the moved value, and a `once` closure (plain data in the IR)
+  did not move at all. Now a variable of its own stands for the held value
+  (`templates::held_args`): a variable of the type argument if the argument can hold
+  a linear value (`None` holds none), or if the type is not `many` (`once`, `!Move`);
+  else a variable of a linear or `once` closure in the argument. The variable is live
+  across a node of its own (`generic::held_node`). After the clauses of the local
+  handlers are in the facts, that node gets the abort and the `multi` of `Main`
+  (`generic::copy_held`). A value that no argument gives keeps the abort and the
+  `multi` of the summary.
+- FP-1. The type argument gives the held variable, not the type of the argument. A
+  tuple `(Tx, u64)` with only `B = u64` in `holds` is no W0602.
+- F-2. A `join` of a result of a type parameter ends a task only if one parameter
+  names a type parameter, the parameter is not a reference, and the argument holds
+  the handle of one task site (`transfer::call_out`, `back_tasks`). A callee with two
+  handle arguments can give one back and the other away. The O3-9 case
+  (`id(t).join()`) stays accepted.
+- P-1 (not of group F). A move of a `ByMove` capture in a closure body also frees the
+  places of the capture (`moved_part`): they have no owner, so before the fix a
+  reference into the capture stayed valid after the move.
+- P-2 (not of group F). A `fork` branch that a closure body makes and gives to a
+  callee gets the captures of a branch of a function body (`task_captures`), if the
+  maker is the body that the template emits. A `Kept` or a `ByRef` capture of the
+  maker is the variable of its source (`alpha::capture_source`). So W0401 and W0403
+  apply. The task stays pinned, and the cell of a variable of another body is not
+  `kept`: a closure can take the task out of the scope of that body (RR4).
+
 ### 5.21 Calls of function values [2.20]
 
 ```text
@@ -3411,10 +3441,11 @@ As built (plan stage F6, `crates/weft-sema/src/analysis/`):
   at a node that can abort or resume more than once (`abort_unhandled`, W0503), or it
   moves into a task; also a linear value whose `on abort` comes from a type argument (a
   `Task<T>` handle, OL-3a). At a call: a linear type argument in `drops` is a dropped
-  value (also a linear closure in an argument of the type parameter, V056); an argument
-  of a type parameter in `holds` moves at `Ret`, and a type argument in `holds` that no
-  argument gives is a variable of a node of its own that can abort or resume more than
-  once; a nonportable type argument in `forks` is a `fork` branch of its own.
+  value (also a linear closure in an argument of the type parameter, V056); a type
+  argument in `holds` is a variable of a node of its own that can abort or resume more
+  than once (an argument of the type parameter moves at `Main`, and the node gets the
+  abort and the `multi` of `Main`; follow-up F20.2, 5.20); a nonportable type argument
+  in `forks` is a `fork` branch of its own.
 - The other parts of the summary of a function with no stated row come from its
   signature (`sig::build`): the parameters, the reads (the root of each parameter), the
   result (the stated places and the flows of 6.7 above), the stores and the `@ uniq`
