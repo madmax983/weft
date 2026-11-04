@@ -8027,3 +8027,38 @@ parts = ["reaches", "multi"]
 files = ["tests/gate/probes/fixes/c1/c16_*.wf"]
 reason = "stage C1.6 (issue #71): `body` calls `picky`, which performs the `multi` operation through the row, and `main` handles the row with a local handler. The old inference marks `body` and `main` `multi`; the `multi` operation goes to the local handler of `main`, and the `ir` summary has no `multi` for a caller (as the entry of follow-up C1.2 for the `h3_*` probes says). reaches: the part `runs`"
 stage = "C1.6"
+
+# ----------------------------------------------------------------------------
+# Stage C1.6: the 8 other tier-2 lost-clean rows of issue #67, signed by the
+# independent review r67b after the fix of #71 (holes C1-HA, C1-HB, C1-HC).
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g2/p3038.wf",
+    "r2/oracle/runs/g7/p42423.wf",
+    "r2/oracle/runs/g5/p21058.wf",
+    "r2/oracle/runs/g7/p43731.wf",
+]
+reason = "W0301 precision: a block value (`&v9[0]`, `first(&v8)`, or the closure `f12` that captures `v11` of the block) points into a local of the block, but no node uses it (ir 5.9, 5.10). A variant that reads the block value, calls the closure or gives it to `apply` is W0301 (z_read, z_call, z_call2, z_apply). The once closure of each row (`g6`, `g6`, `g8`, `g1`) is W0502 or W0503 in each of its variants in a `multi` handle (r67b v01 to v29, r67 h5, h6, h6c; 35 for p21058 with the nb forms, 32 for the others): the C1-H1 to C1-H6 forms, the C1-HA, C1-HB and C1-HC forms, and the Box, enum, Vec and nested struct forms of stage C1.6. p21058 faults at run time with an index out of bounds (`w4.ns.clear()`, then `w4.ns[0]`), not with a memory fault; its variants without `w4.ns.clear()` give the same result"
+signed_by = "independent reviewer (r67b)"
+stage = "C1.6"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g7/p44831.wf",
+    "r3/oracle/runs/g3b/p13470.wf",
+]
+reason = "W0301 precision. p44831: the closure argument `|| print(v1[0])` captures `v1`, and the same call moves `v1`, but `h0` does not run its parameter `p0`. A variant whose callee runs it is W0302 (z_run, z_runlate). p13470: `cv2` captures the variable `v2` by reference. A closure that `apply` runs moves `v2`, but `v2 = [7]` gives the variable a new value before `cv2()` reads it. A variant with no new value is W0302 (z_early, z_nonew). The once closure of each row (`g10`, and the closure that moves `v2`) is W0502 or W0503 in each of its 32 variants in a `multi` handle (r67b v01 to v29, r67 h5, h6, h6c)"
+signed_by = "independent reviewer (r67b)"
+stage = "C1.6"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g4/p10437.wf",
+    "r2/oracle/runs/m2/p7514.wf",
+]
+reason = "W0601 precision: the closure that moves a linear value (`g2` and `g5` of `h0`, `|| { commit(t) }` of `with_tx`) goes to `apply` or `apply_m`, whose summary runs it once on each normal path. A variant that gives it to `drop_`, to a callee that runs it on some paths only, or to `twice` is W0601 or W0502 (z_drop, z_maybe, z_twice). The closure is W0502 or W0503 in each of its variants in a `multi` handle (r67b v01 to v29, r67 h5, h6, h6c; 35 for p10437, 32 for p7514). Each W0503 names the closure, the operand temporary, or the local that holds the closure. The closure is linear too, so W0601/W0602 also come in many of these variants. They do not count: each variant also has W0502 or W0503"
+signed_by = "independent reviewer (r67b)"
+stage = "C1.6"
