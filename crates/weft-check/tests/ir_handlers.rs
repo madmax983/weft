@@ -659,3 +659,25 @@ fn a_run_after_a_value_that_resumes_two_times_runs_again() {
     check("run_after_multi_ok.wf");
     check("run_after_multi_plain_ok.wf");
 }
+
+/// Holes C1-H2 and C1-H3 (follow-up C1.2): a callee that runs a value that
+/// can resume more than once gives a `once` closure argument out again on
+/// each resume (back, in a field, a struct, an `Option`, through a callee,
+/// in a closure that it makes), so the caller can run it two times: the
+/// closure is live across the call (W0503). A closure that a callee makes
+/// and that runs such a value before the `once` closure runs it again
+/// (W0502). A first value that resumes nothing, or a closure that is not
+/// `once`, is no error.
+#[test]
+fn a_callee_gives_a_once_closure_out_again_after_a_multi_value() {
+    check("give_out_ret.wf");
+    check("give_out_field.wf");
+    check("give_out_struct.wf");
+    check("give_out_option.wf");
+    check("give_out_box.wf");
+    check("give_out_nested.wf");
+    check("give_out_made_after.wf");
+    check("made_run_after_multi.wf");
+    check("give_out_ok.wf");
+    check("give_out_plain_ok.wf");
+}

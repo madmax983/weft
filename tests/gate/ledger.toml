@@ -7854,6 +7854,62 @@ files = ["tests/gate/probes/fixes/c1/h1_generic_b.wf"]
 reason = "class F20-SIG-GENERIC (follow-up C1.1): `rb<T>(x: T, f: fn(), g: fn()) -> T` keeps `x` across the runs of `f` and `g`, whose code of a caller can resume more than once, so the value of the type parameter is in `holds`, not in `drops`. passthrough, repeats: the part `runs` (with `after`) and code of a caller, as entry F13 of `**` says"
 stage = "C1.1"
 
+# Stage C1.1 (fbf9be8): the second independent review of the 17 rows that the
+# first review refused (hole C1-H1). 10 rows signed (linear once closures).
+# The 7 rows with a once closure that moves a value of a non-linear type stay
+# refused: holes H2 (made closure, a C1 regression that C1.1 does not fix) and
+# H3 (a returned or stored once argument, also before C1).
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g3/p6849.wf",
+    "r2/oracle/runs/g3/p7181.wf",
+    "r2/oracle/runs/g4/p10437.wf",
+    "r2/oracle/runs/g5/p20769.wf",
+    "r2/oracle/runs/g5/p21999.wf",
+    "r2/oracle/runs/g6/p31901.wf",
+    "r2/oracle/runs/m2/p7514.wf",
+    "r3/oracle/runs/g3b/p19211.wf",
+]
+reason = "W0601 precision: the closure that moves a linear value goes to a callee (`apply`, `apply_m`) whose summary runs it once on each normal path. Each variant where the callee drops it, runs it only on one path, or runs it two times is W0601/W0502. Each variant where a callee runs a value that can resume two times before the closure (C1-H1, fixed in C1.1: also through a struct field, a tuple, a Vec, an Option, a generic callee, a callee of a callee, a loop and a closure that a helper makes) is W0502/W0503. A linear closure that a callee returns or stores is W0601 in both pipelines"
+signed_by = "review agent, stage C1.1 (independent)"
+stage = "C1.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g3/p7192.wf",
+    "r2/oracle/runs/g6/p31046.wf",
+]
+reason = "W0601 precision as for p6849 (the linear closure goes to `apply`, which runs it once; the variants that drop it, run it two times or run it after a value that can resume two times are W0601/W0502/W0503), and W0301 at a block value that no node uses (ir 5.9, 5.10): each variant that reads the block reference or calls the block closure is W0301"
+signed_by = "review agent, stage C1.1 (independent)"
+stage = "C1.1"
+
+# Follow-up C1.2: holes C1-H2 and C1-H3 of the second review of stage C1.
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/c1/h2_*.wf",
+    "tests/gate/probes/fixes/c1/h3_*.wf",
+]
+codes = ["W0301", "W0502", "W0503"]
+reason = "holes C1-H2 and C1-H3 (follow-up C1.2): a callee runs a value that can resume more than once and gives a `once` closure argument out again (back, in a field, a struct, an `Option`, a tuple, through a callee, in a closure that it makes), or a closure that a callee made runs such a value before a `once` capture. Both pipelines reject each program (h3_ret_first_b only the `ir` pipeline: `fixed`); the old pipeline also gives W0301 and W0502 at the call, the `ir` pipeline W0503 for the closure that the callee holds across the call (`templates::given_out`) and W0502 for the made closure. The run faults (the closure runs again)"
+stage = "C1.2"
+
+[[entry]]
+class = "sig"
+parts = ["reaches", "multi"]
+files = [
+    "tests/gate/probes/fixes/c1/h3_field_b.wf",
+    "tests/gate/probes/fixes/c1/h3_option_b.wf",
+    "tests/gate/probes/fixes/c1/h3_struct_b.wf",
+    "tests/gate/probes/fixes/c1/h3_tuple_b.wf",
+]
+reason = "follow-up C1.2: `main` runs a function value that it reads from a field, a payload or a tuple part. The old inference marks `main` `multi` (as entry F13 of `39_multi_params.wf` says); the `multi` operation here goes to the local handler of `main`, and the `ir` summary has no `multi` for a caller. reaches: the part `runs`"
+stage = "C1.2"
+
 # ----------------------------------------------------------------------------
 # Follow-up F20.4: B-2 and I-8 of the third review of group F.
 

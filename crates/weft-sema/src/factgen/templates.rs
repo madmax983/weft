@@ -2882,6 +2882,7 @@ pub fn call(
         args,
         (at, &callee),
     )?;
+    given_out(em, st, main, (sum, &decl.params), args, (at, &callee))?;
     // A value of a type parameter in `forks`: a `fork` branch of the callee
     // captures it (OL-NR-ptrfork). A nonportable type argument is W0401: a
     // branch of its own captures a variable of the type.
@@ -3083,6 +3084,93 @@ fn held_args(
             let a = super::generic::held_node(em.facts, at, v, callee);
             em.holders.held_like(a, main);
         }
+    }
+    Ok(())
+}
+
+/// The arguments of a call whose function values the callee can give back
+/// or put into a place (part `ret.fns` and `put_fns`): `None` for each
+/// argument (a made closure or a value that the summary does not know can
+/// hold any of them).
+fn given_out_args(sum: &crate::analysis::Summary) -> Option<std::collections::BTreeSet<u32>> {
+    use crate::analysis::summary::RetFn;
+    let mut out = std::collections::BTreeSet::new();
+    let rets = sum
+        .ret
+        .fns
+        .iter()
+        .chain(sum.put_fns.iter().flat_map(|(_, rs)| rs.iter()));
+    for r in rets {
+        match r {
+            RetFn::Param(i) => {
+                out.insert(*i);
+            }
+            RetFn::Item(..) => {}
+            RetFn::Made(_) | RetFn::Capture(_) | RetFn::Unknown => return None,
+        }
+    }
+    Some(out)
+}
+
+/// A `once` closure in an argument that the callee can give back or put
+/// into a place (hole C1-H3, follow-up C1.2): if the call can resume more
+/// than once, the callee gives the closure out again, and the caller can
+/// run it two times. The closure is live across a node of its own that
+/// gets the `multi` of `main` (`generic::held_node`, `copy_held`): W0503.
+///
+/// # Errors
+///
+/// The errors of α.
+fn given_out(
+    em: &mut Em<'_>,
+    st: &State,
+    main: NodeId,
+    (sum, params): (&crate::analysis::Summary, &[weft_ir::TyId]),
+    args: &[Operand],
+    (at, callee): (Span, &str),
+) -> R {
+    let some = given_out_args(sum);
+    if some
+        .as_ref()
+        .is_some_and(std::collections::BTreeSet::is_empty)
+    {
+        return Ok(());
+    }
+    let body = em.body;
+    let mut held = Vec::new();
+    for (i, op) in args.iter().enumerate() {
+        let i = u32::try_from(i).unwrap_or(u32::MAX);
+        if some.as_ref().is_some_and(|s| !s.contains(&i)) {
+            continue;
+        }
+        // A value of a type parameter that the callee holds has its node
+        // already (`held_args`, part `holds`).
+        let by_holds = params.get(i as usize).is_some_and(|&t| {
+            let ps = crate::props::ir_linear_params(em.tys, t);
+            sum.holds.iter().any(|j| ps.contains(j))
+        });
+        if by_holds {
+            continue;
+        }
+        let fns = transfer::reach_fns(&mut em.cx(), body, st, op)?;
+        if !fns.iter().any(|f| transfer::once_value(em.p, f)) {
+            continue;
+        }
+        let name = match op {
+            Operand::Copy(q) | Operand::Move(q) => {
+                em.base_var(body, q)?.map(|v| em.facts.var(v).name.clone())
+            }
+            Operand::Const(_) => None,
+        }
+        .unwrap_or_else(|| "the closure".to_string());
+        let mut info =
+            weft_facts::VarInfo::plain(name, weft_facts::VarKind::Temp, at, String::new());
+        info.once = true;
+        held.push(em.facts.add_var(info));
+    }
+    for v in held {
+        let a = super::generic::held_node(em.facts, at, v, callee);
+        em.holders.held_like(a, main);
     }
     Ok(())
 }

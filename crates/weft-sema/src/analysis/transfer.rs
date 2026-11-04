@@ -2805,7 +2805,7 @@ fn apply_runs(
     // that a value runs (`Apps::reached`).
     let mut reached: BTreeMap<(u32, bool), BTreeSet<FnVal>> = BTreeMap::new();
     // The values that each run reaches, by the index of the run.
-    let mut per_run: Vec<(usize, Vec<FnVal>)> = Vec::new();
+    let mut per_run: Vec<(usize, Vec<FnVal>, (BodyId, Operand))> = Vec::new();
     for (index, run) in runs.iter().enumerate() {
         let first = apps.reached.len();
         let many = run.many || two;
@@ -2949,7 +2949,7 @@ fn apply_runs(
         let key = (run.param, run.capture);
         let got = apps.reached.get(first..).unwrap_or_default();
         reached.entry(key).or_default().extend(got.iter().cloned());
-        per_run.push((index, got.to_vec()));
+        per_run.push((index, got.to_vec(), (src_body, src.clone())));
     }
     // A run after a run of a value that can resume more than once (code of
     // a caller in the body between them, `Run::after`) happens again: each
@@ -2983,7 +2983,7 @@ fn apply_runs(
         })
         .map(|(k, _)| *k)
         .collect();
-    for (index, got) in &per_run {
+    for (index, got, arg) in &per_run {
         let Some(run) = runs.get(*index) else {
             continue;
         };
@@ -2991,9 +2991,17 @@ fn apply_runs(
             continue;
         }
         for v in got {
+            // A closure that a callee made holds the values of its captures
+            // in its own value: a capture that runs again runs a `once`
+            // value of it again, so the run moves the value of the closure
+            // (as for `run.many` above; hole C1-H2 of follow-up C1.2).
+            let once = made && run.capture && once_value(cx.p, v);
             if let Some(a) = apps.seen.get(v).and_then(|&k| apps.out.get_mut(k)) {
                 a.again = true;
                 a.order = false;
+                if once && !a.once_args.contains(arg) {
+                    a.once_args.push(arg.clone());
+                }
             }
         }
     }

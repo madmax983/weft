@@ -1,0 +1,19 @@
+// Hole C1-H3 (follow-up C1.2): the callee stores the once closure in a field of the caller.
+effect Pick { multi fn pick() -> bool }
+struct H1 { f: fn() }
+struct Big { v: Vec<u64> }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn take_b(b: Big) -> usize { b.v.len() }
+fn take_box(b: Box<u64>) -> u64 { let c = b
+ 7 }
+fn pass(f: fn(), g: fn(), out: &H1) { f(); out.f = g }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let t = mk_v()
+        let o = H1 { f: || print(0) }
+        pass(|| { if pick() { print(1) } }, || print(take_v(t)), &o)   //~ W0503
+        let k = o.f
+        k()
+    }
+}

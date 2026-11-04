@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1", "C1.2"]
 
 
 # ----------------------------------------------------------------------
@@ -7184,3 +7184,35 @@ stage = "C1.1"
 repro = ["tests/gate/probes/fixes/c1/h1_generic_b.wf"]
 code = "W0502"
 note = "the same with a generic callee"
+
+# Follow-up C1.2: holes C1-H2 and C1-H3 of the second review of stage C1.
+
+[[claim]]
+finding = "C1-H2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.2"
+repro = ["tests/gate/probes/fixes/c1/h2_made_b.wf"]
+code = "W0502"
+note = "a closure that a callee made runs a value that resumes two times, then a `once` capture"
+
+[[claim]]
+finding = "C1-H3"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.2"
+repro = [
+    "tests/gate/probes/fixes/c1/h3_ret_b.wf",
+    "tests/gate/probes/fixes/c1/h3_ret_first_b.wf",
+    "tests/gate/probes/fixes/c1/h3_field_b.wf",
+    "tests/gate/probes/fixes/c1/h3_struct_b.wf",
+    "tests/gate/probes/fixes/c1/h3_option_b.wf",
+    "tests/gate/probes/fixes/c1/h3_tuple_b.wf",
+    "tests/gate/probes/fixes/c1/h3_box_b.wf",
+    "tests/gate/probes/fixes/c1/h3_nested_b.wf",
+    "tests/gate/probes/fixes/c1/h3_made_after_b.wf",
+]
+code = "W0503"
+note = "a callee runs a value that resumes two times and gives a `once` closure argument out again: back, in a field, a struct, an `Option`, a tuple, through a callee, in a made closure; a closure that moves a `Box`"

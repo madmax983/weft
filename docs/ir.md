@@ -1556,7 +1556,17 @@ the nodes of the caller.
   caller gives for a key of `after` can resume more than once: its summary is `multi`, or
   it performs a `multi` operation through a captured capability. So
   `run_both(|| { pick() }, || commit(t))` is W0502 again, and `run_both(|| print(0), ..)`
-  is not.
+  is not. A run of a capture of a closure that a callee made moves the value of the
+  closure for a `once` capture value there too (follow-up C1.2, hole C1-H2: `mk(m, g)`
+  gives `|| { m(); g() }`).
+- Follow-up C1.2, hole C1-H3 (older than C1). A callee that gives a function value of an
+  argument back or puts it into a place (part `ret.fns` with `RetFn::Param(i)`, or each
+  argument for a made closure or a value that the summary does not know; part
+  `put_fns`) gives a `once` closure there out again if the call resumes more than once:
+  the caller can run it two times. The closure gets a variable that is live across a
+  node of its own with the `multi` of the call node (`templates::given_out`, as
+  `held_args` for the part `holds`): W0503. A value of a type parameter in `holds` has
+  its node from `held_args` already.
 - #56. A place of the `rc` group of a definition with no function part (row `Fns` with no
   parameter) reaches no function value (`transfer::fns_of_role`).
 - #57, #58. A call runs the clauses of a handler that it reaches only through the values
