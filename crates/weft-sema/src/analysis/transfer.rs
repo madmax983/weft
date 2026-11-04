@@ -1430,7 +1430,7 @@ pub fn call_out(
         &summary.runs,
         &sigma,
         &mut |cx, run| param_fns(cx, r, run, given),
-        false,
+        &|_| false,
         0,
         &mut apps,
     )?;
@@ -2791,7 +2791,7 @@ fn apply_runs(
     runs: &[super::summary::Run],
     sigma: &super::apply::Sigma,
     of: &mut RunValues<'_>,
-    made: bool,
+    in_value: &dyn Fn(&super::summary::Run) -> bool,
     depth: usize,
     apps: &mut Apps,
 ) -> Result<(), AlphaError> {
@@ -2903,11 +2903,11 @@ fn apply_runs(
             // run of the node applied (a capture of another made closure that
             // runs it one time) gets the move too: this run is a second run
             // of it (`wrap(wrap1(|| eat(b)))`, follow-up F19.2).
-            let moves = !run.capture || (made && run.many);
+            let moves = !run.capture || (in_value(run) && run.many);
             if moves && once_value(cx.p, g) {
                 let at = if fresh {
                     Some(start)
-                } else if made && run.capture {
+                } else if in_value(run) {
                     apps.seen.get(g).copied()
                 } else {
                     None
@@ -2995,7 +2995,7 @@ fn apply_runs(
             // in its own value: a capture that runs again runs a `once`
             // value of it again, so the run moves the value of the closure
             // (as for `run.many` above; hole C1-H2 of follow-up C1.2).
-            let once = made && run.capture && once_value(cx.p, v);
+            let once = in_value(run) && once_value(cx.p, v);
             if let Some(a) = apps.seen.get(v).and_then(|&k| apps.out.get_mut(k)) {
                 a.again = true;
                 a.order = false;
@@ -3382,7 +3382,7 @@ fn apply_value(
                 &runs,
                 &sigma,
                 &mut |cx, run| param_fns(cx, r, run, given),
-                false,
+                &|_| false,
                 depth,
                 apps,
             )
@@ -3611,12 +3611,21 @@ fn apply_value(
                             param_fns(cx, r, run, given)
                         }
                     },
-                    true,
+                    &|run| run.capture,
                     depth,
                     apps,
                 );
             }
             let maker = decl.maker;
+            // The `ByMove` captures: the value of the closure holds their
+            // values, as for a closure that a callee made (hole C1-H4).
+            let by_move: BTreeSet<u32> = decl
+                .captures
+                .iter()
+                .enumerate()
+                .filter(|(_, cap)| cap.mode == weft_ir::CaptureMode::ByMove)
+                .map(|(k, _)| u32::try_from(k).unwrap_or(u32::MAX))
+                .collect();
             apply_runs(
                 cx,
                 r,
@@ -3647,7 +3656,7 @@ fn apply_value(
                     let fns = with_results(cx, r, fns)?;
                     Ok(Some((fns, src, maker)))
                 },
-                false,
+                &|run| run.capture && by_move.contains(&run.param),
                 depth,
                 apps,
             )?;

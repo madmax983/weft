@@ -22,7 +22,7 @@ fn capture_two_times() {
  let (a, b) = p
  a()
  b() }
-    g()
+    g()   //~ W0502
 }
 fn perform_two_times() {
     let v = mkv()

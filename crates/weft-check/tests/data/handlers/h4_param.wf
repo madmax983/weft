@@ -1,0 +1,11 @@
+// Hole C1-H4 (follow-up C1.3): the closure runs its once closure parameter after the multi operation.
+effect Pick { multi fn pick() -> bool }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let t = mk_v()
+        let h = |x: fn()| { if pick() { print(1) }; x() }
+        h(|| print(take_v(t)))   //~ W0502 W0503
+    }
+}

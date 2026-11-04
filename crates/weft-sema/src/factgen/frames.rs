@@ -139,6 +139,7 @@ pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: 
             .get(e.index())
             .and_then(|d| d.ops.get(op.index()))
             .is_some_and(|o| o.multi),
+
         TermKind::Call {
             callee: Callee::Fn(f, _),
             caps,
@@ -194,6 +195,39 @@ pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: 
         }
         _ => false,
     }
+}
+
+/// The blocks of closure body `body` whose terminator performs through a
+/// captured capability whose handler can resume more than once (hole
+/// C1-H4, follow-up C1.3).
+///
+/// The clause runs where a caller runs the closure, and a second resume
+/// runs the code of the closure after the perform again. The blocks after
+/// such a node are in a cycle for the runs of the values of the interface
+/// (`Run::many`: the caller runs them again), but they get no re-entry edge:
+/// the copy of the frames gives a value that the closure moved a new copy.
+pub fn captured_multi_nodes(p: &Program, tys: &TyTable, body: BodyId) -> Vec<BlockId> {
+    let Some((c, _)) = p.closure_of(body) else {
+        return Vec::new();
+    };
+    let Some(b) = p.body(body) else {
+        return Vec::new();
+    };
+    b.blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, blk)| !blk.cleanup)
+        .filter(|(_, blk)| match &blk.term.kind {
+            TermKind::Perform {
+                cap: CapOperand::Local(place),
+                ..
+            } => clause::captured_cap(p, tys, body, place)
+                .and_then(|(k, _)| clause::capture_handler(p, c, k))
+                .is_some_and(|h| clause::multi_twice(p, h)),
+            _ => false,
+        })
+        .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect()
 }
 
 /// The blocks of body `body` whose terminator can wait at a `multi`

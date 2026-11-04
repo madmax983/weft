@@ -201,6 +201,21 @@ impl Cycles {
         self.add_rows_at(p, comp, &rows);
     }
 
+    /// Adds the cycles after the performs of the closure bodies of `comp`
+    /// through a captured capability whose handler can resume more than
+    /// once (`crate::factgen::frames::captured_multi_nodes`, hole C1-H4).
+    pub fn add_captured(&mut self, p: &Program, tys: &weft_ir::TyTable, comp: &[BodyId]) {
+        let rows: Vec<(BodyId, BlockId)> = comp
+            .iter()
+            .flat_map(|&bid| {
+                crate::factgen::frames::captured_multi_nodes(p, tys, bid)
+                    .into_iter()
+                    .map(move |x| (bid, x))
+            })
+            .collect();
+        self.add_rows_at(p, comp, &rows);
+    }
+
     /// [`Self::add_rows`] for the nodes `rows` (a body and a block).
     pub fn add_rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)]) {
         self.rows_at(p, comp, rows, false);

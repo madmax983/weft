@@ -3175,6 +3175,93 @@ fn given_out(
     Ok(())
 }
 
+/// A `once` closure in a capture of closure `c` that the closure gives back
+/// or puts into a place (part `ret.fns` or `put_fns` with `RetFn::Capture`,
+/// or each capture for a made closure or a value that the summary does not
+/// know) is given out again if the call at `main` resumes more than once
+/// (hole C1-H3 for a closure, follow-up C1.3): a variable of it is live
+/// across a node of its own with the `multi` of `main` (W0503). `callee` is
+/// the operand of the closure; the closure itself is no such value.
+///
+/// # Errors
+///
+/// The errors of α.
+fn captures_given_out(
+    em: &mut Em<'_>,
+    st: &State,
+    main: NodeId,
+    (c, sum): (weft_ir::ClosureId, &crate::analysis::Summary),
+    callee: &Operand,
+    (at, name): (Span, &str),
+) -> R {
+    use crate::analysis::summary::RetFn;
+    let Some(decl) = em.p.closures.get(c.index()).cloned() else {
+        return Ok(());
+    };
+    let mut ks: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    let rets = sum
+        .ret
+        .fns
+        .iter()
+        .chain(sum.put_fns.iter().flat_map(|(_, rs)| rs.iter()));
+    for r in rets {
+        match r {
+            RetFn::Capture(k) => {
+                ks.insert(*k);
+            }
+            RetFn::Made(_) | RetFn::Unknown => {
+                ks.extend((0..decl.captures.len()).map(|k| u32::try_from(k).unwrap_or(u32::MAX)));
+            }
+            RetFn::Param(_) | RetFn::Item(..) => {}
+        }
+    }
+    if ks.is_empty() {
+        return Ok(());
+    }
+    let body = em.body;
+    let mut once = false;
+    for k in ks {
+        let Some(cap) = decl.captures.get(k as usize) else {
+            continue;
+        };
+        let fns = match cap.mode {
+            weft_ir::CaptureMode::ByMove => {
+                transfer::operand(&mut em.cx(), body, st, callee)?
+                    .flat()
+                    .fns
+            }
+            // The variable of the maker: a maker that is not in the state of
+            // this body gives a value that the analysis does not know.
+            weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef => {
+                if let Ok(t) = transfer::place_value(&mut em.cx(), decl.maker, st, &cap.source) {
+                    t.flat().fns
+                } else {
+                    once = true;
+                    continue;
+                }
+            }
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => continue,
+        };
+        once |= fns.iter().any(|f| {
+            !matches!(f, crate::analysis::FnVal::Closure(x) | crate::analysis::FnVal::Made(x) if *x == c)
+                && transfer::once_value(em.p, f)
+        });
+    }
+    if once {
+        let mut info = weft_facts::VarInfo::plain(
+            "a closure that the closure gives out".to_string(),
+            weft_facts::VarKind::Temp,
+            at,
+            String::new(),
+        );
+        info.once = true;
+        let v = em.facts.add_var(info);
+        let a = super::generic::held_node(em.facts, at, v, name);
+        em.holders.held_like(a, main);
+    }
+    Ok(())
+}
+
 /// The places that the facts change or lend (first) and read (second)
 /// from the marks `marks` (the lengths of `mutates_at`, `lends_mut` and
 /// `reads_at`) on, that `keep` keeps.
@@ -3627,6 +3714,21 @@ fn call_value(
         .map(|n| n.label.clone())
         .filter(|l| !l.is_empty())
         .unwrap_or_else(|| "the function value".to_string());
+    // A `once` closure that the value gives out again after a resume (hole
+    // C1-H3 for a function value, follow-up C1.3): an argument, or a value
+    // of a capture of a closure.
+    for app in &out.apps {
+        if !matches!(
+            app.kind,
+            crate::analysis::apply::RunKind::Closure | crate::analysis::apply::RunKind::Item
+        ) {
+            continue;
+        }
+        given_out(em, st, main, (&app.summary, &[]), args, (at, &name))?;
+        if let Some(c) = app.closure {
+            captures_given_out(em, st, main, (c, &app.summary), callee, (at, &name))?;
+        }
+    }
     let drops = dropped_fn_args(em, (main, at, &name), st, &fn_params, args, &out.apps)?;
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;

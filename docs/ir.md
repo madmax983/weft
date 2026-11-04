@@ -1567,6 +1567,17 @@ the nodes of the caller.
   node of its own with the `multi` of the call node (`templates::given_out`, as
   `held_args` for the part `holds`): W0503. A value of a type parameter in `holds` has
   its node from `held_args` already.
+- Follow-up C1.3, hole C1-H4. A closure body that performs through a captured capability
+  whose handler can resume more than once (`frames::captured_multi_nodes`) runs the code
+  after the perform again on a second resume. The blocks after such a perform are in a
+  cycle (`Cycles::add_captured`), so the runs of the values of the interface there are
+  `many`; there is no re-entry edge, because the copy of the frames gives a value that
+  the closure moved a new copy (a moved capture of plain data is no error). A `ByMove`
+  capture is a value in the value of the closure, as for a closure that a callee made:
+  a run of it that happens again moves the value of the closure (W0502 at the run of the
+  closure). A call of a function value gives out again a `once` closure of an argument or
+  of a capture that the value gives back or puts into a place
+  (`templates::captures_given_out`, and `given_out` for a value call): W0503.
 - #56. A place of the `rc` group of a definition with no function part (row `Fns` with no
   parameter) reaches no function value (`transfer::fns_of_role`).
 - #57, #58. A call runs the clauses of a handler that it reaches only through the values

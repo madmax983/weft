@@ -681,3 +681,24 @@ fn a_callee_gives_a_once_closure_out_again_after_a_multi_value() {
     check("give_out_ok.wf");
     check("give_out_plain_ok.wf");
 }
+
+/// Hole C1-H4 (follow-up C1.3): a closure that performs a `multi` operation
+/// through a captured capability runs the code after the perform again on a
+/// second resume. A `once` closure that it runs after the perform (a
+/// capture, a parameter) runs again (W0502), where a callee runs the
+/// closure and where the closure is called directly; a `once` closure that
+/// it gives back after the perform is given out again (W0503). Plain data
+/// after the perform, a `once` closure before it, and a moved capture of
+/// plain data (a resume runs on a copy of the frames) are no error.
+#[test]
+fn a_closure_that_resumes_two_times_runs_its_once_values_again() {
+    check("h4_apply.wf");
+    check("h4_direct.wf");
+    check("h4_param.wf");
+    check("h4_cap.wf");
+    check("h4_param_ret.wf");
+    check("h4_capture_ret.wf");
+    check("h4_plain_ok.wf");
+    check("h4_before_ok.wf");
+    check("h4_move_ok.wf");
+}

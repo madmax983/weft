@@ -706,6 +706,7 @@ pub fn emit_parts(
     let mut cycles = crate::analysis::widen::Cycles::of(p, &comp);
     cycles.add_handlers(p, &comp, &frames);
     cycles.add_rows(p, &tys, sums, &comp);
+    cycles.add_captured(p, &tys, &comp);
     // The re-entry edges after a node that can wait at a `multi` operation
     // of a handler of a caller (OL-R2a, plan stage F16).
     let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
@@ -1463,6 +1464,7 @@ fn closure_summary(
         .map_err(|e| unsupported(&e))?;
     let mut cycles = crate::analysis::widen::Cycles::of(p, &comp);
     cycles.add_rows(p, &tys, sums, &comp);
+    cycles.add_captured(p, &tys, &comp);
     let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
         frames::row_multi_nodes(p, &tys, sums, cb)
             .into_iter()

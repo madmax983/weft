@@ -1,0 +1,11 @@
+// Hole C1-H4 (follow-up C1.3): the same with a direct call of the closure.
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        let g = || take(v)
+        let h = || { if pick() { print(1) }; g() }
+        h()
+    }
+}
