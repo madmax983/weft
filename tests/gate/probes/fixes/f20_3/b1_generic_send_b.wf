@@ -1,0 +1,14 @@
+// F20.3 B-1 (cl8): a clause reads an argument that a generic call moved before it fails (W0302).
+struct Msg { body: Vec<u64> }
+fn send<T>(x: T, ok: bool) -> T / fail { if !ok { fail("closed") }
+ x }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn main() {
+    let m = Msg { body: mkv() }
+    handle Fail { fn fail(e) { print("failed to send {m.body.len()} items") } } in {
+        let r = send(m, false)
+        print(r.body.len())
+    }
+}

@@ -1,0 +1,13 @@
+// F20.3 I-2 (o6): one once closure for two type parameters (W0502).
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn pair<A, B>(a: A, b: B) -> (A, B) { (a, b) }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    let (g, h) = pair(f, f)
+    g()
+    h()
+}

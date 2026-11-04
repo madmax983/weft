@@ -1,0 +1,31 @@
+// Follow-up F20.3 (I-2 of the second review of group F): one `once` closure in
+// two operands of one node is two moves of it: W0502 in a tuple and in the
+// arguments of a call. A closure that moves nothing can go two times.
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn pair(a: fn(), b: fn()) { a()
+ b() }
+fn in_a_tuple() {
+    let v = mkv()
+    let f = || consume(v)
+    let p = (f, f)   //~ W0502
+    let (g, h) = p
+    g()
+    h()
+}
+fn in_two_arguments() {
+    let v = mkv()
+    let f = || consume(v)
+    pair(f, f)   //~ W0502
+}
+fn a_closure_that_moves_nothing() {
+    let f = || print(1)
+    pair(f, f)
+    let p = (f, f)
+    let (g, h) = p
+    g()
+    h()
+}
+fn main() {}

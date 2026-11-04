@@ -1502,6 +1502,21 @@ As built (follow-up F20.2, the review of group F at a813be3): five changes.
   apply. The task stays pinned, and the cell of a variable of another body is not
   `kept`: a closure can take the task out of the scope of that body (RR4).
 
+As built (follow-up F20.3, the second review of group F at b6a417f): two changes.
+
+- B-1. A clause of a local handler runs while the call waits, so it runs after the call
+  moved its arguments at `Main`. The facts of the clause go to the run node
+  (`handlers::project`), and the spec gives `moved` only at a node after the node of the
+  move. So a clause that used a moved argument was no use after the move. Now a use of
+  the clause of a variable that the run node moves also goes to each successor of the
+  run node (W0302). This is also true for a call that is not generic: the hole was
+  there before group F.
+- I-2. One `once` or linear closure in two operands of one node (`(f, f)`,
+  `pair(f, f)`) moves two times at that node. For each second move of a whole local,
+  the variable moves and then is used in a part of the graph of its own
+  (`templates::dup_moves`): W0502 (W0302 for a value that is not a closure). A closure
+  that moves nothing is plain data and can go two times.
+
 ### 5.21 Calls of function values [2.20]
 
 ```text

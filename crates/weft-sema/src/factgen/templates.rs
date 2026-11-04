@@ -857,6 +857,51 @@ pub(super) fn operand_moves(
     }
 }
 
+/// Two operands of one node that move the same whole local (`(f, f)`,
+/// `pair(f, f)`; I-2 of the second review of group F, follow-up F20.3).
+///
+/// The spec gives `moved` only after the node of a move, so the second move
+/// at the node is not a use after the first. For each such second move, the
+/// variable of the local moves and then is used in a part of the graph of
+/// its own (W0302, or W0502 for a `once` closure), with the span `at`.
+///
+/// # Errors
+///
+/// The errors of α.
+fn dup_moves(em: &mut Em<'_>, st: &State, ops: &[&Operand], at: Span) -> R {
+    let mut seen: Vec<LocalId> = Vec::new();
+    for op in ops {
+        let (Operand::Copy(q) | Operand::Move(q)) = op else {
+            continue;
+        };
+        if !q.proj.is_empty() {
+            continue;
+        }
+        let plain = em.place_ty(q).is_some_and(|t| !em.tys.not_copy(t));
+        let moves = match op {
+            Operand::Move(_) => !plain || once_read(em, st, q)?,
+            _ => once_read(em, st, q)?,
+        };
+        if !moves {
+            continue;
+        }
+        if !seen.contains(&q.local) {
+            seen.push(q.local);
+            continue;
+        }
+        let body = em.body;
+        let Some(v) = em.base_var(body, q)? else {
+            continue;
+        };
+        let a = em.facts.add_ir_node(at, "first move", "moved twice", "");
+        let b = em.facts.add_ir_node(at, "second move", "moved twice", "");
+        em.facts.cfg_edge.push((a, b));
+        em.facts.moved_at.push((v, a));
+        em.facts.uses.push((v, b));
+    }
+    Ok(())
+}
+
 /// True if the value at `q` in state `st` can be a `once` closure (it moves
 /// a capture when it runs): a read of it moves it.
 ///
@@ -1114,6 +1159,14 @@ pub fn assign(
             }
         }
     }
+    let moving: Vec<&Operand> = transfer::rvalue_operands(rv)
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !kept.get(*i).copied().unwrap_or(false))
+        .map(|(_, op)| op)
+        .collect();
+    let at = em.facts.node(n).span;
+    dup_moves(em, st, &moving, at)?;
     if let Rvalue::Aggregate(weft_ir::AggKind::Closure(c), ops) = rv {
         linear_fn_captures(em, st, *c, ops)?;
     }
@@ -2663,6 +2716,7 @@ pub fn call(
             Operand::Const(_) => Vec::new(),
         });
     }
+    dup_moves(em, st, &args.iter().collect::<Vec<_>>(), at)?;
     let site = crate::analysis::apply::Site {
         callee: &callee,
         spans: spans.clone(),

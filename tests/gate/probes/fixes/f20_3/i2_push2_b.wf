@@ -1,0 +1,14 @@
+// F20.3 I-2 (o3): one once closure pushed two times by one call (W0502).
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn push2<T>(xs: &Vec<T>, a: T, b: T) / mut(xs) { xs.push(a); xs.push(b) }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    let xs = Vec.new()
+    push2(&xs, f, f)
+    match xs.pop() { Some(g) => g(), None => {} }
+    match xs.pop() { Some(g) => g(), None => {} }
+}

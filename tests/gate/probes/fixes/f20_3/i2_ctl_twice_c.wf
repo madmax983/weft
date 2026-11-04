@@ -1,0 +1,13 @@
+// F20.3 I-2 control (o2): clean twin.
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn twice<T>(a: T, b: T, k: fn(T)) { k(a); k(b) }
+fn main() {
+    let v = mkv()
+    let w = mkv()
+    let f = || consume(v)
+    let f2 = || consume(w)
+    twice(f, f2, |g: fn()| g())
+}

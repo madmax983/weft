@@ -715,3 +715,21 @@ from the variants of the review of group F (scratchpad `freview/variants/`, the 
 - `fixes/f20_2/p2_*.wf` (claims F20.2-P2, not of group F): a `fork` through a callee in
   a closure body. The branch captures an `Rc` (`x01`: W0401) or changes a `ByRef` and a
   `Kept` capture of the maker (`x09`: 2 x W0403).
+
+## Follow-up F20.3: B-1 and I-2 of the second review of group F
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the variants of the second review of group F (scratchpad `freview2/v/`, the review
+`freview2/review.md`). Before the fix the `ir` pipeline accepted each `_b.wf` but the
+two controls `b1_ctl_*`.
+
+- `fixes/f20_3/b1_*.wf` (claims F20.3-B1): a clause of a local handler uses an argument
+  that the call moved, while the call waits: a generic callee (`cl8`, `r1m`), a callee
+  that is not generic (`cl3`), a linear value (`cl4`), a change in the clause (`cl5`), a
+  callee that consumes the value (`r1m2`). W0302. The controls `b1_ctl_*` (`cl1`, `cl7`)
+  move the value at an earlier node (no change). The `_c.wf` twins are clean.
+- `fixes/f20_3/i2_*.wf` (claims F20.3-I2): one `once` or linear closure in two operands
+  of one node: a tuple (`o1`), a call that is not generic (`f1j2`; the old pipeline
+  misses it), generic calls (`f1j3`, `f1j`, `o6`, `o3`, `o7`). W0502. `i2_ctl_twice_c.wf`
+  (`o2`) is the clean control.

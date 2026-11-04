@@ -1,0 +1,10 @@
+// F20.3 B-1 (cl3): a clause reads an argument that a call that is not generic moved (W0302).
+fn eat_fail(v: Vec<u64>) / fail { print(v.len())
+ fail("x") }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn main() {
+    let v = mkv()
+    handle Fail { fn fail(m) { print(v.len()) } } in { eat_fail(v) }
+}

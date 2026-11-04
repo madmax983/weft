@@ -302,3 +302,10 @@ fn an_arm_of_a_variant_with_no_payload_consumes_a_linear_closure_in_an_enum() {
 fn a_move_of_a_capture_in_a_closure_body_invalidates_references_into_it() {
     check("nested_move.wf");
 }
+
+/// Follow-up F20.3 (I-2 of the second review of group F): one `once` closure
+/// in two operands of one node is W0502.
+#[test]
+fn a_once_closure_in_two_operands_of_one_node_is_w0502() {
+    check("same_operand_twice.wf");
+}

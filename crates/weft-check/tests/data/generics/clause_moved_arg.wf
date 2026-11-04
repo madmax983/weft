@@ -1,0 +1,44 @@
+// Follow-up F20.3 (B-1 of the second review of group F): a clause runs while
+// the call waits, after the call moved its arguments. A clause that uses a
+// moved argument is W0302: a generic callee (`send`, `hold`) and a callee
+// that is not generic (`eat_fail`), also for a linear value.
+struct Msg { body: Vec<u64> }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+ print(i) }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t
+ print(i) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn send<T>(x: T, ok: bool) -> T / fail { if !ok { fail("closed") }
+ x }
+fn eat_fail(v: Vec<u64>) / fail { print(v.len())
+ fail("x") }
+fn commit_fail(t: Tx) / fail { commit(t)
+ fail("x") }
+
+fn generic_callee() {
+    let m = Msg { body: mkv() }
+    handle Fail { fn fail(e) { print(m.body.len()) } } in {
+        let r = send(m, false)   //~ W0302
+        print(r.body.len())
+    }
+}
+fn callee_that_fails() {
+    let v = mkv()
+    handle Fail { fn fail(e) { print(v.len()) } } in { eat_fail(v) }   //~ W0302
+}
+fn linear_value() {
+    let t = begin(1)
+    handle Fail { fn fail(e) { print(t.id) } } in { commit_fail(t) }   //~ W0302
+}
+// Clean: the clause does not use the moved argument.
+fn clause_reads_other() {
+    let v = mkv()
+    let w = mkv()
+    handle Fail { fn fail(e) { print(w.len()) } } in { eat_fail(v) }
+}
+fn main() {}

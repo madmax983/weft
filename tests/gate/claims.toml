@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3"]
 
 
 # ----------------------------------------------------------------------
@@ -6858,3 +6858,85 @@ repro = [
     "tests/gate/probes/fixes/f20_2/p2_fork_shared_mut_c.wf",
 ]
 note = "clean twins: the `Rc` stays in the body, the branches only read"
+
+# Follow-up F20.3: B-1 and I-2 of the second review of group F.
+
+[[claim]]
+finding = "F20.3-B1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/b1_generic_send_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_clause_reads_held_b.wf",
+]
+code = "W0302"
+note = "a clause reads an argument that a generic call moved: the use of the clause goes after the move"
+
+[[claim]]
+finding = "F20.3-B1"
+kind = "unsound"
+verdict = "one-rule"
+group = "AD"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/b1_callee_fails_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_linear_twice_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_clause_writes_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_consume_direct_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_ctl_fail_after_move_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_ctl_move_before_b.wf",
+]
+code = "W0302"
+note = "a clause uses an argument that a call moved (the callee is not generic), and the controls with the move at an earlier node"
+
+[[claim]]
+finding = "F20.3-B1"
+kind = "sound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/b1_callee_fails_c.wf",
+    "tests/gate/probes/fixes/f20_3/b1_clause_reads_held_c.wf",
+]
+note = "clean twins: the clause does not use the moved argument"
+
+[[claim]]
+finding = "F20.3-I2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/i2_tuple_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_pair_nongeneric_b.wf",
+]
+code = "W0502"
+note = "one `once` closure in two operands of one node (a tuple, a call that is not generic)"
+
+[[claim]]
+finding = "F20.3-I2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/i2_generic_pair_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_generic_pair_fail_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_two_params_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_push2_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_linear_b.wf",
+]
+code = "W0502"
+note = "one `once` or linear closure in two arguments of a generic call"
+
+[[claim]]
+finding = "F20.3-I2"
+kind = "sound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.3"
+repro = ["tests/gate/probes/fixes/f20_3/i2_ctl_twice_c.wf"]
+note = "control: the closure runs at two nodes, one time each"

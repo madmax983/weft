@@ -1702,6 +1702,13 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         }
     }
     let mut parts: HashMap<BodyId, FnFacts> = clause_rows(facts, &clause_of);
+    // The moves of the run nodes before the clauses come: the arguments that
+    // a call or a perform moves at its `Main` node (follow-up F20.3, B-1).
+    let arg_moves: HashSet<(VarId, NodeId)> = facts.moved_at.iter().copied().collect();
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
     // The `Main` nodes of the `Resume`s (their aborts are of the handled
     // body), and the variables that `spared_at` can matter for: a linear
     // or `!Move` value (W0602, W0503).
@@ -1801,6 +1808,19 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         if let Some(c) = clause_of.get(&r.node) {
             add_rows(parts.entry(*c).or_default(), &new);
         }
+        // The clause runs after the run node moves its arguments: a use of a
+        // moved argument in the clause is a use after the move (W0302;
+        // follow-up F20.3, B-1 of the second review of group F). The spec
+        // gives `moved` only after the node of the move, and the operand use
+        // of the argument is at that node too. So the use of the clause also
+        // goes to each successor of the run node.
+        let late: Vec<(VarId, NodeId)> = new
+            .uses
+            .iter()
+            .filter(|u| arg_moves.contains(u))
+            .flat_map(|&(v, n)| succ.get(&n).into_iter().flatten().map(move |&x| (v, x)))
+            .collect();
+        facts.uses.extend(late);
         if let (Some(hs), false) = (&r.spares, abort) {
             spare(p, facts, &cands, (r.node, hs));
         }

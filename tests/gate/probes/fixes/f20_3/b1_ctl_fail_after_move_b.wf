@@ -1,0 +1,10 @@
+// F20.3 B-1 control (cl1): the move is at an earlier node (W0302, no change).
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn main() {
+    let v = mkv()
+    handle Fail { fn fail(m) { print(v.len()) } } in { consume(v)
+ fail("x") }
+}

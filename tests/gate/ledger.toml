@@ -7708,3 +7708,153 @@ files = [
 ]
 reason = "class F20-SIG-HIDDEN (stage F20, the probes of follow-up F20.2): `pins` of a function whose closure gives `fork` branches to a callee; the branches are tasks of the run node in the IR (the `pins` class of stage F19)"
 stage = "F20.2"
+
+# ----------------------------------------------------------------------------
+# Follow-up F20.3: the second review of group F (`freview2/review.md`, at
+# 088dcdb and b6a417f).
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/verify/s5/p/f1_closure_stash.wf"]
+reason = "follow-up F20.1 (issue 47): the closure `|| commit(tx)` moves `tx` (a `ByMove` capture), so the block value `Some(f)` owns `tx` and does not point into it; the old W0301 at lines 14 and 17 are false positives (R3RT5 class). The arm `Some(f)` runs the closure one time, the arm `None` holds no closure, and nothing performs `stop`. Clean on the ir engine (seeds 1 to 10), the ast engine and the fact oracle"
+signed_by = "independent review of group F, round 2 (freview2/review.md)"
+stage = "F20.1"
+
+# The 98 tier-2 new-fp rows of stage F20 (precision losses of the groups A to
+# E): one entry for each group of the review, with the primary group of a row
+# that is in two groups (a row that loses a code with no `multi` keyword is
+# N1, but a W0312 row is N3).
+
+[[entry]]
+class = "new-fp"
+reason_class = "precision"
+issue = 56
+files = [
+    "r2/oracle/runs/g2/p1349.wf",
+    "r2/oracle/runs/g2/p1698.wf",
+    "r2/oracle/runs/g2/p1792.wf",
+    "r2/oracle/runs/g2/p1844.wf",
+    "r2/oracle/runs/g2/p2977.wf",
+    "r2/oracle/runs/g2/p3001.wf",
+    "r2/oracle/runs/g2/p3174.wf",
+    "r2/oracle/runs/g3/p5059.wf",
+    "r2/oracle/runs/g3/p5633.wf",
+    "r2/oracle/runs/g3/p5675.wf",
+    "r2/oracle/runs/g3/p5802.wf",
+    "r2/oracle/runs/g3/p5969.wf",
+    "r2/oracle/runs/g3/p6157.wf",
+    "r2/oracle/runs/g3/p6761.wf",
+    "r2/oracle/runs/g3/p6767.wf",
+    "r2/oracle/runs/g3/p6853.wf",
+    "r2/oracle/runs/g3/p7311.wf",
+    "r2/oracle/runs/g3/p7400.wf",
+    "r2/oracle/runs/g3/p7534.wf",
+    "r2/oracle/runs/g4/p10390.wf",
+    "r2/oracle/runs/g4/p10944.wf",
+    "r2/oracle/runs/g5/p20267.wf",
+    "r2/oracle/runs/g5/p20346.wf",
+    "r2/oracle/runs/g5/p20529.wf",
+    "r2/oracle/runs/g5/p21378.wf",
+    "r2/oracle/runs/g5/p21445.wf",
+    "r2/oracle/runs/g5/p21451.wf",
+    "r2/oracle/runs/g5/p22214.wf",
+    "r2/oracle/runs/g5/p22246.wf",
+    "r2/oracle/runs/g5/p22349.wf",
+    "r2/oracle/runs/g5/p22493.wf",
+    "r2/oracle/runs/g5/p22627.wf",
+    "r2/oracle/runs/g5/p22998.wf",
+    "r2/oracle/runs/g5/p23309.wf",
+    "r2/oracle/runs/g5/p23643.wf",
+    "r2/oracle/runs/g5/p23649.wf",
+    "r2/oracle/runs/g5/p23708.wf",
+    "r2/oracle/runs/g6/p30605.wf",
+    "r2/oracle/runs/g6/p31890.wf",
+    "r2/oracle/runs/g6/p31981.wf",
+    "r2/oracle/runs/g6/p32052.wf",
+    "r2/oracle/runs/g6/p32339.wf",
+    "r2/oracle/runs/g6/p33083.wf",
+    "r2/oracle/runs/g6/p33265.wf",
+    "r2/oracle/runs/g6/p33411.wf",
+    "r2/oracle/runs/g6/p33693.wf",
+    "r2/oracle/runs/g7/p41717.wf",
+    "r2/oracle/runs/g7/p42595.wf",
+    "r2/oracle/runs/g7/p43829.wf",
+    "r2/oracle/runs/g7/p44700.wf",
+    "r2/oracle/runs/m1/p1300.wf",
+    "r2/oracle/runs/m1/p1315.wf",
+    "r2/oracle/runs/m1/p1419.wf",
+    "r2/oracle/runs/m1/p1646.wf",
+    "r2/oracle/runs/m1/p1962.wf",
+    "r2/oracle/runs/m1/p1977.wf",
+    "r2/oracle/runs/m1/p2081.wf",
+    "r2/oracle/runs/m1/p2412.wf",
+    "r2/oracle/runs/m1/p2955.wf",
+    "r2/oracle/runs/m1/p307.wf",
+    "r2/oracle/runs/m1/p322.wf",
+    "r2/oracle/runs/m1/p426.wf",
+    "r2/oracle/runs/m1/p617.wf",
+    "r2/oracle/runs/m1/p757.wf",
+    "r2/oracle/runs/m2/p5065.wf",
+    "r2/oracle/runs/m2/p5086.wf",
+    "r2/oracle/runs/m2/p5177.wf",
+    "r2/oracle/runs/m2/p6127.wf",
+    "r2/oracle/runs/m2/p6239.wf",
+    "r2/oracle/runs/m2/p6679.wf",
+    "r2/oracle/runs/m2/p6998.wf",
+    "r2/oracle/runs/m2/p7189.wf",
+    "r2/oracle/runs/m2/p7210.wf",
+    "r2/oracle/runs/m2/p7720.wf",
+    "r2/oracle/runs/m2/p7741.wf",
+    "r2/oracle/runs/m2/p7997.wf",
+]
+reason = "group N1 of the second review of group F (`freview2/review.md`): a run of a closure that runs another function value (`let g = || f1(); apply(g)`) counts as an unknown run that can resume more than once if the program declares any `multi` operation, also with no handler of it or with a clause that resumes one time (W0503, W0502, W0301 of the copy of the frame). Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
+stage = "F20"
+
+[[entry]]
+class = "new-fp"
+reason_class = "precision"
+issue = 57
+files = [
+    "r2/oracle/runs/g5/p21231.wf",
+    "r2/oracle/runs/g6/p30575.wf",
+    "r2/oracle/runs/g6/p32591.wf",
+    "r2/oracle/runs/g7/p43563.wf",
+    "r2/oracle/runs/m2/p5183.wf",
+    "r2/oracle/runs/m2/p7307.wf",
+    "r2/oracle/runs/m2/p7838.wf",
+]
+reason = "group N2 of the second review of group F: the same unknown run counts as a node that can abort; a linear value with no `on abort` is live across it (W0602), or a clause of an enclosing `Fail` handler reads a local that the body moved (W0302). Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
+stage = "F20"
+
+[[entry]]
+class = "new-fp"
+reason_class = "precision"
+issue = 58
+files = [
+    "r2/oracle/runs/g3/p5259.wf",
+    "r2/oracle/runs/g3/p6634.wf",
+    "r2/oracle/runs/g3/p7416.wf",
+    "r2/oracle/runs/g5/p20662.wf",
+    "r2/oracle/runs/g5/p20701.wf",
+    "r2/oracle/runs/g5/p22084.wf",
+    "r2/oracle/runs/g7/p43989.wf",
+    "r2/oracle/runs/m1/p1121.wf",
+    "r2/oracle/runs/m1/p128.wf",
+    "r2/oracle/runs/m1/p1452.wf",
+    "r2/oracle/runs/m1/p1783.wf",
+    "r2/oracle/runs/m1/p2776.wf",
+    "r2/oracle/t0/q279.wf",
+]
+reason = "group N3 of the second review of group F: W0312 of an argument that points into a place that the clause of an enclosing handler changes (`roots::clause`), and that clause only aborts; or of the root `roots::STORED` of a function value that the call runs, against the argument that holds it. Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
+stage = "F20"
+
+[[entry]]
+class = "new-fp"
+reason_class = "precision"
+issue = 59
+files = [
+    "r2/oracle/runs/g3/p6221.wf",
+    "r2/oracle/runs/g5/p21648.wf",
+]
+reason = "group N4 of the second review of group F: p21648, a closure that a callee makes from a linear argument is linear, but it does not hold the value (W0601); p6221, W0405 at the end of a scope after a `join`. Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
+stage = "F20"

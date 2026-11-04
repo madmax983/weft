@@ -167,3 +167,11 @@ fn a_once_closure_that_a_generic_callee_holds_across_a_multi_operation_is_w0503(
 fn a_join_of_a_picked_handle_ends_only_a_task_that_one_argument_gives() {
     check("pick_handles.wf");
 }
+
+/// Follow-up F20.3 (B-1 of the second review of group F): a clause that runs
+/// at a call uses an argument that the call moved: W0302, for a generic
+/// callee and for a callee that is not generic.
+#[test]
+fn a_clause_that_uses_an_argument_moved_at_the_call_is_w0302() {
+    check("clause_moved_arg.wf");
+}

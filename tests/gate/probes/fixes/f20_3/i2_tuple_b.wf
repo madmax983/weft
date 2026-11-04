@@ -1,0 +1,13 @@
+// F20.3 I-2 (o1): one once closure two times in a tuple (W0502).
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    let p = (f, f)
+    let (g, h) = p
+    g()
+    h()
+}
