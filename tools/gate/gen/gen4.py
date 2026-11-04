@@ -14,11 +14,14 @@ Each episode reuses the wrappers of gen3.
 """
 import os
 import random
-
-import gen3
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PRE = open(os.path.join(HERE, "lib/pre3.wf")).read() + open(os.path.join(HERE, "lib/pre4_extra.wf")).read()
+sys.path.insert(0, HERE)
+
+import gen3  # noqa: E402
+
+PRE = gen3.PRE + open(os.path.join(gen3.LIB, "pre4_extra.wf")).read()
 
 
 class G4(gen3.G):
@@ -180,5 +183,5 @@ def generate(seed):
 
 
 if __name__ == "__main__":
-    import sys
-    print(generate(int(sys.argv[1]) if len(sys.argv) > 1 else 1))
+    import genmain
+    genmain.main("gen4", generate)

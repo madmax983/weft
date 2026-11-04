@@ -232,6 +232,10 @@ pub struct Settings {
     /// The construct groups of the `ir` pipeline for the fact oracle, or
     /// `None` for the default groups (`--groups`, a preview of a stage).
     pub groups: Option<weft_sema::Groups>,
+    /// The number of configurations that run: the first `runs` of
+    /// [`CONFIGS`]. The cache and the gate use all six. The sweep
+    /// (`crate::sweep`) uses three (the seeds 1, 2 and 3).
+    pub runs: usize,
 }
 
 impl Default for Settings {
@@ -245,6 +249,7 @@ impl Default for Settings {
             engine: Engine::Ast,
             fact_oracle: false,
             groups: None,
+            runs: CONFIGS.len(),
         }
     }
 }
@@ -635,7 +640,7 @@ pub fn config_text(config: usize) -> String {
 }
 
 /// Runs the program at `path` below `base` with `engine` in the
-/// configurations of [`CONFIGS`] from index `from`, on this thread.
+/// configurations of [`CONFIGS`] whose index is in `configs`, on this thread.
 ///
 /// Calls `start` with the index of each configuration before its run, and
 /// `emit` with each step and the observation of its run (`None` for a
@@ -646,7 +651,7 @@ pub fn config_text(config: usize) -> String {
 pub fn run_configs(
     base: &Path,
     path: &str,
-    from: usize,
+    configs: std::ops::Range<usize>,
     max_steps: Option<u64>,
     engine: Engine,
     mut start: impl FnMut(usize),
@@ -663,7 +668,12 @@ pub fn run_configs(
     };
     let opts = pkg.options(Profile::default());
     let analysis = weft_sema::analyze(&pkg.units, opts);
-    for (config, &(seed, workers)) in CONFIGS.iter().enumerate().skip(from) {
+    for (config, &(seed, workers)) in CONFIGS
+        .iter()
+        .enumerate()
+        .take(configs.end)
+        .skip(configs.start)
+    {
         start(config);
         let run_opts = RunOptions {
             seed,
@@ -782,7 +792,7 @@ pub fn run_entry_observed(
     run_configs(
         base,
         &entry.path,
-        0,
+        0..settings.runs,
         settings.max_steps,
         settings.engine,
         |_| {},
@@ -1055,6 +1065,8 @@ fn spawn_child(
         .arg(&entry.path)
         .arg("--from")
         .arg(from.to_string())
+        .arg("--runs")
+        .arg(settings.runs.to_string())
         .arg("--limit-ms")
         .arg(settings.limit.as_millis().to_string())
         .arg("--max-memory")
@@ -1182,7 +1194,8 @@ fn isolated(
     let mut c = Combine::default();
     let mut seen: Vec<Observation> = Vec::new();
     let mut next = 0;
-    while next < CONFIGS.len() && !c.is_final() {
+    let runs = settings.runs.min(CONFIGS.len());
+    while next < runs && !c.is_final() {
         let (tx, rx) = mpsc::channel();
         let (mut child, errors) = match spawn_child(exe, base, entry, next, settings, observe, tx) {
             Ok(x) => x,
@@ -1222,7 +1235,7 @@ fn isolated(
                 Ok(ChildMsg::End) | Err(RecvTimeoutError::Disconnected) => {
                     let status = child.wait();
                     let memory = status.as_ref().is_ok_and(|s| s.code() == Some(MEMORY_EXIT));
-                    if next < CONFIGS.len() && !memory && !c.is_final() {
+                    if next < runs && !memory && !c.is_final() {
                         let how = status.map_or_else(|e| e.to_string(), |s| s.to_string());
                         let text = errors.join().unwrap_or_default();
                         let step = Step::Run {

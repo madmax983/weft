@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1", "C1.2", "C1.3", "C1.5", "C1.6"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1", "C1.2", "C1.3", "C1.5", "C1.6", "C2"]
 
 
 # ----------------------------------------------------------------------
@@ -7387,3 +7387,35 @@ repro = [
 ]
 code = "W0503"
 note = "a callee runs a value that resumes two times at the node `Ret` (a late run), then gives a `once` argument back in a struct or in a field of a reference argument: the node of the given value gets the `multi` of `Ret` too"
+
+[[claim]]
+finding = "C2-TUPLE-RC"
+kind = "unsound"
+verdict = "one-rule"
+group = "A"
+stage = "C2"
+repro = [
+    "tests/gate/probes/sweep/c2_tuple_rc_param_b.wf",
+    "tests/gate/probes/sweep/c2_tuple_rc_group_b.wf",
+]
+code = "W0301"
+note = "a part of a tuple result with a stated place points into the object of an `Rc` handle of the argument; a new value of the handle frees the object (the fresh sweep of stage C2, gen4 seed 1002955: each stated part gets the handles of its root, `apply::stated_places`)"
+
+[[claim]]
+finding = "C2-TUPLE-RC"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABC"
+stage = "C2"
+repro = ["tests/gate/probes/sweep/c2_tuple_rc_each_b.wf"]
+code = "W0301"
+note = "the shape of the generated program: a callback gives the `Rc` handle a new value while a part of a tuple result points into the old object"
+
+[[claim]]
+finding = "C2-TUPLE-RC"
+kind = "fp"
+verdict = "one-rule"
+group = "A"
+stage = "C2"
+repro = ["tests/gate/probes/sweep/c2_tuple_rc_c.wf"]
+note = "the clean twin: the read comes before the new value of the handle"

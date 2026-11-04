@@ -8062,3 +8062,17 @@ files = [
 reason = "W0601 precision: the closure that moves a linear value (`g2` and `g5` of `h0`, `|| { commit(t) }` of `with_tx`) goes to `apply` or `apply_m`, whose summary runs it once on each normal path. A variant that gives it to `drop_`, to a callee that runs it on some paths only, or to `twice` is W0601 or W0502 (z_drop, z_maybe, z_twice). The closure is W0502 or W0503 in each of its variants in a `multi` handle (r67b v01 to v29, r67 h5, h6, h6c; 35 for p10437, 32 for p7514). Each W0503 names the closure, the operand temporary, or the local that holds the closure. The closure is linear too, so W0601/W0602 also come in many of these variants. They do not count: each variant also has W0502 or W0503"
 signed_by = "independent reviewer (r67b)"
 stage = "C1.6"
+
+# Stage C2: the fresh sweep (weft-gate sweep, seed base 1000000). The
+# mutate3 programs of seeds 1000291, 1001825 and 1006663 are mutants of
+# `crates/weft-interp/tests/programs/abort_handle_given.wf` with no
+# `on abort` for `Tx`. Both pipelines accept them, and the unwinder faults.
+# The probe is the reduced program.
+
+[[entry]]
+class = "edge"
+issue = 73
+files = ["tests/gate/probes/sweep/c2_spawn_linear_no_abort.wf"]
+finding = "F3-6"
+reason = "unwinder fault (stage C2 sweep, mutate3): a spawn in statement position gives a linear `Tx` with no `on abort` to the scope, and a failure ends the scope after the task is done. The runtime cannot finish the result. The old pipeline misses it too (`tests/ir_targets/f3_6_task_results.wf`, `bad_fresh`: the W0601 at the spawn and the W0602 at the scope are not enforced). Verdict of F3-6 in docs/ir.md 10.3: \"stays\" (the type rule for `Task<T>` with a linear `T`); issue #73."
+stage = "C2"

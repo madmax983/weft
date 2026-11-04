@@ -10,7 +10,7 @@
 //! weft-gate oracle --tier 1|2 [--engine ast|ir] [--out FILE] [--workers N]
 //!                  [--limit SECONDS] [--max-steps N] [--max-memory MB]
 //!                  [--repo DIR] [--probes DIR]
-//! weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
+//! weft-gate oracle-run --base DIR --path PATH [--from K] [--runs K] [--limit-ms MS]
 //!                      [--max-steps N] [--max-memory MB] [--engine ast|ir] [--observe]
 //! weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
 //!               [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
@@ -23,6 +23,10 @@
 //!                   [--repo DIR] [--probes DIR]
 //! weft-gate sigdiff --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
 //!                   [--limit SECONDS] [--repo DIR] [--probes DIR]
+//! weft-gate sweep --n N --seed-base B [--generators gen3,gen4,mutate3,gen,sweep4]
+//!                 [--out DIR] [--report FILE] [--workers N] [--runs K] [--oracle-all]
+//!                 [--limit SECONDS] [--max-steps N] [--max-memory MB] [--python FILE]
+//!                 [--groups ABCDEF] [--repo DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -63,7 +67,8 @@
 //!
 //! `oracle-run` is the child process of `oracle` and `engines`: it runs the
 //! program `PATH` below `DIR` with the engine `--engine` in the configurations
-//! from index `K` and writes one line for each run (`weft_gate::oracle::Step`).
+//! from index `K` (`--from`) to the index before `--runs` (default 6) and writes
+//! one line for each run (`weft_gate::oracle::Step`).
 //! With `--observe` it also writes the observation of each run
 //! (`weft_gate::oracle::Observation`).
 //!
@@ -118,6 +123,20 @@
 //! ledger entry of class `sig`. It writes the report (default
 //! `target/gate/sigdiff-tier<N>.md`). The exit code is 1 if a difference has
 //! no entry or a program panics. Run it with a release build.
+//!
+//! `sweep` is the fresh sweep (plan stage C2, `weft_gate::sweep`): the
+//! generators of `tools/gate/gen` make `N` new programs (divided among the
+//! generators of `--generators`, default all five), with the seeds from `B`.
+//! The sweep checks each program with `--facts=ir` and runs the oracle with
+//! the `ir` engine on each program that the checker accepts (with
+//! `--oracle-all`, on each program), in the first `K` configurations of the
+//! oracle (default 3: the seeds 1, 2 and 3). It keeps each accepted program
+//! that faults and each program on which the `ir` pipeline panics in
+//! `DIR/kept/` (default `DIR`: `target/gate/sweep-B`), writes the seed list
+//! `DIR/programs.tsv` and the report (default `DIR/report.md`). It does not
+//! keep the other programs. The exit code is 1 if it keeps a program. Use
+//! `--python` for another Python program (default `python3`, or
+//! `WEFT_GATE_PYTHON`). Run it with a release build.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
@@ -132,7 +151,7 @@ use weft_gate::ledger::{self, Ledger};
 use weft_gate::manifest::{self, Group, Manifest, Options, Root};
 use weft_gate::oracle::{self, Cache, Engine, Step, Verdict};
 use weft_gate::snapshot::{self, Kind, Pipeline, Settings};
-use weft_gate::{archive, baseline, copy, engines, report};
+use weft_gate::{archive, baseline, copy, engines, report, sweep};
 
 /// The tier-1 manifest, relative to the repository.
 const TIER1_OUT: &str = "tests/gate/manifest-tier1.tsv";
@@ -151,7 +170,7 @@ const USAGE: &str = "usage:
   weft-gate oracle --tier 1|2 [--engine ast|ir] [--out FILE] [--workers N]
                    [--limit SECONDS] [--max-steps N] [--max-memory MB]
                    [--repo DIR] [--probes DIR]
-  weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
+  weft-gate oracle-run --base DIR --path PATH [--from K] [--runs K] [--limit-ms MS]
                        [--max-steps N] [--max-memory MB] [--engine ast|ir] [--observe]
                        [--fact-oracle]
   weft-gate fact-oracle --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N] [--limit SECONDS]
@@ -166,7 +185,11 @@ const USAGE: &str = "usage:
                     [--max-steps N] [--max-memory MB] [--sample PERCENT] [--seed N]
                     [--repo DIR] [--probes DIR]
   weft-gate sigdiff --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
-                    [--limit SECONDS] [--repo DIR] [--probes DIR]";
+                    [--limit SECONDS] [--repo DIR] [--probes DIR]
+  weft-gate sweep --n N --seed-base B [--generators gen3,gen4,mutate3,gen,sweep4]
+                  [--out DIR] [--report FILE] [--workers N] [--runs K] [--oracle-all]
+                  [--limit SECONDS] [--max-steps N] [--max-memory MB] [--python FILE]
+                  [--groups ABCDEF] [--repo DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -206,6 +229,12 @@ struct Flags {
     rejudge: bool,
     sample: Option<u64>,
     seed: Option<u64>,
+    runs: Option<usize>,
+    n: Option<usize>,
+    seed_base: Option<u64>,
+    generators: Option<String>,
+    python: Option<PathBuf>,
+    oracle_all: bool,
 }
 
 impl Flags {
@@ -246,6 +275,12 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
     let mut rejudge = false;
     let mut sample = None;
     let mut seed = None;
+    let mut runs = None;
+    let mut n = None;
+    let mut seed_base = None;
+    let mut generators = None;
+    let mut python = None;
+    let mut oracle_all = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
@@ -303,6 +338,33 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
                         .with_context(|| format!("--seed needs a number, found `{v}`"))?,
                 );
             }
+            "--runs" => {
+                let v = value()?;
+                match v.parse::<usize>() {
+                    Ok(k) if (1..=oracle::CONFIGS.len()).contains(&k) => runs = Some(k),
+                    _ => bail!(
+                        "--runs needs a number from 1 to {}, found `{v}`",
+                        oracle::CONFIGS.len()
+                    ),
+                }
+            }
+            "--n" => {
+                let v = value()?;
+                match v.parse::<usize>() {
+                    Ok(k) if k > 0 => n = Some(k),
+                    _ => bail!("--n needs a number larger than 0, found `{v}`"),
+                }
+            }
+            "--seed-base" => {
+                let v = value()?;
+                seed_base = Some(
+                    v.parse::<u64>()
+                        .with_context(|| format!("--seed-base needs a number, found `{v}`"))?,
+                );
+            }
+            "--generators" => generators = Some(value()?.clone()),
+            "--python" => python = Some(PathBuf::from(value()?)),
+            "--oracle-all" => oracle_all = true,
             "--from" => {
                 let v = value()?;
                 match v.parse::<usize>() {
@@ -342,6 +404,12 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         rejudge,
         sample,
         seed,
+        runs,
+        n,
+        seed_base,
+        generators,
+        python,
+        oracle_all,
     })
 }
 
@@ -376,6 +444,9 @@ fn run(args: &[String]) -> Result<bool> {
     }
     if cmd == "fact-oracle" {
         return run_fact_oracle(&flags);
+    }
+    if cmd == "sweep" {
+        return run_sweep(&flags);
     }
     run_tool(cmd, flags).map(|()| true)
 }
@@ -739,6 +810,7 @@ fn run_engines(flags: &Flags) -> Result<bool> {
         engine: Engine::Ast,
         fact_oracle: false,
         groups: None,
+        runs: oracle::CONFIGS.len(),
     };
     notes.push(format!(
         "{} workers; time limit of a run {} s, step limit {}, memory limit {} MB",
@@ -1101,6 +1173,7 @@ fn run_oracle(flags: &Flags) -> Result<()> {
         engine,
         fact_oracle: false,
         groups: None,
+        runs: oracle::CONFIGS.len(),
     };
     let mut journal = open_journal(&out)?;
     snapshot::install_panic_hook();
@@ -1233,7 +1306,7 @@ fn run_oracle_child(flags: &Flags) -> Result<()> {
         oracle::run_configs(
             &base,
             &path,
-            from,
+            from..flags.runs.unwrap_or(oracle::CONFIGS.len()),
             flags.max_steps,
             engine,
             |k| current.store(k, Ordering::SeqCst),
@@ -1298,6 +1371,7 @@ fn run_fact_oracle(flags: &Flags) -> Result<bool> {
             Some(_) => Some(groups_on(flags)?),
             None => None,
         },
+        runs: oracle::CONFIGS.len(),
     };
     snapshot::install_panic_hook();
     let total = entries.len();
@@ -1334,6 +1408,73 @@ fn run_fact_oracle(flags: &Flags) -> Result<bool> {
         start.elapsed().as_secs_f64()
     );
     Ok(failed == 0)
+}
+
+/// `sweep`: the fresh sweep of plan stage C2. Returns false if the sweep
+/// keeps a program (an accepted fault or a crash).
+fn run_sweep(flags: &Flags) -> Result<bool> {
+    let n = flags.n.context("--n is necessary")?;
+    let seed_base = flags.seed_base.context("--seed-base is necessary")?;
+    let generators = match flags.generators.as_deref() {
+        Some(g) => sweep::parse_generators(g)?,
+        None => sweep::GENERATORS.iter().map(ToString::to_string).collect(),
+    };
+    let out = flags
+        .out
+        .clone()
+        .unwrap_or_else(|| flags.repo.join(format!("target/gate/sweep-{seed_base}")));
+    let python = flags.python.clone().unwrap_or_else(|| {
+        std::env::var_os("WEFT_GATE_PYTHON").map_or_else(|| PathBuf::from("python3"), PathBuf::from)
+    });
+    let workers = flags.workers.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let settings = sweep::Settings {
+        n,
+        seed_base,
+        generators,
+        workers,
+        chunk: sweep::CHUNK,
+        python,
+        out: out.clone(),
+        groups: groups_on(flags)?,
+        check_limit: snapshot::LIMIT,
+        oracle: oracle::Settings {
+            workers,
+            limit: flags.limit.map_or(oracle::LIMIT, Duration::from_secs),
+            max_steps: Some(flags.max_steps.unwrap_or(oracle::MAX_STEPS)),
+            max_memory_mb: flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB),
+            exe: Some(std::env::current_exe().context("find the weft-gate program")?),
+            engine: Engine::Ir,
+            fact_oracle: false,
+            groups: None,
+            runs: flags.runs.unwrap_or(sweep::RUNS),
+        },
+        oracle_all: flags.oracle_all,
+    };
+    snapshot::install_panic_hook();
+    println!(
+        "sweep of {n} programs from seed {seed_base} with {} on {workers} workers",
+        settings.generators.join(", ")
+    );
+    let result = sweep::run(&flags.repo, &settings, |line| println!("{line}"))?;
+    let text = sweep::report(&result, &settings);
+    let file = flags
+        .report
+        .clone()
+        .unwrap_or_else(|| out.join("report.md"));
+    write_text(&file, &text)?;
+    let t = result.total();
+    println!(
+        "wrote {} in {:.1} s: {} programs, {} accepted, {} accepted faults, {} crashes",
+        file.display(),
+        result.elapsed.as_secs_f64(),
+        t.generated,
+        t.ir_accepted,
+        t.accepted_faults,
+        t.crashes
+    );
+    Ok(result.is_clean())
 }
 
 fn tier1(flags: &Flags) -> Result<Manifest> {

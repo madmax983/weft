@@ -1,0 +1,11 @@
+// Stage C2: the variant of `c2_tuple_rc_param_b.wf` with a stated place in
+// the group of the `rc` type. The part of the result depends on the handle
+// `a` of the argument (W0301 at the read).
+struct Cell2 { items: Vec<u64> }
+fn group_pair(h: &Rc<Cell2>) -> (&Vec<u64> in Cell2.items, u64) { (&h.items, 1) }
+fn main() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let (r, _) = group_pair(&a)
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())
+}

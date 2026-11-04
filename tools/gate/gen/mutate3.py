@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Mutation of seed programs for review round 3.
 
-Seeds: the interpreter programs, the corpus programs with `main` or test blocks
-(with the lines that carry `//~` markers removed, so that more of them pass the
-checker), and accepted generated programs in seeds3/. generate(k) picks a seed
+Seeds: the interpreter programs and the corpus programs with `main` or test
+blocks of this repository (with the lines that carry `//~` markers removed, so
+that more of them pass the checker), and the accepted generated programs in
+seeds3/ next to this file, if that directory exists. generate(k) picks a seed
 and applies 1 to 4 line mutations: move, delete, duplicate or swap statements;
 insert a push, clear, pop, move, rebind or borrow of a local; wrap a statement in
 a block, a loop, a closure, `twice`, a handler, a scope, a task, a `fork`,
@@ -15,9 +16,12 @@ import glob
 import os
 import random
 import re
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = "/tmp/claude-0/-home-user-weft/da0e5bf6-1701-54dd-be37-5c174a731219/scratchpad/r3/src"
+sys.path.insert(0, HERE)
+# The root of the repository.
+SRC = os.path.abspath(os.path.join(HERE, "../../.."))
 EXTRA = """
 fn twice_m(f: fn()) { f(); f() }
 fn apply_m(f: fn()) { f() }
@@ -198,5 +202,5 @@ def generate(k):
 
 
 if __name__ == "__main__":
-    import sys
-    print(generate(int(sys.argv[1])))
+    import genmain
+    genmain.main("mutate3", generate)

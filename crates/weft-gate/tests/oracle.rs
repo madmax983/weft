@@ -49,6 +49,7 @@ fn isolated(limit: Duration, max_steps: Option<u64>, max_memory_mb: u64) -> Sett
         engine: Engine::Ast,
         fact_oracle: false,
         groups: None,
+        runs: oracle::CONFIGS.len(),
     }
 }
 

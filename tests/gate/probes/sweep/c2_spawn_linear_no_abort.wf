@@ -1,0 +1,18 @@
+// Stage C2 sweep (mutate3, seeds 1000291 and 1001825, reduced by hand from a
+// mutant of `crates/weft-interp/tests/programs/abort_handle_given.wf` that
+// has no `on abort` for `Tx`). A spawn in statement position gives the
+// linear result of the task to the scope. The scope aborts after the task
+// is done, and the unwinder cannot finish a `Tx` with no `on abort`. Both
+// pipelines accept the program. Finding F3-6 (docs/ir.md 10.3, verdict
+// "stays": the type rule for `Task<T>` with a linear `T`; issue #73).
+linear struct Tx { id: u64 }
+
+fn main() / io, async {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        scope { s =>
+            s.spawn(|| Tx { id: 2 })
+            sleep(5.ms)
+            fail("abort after the task is done")
+        }
+    }
+}

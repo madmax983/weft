@@ -3780,6 +3780,14 @@ As built (plan stage F6, `crates/weft-sema/src/analysis/`):
   arguments (`Lower::group_arg_deps`): the handle places on the way to each argument,
   and the handle `h.*` of a reference argument to an `Rc` (or each handle below a
   reference argument whose pointee is `nonportable`).
+- As built (plan stage C2, `analysis::apply::stated_places`): each part of a tuple
+  result with stated places gets the same handles as a whole result. A stated place
+  with a `Param(i)` root gets the handle places on the way to argument `i`; a stated
+  place with a `Group` root gets the handles of the group. Before stage C2 a part got
+  only the places of its stated place, so in `let (r, _) = pair_of(&a.items)` with
+  `a: Rc<R>` and `pair_of(v: &Vec<u64>) -> (&u64 in v[], u64)`, a new value of `a` did
+  not make `r` invalid. The fresh sweep found this hole (gen4, seed 1002955; probes
+  `tests/gate/probes/sweep/c2_tuple_rc_*`). The old pipeline rejects these programs.
 
 As built (plan stage F10.2, `analysis::apply::stores`; hole H-C of the second review of
 stage F10): a callee can store a reference through a reference that its argument holds.

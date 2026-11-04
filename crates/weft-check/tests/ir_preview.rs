@@ -346,6 +346,49 @@ fn main() {
 }
 
 #[test]
+fn a_part_of_a_tuple_result_depends_on_the_handles_of_the_argument() {
+    // Stage C2 (`tests/gate/probes/sweep/c2_tuple_rc_*.wf`): a part of a
+    // tuple result with stated places gets the handle places of the
+    // argument, as a whole result does. A new value of `a` frees the
+    // object, so the read of `r` is W0301. Before the fix the `ir`
+    // pipeline accepted these programs, and the oracle found a read of a
+    // freed cell.
+    let param = "struct R { items: Vec<u64>, n: u64 }
+fn mk_r() -> Rc<R> { let v = Vec.new(); v.push(1); Rc.new(R { items: v, n: 0 }) }
+fn pair_of(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+fn main() {
+    let a = mk_r()
+    let (r, _) = pair_of(&a.items)
+    a = mk_r()
+    print(r + 1)
+}
+";
+    assert_eq!(ir_codes(param), vec![("W0301".to_string(), 8)]);
+    let group = "struct Cell2 { items: Vec<u64> }
+fn group_pair(h: &Rc<Cell2>) -> (&Vec<u64> in Cell2.items, u64) { (&h.items, 1) }
+fn main() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let (r, _) = group_pair(&a)
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())
+}
+";
+    assert_eq!(ir_codes(group), vec![("W0301".to_string(), 7)]);
+    // The clean twin: no new value of `a` before the read.
+    let clean = "struct R { items: Vec<u64>, n: u64 }
+fn mk_r() -> Rc<R> { let v = Vec.new(); v.push(1); Rc.new(R { items: v, n: 0 }) }
+fn pair_of(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+fn main() {
+    let a = mk_r()
+    let (r, _) = pair_of(&a.items)
+    print(r + 1)
+    a = mk_r()
+}
+";
+    assert_eq!(ir_codes(clean), Vec::<(String, usize)>::new());
+}
+
+#[test]
 fn a_callee_holds_a_reference_argument_into_a_value_that_another_argument_moves() {
     // The callee gets `&v[0]` and `v`: it can free `v` and then read the
     // reference (the oracle faults). The move at the call frees `v`, and the

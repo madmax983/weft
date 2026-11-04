@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """Sweep 4: a task and its parent touch one variable while the task runs.
 
-For each way to start the task, each access of the task, each access of the
-parent and each frame around the parent access, write one program. The task
-is joined after the parent access (at the end of the scope). sweep4.py OUTDIR
+`sweep4.py --all OUTDIR` writes one program for each way to start the task,
+each access of the task, each access of the parent and each frame around the
+parent access (the round-3 sweep). The task is joined after the parent access
+(at the end of the scope).
+
+generate(seed) gives one random program of a larger set: one or two accesses
+of the task, one or two accesses of the parent, each in its own frame, and a
+join before, between or after the accesses of the parent (stage C2). The other
+command lines are those of genmain.py.
 """
 import os
+import random
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PRE = r'''effect Note { fn note(x: u64) }
 struct Two { a: Vec<u64>, b: Vec<u64>, n: u64 }
@@ -71,8 +80,29 @@ STARTS = {
 }
 
 
-def main():
-    out = sys.argv[1]
+def generate(seed):
+    """One random program for `seed`."""
+    r = random.Random(seed)
+    sn = r.choice(sorted(STARTS))
+    tas = [TASK_ACC[k] for k in r.sample(sorted(TASK_ACC), r.choice([1, 1, 2]))]
+    task = "; ".join(tas)
+    accs = []
+    for _ in range(r.choice([1, 1, 2])):
+        pa = PARENT_ACC[r.choice(sorted(PARENT_ACC))]
+        accs.append(FRAMES[r.choice(sorted(FRAMES))].format(A=pa))
+    lines = ["fn main() {", "    let p = mk_t()", "    scope { s =>", "        " + STARTS[sn].format(T=task)]
+    join = r.randrange(len(accs) + 1) if sn == 'spawn_let' else None
+    for i, acc in enumerate(accs):
+        if join == i:
+            lines.append("        t.join()")
+        lines.append("        " + acc)
+    if join == len(accs):
+        lines.append("        t.join()")
+    lines += ["    }", "    print(p.n)", "}"]
+    return PRE + "\n" + "\n".join(lines) + "\n"
+
+
+def enumerate_all(out):
     os.makedirs(out, exist_ok=True)
     n = 0
     for sn, st in STARTS.items():
@@ -96,4 +126,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--all":
+        enumerate_all(sys.argv[2])
+    else:
+        import genmain
+        genmain.main("sweep4", generate)

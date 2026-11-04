@@ -1725,6 +1725,49 @@ with the group forced on, report only).
 - Gate: the common gates; the common exit; tier 2.
 - Exit: the last sweep of 50 000 programs finds no accepted fault (realistic shapes) and
   no unledgered edge fault.
+- As built (stage C2, on top of C1.4b 0699a28):
+  - The generators take their seed as an argument (`tools/gate/gen/genmain.py`):
+    `GEN.py SEED` writes one program, and `GEN.py --seed-base B --n N --out DIR` writes
+    the programs of the seeds `B` to `B+N-1`. Run them with `python3 -I`. `gen3.py` and
+    `gen4.py` read their prelude from `tests/gate/probes/r3/oracle/lib/`; `mutate3.py`
+    mutates the corpus and the interpreter programs of the repository; `sweep4.py` gives
+    a random program of a larger set for each seed (`--all DIR` writes the round-3 set).
+  - `weft-gate sweep --n N --seed-base B` (`crates/weft-gate/src/sweep.rs`) divides `N`
+    among the five generators, checks each program with both pipelines in one analysis
+    (the `ir` record is `--facts=ir`), and runs the oracle with the `ir` engine in the
+    first three configurations (`--runs`, the seeds 1, 2 and 3) on each program that
+    the `ir` pipeline accepts (`--oracle-all`: on each program). It keeps each accepted
+    program that faults and each crash in `OUT/kept/`, writes the seed list
+    `OUT/programs.tsv` and the report, and removes the other programs. `oracle-run`
+    takes `--runs K`. Test: `crates/weft-gate/tests/sweep.rs`.
+  - Seed bases: the earlier rounds used seeds up to 102 999 (`r2/oracle/runs`,
+    `r3/oracle/runs`, `verify/quality/gen`, `verify/s5/S5c/mut`). Stage C2 used
+    1 000 000 (first sweep) and 2 000 000 (last sweep), each generator the seeds from
+    the base to the base + 9 999.
+  - First sweep (base 1 000 000, `--oracle-all`, 3 workers, 955 s, 52 programs/s; 170
+    programs/s without `--oracle-all`): 50 000 programs, 46 349 distinct, 12 092 that
+    `--facts=ir` accepts, 22 790 that fault, 4 accepted faults. gen4 seed 1002955: a
+    part of a tuple result with a stated place (`pair_of(&a.items)`, `-> (&u64 in v[],
+    u64)`) did not get the handle place of the `Rc` handle `a`, so a new value of `a`
+    did not make the part invalid (a read of a freed cell; the old pipeline rejects
+    it). Fix: `analysis::apply::stated_places` gives each stated part the handles of
+    its root, as for a whole result (`docs/ir.md` 6.7, "As built (plan stage C2)");
+    probes `tests/gate/probes/sweep/c2_tuple_rc_*` (claim C2-TUPLE-RC), test
+    `ir_preview` `a_part_of_a_tuple_result_depends_on_the_handles_of_the_argument`. The
+    sweep of gen4 with the same seeds then found no accepted fault. mutate3 seeds
+    1000291, 1001825 and 1006663: a spawn in statement position gives a linear `Tx`
+    with no `on abort` to a scope that aborts (F3-6, verdict "stays"; both pipelines
+    accept it); ledger class `edge`, issue #73, probe
+    `tests/gate/probes/sweep/c2_spawn_linear_no_abort.wf`.
+  - Last sweep (base 2 000 000, after the fix, `--oracle-all`, 3 workers, 940 s, 53
+    programs/s): 50 000 programs, 46 360 distinct, 12 151 that `--facts=ir` accepts,
+    22 674 that fault, 3 accepted faults (mutate3 seeds 2000223, 2000459 and 2001167),
+    each the shape of issue #73 (ledgered `edge`). Counts of each generator (generated,
+    `ir` accepts, faulted, accepted faults): gen3 10 000, 2 271, 6 256, 0; gen4 10 000,
+    3 556, 2 985, 0; mutate3 10 000, 1 674, 2 524, 3; gen 10 000, 1 953, 6 240, 0;
+    sweep4 10 000, 2 697, 4 669, 0. No crash. For information: 24 programs that the old
+    pipeline accepts and the `ir` pipeline rejects (4 fault, 20 do not fault), and
+    1 291 that only the `ir` pipeline accepts (none faults).
 
 #### C3 Switch the defaults
 
@@ -1885,6 +1928,7 @@ gate and the exit of its parent, limited to its group of differences.
 | C1.4b | C1.4 | the rows of `unbound_at_aborts` (#62): the facts of the abort shape of `verify/s5/S5a/x/p/scale_ops.wf` and `s5r/p/scale400.wf`: `handlers::unbound_at_aborts` gives each captured local of a handled body that no path to an abort has assigned a new value at the `AbortValue` node of each such abort (a quadratic number of `rebound_at` rows: 22.6 and 6.4 times the old rows). Fix (`docs/ir.md` 6.2, "As built (plan stage C1.4b)"): the generator keeps the rows (the precision of `scale400.wf` stays), and a last step of the prune, `share_new_values`, puts the rows of the nodes that lead to one node and give nested sets of variables new values on one chain of new nodes, with one row for each variable; the module text of `factgen/prune.rs` gives the argument for each rule that reads `rebound_at`. No rule of the spec changes. Rows: `scale_ops.wf` `many` 1 154 311 to 30 061 (0.59 times the old rows), `scale400.wf` `many` 87 861 to 8 061 (0.59 times); `check` CPU time of `scale_ops.wf` 7.6 s to 4.4 s (old 0.8 s), of `scale400.wf` 0.50 s to 0.34 s (old 0.07 s). Quadratic passes of the profile (callgrind) that this stage fixes: the order of the work list of `handlers::assigned`, `clause::captured_locals` for each abort (now once for each body), a copy of a large value for each join that does not change it (`Tree::includes`), and a copy one by one of the locals of a chunk that the other state has none of (`Chunked::adopt_missing`, the kept values along a cleanup chain). Open: a call of a closure local with `n` closure values computes `reach_refs` of the callee for each value (`transfer::value_out_ty`, `apply_value`); the shared search of `rules::invalidation` visits a quadratic number of nodes on this shape (as at C1.6); the effect inference of the old lowering (`body::Lower::join_fn`). Gates: tier 1 `snapshot --facts ir` the same diagnostics and violations as C1.6 for each of 4526 programs (tier 2: each of 57393); tier 1 0 blockers, each class and each row as C1.6; tier 2 (2 workers) 0 blockers, new-fp 12, the list of the programs that are not `same` as C1.6; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `weft agree --facts=ir` agrees on the corpus, the interpreter programs and the examples. Functions over the bound of ADR 0013: 0 (C1.6: 2). Tests: `agreement_random` `shared_new_values_give_the_same_violations`, `scale.rs` (the abort shape in the row bound), `prune::tests` | done (C1.4b) |
 | C1.5 | C1.3 | the reviews of C1.3: holes C1-H5 and C1-H6, gaps G1 to G5 (lost-fault W0502, W0503 / none; G1 and G4 are older than C1, the old pipeline misses G4). The rule of #56 is an allow-list now (`docs/ir.md` 5.20, "As built (stage C1.5)"): a run of a value of the interface is `many` where a cycle or a re-entry edge reaches it, except where the exceptions E1 to E4 hold, with a proof sketch. Step 1 restored the rule of ec00112 (each re-entry edge makes the runs after it `many`); step 2 fixed the gaps: G1 a nested body runs again where its site is in a cycle (`Cycles` reads the chain of sites), G2/H6 the walk after a row goes through the spliced graph (into a nested body, up to its site), H5 a closure that a callee made holds the values of its captures (`made_held` in `captures_given_out`, `capture_fns`), G3 the key of a run has the part `result` and a result of a closure gives back the values that the closure holds, G4 (issue #68) a stated row is no bound for `multi` of code of a caller, G5 a key with no values is `multi` and the test reads the values that each value runs (`Apps::inner`); step 3 brought the precision back (E1 to E4; a run after a value of the interface of the caller gets its key in `after`, not `again`). The two parts of the analysis that do not find the rows of a body (a clause body, a handler in a closure body) stay with the old pipeline; tests pin both fallbacks. Tier-2 new-fp: 85 after step 1, 85 after step 2, 12 after step 3 (the 12 rows of C1). The 4 rows of the review of issue #67 with a condition are signed (each H5, H6 and H6c variant is W0502 or W0503). Cost of G4: W0503 at 5 control lines of `39_multi_params.wf` and `81_generic_holds.wf` (marker `ir:`), and 3 tier-2 rows that do not run. Probes `tests/gate/probes/fixes/c1/c15_*` (claims C1-G1, C1-H5, C1-H6, C1-G3, C1-G4), tests `ir_handlers` (data `handlers/c15/`) | done (C1.5) |
 | C1.6 | C1.5 | issue #71: holes C1-HA, C1-HB and C1-HC of the review of C1.5 (lost-fault W0503 / none; older than C1; the old pipeline catches HB and HC, and misses most HA forms). In each hole a `once` closure runs a second time after a `multi` operation resumes two times. HA and HB (cause): the flag `once` of the variable of a local of a function type came only from the old analysis (`binding_props_of`), which does not follow a closure through a destructure of a call result, a projection of a call, a binding of a `match` arm, a temporary, or a store into a part (`s.o = Some(g)`, `put(g, &s)`). Fix (`docs/ir.md` 5.20, "As built (stage C1.6)"): each template that gives a local a value calls `templates::mark_fn_once` (the analysis of the IR gives the flag, as `mark_fn_linear_in` gives `linear`), also for the parts `put_fns` and the changed places of a callee; this covers tuples, structs, enum payloads, nested structs, `Box` and `Vec`. HC (cause): the node of a value that `given_out` gives out got the `multi` of `Main` only, but a late run of a value of an argument is at `Ret` (the guess of the review about struct fields was wrong). Fix: `held_like_call` (`Main` and `Ret`). Six programs of the test data get one more W0503 at a line that has an error already (`opt_run`, `tup_run`, `struct_run`, `res_made`, `run_once_multi`, `give_out_field`: the callee holds the `once` argument across the late run). The review sets `r67b/att`, `r67b/v`, `r67b/z`: 0 HOLE (`e04_tuple_res.wf` stays with the old pipeline, which misses it too); the earlier sets: no change. The 8 tier-2 rows of #67 that wait: each variant v06, v07, v08, v11 and v12 is W0502 or W0503 now (not signed). Gates: tier 1 0 blockers; tier 2 new-fp 12 of 12548 (0.096 %, the rows of C1.5; each tier-2 row has the class of C1.5); reg_204 as C1.5; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. Probes `tests/gate/probes/fixes/c1/c16_*` (claims C1-HA, C1-HB, C1-HC), tests `ir_handlers` (data `handlers/c16/`) | done (C1.6) |
+| C2 | C1 | the fresh sweep (`weft-gate sweep`, 50 000 programs from each of the seed bases 1 000 000 and 2 000 000): lost-fault W0301 / none of a part of a tuple result into an `rc` object (gen4 seed 1002955; fix `apply::stated_places`, claim C2-TUPLE-RC, probes `sweep/c2_tuple_rc_*`); F3-6 (both pipelines accept; issue #73, ledger `edge`, probe `sweep/c2_spawn_linear_no_abort.wf`). The last sweep: 3 accepted faults, each the shape of issue #73. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 of 12548 (0.096 %), each class count as C1.6; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (C2) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -1949,6 +1993,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | C1.6 (tier 2, groups A to F, default) | 46958 of 57393 | 44710 | 88 | 12 of 12548 (0.096 %, the rows of C1; each row and class as C1.5) | 2476 (2468 signed; the 8 rows of issue #67 wait) | 1610 | 8487 | 10 (as C1.1) |
 | C1.4b (tier 1, groups A to F, default) | 4142 of 4526 | 3615 | 245 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 430 | 9 (as C1.1); each program has the class, the diagnostics and the violations of C1.6 |
 | C1.4b (tier 2, groups A to F, default) | 46958 of 57393 | 44710 | 88 | 12 of 12548 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1); each program has the class, the diagnostics and the violations of C1.6 |
+| C2 (tier 1, groups A to F, default) | 4147 of 4531 | 3619 (+4: the `sweep/c2_tuple_rc_*` probes; the `_b` probes are W0301 in both pipelines) | 245 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 430 | 10 (as C1.1, and `sweep/c2_spawn_linear_no_abort.wf`: `edge`, issue #73) |
+| C2 (tier 2, groups A to F, default) | 46958 of 57393 | 44710 | 88 | 12 of 12548 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

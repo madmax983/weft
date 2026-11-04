@@ -791,3 +791,12 @@ others come from the self-attack of the stage (scratchpad `c1/att/`). Before the
   back in a struct or in a field of a reference argument after a late run of the value
   (`hc_*`). The `_c.wf` programs are the clean twins: a value that does not resume two
   times. The old pipeline and the `ir` pipeline accept each `_c.wf`.
+- `sweep/` (stage C2, the fresh sweep `weft-gate sweep`): the accepted faults of the
+  sweep, reduced by hand. `c2_tuple_rc_param_b.wf`, `c2_tuple_rc_each_b.wf` (gen4, seed
+  1002955) and `c2_tuple_rc_group_b.wf`: a part of a tuple result points into the object
+  of an `Rc` handle, and a new value of the handle frees the object (W0301; the `ir`
+  pipeline accepted them before stage C2, the old pipeline rejects them).
+  `c2_tuple_rc_c.wf` is the clean twin. `c2_spawn_linear_no_abort.wf` (mutate3, seeds
+  1000291, 1001825 and 1006663): a spawn in statement position gives a linear result
+  with no `on abort` to a scope that aborts (finding F3-6, verdict "stays"; both
+  pipelines accept it; ledger class `edge`, issue #73).

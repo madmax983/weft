@@ -8,6 +8,9 @@ borrow and its use), so the checker must reject them.
 """
 import os
 import random
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Features that are off: known findings, so new runs find new shapes.
 OFF = set(filter(None, os.environ.get("GEN_OFF", "").split(",")))
@@ -941,5 +944,5 @@ def generate(seed, max_depth=3):
 
 
 if __name__ == "__main__":
-    import sys
-    print(generate(int(sys.argv[1]) if len(sys.argv) > 1 else 1))
+    import genmain
+    genmain.main("gen", generate)

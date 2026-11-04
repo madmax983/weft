@@ -1,0 +1,13 @@
+// Stage C2 sweep (gen4, seed 1002955, reduced by hand): the shape of the
+// generated program. A callback gives the `Rc` handle `a` a new value while
+// `r` points into the old object (W0301 at the read).
+struct R { items: Vec<u64>, n: u64 }
+fn mk_r() -> Rc<R> { let v = Vec.new(); v.push(1); Rc.new(R { items: v, n: 0 }) }
+fn pair_of(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+fn each(v: &Vec<u64>, f: fn(&u64)) { for i in 0..v.len() { f(&v[i]) } }
+fn main() {
+    let a = mk_r()
+    let (r, _) = pair_of(&a.items)
+    each(&[1, 2], |x: &u64| { a = mk_r() })
+    print(r + 1)
+}

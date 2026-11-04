@@ -1,0 +1,12 @@
+// Stage C2: the clean twin of `c2_tuple_rc_param_b.wf`. The read of `r`
+// comes before the new value of `a`. Both pipelines accept it.
+struct R { items: Vec<u64>, n: u64 }
+fn mk_r() -> Rc<R> { let v = Vec.new(); v.push(1); Rc.new(R { items: v, n: 0 }) }
+fn pair_of(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+fn main() {
+    let a = mk_r()
+    let (r, _) = pair_of(&a.items)
+    print(r + 1)
+    a = mk_r()
+    print(a.n)
+}
