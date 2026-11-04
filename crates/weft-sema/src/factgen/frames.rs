@@ -306,7 +306,7 @@ pub fn destinations(
         TermKind::Perform { op, .. } => Some(*op),
         _ => None,
     };
-    reach(p, tys, sums, body, t)
+    reach(p, tys, sums, body, t, true)
         .into_iter()
         .filter(|d| match d {
             Dest::Handler { handler, .. } => clause::handler_lands(p, *handler, op),
@@ -360,7 +360,29 @@ pub fn clause_handlers(
     body: BodyId,
     t: &TermKind,
 ) -> Vec<HandlerId> {
-    let mut out: Vec<HandlerId> = reach(p, tys, sums, body, t)
+    handlers_of(reach(p, tys, sums, body, t, true))
+}
+
+/// [`clause_handlers`] with no handler that only the function values reach.
+///
+/// Such a handler is the local `Fail` handler of a failure of a function
+/// value that the terminator or a callee runs, or a handler whose
+/// capability a closure captures. The analysis tells if a value that the
+/// terminator runs can reach it (`clause::run_handlers`, issues #57 and
+/// #58).
+pub fn own_clause_handlers(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    t: &TermKind,
+) -> Vec<HandlerId> {
+    handlers_of(reach(p, tys, sums, body, t, false))
+}
+
+/// The handlers of the destinations `ds`, sorted, each one time.
+fn handlers_of(ds: Vec<Dest>) -> Vec<HandlerId> {
+    let mut out: Vec<HandlerId> = ds
         .into_iter()
         .filter_map(|d| match d {
             Dest::Handler { handler, .. } => Some(handler),
@@ -374,8 +396,19 @@ pub fn clause_handlers(
 
 /// The destinations of terminator `t` of body `body` if each clause can end
 /// with no resume point: a [`Dest::Handler`] is a handler whose clauses the
-/// terminator runs.
-fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKind) -> Vec<Dest> {
+/// terminator runs. With `full`, also the destinations of the function
+/// values that the terminator or a callee runs: the local `Fail` handler of
+/// the call, and each active handler whose capability a closure captures. With no `full`, the
+/// analysis tells which of them the values at the node reach
+/// (`clause::run_handlers`, issues #57 and #58).
+fn reach(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    t: &TermKind,
+    full: bool,
+) -> Vec<Dest> {
     if t.unwind().is_none() {
         return Vec::new();
     }
@@ -401,7 +434,9 @@ fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKin
                     // each way (stage F12, part `runs`).
                     if !sum.runs.is_empty() {
                         out.push(Dest::Past);
-                        out.push(fails(env));
+                        if full {
+                            out.push(fails(env));
+                        }
                     }
                     for a in &sum.aborts {
                         out.push(match a {
@@ -462,7 +497,9 @@ fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKin
             ..
         } => {
             out.push(Dest::Past);
-            out.push(fails(Some(*e)));
+            if full {
+                out.push(fails(Some(*e)));
+            }
             for effect in value_effects(p, tys, sums, body, f, *e) {
                 out.push(resolve(p, tys, *e, &effect, true));
             }
@@ -472,7 +509,7 @@ fn reach(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKin
     // A run of a function value can run a closure that performs through a
     // captured capability of a local handler: the node runs the clauses of
     // the handler (plan stage F16).
-    if runs_values(p, tys, sums, body, t) {
+    if full && runs_values(p, tys, sums, body, t) {
         for h in clause::captured_handlers(p) {
             let active = p
                 .handlers

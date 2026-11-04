@@ -52,10 +52,11 @@
 # (`docs/ir.md` section 10.2 has both lists).
 
 [[entry]]
-class = "open-old"
+class = "edge"
+issue = 48
 files = ["tests/gate/probes/ir/work/map/opres.wf"]
 finding = "map-N1"
-reason = "dangling read: the result of an operation of a handler of a caller has no places"
+reason = "dangling read: the result of an operation of a handler of a caller has no places. Stage C1: the program stays with the old pipeline (the clause gives a reference back to the callee, GIVES_BACK, follow-up F16.3), and the old pipeline misses it; issue #48 (F16.3)."
 stage = "G6"
 
 # Stage F13 removed the entries of j5_kept_borrow.wf (J5),
@@ -107,14 +108,15 @@ reason = "linear leak: a spawn in statement position (or as the scope tail) drop
 stage = "G6"
 
 [[entry]]
-class = "open-old"
+class = "open"
+verdict = "stays"
 files = [
     "tests/gate/probes/r3/fidelity/p/fk4.wf",
     "tests/gate/probes/r3/fidelity/p/tk6.wf",
     "tests/gate/probes/r3/interp/probe/g14_fork_result_lin.wf",
 ]
 finding = "F3-6"
-reason = "unwinder fault: the runtime drops a linear task result with no `on abort`: a `fork` that a failure or a timeout ends. Stage F20 closed the shape of a `Task<T>` handle that a generic callee holds across an abort (g2_generic_task_hold, OL-3a: `fixed`)"
+reason = "unwinder fault: the runtime drops a linear task result with no `on abort`: a `fork` that a failure or a timeout ends. Stage F20 closed the shape of a `Task<T>` handle that a generic callee holds across an abort (g2_generic_task_hold, OL-3a: `fixed`). Stage C1: the verdict of F3-6 in docs/ir.md 10.3 is \"stays\" (types and signatures: `Task<T>` with a linear `T`)."
 stage = "G6"
 
 # Stage F8 removed the entries of i2_refenum.wf and i4_matchref.wf (R3RT2)
@@ -1628,17 +1630,19 @@ stage = "F13"
 # f13/review.md).
 
 [[entry]]
-class = "open-old"
+class = "edge"
+issue = 41
 files = ["tests/gate/probes/fixes/f13b/ab_rc1/a13_nested_rc_rc_b.wf"]
 finding = "F13B-AB-RC1"
-reason = "old hole AB-RC1 (review of stage F13): a reference through a whole local handle of a new object goes into an object that an `Rc<Rc<Cache>>` parameter reaches. The handle of the store is a handle in an `rc` object, so the facts cannot tell if the objects are the same: the old pipeline checks the program, and it skips each whole local handle of the same `rc` type (no W0204)"
+reason = "old hole AB-RC1 (review of stage F13): a reference through a whole local handle of a new object goes into an object that an `Rc<Rc<Cache>>` parameter reaches. The handle of the store is a handle in an `rc` object, so the facts cannot tell if the objects are the same: the old pipeline checks the program, and it skips each whole local handle of the same `rc` type (no W0204). Stage C1: an old hole of the ship rule (issue #41)."
 stage = "F13"
 
 [[entry]]
-class = "open-old"
+class = "edge"
+issue = 41
 files = ["tests/gate/probes/fixes/f13b/ab_rc3/e17_read_in_param_fn_b.wf"]
 finding = "F13B-AB-RC3"
-reason = "old hole AB-RC3 (review of stage F13): the caller puts a reference into an `rc` object (`fill_self`), then a callee changes the group and reads the reference (`use_it`: `grow`, then `read0`). The callee has no heap slot of its own for the references that the object holds at its entry (they point into the wildcard place of the group), so no variable gets invalid. Both pipelines miss it"
+reason = "old hole AB-RC3 (review of stage F13): the caller puts a reference into an `rc` object (`fill_self`), then a callee changes the group and reads the reference (`use_it`: `grow`, then `read0`). The callee has no heap slot of its own for the references that the object holds at its entry (they point into the wildcard place of the group), so no variable gets invalid. Both pipelines miss it. Stage C1: an old hole of the ship rule (issue #41)."
 stage = "F13"
 
 # Stage F13 removed the `open-old` entries of the old holes that the F13 fixes
@@ -1723,10 +1727,11 @@ stage = "F13"
 # `ir` pipeline rejects them (`fixed`; claim F13C-ORD).
 
 [[entry]]
-class = "open-old"
+class = "edge"
+issue = 41
 files = ["tests/gate/probes/fixes/f13c/w4/w09_closure_param_store_b.wf"]
 finding = "F13C-HW9"
-reason = "old hole H-W9 (final check of group C; issue #41): a closure stores its reference parameter into the `rc` object of a captured handle (`let put = |x: &u64| c.refs.push(x); put(&d.data[0])`), and the reference points into a local `rc` object that goes away at the return. The store of a closure app has no handle places (`own`), so the W0204 check keeps the old rule and skips each whole local handle. The old pipeline misses it too; under the default AB the program (group C) goes to the old pipeline"
+reason = "old hole H-W9 (final check of group C; issue #41): a closure stores its reference parameter into the `rc` object of a captured handle (`let put = |x: &u64| c.refs.push(x); put(&d.data[0])`), and the reference points into a local `rc` object that goes away at the return. The store of a closure app has no handle places (`own`), so the W0204 check keeps the old rule and skips each whole local handle. The old pipeline misses it too; under the default AB the program (group C) goes to the old pipeline. Stage C1: an old hole of the ship rule (issue #41)."
 stage = "F13"
 
 [[entry]]
@@ -3907,21 +3912,23 @@ stage = "F20"
 # pipelines accept them and they fault.
 
 [[entry]]
-class = "open-old"
+class = "open"
+verdict = "stays"
 files = ["verify/s5/R3t/jc.wf"]
 finding = "F3-6"
-reason = "unwinder fault (tier 2, as entry of fk4/tk6): `bad_ctx_fork_tx` forks two linear `Tx` results in a scope whose other task fails; the failure ends the scope while the results are live, and the runtime drops them. The old pipeline misses it too. Each group of the program is on from stage F20 (`--groups ABCDEF`)"
+reason = "unwinder fault (tier 2, as entry of fk4/tk6): `bad_ctx_fork_tx` forks two linear `Tx` results in a scope whose other task fails; the failure ends the scope while the results are live, and the runtime drops them. The old pipeline misses it too. Each group of the program is on from stage F20 (`--groups ABCDEF`). Stage C1: the verdict of F3-6 in docs/ir.md 10.3 is \"stays\"."
 stage = "F20"
 
 [[entry]]
-class = "open-old"
+class = "edge"
+issue = 48
 files = [
     "verify/s5/S5a/d1_callee_mut.wf",
     "verify/s5/S5a/d1_callee_mut3.wf",
     "verify/s5/S5a/d1_callee_mut6.wf",
 ]
 finding = "unclassified"
-reason = "dangling read (tier 2, follow-up F16.3): the clause of a local handler resumes with a reference into a place of the site (`resume(c)`), and the callee clears it; the reference of the site into the place is stale after the call. The `ir` pipeline keeps these programs with the old pipeline (fallback `GIVES_BACK` of F16.3), and the old pipeline misses them. The groups of the programs are all on from stage F20"
+reason = "dangling read (tier 2, follow-up F16.3): the clause of a local handler resumes with a reference into a place of the site (`resume(c)`), and the callee clears it; the reference of the site into the place is stale after the call. The `ir` pipeline keeps these programs with the old pipeline (fallback `GIVES_BACK` of F16.3), and the old pipeline misses them. The groups of the programs are all on from stage F20. Stage C1: issue #48 (F16.3, GIVES_BACK fallback)."
 stage = "F20"
 
 [[entry]]
@@ -7724,129 +7731,41 @@ stage = "F20.1"
 # The 98 tier-2 new-fp rows of stage F20 (precision losses of the groups A to
 # E): one entry for each group of the review, with the primary group of a row
 # that is in two groups (a row that loses a code with no `multi` keyword is
-# N1, but a W0312 row is N3).
-
-[[entry]]
-class = "new-fp"
-reason_class = "precision"
-issue = 56
-files = [
-    "r2/oracle/runs/g2/p1349.wf",
-    "r2/oracle/runs/g2/p1698.wf",
-    "r2/oracle/runs/g2/p1792.wf",
-    "r2/oracle/runs/g2/p1844.wf",
-    "r2/oracle/runs/g2/p2977.wf",
-    "r2/oracle/runs/g2/p3001.wf",
-    "r2/oracle/runs/g2/p3174.wf",
-    "r2/oracle/runs/g3/p5059.wf",
-    "r2/oracle/runs/g3/p5633.wf",
-    "r2/oracle/runs/g3/p5675.wf",
-    "r2/oracle/runs/g3/p5802.wf",
-    "r2/oracle/runs/g3/p5969.wf",
-    "r2/oracle/runs/g3/p6157.wf",
-    "r2/oracle/runs/g3/p6761.wf",
-    "r2/oracle/runs/g3/p6767.wf",
-    "r2/oracle/runs/g3/p6853.wf",
-    "r2/oracle/runs/g3/p7311.wf",
-    "r2/oracle/runs/g3/p7400.wf",
-    "r2/oracle/runs/g3/p7534.wf",
-    "r2/oracle/runs/g4/p10390.wf",
-    "r2/oracle/runs/g4/p10944.wf",
-    "r2/oracle/runs/g5/p20267.wf",
-    "r2/oracle/runs/g5/p20346.wf",
-    "r2/oracle/runs/g5/p20529.wf",
-    "r2/oracle/runs/g5/p21378.wf",
-    "r2/oracle/runs/g5/p21445.wf",
-    "r2/oracle/runs/g5/p21451.wf",
-    "r2/oracle/runs/g5/p22214.wf",
-    "r2/oracle/runs/g5/p22246.wf",
-    "r2/oracle/runs/g5/p22349.wf",
-    "r2/oracle/runs/g5/p22493.wf",
-    "r2/oracle/runs/g5/p22627.wf",
-    "r2/oracle/runs/g5/p22998.wf",
-    "r2/oracle/runs/g5/p23309.wf",
-    "r2/oracle/runs/g5/p23643.wf",
-    "r2/oracle/runs/g5/p23649.wf",
-    "r2/oracle/runs/g5/p23708.wf",
-    "r2/oracle/runs/g6/p30605.wf",
-    "r2/oracle/runs/g6/p31890.wf",
-    "r2/oracle/runs/g6/p31981.wf",
-    "r2/oracle/runs/g6/p32052.wf",
-    "r2/oracle/runs/g6/p32339.wf",
-    "r2/oracle/runs/g6/p33083.wf",
-    "r2/oracle/runs/g6/p33265.wf",
-    "r2/oracle/runs/g6/p33411.wf",
-    "r2/oracle/runs/g6/p33693.wf",
-    "r2/oracle/runs/g7/p41717.wf",
-    "r2/oracle/runs/g7/p42595.wf",
-    "r2/oracle/runs/g7/p43829.wf",
-    "r2/oracle/runs/g7/p44700.wf",
-    "r2/oracle/runs/m1/p1300.wf",
-    "r2/oracle/runs/m1/p1315.wf",
-    "r2/oracle/runs/m1/p1419.wf",
-    "r2/oracle/runs/m1/p1646.wf",
-    "r2/oracle/runs/m1/p1962.wf",
-    "r2/oracle/runs/m1/p1977.wf",
-    "r2/oracle/runs/m1/p2081.wf",
-    "r2/oracle/runs/m1/p2412.wf",
-    "r2/oracle/runs/m1/p2955.wf",
-    "r2/oracle/runs/m1/p307.wf",
-    "r2/oracle/runs/m1/p322.wf",
-    "r2/oracle/runs/m1/p426.wf",
-    "r2/oracle/runs/m1/p617.wf",
-    "r2/oracle/runs/m1/p757.wf",
-    "r2/oracle/runs/m2/p5065.wf",
-    "r2/oracle/runs/m2/p5086.wf",
-    "r2/oracle/runs/m2/p5177.wf",
-    "r2/oracle/runs/m2/p6127.wf",
-    "r2/oracle/runs/m2/p6239.wf",
-    "r2/oracle/runs/m2/p6679.wf",
-    "r2/oracle/runs/m2/p6998.wf",
-    "r2/oracle/runs/m2/p7189.wf",
-    "r2/oracle/runs/m2/p7210.wf",
-    "r2/oracle/runs/m2/p7720.wf",
-    "r2/oracle/runs/m2/p7741.wf",
-    "r2/oracle/runs/m2/p7997.wf",
-]
-reason = "group N1 of the second review of group F (`freview2/review.md`): a run of a closure that runs another function value (`let g = || f1(); apply(g)`) counts as an unknown run that can resume more than once if the program declares any `multi` operation, also with no handler of it or with a clause that resumes one time (W0503, W0502, W0301 of the copy of the frame). Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
-stage = "F20"
+# N1, but a W0312 row is N3). Stage C1 fixed the causes of 91 rows (issues
+# #56 to #59); they are `same` now, and the entry of N1 (#56) is gone. The
+# rows that stay are below.
 
 [[entry]]
 class = "new-fp"
 reason_class = "precision"
 issue = 57
 files = [
-    "r2/oracle/runs/g5/p21231.wf",
-    "r2/oracle/runs/g6/p30575.wf",
-    "r2/oracle/runs/g6/p32591.wf",
     "r2/oracle/runs/g7/p43563.wf",
+]
+reason = "group N2 of the second review of group F, the row that stays after stage C1: the code of the clause after `resume(true)` runs at the `Post` node, and its second `resume` can abort (each `resume` can abort, ADR 0005), so the linear `lk2` with no `on abort` is live across the `handle` (W0602). The continuation (the rest of the handled body) cannot abort; a precise rule needs the aborts of the continuation. The run is clean"
+stage = "F20"
+
+[[entry]]
+class = "new-fp"
+reason_class = "stricter"
+issue = 57
+files = [
+    "r2/oracle/runs/g6/p32591.wf",
     "r2/oracle/runs/m2/p5183.wf",
     "r2/oracle/runs/m2/p7307.wf",
     "r2/oracle/runs/m2/p7838.wf",
 ]
-reason = "group N2 of the second review of group F: the same unknown run counts as a node that can abort; a linear value with no `on abort` is live across it (W0602), or a clause of an enclosing `Fail` handler reads a local that the body moved (W0302). Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
-stage = "F20"
+reason = "stage C1: these 4 rows of group N2 are no precision loss. `h0(p0: Vec<u64>, p1: fn(), ..)` runs the function parameter `p1` in the body of a local `Fail` handler whose clause changes `p0`, and the body moved `p0`. A function item runs with the handlers of the call (plan stage F17.2, D-FNVAL-ROW), so a caller that gives an item that fails runs the clause, and the clause uses the moved `p0` (W0302). The old pipeline misses it: `tests/gate/probes/fixes/c1/n57_param_fails_b.wf` gives the item `boom` and faults (`fixed`). The caller of these rows gives a closure that does not fail, so the run is clean"
+stage = "C1"
 
 [[entry]]
 class = "new-fp"
 reason_class = "precision"
 issue = 58
 files = [
-    "r2/oracle/runs/g3/p5259.wf",
-    "r2/oracle/runs/g3/p6634.wf",
-    "r2/oracle/runs/g3/p7416.wf",
-    "r2/oracle/runs/g5/p20662.wf",
     "r2/oracle/runs/g5/p20701.wf",
-    "r2/oracle/runs/g5/p22084.wf",
-    "r2/oracle/runs/g7/p43989.wf",
-    "r2/oracle/runs/m1/p1121.wf",
-    "r2/oracle/runs/m1/p128.wf",
-    "r2/oracle/runs/m1/p1452.wf",
-    "r2/oracle/runs/m1/p1783.wf",
-    "r2/oracle/runs/m1/p2776.wf",
-    "r2/oracle/t0/q279.wf",
 ]
-reason = "group N3 of the second review of group F: W0312 of an argument that points into a place that the clause of an enclosing handler changes (`roots::clause`), and that clause only aborts; or of the root `roots::STORED` of a function value that the call runs, against the argument that holds it. Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
+reason = "group N3 of the second review of group F, the row that stays after stage C1: `run_both(p0, f5)` with an unknown `p0` and `f5 = || grow_w(p1)`. The run of `p0` gets the other arguments of the call (`Sigma::others`: the places that the environment of `f5` points into, root 0), and the run of `f5` changes `p1.es` through its environment (root `STORED`). The conflict joins two runs at one node; a precise rule needs a root of its own for the environment of each argument. The run is clean"
 stage = "F20"
 
 [[entry]]
@@ -7855,10 +7774,23 @@ reason_class = "precision"
 issue = 59
 files = [
     "r2/oracle/runs/g3/p6221.wf",
-    "r2/oracle/runs/g5/p21648.wf",
 ]
-reason = "group N4 of the second review of group F: p21648, a closure that a callee makes from a linear argument is linear, but it does not hold the value (W0601); p6221, W0405 at the end of a scope after a `join`. Groups A to E alone give the same codes; the `id` header kept the programs out of scope before stage F20"
+reason = "group N4 of the second review of group F, the row that stays after stage C1: W0405 at the end of a scope after a `join`. The call `f2()` of a closure that cannot abort has an abort edge in the node table (the frames come before the analysis), and the task `t4` is active on that edge when the unwinding frees `w3`. The run is clean"
 stage = "F20"
+
+[[entry]]
+class = "moved"
+files = ["r2/oracle/t0/q58.wf"]
+codes = ["W0301"]
+reason = "stage C1 (issue #56): the extra W0502 at line 114 of the `ir` pipeline is gone (a re-entry after code of a caller does not run the values of the interface again), so the row is `moved` now: W0301 at line 96 (the use) where the old pipeline gives line 94. The run faults at the dangling read, and both pipelines reject the program"
+stage = "C1"
+
+[[entry]]
+class = "sig"
+parts = ["muts", "ret", "ret_refs"]
+files = ["tests/gate/probes/fixes/c1/n59_made_rebinds_plain_c.wf"]
+reason = "stage C1 (issue #59): `h1(p0: u64, ..) -> fn() { || p0 += 1 }` gives back a closure that changes its own copy of `p0`. The old inference puts the change into the `muts` of the maker (`mut(p0)`); the `ir` summary keeps it in the made closure (`RetFn::Made`), as entry F13 of `44_returned_fns.wf` says. `h1` does not change a place of a caller"
+stage = "C1"
 
 # ----------------------------------------------------------------------------
 # Follow-up F20.4: B-2 and I-8 of the third review of group F.

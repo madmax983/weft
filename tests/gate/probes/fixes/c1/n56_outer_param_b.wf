@@ -1,0 +1,16 @@
+// Issue #56 (stage C1, self-attack): a callee runs a once closure after a function parameter whose row can resume two times (W0502 W0503).
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn choose() / Pick { let b = pick(); print(b) }
+fn both(f: fn(), g: fn() / Pick) / Pick { g(); f() }
+fn outer(g: fn() / Pick) / Pick {
+    let u = [3]
+    let h = || { let w = u; print(w.len()) }
+    both(h, g)
+}
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        outer(choose)
+    }
+}

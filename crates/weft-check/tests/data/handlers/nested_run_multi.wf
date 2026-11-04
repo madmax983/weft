@@ -1,0 +1,15 @@
+// Issue #56 (stage C1): a closure runs a captured function value. The value is a known function that performs a `multi` operation, and the clause resumes two times: the run of the closure can resume more than once.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn choose() / Pick { let b = pick(); print(b) }
+fn apply(f: fn() / Pick) / Pick { f() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let tx = Tx { id: 1 }
+        let f1 = choose
+        let g = || f1()
+        apply(g)   //~ W0503 W0602
+        commit(tx)
+    }
+}

@@ -1,0 +1,11 @@
+// Issue #58 (stage C1): a closure gives a reference into `v2` to a captured closure, and after that run it changes `v2`. The callee `apply` gives no place to the run, so the change is no conflict at the call of `apply`.
+fn apply(f: fn()) { f() }
+fn main() {
+    let fr1 = |x: &u64| print(x)
+    let v2 = [1, 2]
+    let g3 = || {
+        fr1(&v2[0])
+        v2.push(3)
+    }
+    apply(g3)
+}

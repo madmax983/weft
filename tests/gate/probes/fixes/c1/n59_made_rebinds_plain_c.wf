@@ -1,0 +1,13 @@
+// Issue #59 (stage C1): a callee makes a closure that changes its captured `u64`. A run of the closure gives the capture a new `u64`, not a linear value, so the local of the closure is not linear (the linear argument of the callee does not go into the closure).
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn h1(p0: u64, p1: Tx) -> fn() {
+    commit(p1)
+    || p0 += 1
+}
+fn main() {
+    let f3 = h1(2, Tx { id: 2 })
+    f3()
+    run_both(f3, f3)
+}

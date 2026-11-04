@@ -1535,6 +1535,47 @@ As built (follow-up F20.4, the third review of group F at d1ddac6): two changes.
   body is the variable of the capture (`E`, or the source of a `Kept` capture). A
   perform calls it for its arguments.
 
+As built (stage C1, issues #56 to #59): the precision causes of the tier-2 new-fp rows.
+Code of a caller for a value of the interface (a run of a parameter or of a capture) is a
+worst case in the body that runs it, but the caller gives the value and applies its own
+summary there (part `runs`). Six changes keep that worst case out of the summaries and of
+the nodes of the caller.
+
+- #56. The part `multi` of a closure summary does not count a `multi_at` row that code of
+  a caller adds at a run node of a value of the interface (`Em::run_multi`,
+  `FnParts::run_multi`). `Run::multi` still gives the row of a value that the caller does
+  not know.
+- #56. A run node is a `dyn_rows` node of its own reason (`Handlers::real_rows`) only if
+  a summary other than such code is `multi`. The re-entry edges after a node of code of a
+  caller only still go into the facts and the cycles of the analysis, but they do not run
+  the values of the interface again (`Cycles::add_code_rows_at`, `Cycles::has_strict`,
+  the flag `many` of `runs`).
+- #56. A place of the `rc` group of a definition with no function part (row `Fns` with no
+  parameter) reaches no function value (`transfer::fns_of_role`).
+- #57, #58. A call runs the clauses of a handler that it reaches only through the values
+  that the callee runs (a handler whose capability a closure captures, or the local
+  `Fail` handler of a failure of such a value; `frames::own_clause_handlers` does not give
+  them) only if the analysis finds a value at the node that can reach it
+  (`clause::note_cap_apps`, `Handlers::cap_active`, `clause::run_handlers`): code of a
+  caller, a summary that performs the effect, or a summary that can fail. The frames and
+  the abort edges stay as before.
+- #58. The places that a closure gives to a run of a captured value are no arguments of
+  the node (`Sigma::nested`: no `call_arg`, except a place of an environment). The body
+  of the closure checks that run.
+- #59. A change of a closure through a capture gives the place of the capture a value of
+  the type of the capture (`transfer::plain_env`): a capture of a type that can hold no
+  linear value and no function value gets no linear value.
+
+The self-attack of the stage found two old holes of the `ir` pipeline (the old pipeline
+rejects each program, the `ir` pipeline accepted it, and the run leaks a linear value):
+
+- A closure that gives a captured function variable a new closure that moves a value
+  that can be linear (`let set = || { g = || commit(tx) }; set()`): the new value of
+  the part `rebinds` is linear now (`transfer::linear_closure`).
+- A store of a linear closure into a function part of a local whose value was plain
+  data (`cb.f = || unlock(l)` after `Cb { f: || print(0) }`): the store gives
+  `overwrites` of the variable of the local, as a store of a linear part does.
+
 ### 5.21 Calls of function values [2.20]
 
 ```text

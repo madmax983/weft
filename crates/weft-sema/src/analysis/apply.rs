@@ -119,6 +119,13 @@ pub struct Sigma {
     /// the value that the callee runs, not through a place that the callee
     /// gives (W0312, follow-up F13.2).
     pub env: Vec<PlaceId>,
+    /// A value that a closure runs through a capture ([`RunKind::Run`]):
+    /// the closure itself gives the places of the run (`args`, `others`),
+    /// not the callee of the node. They are no argument of the node (no
+    /// `call_arg`, except a place of an environment): a change of the
+    /// closure there is code of the closure before or after the run, and
+    /// the body of the closure checks the run (issue #58).
+    pub nested: bool,
     /// A call of a function item whose effects of the row each go to a
     /// local handler (plan stage F15): the node runs the clauses itself
     /// (`clause::call_clauses`), so the operations lend no place; only the
@@ -1197,6 +1204,10 @@ pub fn main(
         for p in places {
             let root = if in_env(cx.facts, p) {
                 crate::body::roots::STORED
+            } else if s.nested {
+                // The closure gives the place to the run, not the callee of
+                // the node: the body of the closure checks it (issue #58).
+                continue;
             } else {
                 g
             };

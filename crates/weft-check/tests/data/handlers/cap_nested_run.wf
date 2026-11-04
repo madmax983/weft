@@ -1,0 +1,16 @@
+// Issue #57 (stage C1): a closure in a handled body captures the capability of the handler and runs a captured function item that performs the effect. The item runs with the handlers of the call in the closure, so the run of the closure runs the clause, and the `resume` there can abort.
+effect Grab { fn grab(r: &u64) -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(i) = l; print("unlock {i}") }
+fn apply(f: fn()) { f() }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn get() { let x = 1; print(grab(&x)) }
+fn main() {
+    handle Grab { fn grab(r) { let k = r + 0; resume(k) } } in {
+        let lk5 = Lk { id: 5 }
+        let f4 = get
+        let g6 = || run_both(f4, f4)
+        apply(g6)   //~ W0602
+        unlock(lk5)
+    }
+}

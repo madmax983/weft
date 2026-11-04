@@ -157,6 +157,39 @@ fn the_corpus_in_scope_of_all_groups_gives_the_markers_of_the_ir_pipeline() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// The precision programs of the corpus (plan stage C1): each one gives its
+/// markers with `--facts=ir` and all groups. Four of them are in scope; the
+/// other two keep the old pipeline, because an operation gives a function
+/// value to a handler (stage F14), and the old pipeline gives the markers.
+#[test]
+fn the_precision_programs_of_the_corpus_keep_their_markers_with_the_ir_pipeline() {
+    let in_scope = [
+        "35_wild_places.wf",
+        "102_wild_instances.wf",
+        "103_wild_lend.wf",
+        "125_multi_values.wf",
+    ];
+    let fallback = ["143_arg_roots.wf", "83_kept_values.wf"];
+    for name in in_scope {
+        let path = root().join("tests/programs").join(name);
+        let msg = run_with(&path, Some(weft_sema::Groups::ALL));
+        assert_eq!(msg.as_deref(), Some(""), "{name}");
+    }
+    for name in fallback {
+        let path = root().join("tests/programs").join(name);
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        let opts = Options {
+            facts: FactGen::Ir,
+            ir_groups: weft_sema::Groups::ALL,
+            ..Options::from_markers(&src)
+        };
+        let checked = check_source(name, &src, opts);
+        let file = SourceFile::new(name, src.as_str());
+        let (want, _) = expected_for(&src, Pipeline::Ir);
+        assert_eq!(actual(&checked, &file), want, "{name}");
+    }
+}
+
 #[test]
 fn a_marker_of_one_pipeline_needs_a_ledger_entry() {
     let ledger =

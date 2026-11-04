@@ -1,0 +1,16 @@
+// Issue #57 (stage C1, self-attack): a closure in a handled body runs a function parameter that the body does not know: the clause can run (W0602).
+effect Grab { fn grab(r: &u64) -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(i) = l; print("unlock {i}") }
+fn apply(f: fn()) { f() }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn get() { let x = 1; print(grab(&x)) }
+fn k(f: fn()) {
+    handle Grab { fn grab(r) { let z = r + 0; resume(z) } } in {
+        let lk = Lk { id: 1 }
+        let g = || f()
+        apply(g)
+        unlock(lk)
+    }
+}
+fn main() { k(get) }

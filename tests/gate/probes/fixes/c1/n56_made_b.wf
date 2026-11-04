@@ -1,0 +1,15 @@
+// Issue #56 (stage C1, self-attack): a callee makes a closure that runs its function parameter, and the caller gives a function that resumes two times (W0503 W0602).
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn choose() / Pick { let b = pick(); print(b) }
+fn apply(f: fn() / Pick) / Pick { f() }
+fn wrap(f: fn() / Pick) -> fn() / Pick { || f() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let tx = Tx { id: 1 }
+        let g = wrap(choose)
+        apply(g)
+        commit(tx)
+    }
+}

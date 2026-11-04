@@ -631,7 +631,7 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
             bind_handle(em, *av, st, h, &v)?;
         }
     }
-    let hs = clause::call_handlers(&em.cx(), body, t);
+    let hs = clause::run_handlers(&em.cx(), body, block, t);
     let gv = if hs.is_empty() {
         clause::Given::default()
     } else {

@@ -1,0 +1,14 @@
+// Issue #56 (stage C1): the same runs in the body of a `handle` whose clause resumes one time.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn apply(f: fn()) { f() }
+fn main() {
+    handle Pick { fn pick() { resume(true) } } in {
+        let tx = Tx { id: 1 }
+        let f1 = || print(0)
+        let g = || f1()
+        apply(g)
+        commit(tx)
+    }
+}

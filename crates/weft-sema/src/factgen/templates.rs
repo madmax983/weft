@@ -104,6 +104,12 @@ pub struct Em<'a> {
     /// interface (an entry of `runs`): a caller applies the value that it
     /// gives there (no part `lends` of a closure summary).
     pub run_nodes: Vec<NodeId>,
+    /// One entry for each `multi_at` row that code of a caller adds at a
+    /// run node of `run_nodes` (issue #56). The caller applies the value
+    /// that it gives there, with the `multi` part of that value (part
+    /// `runs`), so these rows are no part `multi` of a closure summary. The
+    /// body itself keeps the rows: it does not know the value.
+    pub run_multi: Vec<NodeId>,
     /// The `lends_mut` of each summary that the body applies at a run node
     /// and that no entry of `runs` gives again to a caller: code of a caller
     /// of a value that the body does not know, the captures of a closure
@@ -1425,8 +1431,13 @@ fn part(
     em.facts
         .mutates_at
         .extend(al.places.iter().map(|&m| (n, m)));
+    // The local holds the linear value after the store: a linear part, or
+    // a linear closure in a part with a function type (class H-LIN; the
+    // store into a local whose value was plain data, `cb.f = || unlock(l)`
+    // after `Cb { f: || print(0) }`, stage C1).
     if let (Some(s), Some(t)) = (s, em.place_ty(place)) {
-        if ir_props(em.tys, t).linear {
+        let closure = v.flat().linear && crate::props::ir_has_fns(em.tys, t);
+        if ir_props(em.tys, t).linear || closure {
             em.facts.overwrites.push((s, n));
         }
     }
@@ -3703,7 +3714,9 @@ fn emit_apps(
     let main = nodes.main;
     let mut abort = false;
     let mut frames = Vec::new();
-    let cyclic = em.cycles.has(em.body, block);
+    // A cycle of the re-entry edges after code of a caller does not run
+    // the values of the interface again (issue #56).
+    let cyclic = em.cycles.has_strict(em.body, block);
     let rebinds = apps.iter().any(|a| !a.rebinds.is_empty());
     // One run at the node and no task node: no other code of the call runs
     // while a task of the run runs (E-2, follow-up F19.3), but the code of a
@@ -3832,6 +3845,12 @@ fn emit_apps(
             // F19).
             if em.in_task.is_some() {
                 em.facts.multi_at.truncate(multi);
+            }
+            // Code of a caller for a value of the interface: the caller
+            // gives the `multi` part of the value (issue #56).
+            if app.code && app.run.is_some() {
+                let added = em.facts.multi_at.get(multi..).unwrap_or_default();
+                em.run_multi.extend(added.iter().copied());
             }
             slot_reads(em, n, read);
             // Code of a caller reads the places behind the parameters of the

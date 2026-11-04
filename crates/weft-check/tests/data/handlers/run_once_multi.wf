@@ -1,0 +1,11 @@
+// Issue #56 (stage C1): the bad twin of `run_once_multi_ok.wf`. The callee runs the `once` closure after a known function value that resumes two times: the closure runs two times (W0502).
+effect Pick { multi fn pick() -> bool }
+fn choose() / Pick { let b = pick(); print(b) }
+fn both(f: fn(), g: fn() / Pick) / Pick { g(); f() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let u = [3]
+        let h = || { let w = u; print(w.len()) }
+        both(h, choose)   //~ W0502
+    }
+}

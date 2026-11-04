@@ -1669,6 +1669,32 @@ with the group forced on, report only).
 - Gate: the common gates; the common exit; tier 2.
 - Exit: the common exit on all programs; no unledgered `open` program; the claims test
   passes with all groups.
+- As built (stage C1, on top of F20.4 ec00112):
+  - The new-fp share: the precision causes of the 98 tier-2 rows of F20 (issues #56 to
+    #59) are fixed (`docs/ir.md` 5.20, "As built (stage C1)"); 91 rows are `same` now.
+    Of the 7 rows that stay, 4 (`h0` of `r2/oracle/runs`) are `stricter`: a function
+    parameter that runs in the body of a local `Fail` handler can be an item that fails
+    (probe `fixes/c1/n57_param_fails_b.wf`, `fixed`). Tier 2 has 12 `new-fp` rows of
+    12548 probes that `old` accepts (0.096 %): the share blocker is gone. The rule of the
+    share did not change.
+  - The self-attack of the stage found two old holes of the `ir` pipeline (a closure that
+    rebinds a captured function variable to a linear closure; a store of a linear closure
+    into a function field of a local of plain data). Both are fixed.
+  - `open` programs: F3-6 (`fk4`, `tk6`, `g14_fork_result_lin`, `jc`) are class `open`
+    (verdict "stays", 10.3); `a13`, `e17`, `w09` are class `edge` (issue #41); `opres` and
+    `d1_callee_mut*` are class `edge` (issue #48, the `GIVES_BACK` fallback of F16.3).
+    `h3_div_min` and `c14_big` (the interpreter rejects the literal of the largest `u64`)
+    keep `open-old`: they need an issue.
+  - IR modes: `scale.rs` (`the_programs_of_this_file_check_with_the_ir_facts`, and the
+    `ir` time in `many_locals_check_in_time`) and `limits.rs` (`pipeline` had it; the
+    derivation tests now run with the `ir` facts too). The precision programs of the
+    corpus keep their markers (`programs_ir.rs`); `143_arg_roots.wf` and
+    `83_kept_values.wf` stay with the old pipeline (a function value that an operation
+    gives to a handler, F14).
+  - The cost criterion does not hold (§5, gate record C1): tier 1 `check` time 2.2 times
+    the old time, and 10617 of 37667 functions have more than 3 times the facts.
+  - Not done: 25 tier-2 `lost-clean` rows wait for an independent signature
+    (scratchpad `c1/lost_clean_t2.tsv`).
 
 #### C2 Fresh sweep
 
@@ -1886,6 +1912,18 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | F20.1 (tier 2, groups A to F, default) | 46951 of 57393 | 44265 | 88 | 103 (`h6_option_closure.wf` keeps its W0602 only; `c4_generic_clean.wf` is `same`) | 2524 (as F20, and `verify/s5/p/f1_closure_stash.wf`) | 1594 | 8809 | 10 (open-old) |
 | F20.2 (tier 1, groups A to F, default) | 4023 of 4407 | 3548 | 236 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (100 signed: the 18 of F20 by the review of group F; `verify/s5/p/f1_closure_stash.wf` waits for the second review) | 124 | 388 (+4: the `f20_2` probes, ledgered) | 9 (open-old) |
 | F20.2 (tier 2, groups A to F, default) | 46951 of 57393 | 44347 | 88 | 103 (as F20.1: 98 precision losses of the groups A to E with no issue yet, over the 0.1 % share) | 2451 (2450 signed by the review of group F; the 70 W0401/W0403 rows that it refused are `same` or `changed` now (P-2), and 3 W0301 rows are `same` (P-1); `f1_closure_stash.wf` waits) | 1597 | 8797 | 10 (open-old) |
+| F20.4 (tier 1, groups A to F, default) | 4057 of 4441 | 3579 | 237 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 124 | 390 | 9 (open-old) |
+| F20.4 (tier 2, groups A to F, default) | 46951 of 57393 | 44347 | 88 | 103 (98 with issues #56 to #59; over the 0.1 % share) | 2451 (signed) | 1597 | 8797 | 10 (open-old) |
+| C1 (tier 1, groups A to F, default) | 4082 of 4466 | 3604 | 238 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 124 | 389 | 9 (3 `open` F3-6 "stays"; 4 `edge`: #41 three, #48 one; 2 `open-old` with no issue: `h3_div_min`, `c14_big`) |
+| C1 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %: 4 `stricter` `h0` rows, 3 precision rows of #57 to #59, the 5 of F20 and before) | 2476 (2451 signed; 25 new rows wait for an independent signature) | 1608 | 8471 | 10 (4 `open` F3-6; 4 `edge` #48; 2 `open-old`: `h3_div_min`, `c14_big`) |
+
+Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
+for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts
+(2.2 times; the limit is 2 times). 10617 of 37667 functions have more than 3 times the
+facts of the old pipeline (1436 of them with 20 or more old facts; the largest factor is
+46 on `verify/s5/S5a/x/p/scale_ops.wf`). In `scale.rs` (release) the `ir` check of
+`many_variants(8000)` takes 28 s (old 0.27 s): each test of the chain of a `match` gives
+each part variable of the scrutinee a new value. The criterion does not hold.
 
 ---
 

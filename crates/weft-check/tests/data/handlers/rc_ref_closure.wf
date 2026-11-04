@@ -1,0 +1,17 @@
+// Issue #56 (stage C1): the bad twin of `rc_ref_closure_ok.wf`. The closure runs a function that performs a `multi` operation whose clause resumes two times (W0503).
+effect Pick { multi fn pick() -> bool }
+struct E { hp: u64 }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn choose() / Pick { let b = pick(); print(b) }
+fn apply(f: fn() / Pick) / Pick { f() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let rc2 = Rc.new(E { hp: 2 })
+        let tx = Tx { id: 4 }
+        let r5 = &rc2.hp
+        let g7 = || { print(r5); choose() }
+        apply(g7)   //~ W0301 W0503 W0602
+        commit(tx)
+    }
+}

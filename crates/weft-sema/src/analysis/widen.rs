@@ -112,6 +112,9 @@ pub fn heads(b: &Body, rank: &[usize]) -> Vec<bool> {
 pub struct Cycles {
     /// The blocks in a cycle.
     blocks: BTreeSet<(BodyId, BlockId)>,
+    /// The blocks of `blocks` that only the re-entry edges after code of a
+    /// caller put in a cycle ([`Self::add_code_rows_at`], issue #56).
+    code: BTreeSet<(BodyId, BlockId)>,
 }
 
 impl Cycles {
@@ -121,7 +124,7 @@ impl Cycles {
         for &bid in comp {
             if let Some(b) = p.bodies.get(bid.index()) {
                 for blk in cyclic_blocks(b) {
-                    out.blocks.insert((bid, blk));
+                    out.insert((bid, blk), false);
                 }
             }
         }
@@ -165,8 +168,7 @@ impl Cycles {
                 }
                 if let Some(b) = p.bodies.get(bid.index()) {
                     for i in 0..b.blocks.len() {
-                        self.blocks
-                            .insert((bid, BlockId(u32::try_from(i).unwrap_or(u32::MAX))));
+                        self.insert((bid, BlockId(u32::try_from(i).unwrap_or(u32::MAX))), false);
                     }
                 }
             }
@@ -197,6 +199,34 @@ impl Cycles {
 
     /// [`Self::add_rows`] for the nodes `rows` (a body and a block).
     pub fn add_rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)]) {
+        self.rows_at(p, comp, rows, false);
+    }
+
+    /// [`Self::add_rows_at`] for run nodes that only code of a caller makes
+    /// `multi` (a run of a value of the interface whose value the body does
+    /// not know, issue #56). The blocks are in a cycle, but
+    /// [`Self::has_strict`] does not count them: the caller gives the value
+    /// and applies its `multi` part at its own node.
+    pub fn add_code_rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)]) {
+        self.rows_at(p, comp, rows, true);
+    }
+
+    /// Adds block `key` to the cycles. With `code`, only the re-entry edges
+    /// after code of a caller put it there.
+    fn insert(&mut self, key: (BodyId, BlockId), code: bool) {
+        if code {
+            if !self.blocks.contains(&key) {
+                self.code.insert(key);
+            }
+        } else {
+            self.code.remove(&key);
+        }
+        self.blocks.insert(key);
+    }
+
+    /// The cycles of the re-entry edges after the nodes `rows`; `code` as in
+    /// [`Self::insert`].
+    fn rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)], code: bool) {
         let bodies: BTreeSet<BodyId> = rows.iter().map(|r| r.0).collect();
         for bid in bodies {
             let rows: Vec<BlockId> = rows.iter().filter(|r| r.0 == bid).map(|r| r.1).collect();
@@ -210,7 +240,7 @@ impl Cycles {
                     Some(s) if !*s => *s = true,
                     _ => continue,
                 }
-                self.blocks.insert((bid, x));
+                self.insert((bid, x), code);
                 if let Some(blk) = b.blocks.get(x.index()) {
                     work.extend(blk.term.kind.unwind());
                     work.extend(blk.term.kind.normal_successors());
@@ -220,8 +250,8 @@ impl Cycles {
                 if other != bid && crate::factgen::handlers::splice_root(p, other) == bid {
                     if let Some(ob) = p.bodies.get(other.index()) {
                         for i in 0..ob.blocks.len() {
-                            self.blocks
-                                .insert((other, BlockId(u32::try_from(i).unwrap_or(u32::MAX))));
+                            let key = (other, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
+                            self.insert(key, code);
                         }
                     }
                 }
@@ -232,6 +262,14 @@ impl Cycles {
     /// True if block `block` of body `body` is in a cycle.
     pub fn has(&self, body: BodyId, block: BlockId) -> bool {
         self.blocks.contains(&(body, block))
+    }
+
+    /// True if block `block` of body `body` is in a cycle for a reason other
+    /// than the re-entry edges after code of a caller
+    /// ([`Self::add_code_rows_at`]): a run of a value of the interface there
+    /// runs the value more than once (part `runs`, issue #56).
+    pub fn has_strict(&self, body: BodyId, block: BlockId) -> bool {
+        self.has(body, block) && !self.code.contains(&(body, block))
     }
 }
 

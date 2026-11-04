@@ -1,0 +1,18 @@
+// Issue #56 (stage C1): a closure captures a reference into an `rc` object of a type with no function part. The object holds no function value, so a run of the closure runs no code of a caller, and nothing resumes more than once.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+struct E { hp: u64 }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn apply(f: fn()) { f() }
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        print(ask())
+    }
+    let rc2 = Rc.new(E { hp: 2 })
+    let tx = Tx { id: 4 }
+    let r5 = &rc2.hp
+    let g7 = || print(r5)
+    apply(g7)
+    commit(tx)
+}

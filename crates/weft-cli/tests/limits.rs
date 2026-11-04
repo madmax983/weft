@@ -413,10 +413,21 @@ fn long_multi(n: usize) -> String {
 /// thread. The library calls run on this thread, so the renderer must not
 /// recurse.
 fn explain_on_small_stack(src: String) -> String {
+    explain_with(src, FactGen::Old)
+}
+
+/// [`explain_on_small_stack`] with the facts `facts` (all groups for the
+/// facts of the IR, plan stage C1).
+fn explain_with(src: String, facts: FactGen) -> String {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {
-            let checked = weft_check::check_source("long.wf", &src, Options::default());
+            let opts = Options {
+                facts,
+                ir_groups: weft_sema::Groups::ALL,
+                ..Options::default()
+            };
+            let checked = weft_check::check_source("long.wf", &src, opts);
             let file = weft_syntax::SourceFile::new("long.wf", src.as_str());
             let line_of = |o: u32| file.line_col(o).0;
             let mut text = String::new();
@@ -461,17 +472,30 @@ fn explain_folds_a_long_derivation() {
     }
 }
 
+/// The same with the facts of the IR (plan stage C1, §2.7.4).
+#[test]
+fn explain_folds_a_long_derivation_with_the_ir_facts() {
+    for (src, relation, fold) in long_derivations() {
+        let text = explain_with(src, FactGen::Ir);
+        assert!(text.starts_with(relation), "{text}");
+        assert!(text.contains(fold), "{text}");
+        assert_short(&text);
+    }
+}
+
 /// A clock is not stable on a loaded machine, so this bound runs only in a
 /// release build (`cargo test --release -p weft-cli --test limits`).
 #[test]
 #[cfg_attr(debug_assertions, ignore = "a time bound needs a release build")]
 fn explain_folds_a_long_derivation_in_time() {
-    for (src, _, _) in long_derivations() {
-        let start = std::time::Instant::now();
-        let text = explain_on_small_stack(src);
-        let time = start.elapsed();
-        assert_short(&text);
-        assert!(time.as_secs() < 20, "{time:?}");
+    for facts in [FactGen::Old, FactGen::Ir] {
+        for (src, _, _) in long_derivations() {
+            let start = std::time::Instant::now();
+            let text = explain_with(src, facts);
+            let time = start.elapsed();
+            assert_short(&text);
+            assert!(time.as_secs() < 20, "{facts:?}: {time:?}");
+        }
     }
 }
 

@@ -473,6 +473,11 @@ pub struct FnParts<'a> {
     /// closure summary, because a caller applies the value that it gives
     /// there.
     pub run_nodes: &'a [weft_facts::NodeId],
+    /// In a closure body: one entry for each `multi_at` row that code of a
+    /// caller adds at a node of `run_nodes` (`Em::run_multi`, issue #56).
+    /// The caller applies the value that it gives there with the `multi`
+    /// part of that value, so these rows are no part `multi` of the closure.
+    pub run_multi: &'a [weft_facts::NodeId],
     /// In a closure body: each node where the body gives a capture a whole
     /// new value (`whole_capture`), with the index of the capture. The
     /// changes at the nodes after them are the part `late_muts`.
@@ -1316,11 +1321,23 @@ pub fn closure(
     // operation, a callee that can): a run of the closure can. A perform
     // through a captured capability is a `multi` point of the node that
     // runs the closure (the clause of the handler, `clause_multi`), not of
-    // a caller.
-    out.multi = facts
-        .multi_at
-        .iter()
-        .any(|n| !fv.cap_performs.iter().any(|(x, _, _)| x == n));
+    // a caller. A row of code of a caller at a run of a value of the
+    // interface is not either: the caller applies the value that it gives,
+    // with its own `multi` part (part `runs`; `Run::multi` keeps the row of
+    // a value that the caller does not know either, issue #56). A node with
+    // more rows than code of a caller added has another reason.
+    let mut code_rows: BTreeMap<weft_facts::NodeId, usize> = BTreeMap::new();
+    for &n in fv.run_multi {
+        *code_rows.entry(n).or_default() += 1;
+    }
+    let mut rows: BTreeMap<weft_facts::NodeId, usize> = BTreeMap::new();
+    for &n in &facts.multi_at {
+        *rows.entry(n).or_default() += 1;
+    }
+    out.multi = rows.iter().any(|(n, &k)| {
+        !fv.cap_performs.iter().any(|(x, _, _)| x == n)
+            && k > code_rows.get(n).copied().unwrap_or(0)
+    });
     for blk in &b.blocks {
         match &blk.term.kind {
             TermKind::Assert { .. } => {

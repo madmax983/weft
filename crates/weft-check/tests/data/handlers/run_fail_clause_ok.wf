@@ -1,0 +1,22 @@
+// Issue #58 (stage C1): the clean twin of `run_fail_clause.wf`. The callee runs closures that cannot fail, so the clause of the local `Fail` handler does not run at the call: no W0302 for `v`, and no W0312 for `n` (the clause changes `n`, and the closure points into it).
+fn apply(f: fn()) { f() }
+fn bump_n(r: &u64) { r += 1 }
+fn maybe_fail(n: u64) { if n > 100 { fail("big") } }
+fn main() {
+    let v = [1, 2]
+    handle Fail { fn fail(m) { v.clear(); print(m) } } in {
+        let w = v
+        let f = || print(1)
+        let g = || f()
+        apply(g)
+        g()
+        print(w.len())
+    }
+    let n = 1
+    let r = &n
+    let f8 = || bump_n(r)
+    handle Fail { fn fail(m) { n += 1; print(m) } } in {
+        apply(f8)
+        maybe_fail(1)
+    }
+}

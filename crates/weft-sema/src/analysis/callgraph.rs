@@ -529,6 +529,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 code_multi: e.code_multi,
                                 made: e.made.as_ref(),
                                 run_nodes: &[],
+                                run_multi: &[],
                                 rebind_nodes: &[],
                                 lends: &e.own_lends,
                                 cap_performs: &[],

@@ -1,0 +1,16 @@
+// Issue #56 (stage C1): a callee runs a function parameter one time. The program declares a `multi` operation and a handler, so code of a caller there can resume more than once. The caller gives a `once` closure that resumes nothing: the callee runs it one time.
+effect Pick { multi fn pick() -> bool }
+effect Grab { fn grab() -> u64 }
+fn apply(f: fn()) { f() }
+fn both(f: fn(), g: fn()) { g(); f() }
+fn main() {
+    handle Grab { fn grab() { resume(0) } } in {
+        print(grab())
+    }
+    let v = [1, 2]
+    let g = || { let w = v; print(w.len()) }
+    apply(g)
+    let u = [3]
+    let h = || { let w = u; print(w.len()) }
+    both(h, || print(0))
+}

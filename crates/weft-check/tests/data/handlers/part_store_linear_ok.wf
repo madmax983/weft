@@ -1,0 +1,14 @@
+// Stage C1 (self-attack): the clean twin of `part_store_linear.wf`. Nothing aborts, and the closure runs one time.
+linear struct Lock { id: u64 }
+    on abort = unlock_on_abort
+fn unlock_on_abort(l: Lock) { let Lock(i) = l; print("rollback {i}") }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock {i}") }
+struct Cb { f: fn() }
+fn work() {
+    let l = Lock { id: 6 }
+    let cb = Cb { f: || print(0) }
+    cb.f = || unlock(l)
+    let g = cb.f
+    g()
+}
+fn main() { handle Fail { fn fail(m) { print("caught: {m}") } } in work() }

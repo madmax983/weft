@@ -1512,7 +1512,7 @@ pub fn call_out(
 /// (a function value behind a reference stays with the old pipeline), so
 /// the summary of an item gives a linear closure to a place only with
 /// `fns`. A closure and code of a caller can make one.
-pub(crate) fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
+pub(crate) fn apply_apps(cx: &mut Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
     for app in apps {
         let fns = fns || app.kind != super::apply::RunKind::Item;
         for (q, refs) in &app.stores {
@@ -1523,7 +1523,17 @@ pub(crate) fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: boo
             }
         }
         apply_put_fns(cx, st, &app.put_fns);
-        let changed: Vec<PlaceId> = app.muts.iter().map(|(q, _)| *q).collect();
+        // A change of a closure through a capture gives the place of the
+        // capture a value of the type of the capture: no linear value goes
+        // there if the type can hold no linear value and no function value
+        // (issue #59: `let f3 = h1(2, tx); f3()` with `|| p0 += 1`).
+        let plain = plain_env(cx, app);
+        let changed: Vec<PlaceId> = app
+            .muts
+            .iter()
+            .map(|(q, _)| *q)
+            .filter(|q| !plain.contains(q))
+            .collect();
         for (k, path) in can_get_linear_with(cx, &changed, fns) {
             st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
         }
@@ -1538,6 +1548,65 @@ pub(crate) fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: boo
             }
         }
     }
+}
+
+/// True if the function value `f` is a closure that moves a value that can
+/// be linear into its environment (a `ByMove` capture of such a type).
+fn linear_closure(cx: &mut Cx<'_>, f: &FnVal) -> bool {
+    let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
+        return false;
+    };
+    let p = cx.p;
+    let Some(decl) = p.closures.get(c.index()) else {
+        return false;
+    };
+    decl.captures
+        .iter()
+        .enumerate()
+        .filter(|(_, cap)| cap.mode == weft_ir::CaptureMode::ByMove)
+        .any(|(k, _)| {
+            let k = u32::try_from(k).unwrap_or(u32::MAX);
+            crate::factgen::alpha::capture_ty(p, cx.tys, *c, k)
+                .is_some_and(|t| crate::props::ir_maybe_linear(cx.tys, t))
+        })
+}
+
+/// The places of the captures of the closure of `app` (`Sigma::captures`:
+/// the variable of a `Kept` or `ByRef` capture, the value of the closure for
+/// a `ByMove` capture) that only captures of a type that can hold no linear
+/// value and no function value stand for (issue #59). A change of the
+/// closure there gives the place a value of that type, so no linear value.
+fn plain_env(cx: &mut Cx<'_>, app: &Applied) -> BTreeSet<PlaceId> {
+    let Some(c) = app.closure else {
+        return BTreeSet::new();
+    };
+    let Some(decl) = cx.p.closures.get(c.index()) else {
+        return BTreeSet::new();
+    };
+    let mut plain = BTreeSet::new();
+    let mut other = BTreeSet::new();
+    for (j, cap) in decl.captures.iter().enumerate() {
+        if matches!(
+            cap.mode,
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
+        ) {
+            continue;
+        }
+        let places = app.sigma.captures.get(j).cloned().unwrap_or_default();
+        // The type of the captured variable (or of the value of a `ByMove`
+        // capture): the place of the capture holds a value of it.
+        let ok = crate::factgen::alpha::place_ty(cx.p, cx.tys, decl.maker, &cap.source)
+            .is_some_and(|t| {
+                !crate::props::ir_maybe_linear(cx.tys, t) && !crate::props::ir_has_fns(cx.tys, t)
+            });
+        if ok {
+            plain.extend(places);
+        } else {
+            other.extend(places);
+        }
+    }
+    plain.retain(|q| !other.contains(q));
+    plain
 }
 
 /// A run node with the arguments `args` that changes the places `changed`
@@ -1671,11 +1740,20 @@ fn note_multi_apps(
     apps: &[Applied],
 ) -> Result<(), AlphaError> {
     check_cap_apps(cx, (body, block), apps)?;
+    super::clause::note_cap_apps(cx, (body, block), apps);
     if cx.p.handlers.is_empty() || !crate::factgen::frames::has_multi_ops(cx.tys) {
         return Ok(());
     }
     if apps.iter().any(|a| a.summary.multi) {
         cx.hx.dyn_rows.insert((body, block));
+    }
+    // Code of a caller for a value of the interface: the caller gives the
+    // value and applies its `multi` part at its own node (issue #56).
+    if apps
+        .iter()
+        .any(|a| a.summary.multi && !(a.code && a.run.is_some()))
+    {
+        cx.hx.real_rows.insert((body, block));
     }
     Ok(())
 }
@@ -1875,6 +1953,10 @@ pub struct Applied {
     /// The parameter of the callee whose value the run is (part `runs` of
     /// the summary of the callee), for a run that a callee does.
     pub callee_param: Option<u32>,
+    /// The closure whose summary this is (a closure of the component, or
+    /// one that a callee made); `None` for an item and for code of a
+    /// caller.
+    pub closure: Option<weft_ir::ClosureId>,
     /// The summary is code of a caller (map N2): the value that the caller
     /// gives applies its own aborts where the caller runs it.
     pub code: bool,
@@ -2004,6 +2086,19 @@ fn fns_of_role(cx: &Cx<'_>, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
             out.insert(FnVal::Capture(k));
         }
         Some(Role::Cell(k)) => out.extend(st.value(k, &[]).flat().fns),
+        // A place of the `rc` objects of a definition that no instance of
+        // which can hold a function value gives none (`Rc<E>` with no
+        // function field; issue #56: a closure that captures `&rc.hp` does
+        // not run code of a caller).
+        Some(Role::Group)
+            if cx
+                .roots
+                .group_adt(root)
+                .and_then(|a| cx.tys.adts().get(a.index()))
+                .is_some_and(|d| {
+                    let fns = d.row(weft_ir::ty::TyProp::Fns);
+                    !fns.always && fns.params.is_empty()
+                }) => {}
         _ => {
             out.insert(FnVal::Unknown);
         }
@@ -2775,6 +2870,7 @@ fn apply_runs(
                 // the places of the environment through the environment.
                 if run.capture {
                     a.sigma.env.extend(env.iter().copied());
+                    a.sigma.nested = true;
                 }
                 // A run that the callee does on some paths only: each run
                 // that it gives is on some paths only too (hole H5b of the
@@ -3089,6 +3185,7 @@ fn apply_value(
                 deep: Vec::new(),
                 task_run: None,
                 callee_param: None,
+                closure: None,
             });
             let places = match given {
                 Given::Args(args) => {
@@ -3210,6 +3307,7 @@ fn apply_value(
                 deep: Vec::new(),
                 task_run: None,
                 callee_param: None,
+                closure: None,
             });
             apply_runs(
                 cx,
@@ -3320,6 +3418,13 @@ fn apply_value(
                         }
                     }
                 }
+                // A closure that the body puts there and that moves a value
+                // that can be linear into its environment is a linear value
+                // (`let set = || { g = || commit(t) }; set()`).
+                if v.fns.iter().any(|f| linear_closure(cx, f)) {
+                    v.linear = true;
+                    v.empty = false;
+                }
                 whole.push(k);
                 rebinds.push((key, Tree::leaf(v)));
             }
@@ -3409,6 +3514,7 @@ fn apply_value(
                 deep,
                 task_run: None,
                 callee_param: None,
+                closure: Some(*c),
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: a run of a capture runs each value of the callee

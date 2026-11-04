@@ -573,3 +573,72 @@ fn a_copy_of_a_callee_frame_sees_the_changes_after_a_row_reentry() {
     check("row_mid_closure.wf");
     check("row_mid_ok.wf");
 }
+
+/// Issue #56 (stage C1): a closure that runs a captured function value is a
+/// `multi` point only where the value that the caller gives can resume more
+/// than once. A known value that performs nothing does not make the run of
+/// the closure a `multi` point, also when the program declares a `multi`
+/// operation. A known value or a value of a caller that can resume more
+/// than once still does (W0503).
+#[test]
+fn a_closure_that_runs_a_captured_value_has_the_multi_part_of_the_value() {
+    check("nested_run_multi.wf");
+    check("nested_run_multi_param.wf");
+    check("nested_run_multi_ok.wf");
+    check("nested_run_multi_once_ok.wf");
+}
+
+/// Issue #56 (stage C1): code of a caller that a callee runs can resume
+/// more than once in a program with a `multi` operation, so the callee
+/// gets a re-entry edge after the run. The run of the value itself is not
+/// a second run: the caller gives the value and applies its `multi` part.
+/// A `once` closure that the callee runs one time is no W0502. A known
+/// value that resumes two times before a run of the `once` closure still
+/// gives W0502.
+#[test]
+fn a_reentry_after_code_of_a_caller_does_not_run_the_values_again() {
+    check("run_once_multi.wf");
+    check("run_once_multi_ok.wf");
+}
+
+/// Issue #57 (stage C1): a call in a handled body that runs function values
+/// runs the clauses of a handler whose capability a closure captures only
+/// if a value that it runs can perform through that handler. A closure
+/// that runs a known closure that performs nothing does not run the clause,
+/// so nothing can abort there. A captured function item that performs the
+/// effect still runs the clause (W0602).
+#[test]
+fn a_captured_capability_runs_its_clause_only_for_a_value_that_performs() {
+    check("cap_nested_run.wf");
+    check("cap_nested_run_ok.wf");
+}
+
+/// Issue #58 (stage C1): a call that runs function values runs the clause
+/// of the local `Fail` handler only if a value that it runs can fail. A
+/// closure that cannot fail does not run the clause: no W0302 for a local
+/// that the clause reads, and no W0312 for a place that the clause changes.
+/// A closure whose callee can fail still runs it (W0302).
+#[test]
+fn the_fail_clause_runs_only_for_a_value_that_can_fail() {
+    check("run_fail_clause.wf");
+    check("run_fail_clause_ok.wf");
+}
+
+/// Issue #56 (stage C1): a reference into an `rc` object of a type with no
+/// function part reaches no function value. A closure that captures it runs
+/// no code of a caller, so its run is no `multi` point. A closure that runs
+/// a known function that resumes two times still is (W0503).
+#[test]
+fn a_reference_into_an_rc_object_with_no_function_part_reaches_no_function_value() {
+    check("rc_ref_closure.wf");
+    check("rc_ref_closure_ok.wf");
+}
+
+/// Stage C1 (self-attack): a store of a linear closure into a function field
+/// of a local that held plain data gives the local the linear value
+/// (`overwrites`), so an abort before its run is W0602.
+#[test]
+fn a_store_of_a_linear_closure_into_a_field_makes_the_local_linear() {
+    check("part_store_linear.wf");
+    check("part_store_linear_ok.wf");
+}

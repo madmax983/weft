@@ -1,0 +1,13 @@
+// Issue #56 (stage C1, self-attack): a callee runs a once closure two times (W0502).
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn choose() / Pick { let b = pick(); print(b) }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    handle Pick { fn pick() { resume(true) } } in {
+        let v = [1, 2]
+        let once_c = || { let w = v; print(w.len()) }
+        twice(once_c)
+    }
+}

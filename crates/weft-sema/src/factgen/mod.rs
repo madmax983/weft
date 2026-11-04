@@ -736,9 +736,10 @@ pub fn emit_parts(
         // again with their cycles (plan stage F16).
         let new = new_rows(&hx, &mut known);
         if new.is_empty() {
+            real_row_cycles(&mut cycles, p, &comp, &hx);
             break st;
         }
-        cycles.add_rows_at(p, &comp, &new);
+        row_cycles(&mut cycles, p, &comp, &hx, &new);
         table.row_reentry_edges(p, facts, entry, &new);
         hx = fresh_handlers(&mut hx);
     };
@@ -779,6 +780,7 @@ pub fn emit_parts(
             runs: Vec::new(),
             code_multi: false,
             run_nodes: Vec::new(),
+            run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
             run_at: Vec::new(),
@@ -1183,11 +1185,41 @@ fn new_rows(
     new
 }
 
+/// Adds the cycles of the re-entry edges after the new run nodes `new` of
+/// `dyn_rows` to `cycles`. A node where only code of a caller for a value
+/// of the interface can resume more than once goes in with
+/// `Cycles::add_code_rows_at` (issue #56).
+fn row_cycles(
+    cycles: &mut crate::analysis::widen::Cycles,
+    p: &weft_ir::Program,
+    comp: &[weft_ir::BodyId],
+    hx: &crate::analysis::clause::Handlers,
+    new: &[(weft_ir::BodyId, weft_ir::BlockId)],
+) {
+    let (strict, code): (Vec<_>, Vec<_>) = new.iter().partition(|k| hx.real_rows.contains(k));
+    cycles.add_rows_at(p, comp, &strict);
+    cycles.add_code_rows_at(p, comp, &code);
+}
+
+/// Counts the run nodes of `real_rows` that an earlier run of the analysis
+/// found as nodes of code of a caller only (`row_cycles`) as cycles of
+/// their own.
+fn real_row_cycles(
+    cycles: &mut crate::analysis::widen::Cycles,
+    p: &weft_ir::Program,
+    comp: &[weft_ir::BodyId],
+    hx: &crate::analysis::clause::Handlers,
+) {
+    let real: Vec<_> = hx.real_rows.iter().copied().collect();
+    cycles.add_rows_at(p, comp, &real);
+}
+
 /// New tables of the handlers for a new run of the analysis: they keep the
 /// run nodes that a run found ([`new_rows`]).
 fn fresh_handlers(hx: &mut crate::analysis::clause::Handlers) -> crate::analysis::clause::Handlers {
     let mut out = crate::analysis::clause::Handlers::default();
     out.dyn_rows = std::mem::take(&mut hx.dyn_rows);
+    out.real_rows = std::mem::take(&mut hx.real_rows);
     out.escapes = std::mem::take(&mut hx.escapes);
     out
 }
@@ -1460,9 +1492,10 @@ fn closure_summary(
         };
         let new = new_rows(&hx, &mut known);
         if new.is_empty() {
+            real_row_cycles(&mut cycles, p, &comp, &hx);
             break r;
         }
-        cycles.add_rows_at(p, &comp, &new);
+        row_cycles(&mut cycles, p, &comp, &hx, &new);
         table.row_reentry_edges(p, &mut facts, cb, &new);
         hx = fresh_handlers(&mut hx);
     };
@@ -1470,6 +1503,7 @@ fn closure_summary(
     let mut holders = holders::Holders::new(vars.holder_parts());
     let closure_then: Vec<(u32, bool)>;
     let closure_waits: crate::analysis::tasks::WaitRaw;
+    let run_multi: Vec<weft_facts::NodeId>;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
@@ -1492,6 +1526,7 @@ fn closure_summary(
             runs: Vec::new(),
             code_multi: false,
             run_nodes: Vec::new(),
+            run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
             run_at: Vec::new(),
@@ -1516,6 +1551,7 @@ fn closure_summary(
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
         closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         closure_waits = std::mem::take(&mut em.waits);
+        run_multi = std::mem::take(&mut em.run_multi);
         (
             std::mem::take(&mut em.returns),
             std::mem::take(&mut em.aborts),
@@ -1562,6 +1598,7 @@ fn closure_summary(
             returns: &returns,
             code_multi: false,
             run_nodes: &run_nodes,
+            run_multi: &run_multi,
             lends: &own_lends,
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
@@ -1731,9 +1768,10 @@ fn emit_closure(
         };
         let new = new_rows(&hx, &mut known);
         if new.is_empty() {
+            real_row_cycles(&mut cycles, p, &[cb], &hx);
             break r;
         }
-        cycles.add_rows_at(p, &[cb], &new);
+        row_cycles(&mut cycles, p, &[cb], &hx, &new);
         out.table.row_reentry_edges(p, out.facts, cb, &new);
         hx = fresh_handlers(&mut hx);
     };
@@ -1759,6 +1797,7 @@ fn emit_closure(
         runs: Vec::new(),
         code_multi: false,
         run_nodes: Vec::new(),
+        run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
         run_at: Vec::new(),
@@ -1941,6 +1980,7 @@ fn emit_clause(
         runs: Vec::new(),
         code_multi: false,
         run_nodes: Vec::new(),
+        run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
         run_at: Vec::new(),

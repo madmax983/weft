@@ -1,0 +1,10 @@
+// Stage C1 (self-attack): a closure gives a captured function variable a new closure that moves a linear value. The variable holds a linear value after the run, and nothing runs it (W0601). Before the fix the `ir` pipeline accepted it, and the run leaked `tx`.
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn main() {
+    let tx = Tx { id: 1 }
+    let g = || print(0)
+    let set = || { g = || commit(tx) }
+    set()
+    print(2)
+}   //~ W0601

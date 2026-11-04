@@ -123,6 +123,17 @@ pub struct Handlers {
     /// analysis finds them: an applied summary is `multi`, plan stage F16).
     /// They are nodes of `crate::factgen::frames::row_multi` too.
     pub dyn_rows: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The nodes of `dyn_rows` where a summary other than code of a caller
+    /// for a value of the interface is `multi` (issue #56). At another node
+    /// of `dyn_rows` only the value that the caller gives can resume more
+    /// than once (`crate::analysis::widen::Cycles::add_code_rows_at`).
+    pub real_rows: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The handlers that a value that a run node (a body and a block) runs
+    /// can reach (issues #57 and #58): a handler whose capability a closure
+    /// captures (code of a caller, or a summary that performs the effect of
+    /// the handler), and the local `Fail` handler of the call (code of a
+    /// caller, or a summary that can fail). [`run_handlers`] reads it.
+    pub cap_active: std::collections::BTreeSet<(BodyId, BlockId, HandlerId)>,
     /// The `Main` node of each perform of a closure body through a captured
     /// capability, with the index of the capture and the identity of the
     /// effect (plan stage F16): the summary of the closure performs through
@@ -1125,7 +1136,7 @@ pub fn note_reentry(cx: &mut Cx<'_>, body: BodyId, block: BlockId, t: &TermKind,
             Some(dest.clone()),
             Some(*next),
         ),
-        TermKind::Call { next, .. } => (call_handlers(cx, body, t), None, *next),
+        TermKind::Call { next, .. } => (run_handlers(cx, body, block, t), None, *next),
         _ => return,
     };
     let Some(next) = next else {
@@ -1522,6 +1533,79 @@ fn run_clause(
 /// on each path.
 pub fn call_handlers(cx: &Cx<'_>, body: BodyId, t: &TermKind) -> Vec<HandlerId> {
     crate::factgen::frames::clause_handlers(cx.p, cx.tys, cx.sums, body, t)
+}
+
+/// The handlers of [`call_handlers`] whose clauses call `t` of block `block`
+/// of body `body` can run (issue #57).
+///
+/// A handler that the call reaches only through the values that the callee
+/// runs (a closure of the program captures its capability, or a failure of
+/// such a value; `crate::factgen::frames::own_clause_handlers` does not
+/// give it) counts only if the analysis found a value at the node that can
+/// reach it (`Handlers::cap_active`): a closure that runs a known closure
+/// that performs nothing and cannot fail does not run the clause.
+pub fn run_handlers(cx: &Cx<'_>, body: BodyId, block: BlockId, t: &TermKind) -> Vec<HandlerId> {
+    let own = crate::factgen::frames::own_clause_handlers(cx.p, cx.tys, cx.sums, body, t);
+    let mut hs = call_handlers(cx, body, t);
+    hs.retain(|h| own.contains(h) || cx.hx.cap_active.contains(&(body, block, *h)));
+    hs
+}
+
+/// Notes the handlers that the values of a run node can reach.
+///
+/// The run node is at block `block` of body `body` (`Handlers::cap_active`,
+/// issues #57 and #58). `apps` are the summaries that the node applies:
+/// code of a caller can perform each effect and fail, and a summary can
+/// perform its effects (through the row or through a captured capability)
+/// and fail.
+pub fn note_cap_apps(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    apps: &[super::transfer::Applied],
+) {
+    let p = cx.p;
+    for h in captured_handlers(p) {
+        let effect = p
+            .handlers
+            .get(h.index())
+            .and_then(|d| cx.tys.effects().get(d.effect.index()))
+            .map(|e| e.identity.clone());
+        let active = apps.iter().any(|a| {
+            a.code
+                || a.summary
+                    .performs
+                    .iter()
+                    .any(|pf| effect.as_ref().is_none_or(|e| *e == pf.effect))
+        });
+        if active {
+            cx.hx.cap_active.insert((body, block, h));
+        }
+    }
+    // A value that the callee runs and that can fail: the failure goes to
+    // the local `Fail` handler of the call (issue #58).
+    let fail = crate::factgen::frames::FAIL;
+    let fails = apps.iter().any(|a| {
+        a.code
+            || a.summary.aborts.contains(&super::summary::Abort::Raises)
+            || a.summary.performs.iter().any(|pf| pf.effect == fail)
+    });
+    let env = p
+        .body(body)
+        .and_then(|b| b.blocks.get(block.index()))
+        .and_then(|b| match &b.term.kind {
+            TermKind::Call {
+                caps: weft_ir::CapArgs::Lexical(e),
+                ..
+            } => Some(*e),
+            _ => None,
+        });
+    if let (true, Some(e)) = (fails, env) {
+        if let crate::factgen::frames::Dest::Handler { handler, .. } =
+            crate::factgen::frames::resolve(p, cx.tys, e, fail, true)
+        {
+            cx.hx.cap_active.insert((body, block, handler));
+        }
+    }
 }
 
 /// True if clause body `cb` has a resume point (a `Resume` of its own

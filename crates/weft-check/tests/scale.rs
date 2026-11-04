@@ -498,6 +498,22 @@ fn many_locals_check_in_time() {
         let time = start.elapsed();
         assert!(c.ok(), "{name}: {:?}", c.diags);
         assert!(time.as_millis() < 2000, "{name}: {time:?}");
+        // The facts of the IR (plan stage C1): the same verdict, in a bound
+        // of time. The criterion of §2.7.4 (at most two times the time of
+        // the old pipeline) does not hold for all shapes yet: the gate
+        // record of stage C1 in `docs/plan/core-ir.md` §5 gives the times.
+        let start = std::time::Instant::now();
+        let c = check_source("many.wf", &src, ir());
+        let ir_time = start.elapsed();
+        // At stage C1 the `ir` check of `variants` takes about 26 s: the
+        // match is a chain of tests, and each test gives the parts of the
+        // scrutinee new values (a quadratic number of facts).
+        eprintln!("{name}: ir {ir_time:?}, old {time:?}");
+        assert!(c.ok(), "{name} (ir): {:?}", c.diags);
+        assert!(
+            ir_time.as_secs() < 60,
+            "{name}: ir {ir_time:?}, old {time:?}"
+        );
     }
 }
 
@@ -796,5 +812,67 @@ fn closures_that_call_closures_cost_polynomial_work() {
             wb.closure_queries <= 8 * wa.closure_queries + 64,
             "back {back}: {wa:?} {wb:?}"
         );
+    }
+}
+
+/// The options of the `ir` pipeline with all groups (plan stage C1, §2.7.4).
+fn ir() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::ALL,
+        ..Options::default()
+    }
+}
+
+/// The programs of this file at a size that a debug build checks quickly,
+/// with their names.
+fn ir_cases() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = vec![("rebind".to_string(), rebind(300))];
+    for (name, _, src, _, _) in causes_of([100, 100, 60, 200, 60, 60, 60]) {
+        out.push((format!("cause {name}"), src));
+    }
+    for (name, src, _, _) in long_lived(100) {
+        out.push((format!("long {name}"), src));
+    }
+    for (name, src) in many_locals([300, 100, 300, 300, 40]) {
+        out.push((format!("many {name}"), src));
+    }
+    out.push(("walk".to_string(), walk(40, 10, true)));
+    out.push(("loops".to_string(), seq_loops(40)));
+    out.push(("closures".to_string(), helper_closures(20, 3)));
+    out
+}
+
+/// Stage C1 (plan §2.7.4): each program of this file checks with the facts
+/// of the IR too. The program is in scope, the `ir` pipeline gives the
+/// verdict of the old pipeline, and the work of the checker on each body is
+/// linear in its nodes. (The number of facts is not bounded here: the gate
+/// record of stage C1 in `docs/plan/core-ir.md` §5 gives the counts.)
+#[test]
+fn the_programs_of_this_file_check_with_the_ir_facts() {
+    for (name, src) in ir_cases() {
+        let old = check_source("scale.wf", &src, Options::default());
+        let new = check_source("scale.wf", &src, ir());
+        assert!(
+            new.analysis
+                .ir_scope
+                .as_ref()
+                .is_some_and(weft_sema::Scope::in_scope),
+            "{name}: {:?}",
+            new.analysis
+                .ir_scope
+                .as_ref()
+                .and_then(|s| s.fallback.clone())
+        );
+        assert_eq!(new.ok(), old.ok(), "{name}: {:?}", new.diags);
+        for b in &new.analysis.bodies {
+            let (_, work) = check_counted(&b.facts);
+            let nodes = b.facts.nodes.len() as u64;
+            assert!(
+                work.part_nodes <= 3 * nodes,
+                "{name} {}: {work:?}",
+                b.facts.name
+            );
+        }
     }
 }

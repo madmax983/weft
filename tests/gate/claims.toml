@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1"]
 
 
 # ----------------------------------------------------------------------
@@ -7029,3 +7029,128 @@ repro = [
     "tests/gate/probes/fixes/f20_4/i8_ctl_param_c.wf",
 ]
 note = "controls: `Copy` values, a shared reference and a function parameter two times"
+
+# Stage C1: the precision causes of the tier-2 new-fp rows (issues #56 to #59).
+
+[[claim]]
+finding = "C1-56"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n56_nested_run_c.wf",
+    "tests/gate/probes/fixes/c1/n56_nested_run_once_c.wf",
+    "tests/gate/probes/fixes/c1/n56_two_levels_c.wf",
+    "tests/gate/probes/fixes/c1/n56_rc_ref_closure_c.wf",
+]
+note = "a closure that runs a captured value is a `multi` point only for the value that the caller gives; a reference into an `rc` object with no function part reaches no function value (issue #56)"
+
+[[claim]]
+finding = "C1-56"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n56_nested_run_multi_b.wf",
+    "tests/gate/probes/fixes/c1/n56_nested_run_param_b.wf",
+    "tests/gate/probes/fixes/c1/n56_made_b.wf",
+    "tests/gate/probes/fixes/c1/n56_outer_param_b.wf",
+]
+code = "W0503"
+note = "a known value or a value of a caller that resumes two times: the run of the closure is still a `multi` point"
+
+[[claim]]
+finding = "C1-56"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n56_loop_b.wf",
+    "tests/gate/probes/fixes/c1/n56_twice_b.wf",
+]
+code = "W0502"
+note = "a `once` closure that a callee runs two times or in a loop: a cycle that is no re-entry edge after code of a caller still runs it again"
+
+[[claim]]
+finding = "C1-57"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n57_cap_nested_run_c.wf"]
+note = "a closure that captures the capability of a local handler and runs a known closure that performs nothing does not run the clause (issue #57)"
+
+[[claim]]
+finding = "C1-57"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n57_cap_nested_run_b.wf",
+    "tests/gate/probes/fixes/c1/n57_param_in_handle_b.wf",
+    "tests/gate/probes/fixes/c1/n57_direct_cap_b.wf",
+]
+code = "W0602"
+note = "a captured item that performs the effect, a function parameter, a perform through the captured capability: the clause runs, and its `resume` can abort"
+
+[[claim]]
+finding = "C1-57"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n57_param_fails_b.wf"]
+code = "W0302"
+note = "a function parameter in the body of a local `Fail` handler can be an item that fails: the clause reads a moved parameter (the shape of the 4 tier-2 rows that stay, `stricter`)"
+
+[[claim]]
+finding = "C1-58"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n58_run_fail_clause_c.wf",
+    "tests/gate/probes/fixes/c1/n58_nested_fails_c.wf",
+    "tests/gate/probes/fixes/c1/n58_nested_run_args_c.wf",
+]
+note = "the clause of a local `Fail` handler runs only for a value that can fail; the places that a closure gives to a captured value are no arguments of the call (issue #58)"
+
+[[claim]]
+finding = "C1-58"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n58_run_fail_clause_b.wf",
+    "tests/gate/probes/fixes/c1/n58_closure_fails_b.wf",
+    "tests/gate/probes/fixes/c1/n58_item_fails_b.wf",
+    "tests/gate/probes/fixes/c1/n58_callee_fails_b.wf",
+    "tests/gate/probes/fixes/c1/n58_nested_fails_b.wf",
+]
+code = "W0302"
+note = "a closure that fails, an item that fails, a callee of a closure that fails, a captured item that fails: the clause runs"
+
+[[claim]]
+finding = "C1-58"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n58_nested_run_args_b.wf"]
+code = "W0312"
+note = "a callee keeps a reference across the run of a closure that changes the place"
+
+[[claim]]
+finding = "C1-59"
+kind = "fp"
+verdict = "one-rule"
+group = "AC"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n59_made_rebinds_plain_c.wf"]
+note = "a run of a closure that changes a captured `u64` gives it no linear value (issue #59)"

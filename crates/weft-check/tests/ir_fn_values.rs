@@ -366,3 +366,34 @@ fn a_closure_that_a_callee_made_and_that_runs_a_once_capture_two_times_is_w0502(
     // closure.
     check("made_once_runs.wf");
 }
+
+/// Issue #58 (stage C1): the places that a closure gives to a run of a
+/// captured value are no places that the callee of the node gives. A change
+/// of the closure there (before or after the run) is no W0312 at the call
+/// that runs the closure. A callee that keeps a reference across the run of
+/// a closure that changes the place is still W0312.
+#[test]
+fn the_places_that_a_closure_gives_to_a_captured_value_are_not_given_by_the_callee() {
+    check("nested_run_args.wf");
+    check("nested_run_args_ok.wf");
+}
+
+/// Issue #59 (stage C1): a run of a closure that changes a captured
+/// variable gives it a value of its type. A variable that can hold no linear
+/// value and no function value stays plain data, also when the callee that
+/// made the closure got a linear argument. A variable that can hold a
+/// linear value gets one (W0601).
+#[test]
+fn a_change_of_a_capture_of_plain_data_gives_no_linear_value() {
+    check("made_rebinds_plain.wf");
+    check("made_rebinds_plain_ok.wf");
+}
+
+/// Stage C1 (self-attack): a closure that gives a captured function variable
+/// a new closure that moves a linear value makes the variable linear (the
+/// part `rebinds`): W0601 if nothing runs it.
+#[test]
+fn a_closure_that_rebinds_a_capture_to_a_linear_closure_makes_it_linear() {
+    check("rebind_linear_closure.wf");
+    check("rebind_linear_closure_ok.wf");
+}

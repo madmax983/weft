@@ -753,3 +753,26 @@ from the variants of the third review of group F (scratchpad `freview3/v/`, the 
 - Not in the gate (I-10 of the review; the old pipeline gives a false W0302, so each one
   is `lost-clean`): `c03`, `c03g` and `c05` of `freview3/v`. The `ir` pipeline accepts
   them now.
+
+## Stage C1: the precision causes of the tier-2 new-fp rows (issues #56 to #59)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the issue. Most come from
+the tests of the stage (`crates/weft-check/tests/data/handlers/` and `fn_values/`); the
+others come from the self-attack of the stage (scratchpad `c1/att/`). Before the fix the
+`ir` pipeline rejected each `_c.wf`.
+
+- `fixes/c1/n56_*.wf` (claims C1-56): a closure that runs a captured value is a `multi`
+  point only for the value that the caller gives; a re-entry edge after code of a caller
+  does not run the values of the interface again; a reference into an `rc` object with
+  no function part reaches no function value. The `_b.wf` programs resume two times
+  (W0503) or run a `once` closure two times (W0502).
+- `fixes/c1/n57_*.wf` (claims C1-57): a call in a handled body runs the clause of a
+  handler whose capability a closure captures only for a value that can perform through
+  it. `n57_param_fails_b.wf` is the shape of the four tier-2 rows of `h0` that stay
+  (`stricter`): a function parameter can be an item that fails.
+- `fixes/c1/n58_*.wf` (claims C1-58): the clause of a local `Fail` handler runs only for
+  a value that can fail; the places that a closure gives to a captured value are no
+  arguments of the call (W0312).
+- `fixes/c1/n59_*.wf` (claim C1-59): a run of a closure that changes a captured `u64`
+  gives it no linear value.
