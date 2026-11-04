@@ -1387,6 +1387,7 @@ fn whole(em: &mut Em<'_>, n: NodeId, st: &State, k: Key, v: &Tree) {
     let flat = v.flat();
     let inside = v.kids.values().any(|t| t.flat().linear);
     mark_fn_linear_in(em, k, &flat, inside);
+    mark_fn_once(em, k, &flat);
     let s = em.s_var(k);
     if let Some(s) = s {
         em.facts.rebound_at.push((s, n));
@@ -1478,6 +1479,7 @@ fn part(
     // the local holds a linear value (class H-LIN of the review of stage
     // F13).
     mark_fn_linear_in(em, k, &v.flat(), true);
+    mark_fn_once(em, k, &v.flat());
     let al = em.alpha(st, place)?;
     em.facts
         .mutates_at
@@ -1521,6 +1523,7 @@ fn element(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
         em.hold(Some(n), h, &refs);
     }
     mark_fn_linear_in(em, k, &v.flat(), true);
+    mark_fn_once(em, k, &v.flat());
     if let (Some(s), Some(t)) = (s, em.place_ty(place)) {
         if ir_props(em.tys, t).linear {
             em.facts.overwrites.push((s, n));
@@ -1598,6 +1601,24 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
     // A store of another value over a linear closure overwrites it too.
     let flat = v.flat();
     let fns = place_has_fns(em, place);
+    // A `once` closure through a pointer: the local that owns the place, or
+    // the local of each handle on the way, holds it (hole C1-HB, stage
+    // C1.6).
+    if fns && once_fns(em, &flat) {
+        let mut owners: Vec<Key> = al
+            .places
+            .iter()
+            .filter_map(|&q| em.roots.path_of(em.facts, q).map(|(k, _)| k))
+            .collect();
+        owners.extend(
+            al.handles
+                .iter()
+                .filter_map(|&h| whole_or_local_handle(em, h)),
+        );
+        for k in owners {
+            mark_fn_once(em, k, &flat);
+        }
+    }
     let mut keys: Vec<Key> = Vec::new();
     for &q in &al.places {
         if let Some((k, path)) = em.roots.path_of(em.facts, q) {
@@ -2939,7 +2960,7 @@ pub fn call(
         args,
         (at, &callee),
     )?;
-    given_out(em, st, main, (sum, &decl.params), args, (at, &callee))?;
+    given_out(em, st, nodes, (sum, &decl.params), args, (at, &callee))?;
     // A value of a type parameter in `forks`: a `fork` branch of the callee
     // captures it (OL-NR-ptrfork). A nonportable type argument is W0401: a
     // branch of its own captures a variable of the type.
@@ -3181,7 +3202,7 @@ fn given_out_args(sum: &crate::analysis::Summary) -> Option<std::collections::BT
 fn given_out(
     em: &mut Em<'_>,
     st: &State,
-    main: NodeId,
+    nodes: &CallNodes,
     (sum, params): (&crate::analysis::Summary, &[weft_ir::TyId]),
     args: &[Operand],
     (at, callee): (Span, &str),
@@ -3227,9 +3248,21 @@ fn given_out(
     }
     for v in held {
         let a = super::generic::held_node(em.facts, at, v, callee);
-        em.holders.held_like(a, main);
+        held_like_call(em, a, nodes);
     }
     Ok(())
+}
+
+/// Gives the node `a` of a held value the abort and the `multi` of each
+/// node of the call `nodes` (`generic::copy_held`): `Main`, and `Ret`,
+/// where a late run of a value that the callee runs can resume more than
+/// once (hole C1-HC, stage C1.6: `fn f(m: fn(), g: fn()) -> Pair { m();
+/// Pair { n: 1, h: g } }` gives `g` out again after each resume of `m`).
+fn held_like_call(em: &mut Em<'_>, a: NodeId, nodes: &CallNodes) {
+    em.holders.held_like(a, nodes.main);
+    if let Some(r) = nodes.ret {
+        em.holders.held_like(a, r);
+    }
 }
 
 /// A `once` closure in a capture of closure `c` that the closure gives back
@@ -3246,7 +3279,7 @@ fn given_out(
 fn captures_given_out(
     em: &mut Em<'_>,
     st: &State,
-    main: NodeId,
+    nodes: &CallNodes,
     (c, sum): (weft_ir::ClosureId, &crate::analysis::Summary),
     callee: &Operand,
     (at, name): (Span, &str),
@@ -3341,7 +3374,7 @@ fn captures_given_out(
         info.once = true;
         let v = em.facts.add_var(info);
         let a = super::generic::held_node(em.facts, at, v, name);
-        em.holders.held_like(a, main);
+        held_like_call(em, a, nodes);
     }
     Ok(())
 }
@@ -3808,9 +3841,9 @@ fn call_value(
         ) {
             continue;
         }
-        given_out(em, st, main, (&app.summary, &[]), args, (at, &name))?;
+        given_out(em, st, nodes, (&app.summary, &[]), args, (at, &name))?;
         if let Some(c) = app.closure {
-            captures_given_out(em, st, main, (c, &app.summary), callee, (at, &name))?;
+            captures_given_out(em, st, nodes, (c, &app.summary), callee, (at, &name))?;
         }
     }
     let drops = dropped_fn_args(em, (main, at, &name), st, &fn_params, args, &out.apps)?;
@@ -5090,18 +5123,62 @@ fn mark_fn_linear_in(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal, insid
     }
 }
 
+/// True if the value `v` can be a `once` closure.
+fn once_fns(em: &Em<'_>, v: &crate::analysis::AbsVal) -> bool {
+    v.fns.iter().any(|f| transfer::once_value(em.p, f))
+}
+
+/// The local with key `k` gets the value `v` (holes C1-HA and C1-HB, stage
+/// C1.6). If `v` can be a `once` closure and the type of the local has a
+/// function part, the variable `S` of the local gets `once_var`: a `multi`
+/// resume would run the closure two times (W0503).
+///
+/// The analysis gives the value. So the flag holds for each form that puts
+/// the closure into the local: a destructure of a result, a projection of a
+/// call, a binding of a `match` arm, a store into a field, an element, a
+/// payload, or a place behind a `Box`, and a store of a callee. The
+/// properties of the binding come from the old analysis, and it does not
+/// follow each of these forms.
+fn mark_fn_once(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
+    if !once_fns(em, v) {
+        return;
+    }
+    let fnty =
+        em.p.bodies
+            .get(k.0.index())
+            .and_then(|b| b.locals.get(k.1.index()))
+            .is_some_and(|d| crate::props::ir_has_fns(em.tys, d.ty));
+    if !fnty {
+        return;
+    }
+    let Some(var) = em.s_var(k) else {
+        return;
+    };
+    if let Some(info) = em.facts.vars.get_mut(var.index()) {
+        info.once = true;
+    }
+}
+
 /// The places `put_fns` that a callee puts closures into (part `put_fns`,
 /// stage F13): a closure that the callee made with a linear capture
 /// (`ks.push(|| rollback(t))` in `fn add(ks: &Vec<fn()>, t: Tx)`) is a linear
 /// value there, so the local of the place gets the flags of a linear value
 /// ([`mark_fn_linear`]): W0601 if it can go out of scope with the closure
 /// (a hole of stage F13 that the rerun of the review sets found,
-/// `ah6/h6_08`).
+/// `ah6/h6_08`). A `once` closure there gives the local `once_var`
+/// ([`mark_fn_once`]).
 fn put_linear(
     em: &mut Em<'_>,
     put_fns: &[(PlaceId, std::collections::BTreeSet<crate::analysis::FnVal>)],
 ) {
     for (q, fns) in put_fns {
+        // A `once` closure that the callee puts into a place of a local
+        // (hole C1-HB, stage C1.6).
+        if let Some((k, _)) = em.roots.path_of(em.facts, *q) {
+            let mut v = crate::analysis::AbsVal::none();
+            v.fns.clone_from(fns);
+            mark_fn_once(em, k, &v);
+        }
         let linear = fns.iter().any(|f| match f {
             crate::analysis::FnVal::Made(c) | crate::analysis::FnVal::Closure(c) => {
                 linear_captures(em, *c)
@@ -5138,7 +5215,8 @@ fn linear_captures(em: &mut Em<'_>, c: weft_ir::ClosureId) -> bool {
 /// A run node `n` with the arguments `args` that changes the places
 /// `changed`: a linear closure in an argument can go into a changed place
 /// (`v.push(|| rollback(tx))`), so each local of a type with a function part
-/// there gets the flags of a linear value ([`mark_fn_linear`]).
+/// there gets the flags of a linear value ([`mark_fn_linear`]). A `once`
+/// closure in an argument gives such a local `once_var` ([`mark_fn_once`]).
 ///
 /// # Errors
 ///
@@ -5146,6 +5224,7 @@ fn linear_captures(em: &mut Em<'_>, c: weft_ir::ClosureId) -> bool {
 fn fn_linear_args(em: &mut Em<'_>, st: &State, args: &[Operand], changed: &[PlaceId]) -> R {
     let body = em.body;
     let mut v = crate::analysis::AbsVal::none();
+    let mut once = crate::analysis::AbsVal::none();
     for op in args {
         let (Operand::Copy(q) | Operand::Move(q)) = op else {
             continue;
@@ -5157,11 +5236,14 @@ fn fn_linear_args(em: &mut Em<'_>, st: &State, args: &[Operand], changed: &[Plac
             continue;
         }
         let x = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+        if once_fns(em, &x) {
+            once.join(&x);
+        }
         if x.linear {
             v.join(&x);
         }
     }
-    if !v.linear {
+    if !v.linear && once.fns.is_empty() {
         return Ok(());
     }
     let keys: Vec<Key> = changed
@@ -5169,7 +5251,12 @@ fn fn_linear_args(em: &mut Em<'_>, st: &State, args: &[Operand], changed: &[Plac
         .filter_map(|&q| em.roots.path_of(em.facts, q).map(|(k, _)| k))
         .collect();
     for k in keys {
-        mark_fn_linear(em, k, &v);
+        // A `once` closure can go into a changed place too (hole C1-HB,
+        // stage C1.6).
+        mark_fn_once(em, k, &once);
+        if v.linear {
+            mark_fn_linear(em, k, &v);
+        }
     }
     Ok(())
 }

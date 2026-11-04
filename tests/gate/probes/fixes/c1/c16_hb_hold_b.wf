@@ -1,0 +1,16 @@
+// Hole C1-HB of stage C1.6: a struct that gets a `once` closure by a store is live across a value that resumes two times.
+effect Pick { multi fn pick() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn picky() / Pick { if pick() { print(1) } }
+fn quiet() { print(1) }
+struct Pair { n: u64, h: fn() }
+fn mkp(g: fn()) -> Pair { Pair { n: 1, h: g } }
+fn body() / Pick {
+    let v = [1]
+    let g = || print(take_v(v))
+    let p = mkp(g)
+    picky()
+    let h = p.h
+    h()
+}
+fn main() { handle Pick { fn pick() { resume(true); resume(false) } } in body() }

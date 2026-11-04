@@ -6,6 +6,6 @@ fn f(p: P) { let P(m, g) = p; m(); g() }
 fn main() {
     handle Pick { fn pick() { resume(true); resume(false) } } in {
         let v = [1]
-        f(P { m: || { if pick() { print(1) } }, g: || print(take_v(v)) })   //~ W0302 W0502
+        f(P { m: || { if pick() { print(1) } }, g: || print(take_v(v)) })   //~ W0302 W0502 W0503
     }
 }

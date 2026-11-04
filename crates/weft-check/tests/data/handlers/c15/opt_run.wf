@@ -5,6 +5,6 @@ fn f(m: fn(), o: Option<fn()>) { m(); match o { Some(h) => h(), None => {} } }
 fn main() {
     handle Pick { fn pick() { resume(true); resume(false) } } in {
         let v = [1]
-        f(|| { if pick() { print(1) } }, Some(|| print(take_v(v))))   //~ W0302
+        f(|| { if pick() { print(1) } }, Some(|| print(take_v(v))))   //~ W0302 W0503
     }
 }

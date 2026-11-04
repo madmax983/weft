@@ -5,6 +5,6 @@ fn f(p: (fn(), fn())) { let (m, g) = p; m(); g() }
 fn main() {
     handle Pick { fn pick() { resume(true); resume(false) } } in {
         let v = [1]
-        f((|| { if pick() { print(1) } }, || print(take_v(v))))   //~ W0302
+        f((|| { if pick() { print(1) } }, || print(take_v(v))))   //~ W0302 W0503
     }
 }

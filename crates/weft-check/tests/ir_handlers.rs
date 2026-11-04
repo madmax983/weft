@@ -707,7 +707,14 @@ fn a_closure_that_resumes_two_times_runs_its_once_values_again() {
 /// `tests/data/handlers/c15/` with the `ir` pipeline and the default
 /// groups, and the reason of a fallback to the old pipeline (stage C1.5).
 fn c15_codes(name: &str) -> (Vec<(String, usize)>, Option<String>, String) {
-    let file = format!("c15/{name}");
+    stage_codes("c15", name)
+}
+
+/// The codes and lines of the diagnostics of program `name` of
+/// `tests/data/handlers/DIR/` with the `ir` pipeline and the default groups,
+/// and the reason of a fallback to the old pipeline.
+fn stage_codes(dir: &str, name: &str) -> (Vec<(String, usize)>, Option<String>, String) {
+    let file = format!("{dir}/{name}");
     let src = program(&file);
     let opts = Options {
         facts: weft_sema::FactGen::Ir,
@@ -901,4 +908,89 @@ fn the_rows_of_clauses_and_closure_handlers_stay_with_the_old_pipeline() {
         "g_row_struct.wf",
         "code of a caller can run on another thread",
     );
+}
+
+/// Checks program `name` of `tests/data/handlers/c16/` with the default
+/// groups: it is in scope, and its diagnostics are its markers (stage C1.6).
+fn c16_check(name: &str) {
+    let (got, fallback, src) = stage_codes("c16", name);
+    assert!(fallback.is_none(), "{name}: {fallback:?}");
+    assert_eq!(got, markers(&src), "{name}");
+}
+
+/// Hole C1-HA of stage C1.6: a `once` closure goes from a call result into a
+/// local through a destructure of a tuple or a struct, a projection of the
+/// call, or a binding of a `match` arm (also in a nested tuple, an enum
+/// payload, a `Box` and a `Vec`). The local is live across a value that
+/// resumes two times: W0503. With a value that does not resume two times,
+/// there is no error.
+#[test]
+fn a_once_closure_from_a_call_result_is_not_many() {
+    for name in [
+        "ha_tuple.wf",
+        "ha_struct.wf",
+        "ha_proj.wf",
+        "ha_arm.wf",
+        "ha_nested.wf",
+        "ha_enum.wf",
+        "ha_box.wf",
+        "ha_vec.wf",
+        "ha_tuple_ok.wf",
+        "ha_struct_ok.wf",
+        "ha_proj_ok.wf",
+        "ha_arm_ok.wf",
+        "ha_nested_ok.wf",
+        "ha_enum_ok.wf",
+        "ha_box_ok.wf",
+        "ha_vec_ok.wf",
+    ] {
+        c16_check(name);
+    }
+}
+
+/// Hole C1-HB of stage C1.6: a local gets a `once` closure by a store into a
+/// field (`s.o = Some(g)`), or by a callee that puts it into a field, a
+/// nested field, an enum payload or a `Vec` behind a reference argument. The
+/// local is live across a value that resumes two times: W0503. With a value
+/// that does not resume two times, there is no error.
+#[test]
+fn a_local_that_gets_a_once_closure_by_a_store_is_not_many() {
+    for name in [
+        "hb_store.wf",
+        "hb_put.wf",
+        "hb_hold.wf",
+        "hb_put_nested.wf",
+        "hb_put_enum.wf",
+        "hb_put_vec.wf",
+        "hb_store_ok.wf",
+        "hb_put_ok.wf",
+        "hb_hold_ok.wf",
+        "hb_put_nested_ok.wf",
+        "hb_put_enum_ok.wf",
+        "hb_put_vec_ok.wf",
+    ] {
+        c16_check(name);
+    }
+}
+
+/// Hole C1-HC of stage C1.6: a callee (a function item or a closure) runs a
+/// value that resumes two times, and then gives a `once` argument back in a
+/// struct, as its result, or in a field of a reference argument. The run is
+/// at the node `Ret` of the call, so the node of the given value gets the
+/// `multi` of `Ret` too: W0503. With a value that does not resume two times,
+/// there is no error.
+#[test]
+fn a_callee_gives_a_once_argument_out_again_after_a_late_run() {
+    for name in [
+        "hc_struct_out.wf",
+        "hc_put_field.wf",
+        "hc_ret_tmp.wf",
+        "hc_value.wf",
+        "hc_struct_out_ok.wf",
+        "hc_put_field_ok.wf",
+        "hc_ret_tmp_ok.wf",
+        "hc_value_ok.wf",
+    ] {
+        c16_check(name);
+    }
 }

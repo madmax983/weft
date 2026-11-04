@@ -8010,3 +8010,20 @@ files = [
 ]
 reason = "stage C1.5 (gap G4, issue #68): a stated row is no bound for code of a caller. A function that calls a generic callee with a function value, where the callee runs a parameter whose row (`fail`) has no `multi` effect, is `multi` in a program with a `multi` operation: the callee summary is `multi` for the run of its parameter. The old inference trusts the row"
 stage = "C1.5"
+
+# ----------------------------------------------------------------------------
+# Stage C1.6: issue #71 (holes C1-HA, C1-HB, C1-HC of the review of C1.5).
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/c1/c16_*_b.wf"]
+codes = ["W0502", "W0503"]
+reason = "stage C1.6 (issue #71; holes C1-HA, C1-HB, C1-HC): a `once` closure is live across a value that resumes two times, in a local that gets it from a call result or by a store, or in a value that a callee gives out after a late run of the value. Both pipelines reject each program (`ha_tuple_b`, `ha_proj_b` and `ha_nested_b` only the `ir` pipeline: `fixed`). The old pipeline gives W0502 at the call that takes the closure and W0503 at other lines; the `ir` pipeline gives W0503 at the value that resumes two times (the local is live across it) or at the call that gives the closure out again. The run faults (the closure runs again)"
+stage = "C1.6"
+
+[[entry]]
+class = "sig"
+parts = ["reaches", "multi"]
+files = ["tests/gate/probes/fixes/c1/c16_*.wf"]
+reason = "stage C1.6 (issue #71): `body` calls `picky`, which performs the `multi` operation through the row, and `main` handles the row with a local handler. The old inference marks `body` and `main` `multi`; the `multi` operation goes to the local handler of `main`, and the `ir` summary has no `multi` for a caller (as the entry of follow-up C1.2 for the `h3_*` probes says). reaches: the part `runs`"
+stage = "C1.6"

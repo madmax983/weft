@@ -783,3 +783,11 @@ others come from the self-attack of the stage (scratchpad `c1/att/`). Before the
   resumes two times (`res_*`), as a capture that a made closure gives out (`h5_*`, W0503), or through a parameter whose stated row has no `multi`
   effect (`g_row_fwd`). The `_c.wf` programs are the clean twins: no loop, or a value that
   does not resume two times. The `ir` pipeline accepts each `_c.wf`.
+- `fixes/c1/c16_*.wf` (stage C1.6, issue #71; claims C1-HA, C1-HB, C1-HC): the holes of the
+  review of C1.5, from `crates/weft-check/tests/data/handlers/c16/`. The `_b.wf` programs
+  keep a `once` closure across a value that resumes two times, and run it after the value:
+  a local gets it from a call result through a destructure, a projection or a `match` arm
+  (`ha_*`), a struct gets it by a store or from a callee (`hb_*`), or a callee gives it
+  back in a struct or in a field of a reference argument after a late run of the value
+  (`hc_*`). The `_c.wf` programs are the clean twins: a value that does not resume two
+  times. The old pipeline and the `ir` pipeline accept each `_c.wf`.

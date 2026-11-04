@@ -1557,7 +1557,8 @@ the nodes of the caller.
   the caller can run it two times. The closure gets a variable that is live across a
   node of its own with the `multi` of the call node (`templates::given_out`, as
   `held_args` for the part `holds`): W0503. A value of a type parameter in `holds` has
-  its node from `held_args` already.
+  its node from `held_args` already. Stage C1.6 gives that node the `multi` of `Ret`
+  too (hole C1-HC).
 - Follow-up C1.3, hole C1-H4. A closure body that performs through a captured capability
   whose handler can resume more than once (`frames::captured_multi_nodes`) runs the code
   after the perform again on a second resume. The blocks after such a perform are in a
@@ -1704,6 +1705,55 @@ Two parts of the analysis do not find the rows of a body. They are safe only bec
 
 A test pins each of these fallbacks (`ir_handlers.rs`), so a change of a fallback breaks
 the test. If a fallback goes away, the rows of the body must be found first.
+
+As built (stage C1.6, issue #71: holes C1-HA, C1-HB and C1-HC of the review of C1.5).
+The three holes are older than C1. In each hole, a `once` closure runs a second time
+after a `multi` operation resumes two times, and the `ir` pipeline accepted the program.
+
+- C1-HA and C1-HB (cause): the flag `once` of the variable `S` of a local came only from
+  the properties of the local (`Props::once`). For a local of a function type, the
+  builder joins the modes of the values that the old analysis gives the binding
+  (`binding_props_of`). The old analysis does not follow a `once` closure through a
+  destructure of a call result (`let (n, h) = mk(g)`, `let Pair(n, h) = mkp(g)`), a
+  projection of a call (`let h = mk(g).1`), a binding of a `match` arm, a temporary, or
+  a store into a part of a struct (`s.o = Some(g)`, `put(g, &s)`). So the local had no
+  `once_var`, and W0503 did not apply.
+- C1-HA and C1-HB (fix): the analysis of the IR gives the flag. Each template that gives
+  a local a value (`whole`, `part`, `element`, `through`, the part `put_fns` of a
+  callee, and a changed place of a callee that can take a function value of an
+  argument) calls `templates::mark_fn_once`, next to `mark_fn_linear_in`. If the value
+  can be a `once` closure (`transfer::once_value` of a value of its set `fns`, also in a
+  part: `Tree::flat`) and the type of the local has a function part, `S` gets
+  `once_var`. This holds for each form that puts the value into the local: a tuple, a
+  struct, an enum payload, a nested struct, a `Box`, a `Vec` and a temporary. The flag
+  is for the whole body, as in the old lowering: a local that gets the closure after a
+  `multi` node and is live across it is W0503 too (the old pipeline also rejects such a
+  program).
+- C1-HC (cause): `templates::given_out` (follow-up C1.2) gives a `once` argument that the
+  callee gives back or puts into a place a variable that is live across a node of its
+  own. That node got the `multi` of `Main` only (`generic::copy_held`). But a callee
+  that runs a value of an argument and then returns runs the value late: the run node
+  is `Ret` (`emit_apps`), and `Ret` has the `multi_at` row. So `fn f(m: fn(), g: fn())
+  -> Pair { m(); Pair { n: 1, h: g } }` gave no W0503. The guess of the review (no
+  function value in a struct field) was wrong: `ret.fns` has `Param(1)`.
+- C1-HC (fix): `templates::held_like_call` gives the node of the value the abort and the
+  `multi` of `Main` and of `Ret` (`given_out`, `captures_given_out`).
+
+The proof sketch above needs these base facts. Stage C1.6 makes them hold:
+
+- B1. If a local can hold a `once` closure at a node (in the state of the analysis, in
+  each part of its value), its variable `S` has `once_var`. A value that the analysis
+  does not know (`FnVal::Unknown`, a parameter, a capture) is not a `once` closure of
+  this body: the caller that knows it checks it (cases 2 and 3 of the proof).
+- B2. If a callee can give a `once` value of an argument or of a capture out (part
+  `ret.fns` or `put_fns`), the value has a variable that is live across a node with the
+  `multi_at` row of each node of the call that can resume more than once (`Main` and
+  `Ret`).
+
+Tests: `ir_handlers.rs` (data `handlers/c16/`). Probes `tests/gate/probes/fixes/c1/c16_*`,
+claims C1-HA, C1-HB and C1-HC. One review program stays with the old pipeline, and the
+old pipeline misses it too (`e04_tuple_res.wf`: the closure gives a capability out, group
+C).
 
 ### 5.21 Calls of function values [2.20]
 
