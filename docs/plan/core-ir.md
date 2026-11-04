@@ -1684,17 +1684,20 @@ with the group forced on, report only).
     (verdict "stays", 10.3); `a13`, `e17`, `w09` are class `edge` (issue #41); `opres` and
     `d1_callee_mut*` are class `edge` (issue #48, the `GIVES_BACK` fallback of F16.3).
     `h3_div_min` and `c14_big` (the interpreter rejects the literal of the largest `u64`)
-    keep `open-old`: they need an issue.
+    are class `edge` (issue #63).
   - IR modes: `scale.rs` (`the_programs_of_this_file_check_with_the_ir_facts`, and the
     `ir` time in `many_locals_check_in_time`) and `limits.rs` (`pipeline` had it; the
     derivation tests now run with the `ir` facts too). The precision programs of the
     corpus keep their markers (`programs_ir.rs`); `143_arg_roots.wf` and
     `83_kept_values.wf` stay with the old pipeline (a function value that an operation
-    gives to a handler, F14).
-  - The cost criterion does not hold (§5, gate record C1): tier 1 `check` time 2.2 times
-    the old time, and 10617 of 37667 functions have more than 3 times the facts.
-  - Not done: 25 tier-2 `lost-clean` rows wait for an independent signature
-    (scratchpad `c1/lost_clean_t2.tsv`).
+    gives to a handler, F14; issue #64).
+  - The cost criterion does not hold (§5, gate record C1; issue #62): tier 1 `check`
+    time 2.2 times the old time, and 10617 of 37667 functions have more than 3 times the
+    facts.
+  - The independent review of C1 signed 8 of the 25 new tier-2 `lost-clean` rows and
+    refused 17: their programs run a value that can resume more than once before a
+    `once` closure in variants (hole C1-H1, follow-up C1.1). The 17 rows wait for a
+    signature.
 
 #### C2 Fresh sweep
 
@@ -1866,6 +1869,7 @@ gate and the exit of its parent, limited to its group of differences.
 | F20.2 | F20 | the independent review of group F at a813be3 (scratchpad `freview/review.md`). F-1 (blocker; lost-fault W0301, W0502, W0503 / none): an argument that a generic callee holds moved only at `Ret`, and a `once` closure (plain data in the IR) did not move; fix: the argument moves at `Main`, and a variable of the type argument (or of a linear or `once` closure in the argument) is live across a node of its own that gets the abort and the `multi` of `Main` (`templates::held_args`, `generic::held_var`, `held_node`, `copy_held`; `handlers::moved_at_main` moves it too). FP-1 (new-fp W0602): the type of the argument, not the type argument, gave the held value; fixed by F-1. F-2 (blocker; lost-fault W0405 / none): `back_tasks` (O3-9) ended each task of each handle argument of a type parameter; fix: only one parameter names a type parameter, it is not a reference, and the argument holds one task site. P-1 (lost-fault W0301 / none, not of group F): a move of a `ByMove` capture in a closure body did not free its places; fix: `moved_part` also for a move of the whole capture. P-2 (W0401, W0403 / none, not of group F): a `fork` branch that a closure body gives to a callee had no captures (the task was only pinned); fix: if the maker is the body that the template emits, the captures of the branch are checked as in a function body, through `alpha::capture_source` for a `Kept` or `ByRef` capture of the maker; no `kept` cell (RR4). The 18 tier-1 lost-clean rows of F20 and the tier-2 classes that the review marked SIGN are signed (`signed_by = "independent review of group F (freview/review.md)"`); `verify/s5/p/f1_closure_stash.wf` waits for the second review. Probes `tests/gate/probes/fixes/f20_2/` (claims F20.2-F1, -FP1, -F2, -P1, -P2), tests `ir_generics` (`held_args.wf`, `held_multi.wf`, `pick_handles.wf`), `ir_closures` (`nested_move.wf`), `ir_tasks` (`fork_in_closure.wf`). Not fixed: O-1 (a value of a type parameter can hold a reference), O-2 (`forks` of item values), O-3 (`!Move` through `Vec<T>.push`); the old pipeline misses them too | done (F20.2) |
 | F20.3 | F20 | the second independent review of group F at 088dcdb and b6a417f (scratchpad `freview2/review.md`). B-1 (blocker; lost-fault W0302 / none; generic since F20.2, not generic also before group F): a clause of a local handler that uses an argument that the call moved; the uses of the clause were at the run node, the node of the move, and the spec gives `moved` only after it. Fix (`handlers::project`): a use of the clause of a variable that the run node moves goes to each successor of the run node too. I-2 (lost-fault W0502 / none; a hole before group F for a tuple, extended by F20 to generic calls): one `once` or linear closure in two operands of one node; fix (`templates::dup_moves`, at an assignment and at a call): each second move of a whole local is a move and a use in a part of the graph of its own. `verify/s5/p/f1_closure_stash.wf` is signed by the second review. The 98 tier-2 new-fp rows have entries of class `new-fp` (`precision`) with the issues #56 (N1), #57 (N2), #58 (N3) and #59 (N4). Probes `tests/gate/probes/fixes/f20_3/` (claims F20.3-B1, F20.3-I2), tests `ir_generics` (`clause_moved_arg.wf`) and `ir_closures` (`same_operand_twice.wf`). Open: the rule of the new-fp share counts the ledgered rows too, so tier 2 keeps that blocker; I-3 (`back_tasks` with two type parameters, precision) | done (F20.3) |
 | F20.4 | F20 | the third independent review of group F at d1ddac6 (scratchpad `freview3/review.md`). B-2 (blocker; lost-fault W0301 / none; generic since F20, not generic also before group F): a clause reads a reference into an argument that the call moved; the fix of B-1 copied only a use of the moved variable. Fix (`handlers::late_uses`, after the owners and the versions of the parts): a use of the clause goes to each successor of the run node also if the variable points into a place that a move of the run node frees; a move of a part counts only if the clause accesses that part, and a use after a new value in the clause does not count (`handlers::exposed`; this also removes the false W0302 of I-10). I-8 (lost-fault W0302, W0502 / none): `dup_moves` compares whole places (`(p.0, p.0)`), takes the variable of a capture of a closure body, and runs at a perform. Probes `tests/gate/probes/fixes/f20_4/` (claims F20.4-B2, F20.4-I8), tests `ir_generics` (`clause_ref_moved_arg.wf`, `same_place_twice.wf`). Open: I-9 (a clause reads a reference into an element that the callee changed; both pipelines miss it), O-1 to O-3, I-3 | done (F20.4) |
+| C1.1 | C1 | hole C1-H1 of the independent review of C1 (lost-fault W0502, W0503 / none; C1 made it): a callee runs a value of the caller that can resume more than once, then a `once` closure (`run_both(\|\| { pick() }, \|\| commit(t))`). The fix of #56 stopped the re-entry edges after code of a caller from making the later runs `many`, and the caller did not see the order of the runs. Fix: the part `after` of a run (`Run::after`, `Cycles::code_from`, `factgen::runs_after`): the values of the interface whose code of a caller comes before the run on a path back from a re-entry; `transfer::apply_runs` runs it again if a value that the caller gives for such a key is `multi` or performs a `multi` operation through a captured capability. Probes `tests/gate/probes/fixes/c1/h1_*.wf` (claim C1-H1), tests `ir_handlers` (`run_after_multi*.wf`), `ir_generics` (`run_after_multi_generic.wf`); the 202 variants of the review and the self-attack (`c1/att4`): 0 HOLE. The tier-2 rows of C1 do not change | done (C1.1) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -1916,6 +1920,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | F20.4 (tier 2, groups A to F, default) | 46951 of 57393 | 44347 | 88 | 103 (98 with issues #56 to #59; over the 0.1 % share) | 2451 (signed) | 1597 | 8797 | 10 (open-old) |
 | C1 (tier 1, groups A to F, default) | 4082 of 4466 | 3604 | 238 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 124 | 389 | 9 (3 `open` F3-6 "stays"; 4 `edge`: #41 three, #48 one; 2 `open-old` with no issue: `h3_div_min`, `c14_big`) |
 | C1 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %: 4 `stricter` `h0` rows, 3 precision rows of #57 to #59, the 5 of F20 and before) | 2476 (2451 signed; 25 new rows wait for an independent signature) | 1608 | 8471 | 10 (4 `open` F3-6; 4 `edge` #48; 2 `open-old`: `h3_div_min`, `c14_big`) |
+| C1.1 (tier 1, groups A to F, default) | 4090 of 4474 | 3604 | 238 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 124 | 397 (+8: the `h1` probes, ledgered) | 9 (3 `open` F3-6; 6 `edge`: #41 three, #48 one, #63 two) |
+| C1.1 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %, as C1) | 2476 (2459 signed; the 17 that the review of C1 refused wait) | 1608 | 8471 | 10 (4 `open` F3-6; 6 `edge`: #48 four, #63 two) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts
@@ -1923,7 +1929,7 @@ for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir
 facts of the old pipeline (1436 of them with 20 or more old facts; the largest factor is
 46 on `verify/s5/S5a/x/p/scale_ops.wf`). In `scale.rs` (release) the `ir` check of
 `many_variants(8000)` takes 28 s (old 0.27 s): each test of the chain of a `match` gives
-each part variable of the scrutinee a new value. The criterion does not hold.
+each part variable of the scrutinee a new value. The criterion does not hold (issue #62).
 
 ---
 

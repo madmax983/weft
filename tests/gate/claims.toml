@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1"]
 
 
 # ----------------------------------------------------------------------
@@ -7154,3 +7154,33 @@ group = "AC"
 stage = "C1"
 repro = ["tests/gate/probes/fixes/c1/n59_made_rebinds_plain_c.wf"]
 note = "a run of a closure that changes a captured `u64` gives it no linear value (issue #59)"
+
+# Follow-up C1.1: hole C1-H1 of the independent review of stage C1.
+
+[[claim]]
+finding = "C1-H1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.1"
+repro = [
+    "tests/gate/probes/fixes/c1/h1_min_b.wf",
+    "tests/gate/probes/fixes/c1/h1_helper_b.wf",
+    "tests/gate/probes/fixes/c1/h1_let_b.wf",
+    "tests/gate/probes/fixes/c1/h1_order_b.wf",
+    "tests/gate/probes/fixes/c1/h1_nested_call_b.wf",
+    "tests/gate/probes/fixes/c1/h1_callee_of_callee_b.wf",
+    "tests/gate/probes/fixes/c1/h1_item_row_b.wf",
+]
+code = "W0502"
+note = "a callee runs a value that can resume more than once, then a `once` closure: the closure runs again (`Run::after`)"
+
+[[claim]]
+finding = "C1-H1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "C1.1"
+repro = ["tests/gate/probes/fixes/c1/h1_generic_b.wf"]
+code = "W0502"
+note = "the same with a generic callee"

@@ -840,6 +840,7 @@ pub fn emit_parts(
         )
     };
     let (mut stored, aborts, union, mut runs, returns, last, (code_multi, own_lends)) = stored;
+    runs_after(&mut runs, &cycles);
     let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
         .iter()
         .filter_map(|&cb| p.closure_of(cb).map(|(c, _)| c))
@@ -1183,6 +1184,32 @@ fn new_rows(
         .collect();
     known.extend(new.iter().copied());
     new
+}
+
+/// The part `after` of each run of `runs` (`Run::after`, hole C1-H1 of
+/// stage C1.1): the values of the interface whose run node is a run node
+/// of code of a caller whose re-entry edges reach the run
+/// (`Cycles::code_from`). The value itself does not count: a second run
+/// node of it, or a loop, makes it `many` already.
+fn runs_after(
+    runs: &mut [(crate::analysis::transfer::RunOf, bool)],
+    cycles: &crate::analysis::widen::Cycles,
+) {
+    let at: Vec<((weft_ir::BodyId, weft_ir::BlockId), (u32, bool))> = runs
+        .iter()
+        .map(|(r, _)| ((r.body, r.block), (r.param, r.capture)))
+        .collect();
+    for (r, _) in runs.iter_mut() {
+        let Some(from) = cycles.code_from(r.body, r.block) else {
+            continue;
+        };
+        let own = (r.param, r.capture);
+        r.after.extend(
+            at.iter()
+                .filter(|(k, key)| *key != own && from.contains(k))
+                .map(|(_, key)| *key),
+        );
+    }
 }
 
 /// Adds the cycles of the re-entry edges after the new run nodes `new` of
@@ -1570,6 +1597,8 @@ fn closure_summary(
             ),
         )
     };
+    let mut runs = runs;
+    runs_after(&mut runs, &cycles);
     let rebind_nodes = rebind_nodes(p, &table, cb);
     let joins = crate::analysis::tasks::must_joins(
         &facts.cfg_edge,

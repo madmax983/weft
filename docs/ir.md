@@ -1547,9 +1547,16 @@ the nodes of the caller.
   not know.
 - #56. A run node is a `dyn_rows` node of its own reason (`Handlers::real_rows`) only if
   a summary other than such code is `multi`. The re-entry edges after a node of code of a
-  caller only still go into the facts and the cycles of the analysis, but they do not run
-  the values of the interface again (`Cycles::add_code_rows_at`, `Cycles::has_strict`,
-  the flag `many` of `runs`).
+  caller only still go into the facts and the cycles of the analysis, but they do not set
+  the flag `many` of the runs after them (`Cycles::add_code_rows_at`, `Cycles::has_strict`).
+  Instead each such run gets the part `after` (follow-up C1.1, hole C1-H1 of the review of
+  C1): the values of the interface whose run node of code of a caller reaches it
+  (`Cycles::code_from`, `factgen::runs_after`). Where a caller applies the summary
+  (`transfer::apply_runs`), a run happens again (`again`, no order) if a value that the
+  caller gives for a key of `after` can resume more than once: its summary is `multi`, or
+  it performs a `multi` operation through a captured capability. So
+  `run_both(|| { pick() }, || commit(t))` is W0502 again, and `run_both(|| print(0), ..)`
+  is not.
 - #56. A place of the `rc` group of a definition with no function part (row `Fns` with no
   parameter) reaches no function value (`transfer::fns_of_role`).
 - #57, #58. A call runs the clauses of a handler that it reaches only through the values

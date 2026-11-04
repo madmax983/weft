@@ -243,6 +243,7 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     multi: fn_multi(tys, t),
                     maybe: false,
                     then: true,
+                    after: std::collections::BTreeSet::new(),
                 },
             );
             inf.ret_fns.insert(RetFn::Param(u(i)));
@@ -291,6 +292,7 @@ pub fn intrinsic(decl: &FnDecl, tys: &TyTable, i: weft_ir::Intrinsic) -> Summary
                 maybe: false,
                 // `with_timeout` can fail after the block started (5.31).
                 then: i == weft_ir::Intrinsic::WithTimeout,
+                after: std::collections::BTreeSet::new(),
             });
         }
     }
@@ -583,6 +585,7 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         x.then,
         x.args.len(),
         x.how.clone(),
+        x.after.len(),
     );
     x.many |= r.many;
     x.task |= r.task;
@@ -605,6 +608,7 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
     x.how.reads.sort();
     x.multi |= r.multi;
     x.maybe |= r.maybe;
+    x.after.extend(r.after.iter().copied());
     for a in &r.args {
         if !x.args.contains(a) {
             x.args.push(a.clone());
@@ -620,6 +624,7 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
             x.then,
             x.args.len(),
             x.how.clone(),
+            x.after.len(),
         )
 }
 

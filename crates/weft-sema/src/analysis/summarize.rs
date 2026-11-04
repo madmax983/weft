@@ -555,6 +555,7 @@ fn runs_of(
             multi: r.multi,
             maybe: body.is_none_or(|b| returns_without(b, &blocks)),
             then: false,
+            after: r.after.clone(),
         };
         // A second run node of the value runs it again.
         if let Some(x) = out

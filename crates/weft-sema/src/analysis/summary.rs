@@ -197,6 +197,12 @@ pub struct Run {
     /// clause of a handler of a caller can run while a task that the value
     /// starts runs.
     pub then: bool,
+    /// The values of the interface (by parameter, or by capture) whose run
+    /// comes before this run on a path, where code of a caller can resume
+    /// more than once (a re-entry edge after that run reaches this run;
+    /// hole C1-H1 of stage C1.1). If the caller gives such a value that can
+    /// resume more than once, this run happens again (`many`).
+    pub after: std::collections::BTreeSet<(u32, bool)>,
 }
 
 /// How a body runs a function value of its interface as a task.

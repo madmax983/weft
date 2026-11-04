@@ -1,0 +1,14 @@
+// Hole C1-H1 (stage C1.1), the clean twin: the once closure runs before the value that resumes two times.
+linear struct Tx { id: u64 }
+effect Pick { multi fn pick() -> bool }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn apply(f: fn()) { f() }
+fn picky() / Pick { if pick() { print(1) } }
+
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let t = Tx { id: 7 }
+        run_both(|| commit(t), || { if pick() { print(1) } })
+    }
+}

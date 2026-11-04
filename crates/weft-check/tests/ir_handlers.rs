@@ -642,3 +642,20 @@ fn a_store_of_a_linear_closure_into_a_field_makes_the_local_linear() {
     check("part_store_linear.wf");
     check("part_store_linear_ok.wf");
 }
+
+/// Hole C1-H1 (stage C1.1): a callee that runs a value of the caller and
+/// then a `once` closure runs the closure again if the value can resume
+/// more than once (`Run::after`: the caller gives the values and knows if
+/// one of them can). A known value, a function parameter of a helper, a
+/// local and the other order of the parameters are W0502 (a generic callee:
+/// `ir_generics`). A `once` closure that runs first, or a first value that resumes
+/// nothing, is no error.
+#[test]
+fn a_run_after_a_value_that_resumes_two_times_runs_again() {
+    check("run_after_multi.wf");
+    check("run_after_multi_helper.wf");
+    check("run_after_multi_let.wf");
+    check("run_after_multi_order.wf");
+    check("run_after_multi_ok.wf");
+    check("run_after_multi_plain_ok.wf");
+}

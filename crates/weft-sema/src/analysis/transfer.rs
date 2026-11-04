@@ -1892,6 +1892,12 @@ pub struct RunOf {
     /// block does not count as a block that runs the value (hole H5b of the
     /// second review of the ABC preview).
     pub maybe: bool,
+    /// The body of the run node.
+    pub body: BodyId,
+    /// The values of the interface whose run comes before on a path where
+    /// code of a caller can resume more than once (`Run::after`; filled by
+    /// the fact generator, `crate::factgen` `runs_after`).
+    pub after: BTreeSet<(u32, bool)>,
 }
 
 /// One summary that a run node of a function value applies (`docs/ir.md`
@@ -2798,6 +2804,8 @@ fn apply_runs(
     // The values that the runs of each key reach, also through the values
     // that a value runs (`Apps::reached`).
     let mut reached: BTreeMap<(u32, bool), BTreeSet<FnVal>> = BTreeMap::new();
+    // The values that each run reaches, by the index of the run.
+    let mut per_run: Vec<(usize, Vec<FnVal>)> = Vec::new();
     for (index, run) in runs.iter().enumerate() {
         let first = apps.reached.len();
         let many = run.many || two;
@@ -2941,6 +2949,53 @@ fn apply_runs(
         let key = (run.param, run.capture);
         let got = apps.reached.get(first..).unwrap_or_default();
         reached.entry(key).or_default().extend(got.iter().cloned());
+        per_run.push((index, got.to_vec()));
+    }
+    // A run after a run of a value that can resume more than once (code of
+    // a caller in the body between them, `Run::after`) happens again: each
+    // value that it reaches runs again, not in one order only (hole C1-H1
+    // of stage C1.1: `run_both(|| { pick() }, || commit(t))`).
+    // A value can resume more than once: its summary is `multi`, or it
+    // performs a `multi` operation through a captured capability (the
+    // clause of the handler runs at the node, `clause_multi`).
+    let multi_effect = |e: &str| {
+        cx.tys
+            .effects()
+            .iter()
+            .any(|d| d.identity == e && d.ops.iter().any(|o| o.multi))
+    };
+    let multi_keys: BTreeSet<(u32, bool)> = reached
+        .iter()
+        .filter(|(_, vals)| {
+            vals.iter().any(|v| {
+                apps.seen
+                    .get(v)
+                    .and_then(|&k| apps.out.get(k))
+                    .is_some_and(|a| {
+                        a.summary.multi
+                            || a.summary.unknown_multi
+                            || a.summary.performs.iter().any(|pf| {
+                                matches!(pf.cap, super::summary::CapIface::Cap(_))
+                                    && multi_effect(&pf.effect)
+                            })
+                    })
+            })
+        })
+        .map(|(k, _)| *k)
+        .collect();
+    for (index, got) in &per_run {
+        let Some(run) = runs.get(*index) else {
+            continue;
+        };
+        if !run.after.iter().any(|k| multi_keys.contains(k)) {
+            continue;
+        }
+        for v in got {
+            if let Some(a) = apps.seen.get(v).and_then(|&k| apps.out.get_mut(k)) {
+                a.again = true;
+                a.order = false;
+            }
+        }
     }
     // A value that the runs of two keys reach runs two times
     // (`both(h, || h())`, `both(|| h(), || h())`): its app happens again,
@@ -3107,6 +3162,8 @@ fn apply_value(
                     task: false,
                     block: r.block,
                     maybe: false,
+                    body: r.body,
+                    after: BTreeSet::new(),
                 }),
                 (
                     FnVal::Param(i) | FnVal::ParamResult(i) | FnVal::Capture(i),
@@ -3120,6 +3177,8 @@ fn apply_value(
                     task: false,
                     block: r.block,
                     maybe: false,
+                    body: r.body,
+                    after: BTreeSet::new(),
                 }),
                 _ => None,
             };

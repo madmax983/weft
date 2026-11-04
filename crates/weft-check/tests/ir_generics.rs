@@ -193,3 +193,11 @@ fn a_clause_that_reads_a_reference_into_an_argument_moved_at_the_call_is_w0301()
 fn a_place_moved_two_times_at_one_node_is_a_second_move() {
     check("same_place_twice.wf");
 }
+
+/// Hole C1-H1 (stage C1.1): a generic callee that runs a value that can
+/// resume more than once and then a `once` closure runs the closure again
+/// (W0502).
+#[test]
+fn a_generic_callee_runs_a_once_closure_again_after_a_multi_value() {
+    check("run_after_multi_generic.wf");
+}

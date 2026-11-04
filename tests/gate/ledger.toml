@@ -124,13 +124,14 @@ stage = "G6"
 # R3RT2 and R3RT3).
 
 [[entry]]
-class = "open-old"
+class = "edge"
+issue = 63
 files = [
     "tests/gate/probes/r3/interp/probe/h3_div_min.wf",
     "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/c14_big.wf",
 ]
 finding = "unclassified"
-reason = "interpreter: the literal 18446744073709551615 (u64 max) is a runtime error (`integer literal is too large`). The checker is correct; no finding names this defect"
+reason = "interpreter: the literal 18446744073709551615 (u64 max) is a runtime error (`integer literal is too large`). The checker is correct; stage C1: issue #63 names this defect"
 stage = "G6"
 
 # ----------------------------------------------------------------------------
@@ -7742,7 +7743,7 @@ issue = 57
 files = [
     "r2/oracle/runs/g7/p43563.wf",
 ]
-reason = "group N2 of the second review of group F, the row that stays after stage C1: the code of the clause after `resume(true)` runs at the `Post` node, and its second `resume` can abort (each `resume` can abort, ADR 0005), so the linear `lk2` with no `on abort` is live across the `handle` (W0602). The continuation (the rest of the handled body) cannot abort; a precise rule needs the aborts of the continuation. The run is clean"
+reason = "group N2 of the second review of group F, the row that stays after stage C1: the code of the clause after `resume(true)` runs at the `Post` node, and its second `resume` can abort (each `resume` can abort, ADR 0005), so the linear `lk2` with no `on abort` is live across the `handle` (W0602). The continuation (the rest of the handled body) cannot abort; a precise rule needs the aborts of the continuation (issue #57, D2). The run is clean"
 stage = "F20"
 
 [[entry]]
@@ -7791,6 +7792,67 @@ parts = ["muts", "ret", "ret_refs"]
 files = ["tests/gate/probes/fixes/c1/n59_made_rebinds_plain_c.wf"]
 reason = "stage C1 (issue #59): `h1(p0: u64, ..) -> fn() { || p0 += 1 }` gives back a closure that changes its own copy of `p0`. The old inference puts the change into the `muts` of the maker (`mut(p0)`); the `ir` summary keeps it in the made closure (`RetFn::Made`), as entry F13 of `44_returned_fns.wf` says. `h1` does not change a place of a caller"
 stage = "C1"
+
+# Stage C1 tier-2 lost-clean rows: entries signed by an independent review.
+# 8 of 25 rows signed. The other 17 rows are refused: see report.md (hole C1-H1).
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g3/p7743.wf",
+    "r2/oracle/runs/g6/p31407.wf",
+    "r2/oracle/runs/g7/p41440.wf",
+]
+reason = "the block value is a closure that captures a local of the block, but no node calls it: W0301 is an error at a use (ir 5.9, 5.10). Each variant that calls the closure or gives it to a callee (apply, run_both) is W0301. The ir errors before C1 were precision errors: p7743 W0503 (#56), and the variant with a real multi run while `lk3` is live is W0503; p31407 and p41440 W0312 (#57, #58), and the variants where the nested closure, or a clause that the closure argument reaches, changes the vector under a held reference are W0301/W0312"
+signed_by = "review agent, stage C1 (independent)"
+stage = "C1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g3/p7145.wf",
+    "r2/oracle/runs/g3/p7648.wf",
+]
+reason = "W0312 precision: `run_both(f, f)` gets one closure two times, and a closure argument does not conflict with itself (O3-7). The closure reads its captures where it runs and holds no reference into the vector that it pushes to. Each variant with a closure argument that holds a reference into the vector, or with a reference held across the call, is W0301/W0312; each variant with a real multi run while the Tx is live is W0503"
+signed_by = "review agent, stage C1 (independent)"
+stage = "C1"
+
+[[entry]]
+class = "lost-clean"
+files = ["r2/oracle/runs/g5/p20327.wf"]
+reason = "W0312 precision: the closure argument `|| print(v8[0])` reads `v8` where it runs and holds no reference into it, so the change of `p2` (that is `v8`) in `h1` cannot invalidate it. The variant with a held reference `&v8[0]` in the closure is W0301/W0312; the variants with a task that writes `v8` while the closure runs are W0405 (or old fallback W0312/W0503). The summary oracle (A3) failure is the missing `reads_at` of issue #65, with no known fault"
+signed_by = "review agent, stage C1 (independent)"
+stage = "C1"
+
+[[entry]]
+class = "lost-clean"
+files = ["r3/oracle/runs/g3b/p21840.wf"]
+reason = "W0312 precision: the two tasks of `spawn_two` touch separate parts, the first writes `two2.a` (through a nested `apply`) and the second reads `two2.b`. Each variant where the reader reads `two2.a` (also through a nested closure or a held reference into `two2.a`) or the writer writes `two2.b` is W0405; seeds 1 to 30 are clean"
+signed_by = "review agent, stage C1 (independent)"
+stage = "C1"
+
+[[entry]]
+class = "lost-clean"
+files = ["r3/oracle/runs/m3b/p23000.wf"]
+reason = "main does not call the functions with the old errors. The 4 W0503 are O3-10: a spawn is no resume point of the parent, and the spawned closure runs its function value on its own task stack (a task cannot perform through a handler of another task: the variant is a runtime `no handler` that the checker rejects). W0405@154 is the ADR 0006 imprecision: the body after `resume` does not access `n`. A version that calls each function is clean on seeds 1 to 30; each variant where the body or the clause reads or writes `n` after the spawn is W0405"
+signed_by = "review agent, stage C1 (independent)"
+stage = "C1"
+
+# Follow-up C1.1: hole C1-H1 of the independent review of stage C1.
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/c1/h1_*.wf"]
+codes = ["W0301", "W0502", "W0503", "W0601"]
+reason = "hole C1-H1 (follow-up C1.1): a callee runs a value that can resume more than once and then a `once` closure. Both pipelines reject each program; the old pipeline also gives W0301 and W0601 (the old checks of the closure literal and of the linear capture), the `ir` pipeline W0502 and W0503 at the call (`Run::after`). The run faults (the closure runs again)"
+stage = "C1.1"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "repeats", "drops"]
+files = ["tests/gate/probes/fixes/c1/h1_generic_b.wf"]
+reason = "class F20-SIG-GENERIC (follow-up C1.1): `rb<T>(x: T, f: fn(), g: fn()) -> T` keeps `x` across the runs of `f` and `g`, whose code of a caller can resume more than once, so the value of the type parameter is in `holds`, not in `drops`. passthrough, repeats: the part `runs` (with `after`) and code of a caller, as entry F13 of `**` says"
+stage = "C1.1"
 
 # ----------------------------------------------------------------------------
 # Follow-up F20.4: B-2 and I-8 of the third review of group F.

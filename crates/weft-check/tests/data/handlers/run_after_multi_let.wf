@@ -1,0 +1,13 @@
+// Hole C1-H1 (stage C1.1): the same with closures in locals.
+linear struct Tx { id: u64 }
+effect Pick { multi fn pick() -> bool }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let t = Tx { id: 7 }
+        let m = || { if pick() { print(1) } }
+        let g = || commit(t)
+        run_both(m, g)   //~ W0502 W0503
+    }
+}

@@ -115,6 +115,10 @@ pub struct Cycles {
     /// The blocks of `blocks` that only the re-entry edges after code of a
     /// caller put in a cycle ([`Self::add_code_rows_at`], issue #56).
     code: BTreeSet<(BodyId, BlockId)>,
+    /// For each block, the run nodes of code of a caller
+    /// ([`Self::add_code_rows_at`]) whose re-entry edges reach the block: a
+    /// resume there runs the block again (hole C1-H1 of stage C1.1).
+    code_from: std::collections::BTreeMap<(BodyId, BlockId), BTreeSet<(BodyId, BlockId)>>,
 }
 
 impl Cycles {
@@ -227,6 +231,11 @@ impl Cycles {
     /// The cycles of the re-entry edges after the nodes `rows`; `code` as in
     /// [`Self::insert`].
     fn rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)], code: bool) {
+        if code {
+            for &row in rows {
+                self.note_code_row(p, comp, row);
+            }
+        }
         let bodies: BTreeSet<BodyId> = rows.iter().map(|r| r.0).collect();
         for bid in bodies {
             let rows: Vec<BlockId> = rows.iter().filter(|r| r.0 == bid).map(|r| r.1).collect();
@@ -253,6 +262,50 @@ impl Cycles {
                             let key = (other, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
                             self.insert(key, code);
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The run nodes of code of a caller (a body and a block) whose re-entry
+    /// edges reach block `block` of body `body` ([`Self::add_code_rows_at`]).
+    pub fn code_from(&self, body: BodyId, block: BlockId) -> Option<&BTreeSet<(BodyId, BlockId)>> {
+        self.code_from.get(&(body, block))
+    }
+
+    /// Notes for each block that the re-entry edges after the run node `row`
+    /// of code of a caller reach that the row reaches it ([`Self::code_from`]):
+    /// the successors of the row, their successors, and each block of the
+    /// handled bodies that splice into the body.
+    fn note_code_row(&mut self, p: &Program, comp: &[BodyId], row: (BodyId, BlockId)) {
+        let (bid, x0) = row;
+        let Some(b) = p.bodies.get(bid.index()) else {
+            return;
+        };
+        let mut seen = vec![false; b.blocks.len()];
+        let mut work: Vec<BlockId> = b.blocks.get(x0.index()).map_or_else(Vec::new, |blk| {
+            let mut w = blk.term.kind.unwind().into_iter().collect::<Vec<_>>();
+            w.extend(blk.term.kind.normal_successors());
+            w
+        });
+        while let Some(x) = work.pop() {
+            match seen.get_mut(x.index()) {
+                Some(s) if !*s => *s = true,
+                _ => continue,
+            }
+            self.code_from.entry((bid, x)).or_default().insert(row);
+            if let Some(blk) = b.blocks.get(x.index()) {
+                work.extend(blk.term.kind.unwind());
+                work.extend(blk.term.kind.normal_successors());
+            }
+        }
+        for &other in comp {
+            if other != bid && crate::factgen::handlers::splice_root(p, other) == bid {
+                if let Some(ob) = p.bodies.get(other.index()) {
+                    for i in 0..ob.blocks.len() {
+                        let key = (other, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
+                        self.code_from.entry(key).or_default().insert(row);
                     }
                 }
             }
