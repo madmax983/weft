@@ -7931,3 +7931,82 @@ files = [
 codes = ["W0302", "W0502"]
 reason = "class F20.4-CAPTURE-TWICE (follow-up F20.4, I-8 of the third review of group F): one `once` closure, a `Kept` capture of a closure body, in two operands of one node. The `ir` pipeline moves the variable of the source of the capture two times and gives W0302 for it; the old pipeline gives W0502 for the closure. Same line, same fault"
 stage = "F20.4"
+
+# ----------------------------------------------------------------------------
+# Stage C1.5: the allow-list of #56 (holes C1-H5, C1-H6; gaps G1 to G5).
+
+# Issue #67: the 4 rows that the review signed with a condition. The condition
+# holds at stage C1.5: each H5, H6 and H6c variant of the 4 rows
+# (scratchpad r67/v/rows) is W0502 or W0503 in the ir pipeline.
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g5/p22405.wf",
+    "r2/oracle/runs/g6/p31046.wf",
+    "r2/oracle/runs/g6/p31901.wf",
+    "r2/oracle/runs/g3/p7192.wf",
+]
+reason = "W0301 precision: a block value (`first(&v)` or a closure that captures a local of the block) points into a local of the block, but no node uses it (ir 5.9, 5.10). W0601 precision: the closure that moves a linear value goes to `apply`, whose summary runs it once on each normal path. Each variant that reads the block value or calls the block closure is W0301. Each variant that gives the closure to `drop_` or to a callee that runs it on some paths is W0601. The once closure of each row changes a place that it captures by reference (`w5`, `w4.es[0]`, `v8`, `v1`). Each variant that gives it to a value that can resume two times is W0502/W0503 (H1 to H4 forms) or W0301 at the call (H5 and H6 forms: the copy of the frame holds a reference into the place that the closure changes). CONDITION: the H5 and H6 forms are rejected only by this W0301, not by W0502/W0503. Check these rows again after the fix of holes C1-H5 and C1-H6. Checked at stage C1.5: each H5, H6 and H6c variant is W0502 or W0503 now"
+signed_by = "review agent, issue #67 (independent)"
+stage = "C1.5"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/redteam/p/h_multi.wf",
+    "tests/gate/probes/r2/redteam/p/h_multi.wf",
+    "verify/s5/S5c/mut/progs/m02274_39_multi_params.wf",
+]
+codes = ["W0503"]
+reason = "gap G4 of stage C1.5 (issue #68): a stated row is no bound for code of a caller, because a value with no row can go into a place of a type with a row. A linear value is live across the run of a function value whose row has no `multi` effect (`typed_param(f: fn() -> u64 / Ask)`, `call_log(s)` with `s.f`), in a program with a `multi` operation: W0503 there too. The programs do not run (W0705, W0101)"
+stage = "C1.5"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/81_generic_holds.wf",
+    "tests/programs/81_generic_holds.wf",
+    "tests/programs/39_multi_params.wf",
+]
+codes = ["W0503"]
+reason = "gap G4 of stage C1.5 (issue #68): the function values of the stated row `fail` can resume more than once in a program with a `multi` operation, so a linear value that a generic callee holds across their run is W0503 too. The program does not run"
+stage = "C1.5"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/c1/c15_*_b.wf"]
+codes = ["W0301", "W0302", "W0502", "W0503"]
+reason = "stage C1.5 (holes C1-H5, C1-H6; gaps G1, G3): a `once` closure runs or is given out again after a value that resumes two times, inside or after a nested body, or as a result of the run of such a value. Both pipelines reject each program (`g_row_fwd_b` and `h6_oldmiss_min_b` only the `ir` pipeline: `fixed`); the old pipeline gives W0301 (the closure captures `v`) or W0302 and W0503 there too, the `ir` pipeline W0502 and W0503 at the call that gives the closure. The run faults (the closure runs again)"
+stage = "C1.5"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "reaches", "multi", "repeats"]
+files = [
+    "tests/gate/probes/fixes/c1/c15_res_made_b.wf",
+    "tests/gate/probes/fixes/c1/c15_res_run_b.wf",
+    "tests/gate/probes/fixes/c1/c15_res_run2_b.wf",
+]
+reason = "stage C1.5 (gap G3): `run2` runs a function value of a parameter and its result, and `main` gives it a closure that performs the `multi` operation of the local handler of `main`. The old inference marks `run2` and `main` `multi`; the `ir` summary has no `multi` for a caller (the run of the value is code of a caller: its summary gives the `multi` part where a caller applies it). reaches, passthrough, repeats: the part `runs`"
+stage = "C1.5"
+
+[[entry]]
+class = "sig"
+parts = ["repeats", "raises"]
+files = [
+    "tests/gate/probes/fixes/c1/c15_loop_scope_b.wf",
+    "tests/gate/probes/fixes/c1/c15_loop_scope_c.wf",
+    "tests/gate/probes/fixes/c1/c15_h6_code_scope_b.wf",
+]
+reason = "stage C1.5 (gaps G1, G2): a function with a `scope` and no task. The old inference marks it `raises` (a task of the scope can fail); the `ir` summary raises only for a task that the scope starts. repeats: the part `runs`"
+stage = "C1.5"
+
+[[entry]]
+class = "sig"
+parts = ["multi"]
+files = [
+    "tests/gate/probes/verify/s5/diff/p/gen_hold2.wf",
+    "tests/programs/81_generic_holds.wf",
+]
+reason = "stage C1.5 (gap G4, issue #68): a stated row is no bound for code of a caller. A function that calls a generic callee with a function value, where the callee runs a parameter whose row (`fail`) has no `multi` effect, is `multi` in a program with a `multi` operation: the callee summary is `multi` for the run of its parameter. The old inference trusts the row"
+stage = "C1.5"

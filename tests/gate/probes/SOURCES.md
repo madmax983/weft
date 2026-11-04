@@ -776,3 +776,10 @@ others come from the self-attack of the stage (scratchpad `c1/att/`). Before the
   arguments of the call (W0312).
 - `fixes/c1/n59_*.wf` (claim C1-59): a run of a closure that changes a captured `u64`
   gives it no linear value.
+- `fixes/c1/c15_*.wf` (stage C1.5; claims C1-H5, C1-H6, C1-G1 to C1-G4): the counterexamples of
+  the reviews of C1.3, from `crates/weft-check/tests/data/handlers/c15/`. The `_b.wf`
+  programs run a `once` closure two times: in a loop around a `handle` or a `scope`
+  (`loop_*`), after a resume inside a nested body (`h6_*`), as a result of a run that
+  resumes two times (`res_*`), as a capture that a made closure gives out (`h5_*`, W0503), or through a parameter whose stated row has no `multi`
+  effect (`g_row_fwd`). The `_c.wf` programs are the clean twins: no loop, or a value that
+  does not resume two times. The `ir` pipeline accepts each `_c.wf`.

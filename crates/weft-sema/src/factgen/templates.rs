@@ -3277,10 +3277,37 @@ fn captures_given_out(
     }
     let body = em.body;
     let mut once = false;
+    // A closure that a callee made holds the values of its captures in its
+    // own value (`made_held`; hole C1-H5 of stage C1.5): the variable of the
+    // maker is not in the state of this body. A value that the analysis
+    // does not know there can be a `once` value.
+    let held = transfer::operand(&mut em.cx(), body, st, callee)?
+        .flat()
+        .fns;
+    let made = held.contains(&crate::analysis::FnVal::Made(c));
+    let own_comp = crate::factgen::handlers::splice_root(em.p, decl.maker)
+        == crate::factgen::handlers::splice_root(em.p, body);
     for k in ks {
         let Some(cap) = decl.captures.get(k as usize) else {
             continue;
         };
+        if matches!(
+            cap.mode,
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
+        ) {
+            continue;
+        }
+        if made || !own_comp {
+            let fns = if made {
+                transfer::made_held(em.p, c, k, &held)
+            } else {
+                std::collections::BTreeSet::from([crate::analysis::FnVal::Unknown])
+            };
+            once |= fns.iter().any(|f| {
+                matches!(f, crate::analysis::FnVal::Unknown) || transfer::once_value(em.p, f)
+            });
+            continue;
+        }
         let fns = match cap.mode {
             weft_ir::CaptureMode::ByMove => {
                 transfer::operand(&mut em.cx(), body, st, callee)?
@@ -3961,8 +3988,10 @@ fn emit_apps(
     let main = nodes.main;
     let mut abort = false;
     let mut frames = Vec::new();
-    // A cycle of the re-entry edges after code of a caller does not run
-    // the values of the interface again (issue #56).
+    // A cycle of the re-entry edges after code of a caller only does not
+    // run the values of the interface again (exceptions E1 and E2 of stage
+    // C1.5, `docs/ir.md` 5.20): each run there gets the part `after`, and
+    // the caller decides (E3).
     let cyclic = em.cycles.has_strict(em.body, block);
     let rebinds = apps.iter().any(|a| !a.rebinds.is_empty());
     // One run at the node and no task node: no other code of the call runs

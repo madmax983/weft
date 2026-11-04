@@ -1,0 +1,10 @@
+// Stage C1.5 review: a once closure runs after a value that can resume two times.
+effect Pick { multi fn pick() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn app(m: fn(), x: Vec<u64>, k: fn(Vec<u64>)) { m(); k(x) }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        app(|| { if pick() { print(1) } }, v, |w: Vec<u64>| print(take_v(w)))
+    }
+}

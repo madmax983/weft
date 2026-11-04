@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1", "C1.2", "C1.3"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1", "C1.2", "C1.3", "C1.5"]
 
 
 # ----------------------------------------------------------------------
@@ -7246,3 +7246,98 @@ repro = [
 ]
 code = "W0503"
 note = "the closure gives the `once` closure back after the `multi` operation"
+
+# Stage C1.5: the reviews of C1.3 (holes C1-H5, C1-H6; gaps G1 to G5).
+
+[[claim]]
+finding = "C1-G1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "C1.5"
+repro = [
+    "tests/gate/probes/fixes/c1/c15_loop_handle_b.wf",
+    "tests/gate/probes/fixes/c1/c15_loop_clause_b.wf",
+]
+code = "W0502"
+note = "a loop around a `handle` runs the handled body or the clause again, and they run a `once` closure (`Cycles` reads the chain of sites)"
+
+[[claim]]
+finding = "C1-G1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCE"
+stage = "C1.5"
+repro = [
+    "tests/gate/probes/fixes/c1/c15_loop_scope_b.wf",
+]
+code = "W0502"
+note = "a loop around a `scope` runs the scope body again, and it runs a `once` closure"
+
+[[claim]]
+finding = "C1-H6"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.5"
+repro = [
+    "tests/gate/probes/fixes/c1/c15_h6_inner_b.wf",
+    "tests/gate/probes/fixes/c1/c15_h6_inner_perform_b.wf",
+    "tests/gate/probes/fixes/c1/c15_h6_two_b.wf",
+    "tests/gate/probes/fixes/c1/c15_h6_code_b.wf",
+    "tests/gate/probes/fixes/c1/c15_h6_abort_b.wf",
+    "tests/gate/probes/fixes/c1/c15_h6_oldmiss_min_b.wf",
+]
+code = "W0502"
+note = "a resume inside a handled body runs the code after the `handle` again (the walk of a row goes through the spliced graph, gap G2)"
+
+[[claim]]
+finding = "C1-H6"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "C1.5"
+repro = [
+    "tests/gate/probes/fixes/c1/c15_h6_code_scope_b.wf",
+]
+code = "W0502"
+note = "a resume inside a scope body runs the code after the `scope` again"
+
+[[claim]]
+finding = "C1-G3"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.5"
+repro = [
+    "tests/gate/probes/fixes/c1/c15_res_run_b.wf",
+    "tests/gate/probes/fixes/c1/c15_res_made_b.wf",
+    "tests/gate/probes/fixes/c1/c15_res_run2_b.wf",
+]
+code = "W0502"
+note = "a run of a result of a parameter comes after the run of the parameter that gives it (the key has the part `result`); a closure that a callee made gives back the values that it holds"
+
+[[claim]]
+finding = "C1-G4"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.5"
+repro = [
+    "tests/gate/probes/fixes/c1/c15_g_row_fwd_b.wf",
+]
+code = "W0502"
+note = "issue #68: a value with no row goes into a parameter whose stated row has no `multi` effect; code of a caller can resume more than once in each program with a `multi` operation"
+
+[[claim]]
+finding = "C1-H5"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.5"
+repro = [
+    "tests/gate/probes/fixes/c1/c15_h5_min_b.wf",
+    "tests/gate/probes/fixes/c1/c15_h5_twolevel_b.wf",
+]
+code = "W0503"
+note = "a closure that a callee made gives back a `once` capture after a value that resumes two times: the value of the capture is in the value of the closure (`made_held`), not in the variable of the maker"

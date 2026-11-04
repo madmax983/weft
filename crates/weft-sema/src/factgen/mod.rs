@@ -1193,21 +1193,27 @@ fn new_rows(
 /// The part `after` of each run of `runs` (`Run::after`, hole C1-H1 of
 /// stage C1.1): the values of the interface whose run node is a run node
 /// of code of a caller whose re-entry edges reach the run
-/// (`Cycles::code_from`). The value itself does not count: a second run
-/// node of it, or a loop, makes it `many` already.
+/// (`Cycles::code_from`). The key of a run is `(param, capture, result)`:
+/// a run of a result of a parameter comes after the run of the parameter
+/// that gives it (gap G3 of stage C1.5). The run itself does not count: a
+/// second run node of its key, or a loop, makes it `many` already.
 fn runs_after(
     runs: &mut [(crate::analysis::transfer::RunOf, bool)],
     cycles: &crate::analysis::widen::Cycles,
 ) {
-    let at: Vec<((weft_ir::BodyId, weft_ir::BlockId), (u32, bool))> = runs
+    let at: Vec<(
+        (weft_ir::BodyId, weft_ir::BlockId),
+        crate::analysis::summary::RunKey,
+    )> = runs
         .iter()
-        .map(|(r, _)| ((r.body, r.block), (r.param, r.capture)))
+        .map(|(r, _)| ((r.body, r.block), (r.param, r.capture, r.result)))
         .collect();
     for (r, _) in runs.iter_mut() {
-        let Some(from) = cycles.code_from(r.body, r.block) else {
+        let from = cycles.code_from(r.body, r.block);
+        if from.is_empty() {
             continue;
-        };
-        let own = (r.param, r.capture);
+        }
+        let own = (r.param, r.capture, r.result);
         r.after.extend(
             at.iter()
                 .filter(|(k, key)| *key != own && from.contains(k))

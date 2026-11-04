@@ -1,0 +1,13 @@
+// Stage C1.5: a row in a clause body stays with the old pipeline (group D fallback).
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn f(m: fn(), g: fn()) {
+    handle Ask { fn ask() { m(); resume(true) } } in { if ask() { print(0) }; g() }   //~ W0503
+}
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        f(|| { if pick() { print(1) } }, || print(take_v(v)))   //~ W0301 W0502 W0503
+    }
+}

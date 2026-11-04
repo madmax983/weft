@@ -728,19 +728,13 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
 }
 
 /// True if code of a caller of the function values of type `t` can resume
-/// more than once: an effect of the row of the function type has a `multi`
-/// operation, or (with no row, or no function type) an effect of the
-/// program has one.
-fn fn_multi(tys: &TyTable, t: TyId) -> bool {
-    let multi = |e: &weft_ir::ty::EffectDecl| e.ops.iter().any(|o| o.multi);
-    match tys.try_get(t) {
-        Some(Ty::Fn(f)) if f.row.is_some() => f
-            .row
-            .iter()
-            .flatten()
-            .any(|e| tys.effects().get(e.index()).is_some_and(multi)),
-        _ => tys.effects().iter().any(multi),
-    }
+/// more than once: an effect of the program has a `multi` operation. A
+/// stated row is no bound here: a value of a type with no row can go into a
+/// place of a type with a row, and its effects pass through (ADR 0005), so
+/// it can perform a `multi` operation that the row does not name (gap G4
+/// of stage C1.5, issue #68).
+fn fn_multi(tys: &TyTable, _t: TyId) -> bool {
+    tys.effects().iter().any(|e| e.ops.iter().any(|o| o.multi))
 }
 
 /// `i` as a `u32` (saturated).

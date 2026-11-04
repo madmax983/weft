@@ -1541,24 +1541,15 @@ worst case in the body that runs it, but the caller gives the value and applies 
 summary there (part `runs`). Six changes keep that worst case out of the summaries and of
 the nodes of the caller.
 
-- #56. The part `multi` of a closure summary does not count a `multi_at` row that code of
-  a caller adds at a run node of a value of the interface (`Em::run_multi`,
-  `FnParts::run_multi`). `Run::multi` still gives the row of a value that the caller does
-  not know.
-- #56. A run node is a `dyn_rows` node of its own reason (`Handlers::real_rows`) only if
-  a summary other than such code is `multi`. The re-entry edges after a node of code of a
-  caller only still go into the facts and the cycles of the analysis, but they do not set
-  the flag `many` of the runs after them (`Cycles::add_code_rows_at`, `Cycles::has_strict`).
-  Instead each such run gets the part `after` (follow-up C1.1, hole C1-H1 of the review of
-  C1): the values of the interface whose run node of code of a caller reaches it
-  (`Cycles::code_from`, `factgen::runs_after`). Where a caller applies the summary
-  (`transfer::apply_runs`), a run happens again (`again`, no order) if a value that the
-  caller gives for a key of `after` can resume more than once: its summary is `multi`, or
-  it performs a `multi` operation through a captured capability. So
-  `run_both(|| { pick() }, || commit(t))` is W0502 again, and `run_both(|| print(0), ..)`
-  is not. A run of a capture of a closure that a callee made moves the value of the
-  closure for a `once` capture value there too (follow-up C1.2, hole C1-H2: `mk(m, g)`
-  gives `|| { m(); g() }`).
+- #56 (stage C1.5 replaces the rule of C1 to C1.3 with an allow-list; see "As built
+  (stage C1.5)" below). A run of a value of the interface is `many` where a re-entry
+  edge reaches it, except where the exceptions E1 to E4 hold. Each such run gets the part
+  `after` (follow-up C1.1, hole C1-H1 of the review of C1), and the caller decides if
+  the run happens again (`transfer::apply_runs`). So
+  `run_both(|| { pick() }, || commit(t))` is W0502, and `run_both(|| print(0), ..)` is
+  not. A run of a capture of a closure that a callee made moves the value of the closure
+  for a `once` capture value there too (follow-up C1.2, hole C1-H2: `mk(m, g)` gives
+  `|| { m(); g() }`).
 - Follow-up C1.2, hole C1-H3 (older than C1). A callee that gives a function value of an
   argument back or puts it into a place (part `ret.fns` with `RetFn::Param(i)`, or each
   argument for a made closure or a value that the summary does not know; part
@@ -1603,6 +1594,116 @@ rejects each program, the `ir` pipeline accepted it, and the run leaks a linear 
 - A store of a linear closure into a function part of a local whose value was plain
   data (`cb.f = || unlock(l)` after `Cb { f: || print(0) }`): the store gives
   `overwrites` of the variable of the local, as a store of a linear part does.
+
+As built (stage C1.5, the reviews of C1 to C1.3: holes C1-H5 and C1-H6, gaps G1 to G5;
+issue #68). The rule of #56 is an allow-list now. A run of a value of the interface (a
+parameter, a capture, or a result of a run of one) is `many` if a cycle of the CFG or a
+re-entry edge reaches its block. It is not `many` only if each of the exceptions E1 to
+E4 holds. Each exception is a fact that the fact generator makes, not an assumption.
+
+The cycles (`analysis::widen::Cycles`):
+
+- G1. A handled body, a scope body and a clause body run in a frame of their own, at a
+  site block (the `handle` or the `scope`). `Cycles::has`, `Cycles::has_strict` and
+  `Cycles::code_from` read the chain of sites: a body runs again when its site block is
+  in a cycle (`while .. { handle .. in { g() } }`, also with `scope` and with a clause
+  that runs `g`). A nested body with no site in the component is in a cycle.
+- G2 (hole C1-H6). The walk after a row goes through the spliced graph of the component:
+  from a `handle` or a `scope` into the entry of the nested body (and of the clauses of
+  the handler), from a `Return` of a nested body to the normal successors of its site,
+  from an `UnwindExit` to the `unwind` block of the site (with none, to each `UnwindExit`
+  of the site body), and from a `resume` to the entry of the handled body of the clause.
+  The walk does not enter a closure body: the node that runs the closure applies its
+  summary.
+
+The keys and the caller (`transfer::apply_runs`):
+
+- G3. The key of a run is `(param, capture, result)` (`Run::after`). A run of a result
+  of a parameter comes after the run of the parameter that gives it, so its part
+  `after` has the key of the parameter (`fn run2(w) { let k = w(); k() }`). A closure
+  that a callee made and that gives back a capture gives the values that the operand
+  holds (`with_results`, `capture_fns`).
+- G4 (issue #68). `Run::multi` and `unknown::code_of_caller` do not read a stated row: a
+  value with no row can go into a place of a type with a row, and its effects pass
+  through (ADR 0005). Code of a caller can resume more than once if an effect of the
+  program has a `multi` operation.
+- G5. A key whose values the node does not know (no values, or no source) counts as a
+  key that can resume more than once. A value can resume more than once if its own app
+  can, or the app of a value that its first application reached (`Apps::inner`, at each
+  depth), or if it has no app.
+- Hole C1-H5. A closure that a callee made holds the values of its captures in its own
+  value: `templates::captures_given_out` reads them there (`made_held`), not from the
+  variable of the maker. A closure of another component gives a value that the analysis
+  does not know: it counts as a `once` value.
+
+The exceptions. A run r of a value of the interface at block b is not `many` only if:
+
+- E1. Each run node X of code of a caller whose re-entry reaches b in the spliced graph
+  is a run of a value of the interface, and the key of X is in `r.after`
+  (`Cycles::add_code_rows_at`, `Cycles::code_from`, `factgen::runs_after`).
+- E2. No strict row reaches b (`Cycles::has_strict`): no perform of a `multi` operation
+  through the row, no call whose summary can resume more than once, no local handler
+  whose clause resumes more than once (`add_handlers`), no captured capability of a
+  `multi` handler in a closure body (`add_captured`), no loop, no cyclic site block of an
+  enclosing body (G1), and no strict row in a nested body that reaches b (G2).
+- E3. Where a caller applies the summary, r happens again (`again`, no order; for a
+  `once` value of a made closure or of a `ByMove` capture also the move of the value of
+  the closure) if a key of `r.after` is a key that can resume more than once (G5). A
+  value of the interface of the caller itself (a parameter, a capture, or a result of
+  one) is code of a caller there too: the runs after it do not happen again, but their
+  values of the interface get its key in their part `after`. So the key goes up the
+  chain of callers to the caller that knows the value.
+- E4. A closure summary leaves out of its part `multi` only the `multi_at` rows of code
+  of a caller at a run of a capture or a parameter of the closure (`Em::run_multi`,
+  `FnParts::run_multi`). The row stays in the facts of the body. Each other row (a
+  perform, a callee, a clause, a nested body) stays in the part `multi`.
+
+Proof sketch: a second resume of a multi point M runs the code after M again. That code
+reaches b in one of these ways:
+
+1. M is a node of the body of r, or of a body that splices into it, or of a clause body
+   of a local handler. Then M is a row. A strict row makes b strict-cyclic (E2), and r
+   is `many`. A row of code of a caller puts its key into `r.after` (E1). The walk
+   follows each edge of the spliced CFG, so each path from M to b in the IR is a path of
+   the walk. A loop of an enclosing body runs the nested body again (G1, E2).
+2. M is inside a value v that a run node X of the body runs. The resume runs the rest of
+   v, then the code after X. The key of X is in `r.after` (E1), and the caller checks v
+   and each value that v runs (E3). A run of a result has its own key (G3). If the
+   caller does not know v (a value of its own interface), the runs after X get the key
+   of v in their part `after` at the caller, and the same argument holds one level up.
+3. M is inside a callee that is no value of the interface. Its summary is `multi` or
+   `unknown_multi`, so its call node is a strict row (E2). A value of the interface that
+   the callee runs is a run of the summary of the callee: the node applies its `after`
+   and its `many`, and the node itself gets `again`.
+4. M is in a caller, and the body waits at an operation of a handler of the caller. The
+   perform, or the call that performs, is a strict row (E2).
+5. M is in a task. A task runs on a stack of its own: a `multi` resume there does not
+   run the code of the parent again (O3-10, W0314).
+6. M is in a value with a stated row with no `multi` effect. The row does not count
+   (G4), so case 2 applies.
+
+For E4: the node that runs a closure applies the summary of the closure and the summary
+of each value that the closure runs (part `runs`). The row that the closure leaves out is
+the row of such a run. So the node of the caller gets `multi_at` from the summary of the
+value, a `dyn_rows` row if the value can resume more than once, and `Run::multi` for a
+value that the node does not know. The readers of the part `multi` of a closure summary
+are `apply::main`, `transfer::note_multi_apps` and the keys of `apply_runs` (G5 reads the
+values that the closure runs too).
+
+Two parts of the analysis do not find the rows of a body. They are safe only because the
+`ir` pipeline stops there (`AlphaError::Later`) and the old pipeline checks the program:
+
+- A clause body has no loop of new rows: `emit_clause` runs the analysis one time with
+  the cycles of the function. A row in a clause, or in a body that does not splice into
+  the body under analysis, stops the analysis ("a `multi` operation of a handler of a
+  caller in a clause (stage F16)", group D).
+- `frames::captured_multi_nodes` reads only the closure body itself. A handler in a
+  closure body stops the analysis ("a handler in a closure body (stage F16)", group D),
+  and a `scope` is in scope only in a body that splices into a function, a test or a
+  clause.
+
+A test pins each of these fallbacks (`ir_handlers.rs`), so a change of a fallback breaks
+the test. If a fallback goes away, the rows of the body must be found first.
 
 ### 5.21 Calls of function values [2.20]
 
