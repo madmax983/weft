@@ -276,7 +276,14 @@ Each stage that changes `ir` diagnostics ends only if, on the programs in scope:
 4. the cost: the total `check` time of the `ir` pipeline is at most 2 times the `old`
    time on the same programs, the facts of each function are at most 3 times as many, and
    `crates/weft-check/tests/scale.rs` and `crates/weft-cli/tests/limits.rs` pass with
-   `--facts=ir`;
+   `--facts=ir`. As decided at stage C1.4 (ADR 0013): a fact is a row of an input
+   relation of the spec that the checker reads (each fact of `bridge::each_fact`, also
+   `cfg_edge` and the place table). The `ir` pipeline removes the rows that no rule can
+   read (`factgen::prune`, `docs/ir.md` 6.2), so these rows do not count; the old facts
+   count as they are. The bound for each function is 3 times the old rows plus a fixed
+   part of 64 rows (a function of 1 to 4 old rows has no stable ratio). The time is the
+   CPU time of one release process for each check of the single-file programs of tier 1
+   in scope; the time criterion did not change;
 5. tier 2 for the stages that say "tier 2".
 
 ### 2.8 Commands
@@ -1693,7 +1700,8 @@ with the group forced on, report only).
     gives to a handler, F14; issue #64).
   - The cost criterion does not hold (§5, gate record C1; issue #62): tier 1 `check`
     time 2.2 times the old time, and 10617 of 37667 functions have more than 3 times the
-    facts.
+    facts. Follow-up C1.4 fixes the time and the facts (§5; two functions of the abort
+    shape of `scale_ops.wf` stay over the bound of the facts, follow-up C1.5).
   - The independent reviews of C1 signed 13 of the 25 new tier-2 `lost-clean` rows. Their
     variants found holes C1-H1 (follow-up C1.1), C1-H2, C1-H3 (follow-up C1.2) and C1-H4
     (follow-up C1.3). 12 rows (p3038, p21058, p22405, p42423, p43731, p44831, p13470,
@@ -1873,6 +1881,9 @@ gate and the exit of its parent, limited to its group of differences.
 | C1.2 | C1 | holes C1-H2 and C1-H3 of the second review of C1 (lost-fault W0301, W0502, W0503 / none). H2 (C1 made it): a closure that a callee made runs a value that resumes two times, then a `once` capture; the `after` of C1.1 set `again`, but a capture of a made closure moves the value of the closure only for `many`. Fix: that move for each value of such a run too. H3 (older than C1): a callee runs such a value and gives a `once` closure argument out again (back, in a field, a struct, an `Option`, a tuple, a `Vec`, through a callee, in a made closure); the caller runs it two times. Fix: `templates::given_out` (a variable of the closure live across a node with the `multi` of the call, W0503; parts `ret.fns` and `put_fns`). Probes `tests/gate/probes/fixes/c1/h2_*`, `h3_*` (claims C1-H2, C1-H3), tests `ir_handlers` (`give_out_*.wf`, `made_run_after_multi.wf`); the variants `c1sign/v`, `c1sign/v2` and the self-attack `c1/att5`: 0 HOLE | done (C1.2) |
 | C1.3 | C1 | hole C1-H4 of the third review of C1 (lost-fault W0502, W0503 / none; the form through a callee is a C1 regression, the direct call is older): a closure performs a `multi` operation through a captured capability, then runs or gives out a `once` closure (a capture, a parameter). Fix: the blocks after such a perform are in a cycle of the closure body (`frames::captured_multi_nodes`, `Cycles::add_captured`; no re-entry edge), a `ByMove` capture is a value in the value of the closure (a run again moves the closure), and a value call gives out a `once` closure of an argument or a capture again (`templates::captures_given_out`, `given_out`). Probes `tests/gate/probes/fixes/c1/h4_*` (claim C1-H4), tests `ir_handlers` (`h4_*.wf`); `c1sign/v3` and the self-attack `c1/att6`: 0 HOLE (2 old misses of fallback programs stay) | done (C1.3) |
 
+| C1.4 | C1 | the cost criterion (§2.7.4, issue #62). Causes: each test of the chain of a `match` gave each variant test variable of the scrutinee a new value (`rebound_at`, `points_into`: quadratic); rows that no rule reads (the `rebound_at`, `empty_at`, `uses`, `scope_end` of temporaries of plain data, the `reads_at` and `owner` rows of place trees that no reference or task reaches, edges through nodes with no fact, the places of such trees); quadratic passes (`handlers::exposed` built the predecessors of the whole graph for each use of a clause, `late_uses` read all rows for each use, `frames::cyclic` walked from each block, `Weights::count` read all runs for each handler, `handlers::spliced` for each clause, `receiver_ref` searched the body for each call, `Vars::variant_tests` searched its list for each key, `sig::Inferred::join` compared each changed place with each other one, `clause::finish_handle` walked the parent chain for each local, the type table copied its effects for each body, `State::remove_bodies` read each local, and a join of states copied the chunks that it did not share). Fixes: a test binds only the `W` variables of the variants that its `Switch` selects (`templates::selected_variants`); `factgen::prune` (`docs/ir.md` 6.2; ADR 0013); indexes for the passes, Tarjan's components, shared chunks and shared type declarations. The verdicts do not change (tier 1: each program has the same diagnostics and violations; `agreement_random` `pruned_facts_give_the_same_violations`). Test `scale.rs` `the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts` | done (C1.4) |
+| C1.5 | C1.4 | the facts of the abort shape of `verify/s5/S5a/x/p/scale_ops.wf` and `s5r/p/scale400.wf`: `handlers::unbound_at_aborts` gives each captured local of a handled body that no path to an abort has assigned a new value at the `AbortValue` node of each such abort (a quadratic number of `rebound_at` rows: 22.6 and 6.4 times the old rows). A form with fewer rows must keep the precision of `s5r/p/scale400.wf` (a new value only where an invalidation of the places of the local can reach the abort) | open |
+
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
 behind its group):
@@ -1928,6 +1939,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | C1.2 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %, as C1) | 2476 (2469 signed; 7 refused by the second review of C1 wait) | 1608 | 8471 | 10 (as C1.1) |
 | C1.3 (tier 1, groups A to F, default) | 4106 of 4490 | 3604 | 240 (+1: `h4_param_b`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 124 | 411 (+5: the `h4` probes, ledgered) | 9 (as C1.1) |
 | C1.3 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %, as C1) | 2476 (2464 signed; 12 wait: the 7 refused rows and the 5 whose signature the third review withdrew) | 1608 | 8471 | 10 (as C1.1) |
+| C1.4 (tier 1, groups A to F, default) | 4106 of 4490 | 3604 | 240 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 124 | 411 | 9 (as C1.1); each program has the class and the diagnostics of C1.3 |
+| C1.4 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %, as C1) | 2476 (12 wait, as C1.3) | 1608 | 8471 | 10 (as C1.1); the classes and the blockers of C1.3 |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts
@@ -1936,6 +1949,34 @@ facts of the old pipeline (1436 of them with 20 or more old facts; the largest f
 46 on `verify/s5/S5a/x/p/scale_ops.wf`). In `scale.rs` (release) the `ir` check of
 `many_variants(8000)` takes 28 s (old 0.27 s): each test of the chain of a `match` gives
 each part variable of the scrutinee a new value. The criterion does not hold (issue #62).
+
+Cost at C1.4 (follow-up C1.4; the definition of ADR 0013; release; the 4136 single-file
+programs of tier 1 in scope; one process for each check; CPU time, user and system, of
+the process; scripts `c14/cost3.py` and `c14/crit.py` of the scratchpad):
+
+| Measure | C1.3 (e1902fb) | C1.4 |
+| --- | --- | --- |
+| tier 1 `check`, CPU time, old / `ir` | 38.0 s / 79.6 s (2.10 times) | 37.9 s / 62.4 s (1.65 times) |
+| tier 1 `check`, wall time, old / `ir` | 41.2 s / 83.0 s (2.02 times) | 41.6 s / 65.9 s (1.59 times) |
+| rows of all functions, old / `ir` | 1 887 499 / 6 632 522 (3.51 times) | 1 887 499 / 2 465 536 (1.31 times) |
+| functions over 3 times the old rows (of 37 787) | 10 674 (1 468 with 20 or more old rows) | 493 (460 with 1 to 4 old rows; 26 with 20 or more) |
+| functions over 3 times the old rows plus 64 (the bound of ADR 0013) | 102 | 2 (`scale_ops.wf` `many`, 22.6 times; `s5r/p/scale400.wf` `many`, 6.4 times: follow-up C1.5) |
+| `scale_ops.wf` `many`: rows; `check` time | 2 331 262 (45.7 times); 14.9 s (old 0.8 s) | 1 154 311 (22.6 times); 8.6 s |
+| `edge/chain*.wf`, `n100.wf` `f`, `154_unset_nested.wf` `mk_chain` | 36 to 42 times; 995 rows (old 1); 128 rows (old 2) | 0 or 1 row; 0 rows; 60 rows (in the fixed part) |
+
+`scale.rs` (`many_locals_check_in_time`, release, in one process; the C1 column is the
+record of stage C1):
+
+| Shape | C1 `ir` | C1.4 `ir` | old |
+| --- | --- | --- | --- |
+| `blocks` (4000) | 2.9 s | 1.3 s | 0.6 s |
+| `types` (3200) | | 0.11 s | 0.06 s |
+| `fields` (16000) | 2.5 s | 1.1 s | 0.4 s |
+| `variants` (8000) | 28 s | 1.0 s | 0.2 s |
+| `handlers` (4000) | 1.9 s | 1.8 s | 0.4 s |
+
+The time criterion holds (1.65 times the old time). The facts criterion holds for each
+function but the two of follow-up C1.5. `scale.rs` and `limits.rs` pass with `--facts=ir`.
 
 ---
 

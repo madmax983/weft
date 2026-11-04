@@ -1095,11 +1095,21 @@ impl Frames {
     /// a cycle of the handled body (also through the `handle`s on the way,
     /// [`run_weight`]), or one node in a clause.
     fn twice_of(&self, p: &Program) -> std::collections::BTreeSet<HandlerId> {
+        let mut by: BTreeMap<HandlerId, Vec<(BodyId, BlockId)>> = BTreeMap::new();
+        for (k, hs) in &self.runs {
+            for &h in hs {
+                let at = by.entry(h).or_default();
+                if at.last() != Some(k) {
+                    at.push(*k);
+                }
+            }
+        }
         let mut w = Weights {
             p,
-            runs: &self.runs,
+            by,
             cyc: BTreeMap::new(),
             count: BTreeMap::new(),
+            handles: BTreeMap::new(),
         };
         let hs: std::collections::BTreeSet<HandlerId> =
             self.runs.values().flatten().copied().collect();
@@ -1283,31 +1293,117 @@ impl Frames {
 }
 
 /// The blocks of body `b` that are in a cycle of its normal edges.
+///
+/// A block is in a cycle if its strongly connected component has more than
+/// one block, or if it is its own successor. The components come from one
+/// pass of Tarjan's algorithm (stage C1.4: a walk from each block was
+/// quadratic in a body with many blocks, `s5/h4000.wf`).
 fn cyclic(b: &weft_ir::Body) -> std::collections::BTreeSet<BlockId> {
+    let n = b.blocks.len();
+    let succ: Vec<Vec<usize>> = b
+        .blocks
+        .iter()
+        .map(|x| {
+            x.term
+                .kind
+                .normal_successors()
+                .into_iter()
+                .map(BlockId::index)
+                .filter(|&j| j < n)
+                .collect()
+        })
+        .collect();
+    cyclic_of(&succ)
+        .into_iter()
+        .map(|w| BlockId(u32::try_from(w).unwrap_or(u32::MAX)))
+        .collect()
+}
+
+/// The nodes of the graph `succ` (the successors of each node) that are in
+/// a cycle ([`cyclic`]).
+fn cyclic_of(succ: &[Vec<usize>]) -> std::collections::BTreeSet<usize> {
+    let n = succ.len();
     let mut out = std::collections::BTreeSet::new();
-    for (i, _) in b.blocks.iter().enumerate() {
-        let start = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
-        let mut seen = vec![false; b.blocks.len()];
-        let mut work: Vec<BlockId> = b
-            .blocks
-            .get(i)
-            .map(|x| x.term.kind.normal_successors())
-            .unwrap_or_default();
-        while let Some(x) = work.pop() {
-            if x == start {
-                out.insert(start);
-                break;
+    let none = usize::MAX;
+    let mut index = vec![none; n];
+    let mut low = vec![0usize; n];
+    let mut on_stack = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut next = 0usize;
+    for root in 0..n {
+        if index.get(root).copied() != Some(none) {
+            continue;
+        }
+        // The frames of the walk: a block and the index of its next edge.
+        let mut walk: Vec<(usize, usize)> = vec![(root, 0)];
+        if let (Some(i), Some(l), Some(o)) = (
+            index.get_mut(root),
+            low.get_mut(root),
+            on_stack.get_mut(root),
+        ) {
+            *i = next;
+            *l = next;
+            *o = true;
+        }
+        next += 1;
+        stack.push(root);
+        while let Some(&(v, e)) = walk.last() {
+            if let Some(&w) = edges_of(succ, v).get(e) {
+                if let Some(top) = walk.last_mut() {
+                    top.1 += 1;
+                }
+                let wi = index.get(w).copied().unwrap_or(none);
+                if wi == none {
+                    if let (Some(i), Some(l), Some(o)) =
+                        (index.get_mut(w), low.get_mut(w), on_stack.get_mut(w))
+                    {
+                        *i = next;
+                        *l = next;
+                        *o = true;
+                    }
+                    next += 1;
+                    stack.push(w);
+                    walk.push((w, 0));
+                } else if on_stack.get(w).copied().unwrap_or(false) {
+                    let lv = low.get(v).copied().unwrap_or(0).min(wi);
+                    if let Some(l) = low.get_mut(v) {
+                        *l = lv;
+                    }
+                }
+                continue;
             }
-            match seen.get_mut(x.index()) {
-                Some(s) if !*s => *s = true,
-                _ => continue,
+            walk.pop();
+            let lv = low.get(v).copied().unwrap_or(0);
+            if let Some(&(u, _)) = walk.last() {
+                let lu = low.get(u).copied().unwrap_or(0).min(lv);
+                if let Some(l) = low.get_mut(u) {
+                    *l = lu;
+                }
             }
-            if let Some(blk) = b.blocks.get(x.index()) {
-                work.extend(blk.term.kind.normal_successors());
+            if Some(lv) == index.get(v).copied() {
+                let mut comp = Vec::new();
+                while let Some(w) = stack.pop() {
+                    if let Some(o) = on_stack.get_mut(w) {
+                        *o = false;
+                    }
+                    comp.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                let looped = comp.len() > 1 || edges_of(succ, v).contains(&v);
+                if looped {
+                    out.extend(comp);
+                }
             }
         }
     }
     out
+}
+
+/// The successors of block `v` in `succ`.
+fn edges_of(succ: &[Vec<usize>], v: usize) -> &[usize] {
+    succ.get(v).map_or(&[], Vec::as_slice)
 }
 
 /// The number of runs of the clauses of each handler in one run of its
@@ -1315,12 +1411,16 @@ fn cyclic(b: &weft_ir::Body) -> std::collections::BTreeSet<BlockId> {
 struct Weights<'a> {
     /// The program.
     p: &'a Program,
-    /// The handlers whose clauses each node runs.
-    runs: &'a BTreeMap<(BodyId, BlockId), Vec<HandlerId>>,
+    /// The nodes that run a clause of each handler, in the order of
+    /// [`Frames::runs`].
+    by: BTreeMap<HandlerId, Vec<(BodyId, BlockId)>>,
     /// The cyclic blocks of each body.
     cyc: BTreeMap<BodyId, std::collections::BTreeSet<BlockId>>,
     /// The count of each handler, once known.
     count: BTreeMap<HandlerId, u32>,
+    /// The first block of each body (not a cleanup block) whose terminator
+    /// is the `handle` of each handler, once known.
+    handles: BTreeMap<BodyId, BTreeMap<HandlerId, usize>>,
 }
 
 impl Weights<'_> {
@@ -1334,12 +1434,7 @@ impl Weights<'_> {
         let Some(hb) = self.p.handlers.get(h.index()).map(|d| d.handled) else {
             return 2;
         };
-        let nodes: Vec<(BodyId, BlockId)> = self
-            .runs
-            .iter()
-            .filter(|(_, hs)| hs.contains(&h))
-            .map(|(k, _)| *k)
-            .collect();
+        let nodes: Vec<(BodyId, BlockId)> = self.by.get(&h).cloned().unwrap_or_default();
         let mut c = 0u32;
         for at in nodes {
             c = c.saturating_add(self.weight(at, hb, depth));
@@ -1390,15 +1485,70 @@ impl Weights<'_> {
             let Some(sb) = p.bodies.get(site.index()) else {
                 return 2;
             };
-            let Some(i) = sb.blocks.iter().position(|x| {
-                !x.cleanup
-                    && matches!(x.term.kind, TermKind::Handle { handler, .. } if handler == h2)
-            }) else {
+            let at = self.handles.entry(site).or_insert_with(|| {
+                let mut m: BTreeMap<HandlerId, usize> = BTreeMap::new();
+                for (i, x) in sb.blocks.iter().enumerate() {
+                    if let (false, TermKind::Handle { handler, .. }) = (x.cleanup, &x.term.kind) {
+                        m.entry(*handler).or_insert(i);
+                    }
+                }
+                m
+            });
+            let Some(&i) = at.get(&h2) else {
                 return 2;
             };
             b = site;
             blk = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
         }
         2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cyclic_of;
+
+    /// The nodes in a cycle, with a walk from each node (the first form of
+    /// [`super::cyclic`]).
+    fn cyclic_slow(succ: &[Vec<usize>]) -> std::collections::BTreeSet<usize> {
+        let mut out = std::collections::BTreeSet::new();
+        for start in 0..succ.len() {
+            let mut seen = vec![false; succ.len()];
+            let mut work: Vec<usize> = succ[start].clone();
+            while let Some(x) = work.pop() {
+                if x == start {
+                    out.insert(start);
+                    break;
+                }
+                if std::mem::replace(&mut seen[x], true) {
+                    continue;
+                }
+                work.extend(succ[x].iter().copied());
+            }
+        }
+        out
+    }
+
+    /// Tarjan's components give the nodes of the walks on random graphs.
+    #[test]
+    fn cyclic_nodes_are_the_nodes_of_the_walks() {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            usize::try_from((seed >> 33) % m).unwrap_or(0)
+        };
+        for _ in 0..500 {
+            let n = 1 + next(12);
+            let edges = next(30);
+            let mut succ = vec![Vec::new(); n];
+            for _ in 0..edges {
+                let a = next(n as u64);
+                let b = next(n as u64);
+                succ[a].push(b);
+            }
+            assert_eq!(cyclic_of(&succ), cyclic_slow(&succ), "{succ:?}");
+        }
     }
 }

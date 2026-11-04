@@ -625,13 +625,16 @@ impl Vars {
             }
         }
         let mut new: Vec<(VarKey, VarInfo)> = Vec::new();
+        // The keys of `new` (stage C1.4: a search of `new` for each key was
+        // quadratic in a `match` with many arms).
+        let mut seen: HashSet<VarKey> = HashSet::new();
         for q in accessed(b) {
             for (base, v) in variant_steps(q) {
                 let Some(&sp) = tests.get(&base) else {
                     continue;
                 };
                 let key = VarKey::W(bid, base.clone(), v);
-                if self.ids.contains_key(&key) || new.iter().any(|(k, _)| *k == key) {
+                if self.ids.contains_key(&key) || !seen.insert(key.clone()) {
                     continue;
                 }
                 let ty = place_ty(p, tys, bid, &base).map_or_else(String::new, |t| tys.show(t));
@@ -666,7 +669,7 @@ impl Vars {
                 }
                 for (base, v) in variant_steps(target) {
                     let key = VarKey::N(bid, t.local, base.clone(), v);
-                    if self.ids.contains_key(&key) || new.iter().any(|(k, _)| *k == key) {
+                    if self.ids.contains_key(&key) || !seen.insert(key.clone()) {
                         continue;
                     }
                     let named = variant_place(&base, v);

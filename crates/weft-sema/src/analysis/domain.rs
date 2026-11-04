@@ -378,8 +378,14 @@ struct Chunked<V: Clone> {
     chunks: Rc<Chunks<V>>,
 }
 
+/// One chunk of a [`Chunked`] map.
+type Chunk<V> = BTreeMap<Key, V>;
+
+/// The key of a chunk: the body and the chunk number.
+type ChunkKey = (BodyId, u32);
+
 /// The chunks of a [`Chunked`] map.
-type Chunks<V> = BTreeMap<(BodyId, u32), Rc<BTreeMap<Key, V>>>;
+type Chunks<V> = BTreeMap<ChunkKey, Rc<Chunk<V>>>;
 
 /// The paths of one local in a [`PathSet`].
 type Paths = Rc<BTreeSet<Vec<PathStep>>>;
@@ -439,6 +445,65 @@ impl<V: Clone> Chunked<V> {
     /// The locals and their values.
     fn iter(&self) -> impl Iterator<Item = (&Key, &V)> {
         self.chunks.values().flat_map(|chunk| chunk.iter())
+    }
+
+    /// Removes the values of the locals of each body for which `of` is
+    /// true. A chunk holds the locals of one body, so whole chunks go.
+    fn remove_bodies(&mut self, of: &dyn Fn(BodyId) -> bool) {
+        if self.chunks.keys().any(|c| of(c.0)) {
+            Rc::make_mut(&mut self.chunks).retain(|c, _| !of(c.0));
+        }
+    }
+
+    /// Gives the locals of each body for which `of` is true the values in
+    /// `o`. The chunks of these bodies are shared with `o`. Call it after
+    /// [`Self::remove_bodies`] with the same `of`.
+    fn copy_bodies(&mut self, o: &Self, of: &dyn Fn(BodyId) -> bool) {
+        let mut from = o
+            .chunks
+            .iter()
+            .filter(|(c, chunk)| of(c.0) && !chunk.is_empty())
+            .peekable();
+        if from.peek().is_none() {
+            return;
+        }
+        let chunks = Rc::make_mut(&mut self.chunks);
+        for (c, chunk) in from {
+            chunks.insert(*c, Rc::clone(chunk));
+        }
+    }
+
+    /// Shares each chunk of `o` that has the same values as the chunk of
+    /// `self`: the values stay, and a later join or comparison of the two
+    /// skips the chunk (stage C1.4: a join of the states of many nodes into
+    /// one state copied each chunk again).
+    fn share_equal(&mut self, o: &Self)
+    where
+        V: PartialEq,
+    {
+        if Rc::ptr_eq(&self.chunks, &o.chunks) {
+            return;
+        }
+        let same: Vec<(ChunkKey, Rc<Chunk<V>>)> = o
+            .chunks
+            .iter()
+            .filter(|(c, theirs)| {
+                self.chunks
+                    .get(c)
+                    .is_some_and(|mine| !Rc::ptr_eq(mine, theirs) && **mine == ***theirs)
+            })
+            .map(|(c, theirs)| (*c, Rc::clone(theirs)))
+            .collect();
+        if same.is_empty() {
+            if *self.chunks == *o.chunks {
+                self.chunks = Rc::clone(&o.chunks);
+            }
+            return;
+        }
+        let chunks = Rc::make_mut(&mut self.chunks);
+        for (c, chunk) in same {
+            chunks.insert(c, chunk);
+        }
     }
 
     /// The locals and their values, by chunk: a chunk that `o` shares with
@@ -688,21 +753,10 @@ impl State {
     /// local of a body for which `of` is true: the locals of a frame that
     /// ended (a handled body, a clause, plan stage F14).
     pub fn remove_bodies(&mut self, of: &dyn Fn(BodyId) -> bool) {
-        let keys: BTreeSet<Key> = self
-            .vals
-            .iter()
-            .map(|(k, _)| *k)
-            .chain(self.may.0.iter().map(|(k, _)| *k))
-            .chain(self.must.0.iter().map(|(k, _)| *k))
-            .chain(self.holes.0.iter().map(|(k, _)| *k))
-            .filter(|k| of(k.0))
-            .collect();
-        for k in keys {
-            self.vals.remove(k);
-            self.may.0.remove(k);
-            self.must.0.remove(k);
-            self.holes.0.remove(k);
-        }
+        self.vals.remove_bodies(of);
+        self.may.0.remove_bodies(of);
+        self.must.0.remove_bodies(of);
+        self.holes.0.remove_bodies(of);
     }
 
     /// A copy of `self` where each local of a body for which `of` is true has
@@ -714,26 +768,10 @@ impl State {
     pub fn with_bodies_of(&self, o: &Self, of: &dyn Fn(BodyId) -> bool) -> Self {
         let mut out = self.clone();
         out.remove_bodies(of);
-        for (k, t) in o.vals.iter() {
-            if of(k.0) {
-                out.vals.insert(*k, Rc::clone(t));
-            }
-        }
-        for (k, ps) in o.may.0.iter() {
-            if of(k.0) {
-                out.may.0.insert(*k, Rc::clone(ps));
-            }
-        }
-        for (k, ps) in o.must.0.iter() {
-            if of(k.0) {
-                out.must.0.insert(*k, Rc::clone(ps));
-            }
-        }
-        for (k, ps) in o.holes.0.iter() {
-            if of(k.0) {
-                out.holes.0.insert(*k, Rc::clone(ps));
-            }
-        }
+        out.vals.copy_bodies(&o.vals, of);
+        out.may.0.copy_bodies(&o.may.0, of);
+        out.must.0.copy_bodies(&o.must.0, of);
+        out.holes.0.copy_bodies(&o.holes.0, of);
         out.lose_tasks(o.lost.iter().copied());
         out
     }
@@ -801,6 +839,10 @@ impl State {
             }
         }
         changed |= self.lose_tasks(o.lost.iter().copied());
+        self.vals.share_equal(&o.vals);
+        self.may.0.share_equal(&o.may.0);
+        self.must.0.share_equal(&o.must.0);
+        self.holes.0.share_equal(&o.holes.0);
         changed
     }
 

@@ -2048,6 +2048,33 @@ the fact generator keeps (6.5), the splice edges and the re-entry edges. A state
 node with no facts and one successor may merge with its successor; this changes no
 derivation of the spec.
 
+As built (plan stage C1.4, issue #62, the cost criterion of plan §2.7.4): after the fact
+generator, the summaries and the post-passes, `factgen::prune` removes the rows that no
+rule of the spec can read. The fact oracle (8.5) reads the facts before this step; the
+checker, `weft facts` and the gate read the facts after it. The module text of
+`factgen/prune.rs` gives the argument for each step:
+
+- the rows of a variable that no rule reads: `empty_at`, `overwrites` and `rest_linear`
+  of a variable that is not `linear`; `spared_at` of a variable that is not `linear`,
+  `once_var` or `immovable`; `scope_end` and `unwound_at` of a variable with no `owner`
+  row that is not `linear`; `rebound_at` and `uses` of a variable with no
+  `points_into`, `moved_at` or `unset_at` row that is not `linear`, `once_var` or
+  `immovable` (a temporary of plain data);
+- the rows of a place tree that no rule reads: a tree with no place in a `points_into`,
+  `task_reads`, `task_writes` or `call_arg` row, no `param_rooted` place and no
+  `shared_root` loses its `mutates_at`, `reads_at`, `lends_mut` and `releases_at` rows,
+  and the `owner` rows of a variable whose roots are all in such trees go;
+- a node with no row of a relation other than `cfg_edge` and at most one predecessor or
+  at most one successor leaves the graph (its predecessors get edges to its
+  successors); the entry node and the `handler clause` nodes stay;
+- a tree that is not read and that no row names leaves the place table; the other
+  places keep their order with new ids.
+
+So the verdicts and the diagnostics do not change; a derivation of `--explain` can take
+a shorter path or another witness, and the ids of the places can change. The tests
+`agreement_random` (`pruned_facts_give_the_same_violations`) and `scale.rs`
+(`the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts`) check it.
+
 As built (plan stage F12, labels): diagnostics name a node by its label. Each node of a
 `Call` or a `Perform` (each phase, also on an abort path) has the label of its callee, as
 the old lowering: the name of the function item (`push`, not `Vec.push`), the local of a
@@ -2117,7 +2144,7 @@ the path of `q`: for each `Deref`, the place before it. An access of `q` reads t
 | `F(n)`, `K(h)`, `R(n)` | frames that the body cannot see | see the roots |
 | a heap slot variable | a function value or a capability stored behind a reference, in a `Box`, a `Vec` or an `rc` object | `points_into` of the places that its values hold; `uses` at each node that runs a value from the slot; a store is a weak update: no `rebound_at` |
 | a drop pair | `Drop(p)` behind a pointer of a maybe-linear type | `rebound_at` at the `Drop` node, `scope_end` at the `Assign` after it (W0601) |
-| `W(b, v)` of each base place `b` with a `Discriminant(b)` and each variant `v` that the body reads through `(b as v)` | the variant test of a place (as built F8d) | `rebound_at` and `points_into(α(b as v))` at each `Discriminant(b)`; `uses` at each access through the step `(b as v)` |
+| `W(b, v)` of each base place `b` with a `Discriminant(b)` and each variant `v` that the body reads through `(b as v)` | the variant test of a place (as built F8d) | `rebound_at` and `points_into(α(b as v))` at each `Discriminant(b)` whose `Switch` can select `v` (as built C1.4: a `match` is a chain of tests, one for each arm; a test of another form binds each `W` variable of `b`); `uses` at each access through the step `(b as v)` |
 | `N(t, b, v)` of the target of an assignment `p = move t` or `t2 := Op(copy p, move t)` with a step `(b as v)` | the variant that the target names before the value (5.6, 5.7; as built F8d) | `rebound_at` and `points_into(α(b as v))` at `Live(t)`; `uses` at the write (or the read) of the target |
 
 During the migration the move and linear facts use `S(l)` of the whole local, as the R3a
@@ -2137,7 +2164,8 @@ origin.
 the value of `b` that the test of the variant saw, in the same way as a reference into
 `b.v`: the step is unstable, so a write of `b` or of a place above it, a move or the end
 of `b`, and a change of `b` by a call (`mutates_at`, `lends_mut`) end it. The `W`
-variable of the step points into `α(b as v)` from each test of `b`, and each access
+variable of the step points into `α(b as v)` from each test of `b` that can select `v`
+(as built C1.4), and each access
 through the step uses it (the operands, a borrow, a `Discriminant` of a place below it,
 a write). So an access after such a change, with no new test, is W0301 with the text
 ``the variant test of `b` used after it was invalidated``. Only a receiver place (5.19)

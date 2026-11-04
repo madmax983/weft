@@ -472,10 +472,39 @@ fn explain_folds_a_long_derivation() {
     }
 }
 
+/// The long derivations of [`long_derivations`] for the facts of the IR.
+/// The IR takes a node with no fact out of the graph (`docs/ir.md` 6.2,
+/// stage C1.4), so `print(1)` gives no step. Each statement of the chain
+/// reads a reference `q` into another vector here: its node has a fact.
+fn long_ir_derivations() -> [(String, &'static str, &'static str); 2] {
+    let q = "    let u = Vec.new()\n    u.push(2)\n    let q = &u[0]\n";
+    let path = long_path(N_LONG).replacen("    v.push(1)\n", &format!("    v.push(1)\n{q}"), 1);
+    let multi = long_multi(N_LONG).replacen(
+        "    let b = choose()\n",
+        &format!("{q}    let b = choose()\n"),
+        1,
+    );
+    [
+        (
+            path.replace("    print(1)\n", "    print(q)\n"),
+            "error(",
+            "more `invalid` steps ...",
+        ),
+        (
+            multi.replace("    print(1)\n", "    print(q)\n"),
+            "live_across_multi(",
+            "more `live_in`, `live_out` steps ...",
+        ),
+    ]
+}
+
+/// The number of statements of the chains of [`long_ir_derivations`].
+const N_LONG: usize = 10_000;
+
 /// The same with the facts of the IR (plan stage C1, §2.7.4).
 #[test]
 fn explain_folds_a_long_derivation_with_the_ir_facts() {
-    for (src, relation, fold) in long_derivations() {
+    for (src, relation, fold) in long_ir_derivations() {
         let text = explain_with(src, FactGen::Ir);
         assert!(text.starts_with(relation), "{text}");
         assert!(text.contains(fold), "{text}");

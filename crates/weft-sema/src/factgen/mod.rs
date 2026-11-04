@@ -52,6 +52,7 @@ pub mod handlers;
 pub mod holders;
 pub mod kernel;
 pub mod nodes;
+pub mod prune;
 pub mod rels;
 pub mod templates;
 pub mod vars;
@@ -665,7 +666,8 @@ pub fn emit_parts(
     let mut table = nodes::NodeTable::default();
     // The handled bodies splice into the component of their site
     // (`docs/ir.md` 6.1, plan stage F14).
-    let spliced = handlers::spliced(p, &comp, entry);
+    let splices = handlers::Splices::new(p, &comp);
+    let spliced = splices.of(entry);
     for &b in &spliced {
         table.add_body(p, &tys, b, facts, &frames);
     }
@@ -709,15 +711,15 @@ pub fn emit_parts(
     cycles.add_captured(p, &tys, &comp);
     // The re-entry edges after a node that can wait at a `multi` operation
     // of a handler of a caller (OL-R2a, plan stage F16).
-    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
-        handlers::spliced(p, &comp, entry)
-            .into_iter()
-            .flat_map(|b| {
-                frames::row_multi_nodes(p, &tys, sums, b)
-                    .into_iter()
-                    .map(move |x| (b, x))
-            })
-            .collect();
+    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> = spliced
+        .iter()
+        .copied()
+        .flat_map(|b| {
+            frames::row_multi_nodes(p, &tys, sums, b)
+                .into_iter()
+                .map(move |x| (b, x))
+        })
+        .collect();
     table.row_reentry_edges(p, facts, entry, &known.iter().copied().collect::<Vec<_>>());
     let states = loop {
         let st = {
@@ -800,6 +802,7 @@ pub fn emit_parts(
             last: (!closures.is_empty()).then(crate::analysis::State::new),
             aborts: std::collections::BTreeSet::new(),
             union: (!closures.is_empty()).then(crate::analysis::State::new),
+            temp_src: std::collections::HashMap::new(),
             hx: &mut hx,
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
@@ -904,7 +907,7 @@ pub fn emit_parts(
                 task_ends: &mut task_end_list,
                 task_frames: &mut task_frames,
             },
-            (&mut hx, &frames, &comp),
+            (&mut hx, &frames, &splices),
             cb,
         )
         .map_err(|e| unsupported(&e))?;
@@ -1574,6 +1577,7 @@ fn closure_summary(
             last: Some(crate::analysis::State::new()),
             aborts: std::collections::BTreeSet::new(),
             union: Some(crate::analysis::State::new()),
+            temp_src: std::collections::HashMap::new(),
             hx: &mut hx,
         };
         templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
@@ -1847,6 +1851,7 @@ fn emit_closure(
         last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),
+        temp_src: std::collections::HashMap::new(),
         hx: &mut hx,
     };
     templates::closure_entry(&mut em, en, &params.entry, &env)?;
@@ -1899,10 +1904,10 @@ type ClauseOut = (
 fn emit_clause(
     cx: &ClosureCx<'_>,
     out: &mut ClosureOut<'_, '_>,
-    (hx, frames, comp): (
+    (hx, frames, splices): (
         &mut crate::analysis::clause::Handlers,
         &frames::Frames,
-        &[weft_ir::BodyId],
+        &handlers::Splices,
     ),
     cb: weft_ir::BodyId,
 ) -> Result<ClauseOut, alpha::AlphaError> {
@@ -1914,7 +1919,7 @@ fn emit_clause(
     let weft_ir::BodyKind::Clause(h, _) = body.kind else {
         return Err(alpha::AlphaError::BadPlace("not a clause".to_string()));
     };
-    let spliced = handlers::spliced(p, comp, cb);
+    let spliced = splices.of(cb);
     for &b in &spliced {
         out.table.add_body(p, out.tys, b, out.facts, frames);
     }
@@ -2030,6 +2035,7 @@ fn emit_clause(
         last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),
+        temp_src: std::collections::HashMap::new(),
         hx,
     };
     handlers::clause_entry(&mut em, en, &entry)?;
@@ -3396,6 +3402,10 @@ pub(crate) fn run(
         return (s, None);
     }
     exports::fill(a, &built, &mut facts);
+    // The rows that no rule reads go (stage C1.4).
+    for f in &mut facts {
+        prune::prune(f);
+    }
     let mut sigs = a.sigs.clone();
     for (f, e) in effects.into_inner() {
         if let Some(sig) = sigs.get_mut(f.index()) {

@@ -3145,7 +3145,8 @@ fn a_call_gives_a_clause_the_places_of_the_callee_frame_and_of_its_arguments() {
 // ------------------------------------------------------- the fact oracle
 
 /// The components of the fact oracle (`docs/ir.md` 8.5) have the facts that
-/// the checker reads in the `ir` pipeline, on each corpus program in scope:
+/// the checker reads in the `ir` pipeline, before the prune of the rows that
+/// no rule reads (`factgen::prune`, stage C1.4), on each corpus program in scope:
 /// the oracle maps the IR to the node ids of those facts. The components are
 /// made from the analysis of the old pipeline, as the interpreter does.
 #[test]
@@ -3181,7 +3182,11 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
         for c in &comps {
             checked += 1;
             let want = &ir.bodies[c.index].facts;
-            if &c.facts != want {
+            // The checker reads the facts after the prune of the rows that no
+            // rule reads (stage C1.4); the fact oracle reads them before it.
+            let mut pruned = c.facts.clone();
+            weft_sema::factgen::prune::prune(&mut pruned);
+            if &pruned != want {
                 bad.push(format!("{} {}", f.display(), c.facts.name));
             }
             // The entry node is `n0`, and each node of the table is a node

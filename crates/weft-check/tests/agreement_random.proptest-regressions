@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 86976f6ecbeaa9449b822aa6530dcad920410c82dbc02a75d45b116b986dae39 # shrinks to s = Shape { nodes: 1, edges: [], roots: [0, 103, 0], places: [(8, 0, 0, false), (0, 0, 0, false), (0, 0, 1, false), (2, 0, 0, true)], vars: [[false, false, false, false, false, false]], rels: [(247, 0, 2, 0)], tasks: [], handlers: [], flags: (false, false, false, false), std: (false, false) }

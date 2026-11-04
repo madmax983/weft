@@ -174,6 +174,10 @@ pub struct Em<'a> {
     /// what their runs found, and the templates keep the run nodes of the
     /// clauses (`super::handlers`).
     pub hx: &'a mut crate::analysis::clause::Handlers,
+    /// The place of the first `Assign` of each whole local of each body from
+    /// a borrow or a copy (`receiver_ref`), made at the first use (stage
+    /// C1.4: a search of the body for each call was quadratic).
+    pub temp_src: std::collections::HashMap<BodyId, std::collections::HashMap<LocalId, Place>>,
 }
 
 /// The tasks of a call that stand for the tasks that can run while a clause
@@ -1220,13 +1224,27 @@ pub fn assign(
             em.apply(n, kernel::read(&a));
         }
         // The test of a variant binds the `W` variable of each variant step
-        // that the body reads through `q` (`docs/ir.md` 6.3).
+        // that the body reads through `q` (`docs/ir.md` 6.3), but only of
+        // the variants that the `Switch` after the test selects (stage
+        // C1.4): a `match` is a chain of tests, one for each arm.
         Rvalue::Discriminant(q) => {
             let (a, _) = em.access(st, q, true)?;
             em.apply(n, kernel::read(&a));
             let vars = em.vars;
-            for &(v, var) in vars.tested_at(em.body, q) {
-                em.bind_variant(n, st, var, q, v)?;
+            match selected_variants(em, place).as_deref() {
+                // One variant (each test of the builder): its variable.
+                Some(&[v]) => {
+                    if let Some(var) = vars.get(&VarKey::W(em.body, q.clone(), v)) {
+                        em.bind_variant(n, st, var, q, v)?;
+                    }
+                }
+                selected => {
+                    for &(v, var) in vars.tested_at(em.body, q) {
+                        if selected.is_none_or(|s| s.contains(&v)) {
+                            em.bind_variant(n, st, var, q, v)?;
+                        }
+                    }
+                }
             }
         }
         Rvalue::Aggregate(weft_ir::AggKind::Struct(t), ops) => literal_fields(em, st, n, *t, ops)?,
@@ -1288,6 +1306,39 @@ pub fn assign(
     }
     place_field(em, st, n, place, &v)?;
     Ok(())
+}
+
+/// The variants that the test with destination `dest` selects: the values
+/// of the arms of the `Switch` that ends the block of the test and reads
+/// `dest`, if the test is the last statement of the block. `None` if the
+/// test has another form: then each variant counts.
+///
+/// A read through `(b as v)` comes only after an arm of value `v` of such
+/// a `Switch` (`irbuild::pattern`, `irbuild::place`). So a test that
+/// cannot select `v` does not give the `W` variable of `v` a value: the
+/// test of `v` comes later on each path to the read.
+fn selected_variants(em: &Em<'_>, dest: &Place) -> Option<Vec<u32>> {
+    let (block, at) = em.at;
+    let b =
+        em.p.bodies
+            .get(em.body.index())?
+            .blocks
+            .get(block.index())?;
+    if usize::try_from(at).ok()? + 1 != b.stmts.len() || !dest.proj.is_empty() {
+        return None;
+    }
+    let TermKind::Switch {
+        on: Operand::Move(on) | Operand::Copy(on),
+        arms,
+        ..
+    } = &b.term.kind
+    else {
+        return None;
+    };
+    if on != dest {
+        return None;
+    }
+    arms.iter().map(|(x, _)| u32::try_from(*x).ok()).collect()
 }
 
 /// The place fields of the whole local `t` that moves to `place` (at the
@@ -2546,7 +2597,7 @@ pub(super) fn operand_span(em: &Em<'_>, op: &Operand, at: Span) -> Span {
 /// The local that a receiver argument reaches through: `r` for a receiver
 /// `&(*r).q` (a temporary that the body borrows through `r`) or `copy r`,
 /// where `r` is a reference.
-fn receiver_ref(em: &Em<'_>, op: &Operand) -> Option<LocalId> {
+fn receiver_ref(em: &mut Em<'_>, op: &Operand) -> Option<LocalId> {
     let (Operand::Copy(q) | Operand::Move(q)) = op else {
         return None;
     };
@@ -2556,16 +2607,22 @@ fn receiver_ref(em: &Em<'_>, op: &Operand) -> Option<LocalId> {
     let b = em.p.bodies.get(em.body.index())?;
     let d = b.locals.get(q.local.index())?;
     let place = if matches!(d.kind, LocalKind::Temp(_)) {
-        b.blocks
-            .iter()
-            .flat_map(|blk| &blk.stmts)
-            .find_map(|s| match &s.kind {
-                StmtKind::Assign(
+        let srcs = em.temp_src.entry(em.body).or_insert_with(|| {
+            let mut m: std::collections::HashMap<LocalId, Place> = std::collections::HashMap::new();
+            for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+                if let StmtKind::Assign(
                     dest,
                     Rvalue::Ref(p) | Rvalue::Use(Operand::Copy(p) | Operand::Move(p)),
-                ) if dest.local == q.local && dest.proj.is_empty() => Some(p.clone()),
-                _ => None,
-            })?
+                ) = &s.kind
+                {
+                    if dest.proj.is_empty() {
+                        m.entry(dest.local).or_insert_with(|| p.clone());
+                    }
+                }
+            }
+            m
+        });
+        srcs.get(&q.local)?.clone()
     } else {
         q.clone()
     };

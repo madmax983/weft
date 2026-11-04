@@ -346,6 +346,57 @@ pub fn spliced_into(p: &Program, b: BodyId, hb: BodyId) -> bool {
     false
 }
 
+/// A test if a body is inside one of the bodies `roots` (each [`inside`]),
+/// with the result of each body on the way kept: a state has the locals of
+/// many bodies of one chain, and a test for each of them walked the chain
+/// again (stage C1.4, `redteam/crash/d09.wf`).
+struct InsideAny<'a> {
+    /// The program.
+    p: &'a Program,
+    /// The bodies.
+    roots: Vec<BodyId>,
+    /// The result of each body, once known.
+    memo: std::cell::RefCell<std::collections::HashMap<BodyId, bool>>,
+}
+
+impl<'a> InsideAny<'a> {
+    /// The test for the bodies `roots`.
+    fn new(p: &'a Program, roots: Vec<BodyId>) -> Self {
+        Self {
+            p,
+            roots,
+            memo: std::cell::RefCell::default(),
+        }
+    }
+
+    /// True if `inside(p, b, r)` for a body `r` of the roots.
+    fn test(&self, b: BodyId) -> bool {
+        let mut memo = self.memo.borrow_mut();
+        let mut path = Vec::new();
+        let mut at = Some(b);
+        let mut out = false;
+        for _ in 0..=self.p.bodies.len() {
+            let Some(x) = at else {
+                break;
+            };
+            if let Some(&known) = memo.get(&x) {
+                out = known;
+                break;
+            }
+            path.push(x);
+            if self.roots.contains(&x) {
+                out = true;
+                break;
+            }
+            at = self.p.bodies.get(x.index()).and_then(|d| d.parent);
+        }
+        for x in path {
+            memo.insert(x, out);
+        }
+        out
+    }
+}
+
 /// True if body `b` is body `root` or a body inside it: the parent chain of
 /// `b` reaches `root`.
 pub fn inside(p: &Program, b: BodyId, root: BodyId) -> bool {
@@ -1022,7 +1073,10 @@ fn finish_handle(
         .into_iter()
         .filter_map(|k| after.tree(k).map(|t| (k, t.clone())))
         .collect();
-    after.remove_bodies(&|b| inside(p, b, hb) || clauses.iter().any(|&c| inside(p, b, c)));
+    let mut roots = clauses;
+    roots.push(hb);
+    let frame = InsideAny::new(p, roots);
+    after.remove_bodies(&|b| frame.test(b));
     for (k, t) in captured {
         after.keep_value(k, t);
     }
@@ -1039,7 +1093,7 @@ fn finish_handle(
     // clause puts into a place of the site after `resume` and that runs
     // later is a run outside its handler (`transfer::check_cap_apps`).
     let ends: Vec<&State> = r.exit.iter().chain(landing.iter()).collect();
-    let site = |k: &super::Key| !inside(p, k.0, hb) && !clauses.iter().any(|&c| inside(p, k.0, c));
+    let site = |k: &super::Key| !frame.test(k.0);
     // The closure can perform through the capture (`performs_cap`). The IR
     // gives a closure of the handled body each capability in scope, so a
     // closure that holds it for nothing does not count.

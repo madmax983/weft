@@ -429,20 +429,119 @@ pub fn covers(a: &IPlace, b: &IPlace) -> bool {
     true
 }
 
+/// The steps `steps` with no texts: two steps that [`covers`] compares as
+/// the same step are equal.
+fn bare(steps: &[IStep]) -> Vec<IStep> {
+    steps
+        .iter()
+        .map(|x| match x {
+            IStep::Step(s, _) => IStep::Step(*s, String::new()),
+            other => other.clone(),
+        })
+        .collect()
+}
+
+/// An index of the places of a row for [`covers`] (stage C1.4: a body that
+/// changes many fields compared each new place with each place of the row).
+#[derive(Default)]
+struct CoverIndex {
+    /// The count of the places of each root, with the bare steps before the
+    /// first wildcard step and a flag for that wildcard step.
+    keys: BTreeMap<(IRoot, Vec<IStep>, bool), usize>,
+    /// The count of the places of each root with all their bare steps.
+    full: BTreeMap<(IRoot, Vec<IStep>), usize>,
+}
+
+impl CoverIndex {
+    /// The index of the places `ps`.
+    fn of(ps: &[(IPlace, u32)]) -> Self {
+        let mut idx = Self::default();
+        for (p, _) in ps {
+            idx.add(p);
+        }
+        idx
+    }
+
+    /// Adds place `p`.
+    fn add(&mut self, p: &IPlace) {
+        let b = bare(&p.steps);
+        let w = b.iter().position(|x| *x == IStep::Wild);
+        let pre = b.get(..w.unwrap_or(b.len())).unwrap_or_default().to_vec();
+        *self
+            .keys
+            .entry((p.root.clone(), pre, w.is_some()))
+            .or_default() += 1;
+        *self.full.entry((p.root.clone(), b)).or_default() += 1;
+    }
+
+    /// True if a place of the index covers `m` (`covers(k, m)`): its steps
+    /// before its first wildcard step are the first steps of `m`, and `m`
+    /// has a step at the wildcard step.
+    fn covered(&self, m: &IPlace) -> bool {
+        let b = bare(&m.steps);
+        (0..=b.len()).any(|l| {
+            let pre = b.get(..l).unwrap_or_default().to_vec();
+            let exact = (m.root.clone(), pre, false);
+            if self.keys.contains_key(&exact) {
+                return true;
+            }
+            let (r, pre, _) = exact;
+            l < b.len() && self.keys.contains_key(&(r, pre, true))
+        })
+    }
+
+    /// True if `m` covers a place of the index (`covers(m, k)`).
+    fn covers_some(&self, m: &IPlace) -> bool {
+        let b = bare(&m.steps);
+        let w = b.iter().position(|x| *x == IStep::Wild);
+        let pre = b.get(..w.unwrap_or(b.len())).unwrap_or_default().to_vec();
+        self.full
+            .range((m.root.clone(), pre.clone())..)
+            .take_while(|((r, s), _)| *r == m.root && s.starts_with(&pre))
+            .any(|((_, s), _)| w.is_none() || s.len() > pre.len())
+    }
+}
+
+/// Adds the changed places `o` to the changed places `muts` (part `muts`
+/// of [`Inferred::join`]): a place that a place of `muts` covers adds
+/// nothing, and a new place removes the places that it covers. Returns true
+/// if `muts` grows.
+fn join_muts(muts: &mut Vec<(IPlace, u32)>, o: &[(IPlace, u32)]) -> bool {
+    let mut grew = false;
+    // A few places: compare them one by one.
+    if o.len() <= 8 && muts.len() <= 64 {
+        for (m, idx) in o {
+            if muts.iter().any(|(k, _)| covers(k, m)) {
+                continue;
+            }
+            muts.retain(|(k, _)| !covers(m, k));
+            muts.push((m.clone(), *idx));
+            grew = true;
+        }
+        return grew;
+    }
+    let mut index = CoverIndex::of(muts);
+    for (m, idx) in o {
+        if index.covered(m) {
+            continue;
+        }
+        if index.covers_some(m) {
+            muts.retain(|(k, _)| !covers(m, k));
+            index = CoverIndex::of(muts);
+        }
+        muts.push((m.clone(), *idx));
+        index.add(m);
+        grew = true;
+    }
+    grew
+}
+
 impl Inferred {
     /// Adds the parts of `o`. Returns true if a part grows. A changed place
     /// that a place of the row covers adds nothing; a new place removes the
     /// places that it covers.
     pub fn join(&mut self, o: &Self) -> bool {
-        let mut grew = false;
-        for (m, idx) in &o.muts {
-            if self.muts.iter().any(|(k, _)| covers(k, m)) {
-                continue;
-            }
-            self.muts.retain(|(k, _)| !covers(m, k));
-            self.muts.push((m.clone(), *idx));
-            grew = true;
-        }
+        let mut grew = join_muts(&mut self.muts, &o.muts);
         for n in &o.named {
             grew |= self.named.insert(n.clone());
         }
@@ -994,4 +1093,74 @@ fn ret_of(sig: &FnSig, decl: &FnDecl, tys: &TyTable) -> Ret {
         }
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{covers, join_muts, IPlace, IRoot, IStep};
+    use weft_facts::{Step, StepKind};
+
+    /// [`join_muts`] with a comparison of each pair (its first form).
+    fn join_slow(muts: &mut Vec<(IPlace, u32)>, o: &[(IPlace, u32)]) -> bool {
+        let mut grew = false;
+        for (m, idx) in o {
+            if muts.iter().any(|(k, _)| covers(k, m)) {
+                continue;
+            }
+            muts.retain(|(k, _)| !covers(m, k));
+            muts.push((m.clone(), *idx));
+            grew = true;
+        }
+        grew
+    }
+
+    /// The index of [`join_muts`] gives the result of the comparisons of
+    /// each pair, on random rows (also with wildcard steps, splits, texts
+    /// that differ, and rows of more than eight places).
+    #[test]
+    fn join_muts_is_the_join_of_each_pair() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            u32::try_from((seed >> 33) % m).unwrap_or(0)
+        };
+        let place = |next: &mut dyn FnMut(u64) -> u32| {
+            let root = if next(2) == 0 {
+                IRoot::Param(next(2))
+            } else {
+                IRoot::Held(0)
+            };
+            let len = next(4);
+            let steps = (0..len)
+                .map(|_| match next(6) {
+                    0 => IStep::Wild,
+                    1 => IStep::Seg {
+                        label: next(2),
+                        hi: next(2) == 0,
+                        unstable: true,
+                    },
+                    k => IStep::Step(
+                        Step {
+                            kind: StepKind::Field { id: next(3) },
+                            unstable: k == 5,
+                        },
+                        format!(".f{}", next(2)),
+                    ),
+                })
+                .collect();
+            IPlace { root, steps }
+        };
+        for _ in 0..2000 {
+            let a: Vec<(IPlace, u32)> = (0..next(20)).map(|i| (place(&mut next), i)).collect();
+            let b: Vec<(IPlace, u32)> = (0..next(20)).map(|i| (place(&mut next), i)).collect();
+            let mut start: Vec<(IPlace, u32)> = Vec::new();
+            join_slow(&mut start, &a);
+            let (mut fast, mut slow) = (start.clone(), start);
+            let g1 = join_muts(&mut fast, &b);
+            let g2 = join_slow(&mut slow, &b);
+            assert_eq!((g1, &fast), (g2, &slow), "{a:?} {b:?}");
+        }
+    }
 }

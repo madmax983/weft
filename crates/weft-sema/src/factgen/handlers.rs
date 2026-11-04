@@ -206,6 +206,38 @@ pub fn spliced(p: &Program, comp: &[BodyId], root: BodyId) -> Vec<BodyId> {
     out
 }
 
+/// [`spliced`] for each body of a component, made one time (stage C1.4: a
+/// component with many clauses asked [`spliced`] for each clause).
+#[derive(Debug, Default)]
+pub struct Splices(HashMap<BodyId, Vec<BodyId>>, HashSet<BodyId>);
+
+impl Splices {
+    /// The index of the bodies `comp`.
+    pub fn new(p: &Program, comp: &[BodyId]) -> Self {
+        let mut by: HashMap<BodyId, Vec<BodyId>> = HashMap::new();
+        for &b in comp {
+            by.entry(splice_root(p, b)).or_default().push(b);
+        }
+        for v in by.values_mut() {
+            v.sort();
+            v.dedup();
+        }
+        Self(by, comp.iter().copied().collect())
+    }
+
+    /// The bodies whose nodes splice into body `root`: [`spliced`] with the
+    /// bodies of the index.
+    pub fn of(&self, root: BodyId) -> Vec<BodyId> {
+        let mut out = self.0.get(&root).cloned().unwrap_or_default();
+        if self.1.contains(&root) {
+            if let Err(i) = out.binary_search(&root) {
+                out.insert(i, root);
+            }
+        }
+        out
+    }
+}
+
 /// The handler id and the capability id of handler `h` in the facts: made
 /// at the first use.
 fn ids(em: &mut Em<'_>, h: HandlerId) -> (weft_facts::HandlerId, CapId) {
@@ -1741,6 +1773,13 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
     // clauses first.
     let mut order: Vec<&ClauseRun> = hx.runs.iter().collect();
     order.sort_by_key(|r| std::cmp::Reverse(clause_depth(p, r.at)));
+    // The edges inside each part of each clause, for [`exposed`]. The loop
+    // adds no edge.
+    let mut all_preds: Preds = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        all_preds.entry(b).or_default().push(a);
+    }
+    let mut clause_preds: HashMap<(BodyId, bool), Preds> = HashMap::new();
     for r in order {
         let Some((pre, post)) = regions.get(&r.clause) else {
             continue;
@@ -1809,8 +1848,13 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
         }
         // The clause runs after the run node moves its arguments
         // ([`late_uses`], follow-up F20.3 and F20.4).
-        late.uses
-            .extend(clause_uses(facts, (part, nodes), &new.uses));
+        if !new.uses.is_empty() {
+            let preds = clause_preds
+                .entry((r.clause, r.post))
+                .or_insert_with(|| preds_in(&all_preds, nodes));
+            late.uses
+                .extend(clause_uses((part, nodes, preds), &new.uses));
+        }
         add_rows(facts, &new);
         if let Some(c) = clause_of.get(&r.node) {
             add_rows(parts.entry(*c).or_default(), &new);
@@ -2182,8 +2226,7 @@ pub struct LateUses {
 /// their variable from the site ([`exposed`]), each with the places that the
 /// clause (rows `part`, nodes `nodes`) reads, changes or lends.
 fn clause_uses(
-    facts: &FnFacts,
-    (part, nodes): (&FnFacts, &HashSet<NodeId>),
+    (part, nodes, preds): (&FnFacts, &HashSet<NodeId>, &Preds),
     uses: &[(VarId, NodeId)],
 ) -> Vec<(VarId, NodeId, Vec<PlaceId>)> {
     let places: Vec<PlaceId> = part
@@ -2195,9 +2238,27 @@ fn clause_uses(
         .map(|&(_, q)| q)
         .collect();
     uses.iter()
-        .filter(|&&(v, _)| exposed(facts, (part, nodes), v))
+        .filter(|&&(v, _)| exposed((part, nodes, preds), v))
         .map(|&(v, n)| (v, n, places.clone()))
         .collect()
+}
+
+/// The predecessors of each node of `nodes` through the edges of `facts`
+/// inside `nodes`.
+type Preds = HashMap<NodeId, Vec<NodeId>>;
+
+/// The [`Preds`] of the nodes `nodes`, from the predecessors `all` of each
+/// node of the facts.
+fn preds_in(all: &Preds, nodes: &HashSet<NodeId>) -> Preds {
+    let mut preds: Preds = HashMap::new();
+    for &b in nodes {
+        for &a in all.get(&b).into_iter().flatten() {
+            if nodes.contains(&a) {
+                preds.entry(b).or_default().push(a);
+            }
+        }
+    }
+    preds
 }
 
 /// The uses of the clauses that the run nodes see after the moves of their
@@ -2225,37 +2286,41 @@ pub fn late_uses(facts: &mut FnFacts, late: &LateUses) {
     for &(a, b) in &facts.cfg_edge {
         succ.entry(a).or_default().push(b);
     }
-    let roots_of = |facts: &FnFacts, w: VarId| -> Vec<PlaceId> {
-        facts
-            .owner
-            .iter()
-            .filter(|(_, x)| *x == w)
-            .map(|(r, _)| *r)
-            .collect()
-    };
+    // The rows by variable and by node: each use reads only its own rows
+    // (stage C1.4; a scan of all rows for each use was quadratic).
+    let mut roots: HashMap<VarId, Vec<PlaceId>> = HashMap::new();
+    for &(r, w) in &facts.owner {
+        roots.entry(w).or_default().push(r);
+    }
+    let mut points: HashMap<VarId, Vec<PlaceId>> = HashMap::new();
+    for &(w, q) in &facts.points_into {
+        points.entry(w).or_default().push(q);
+    }
+    let mut parts_by: HashMap<NodeId, Vec<PlaceId>> = HashMap::new();
+    for &(m, x) in &late.parts {
+        parts_by.entry(x).or_default().push(m);
+    }
+    let mut moves_by: HashMap<NodeId, Vec<VarId>> = HashMap::new();
+    for &(w, x) in &late.moves {
+        moves_by.entry(x).or_default().push(w);
+    }
+    let none: Vec<PlaceId> = Vec::new();
+    let roots_of = |w: VarId| roots.get(&w).unwrap_or(&none);
     let mut out = Vec::new();
     for (v, n, places) in &late.uses {
         let (v, n) = (*v, *n);
-        let parts_at: Vec<PlaceId> = late
-            .parts
-            .iter()
-            .filter(|(_, x)| *x == n)
-            .map(|(m, _)| *m)
-            .collect();
+        let parts_at: &[PlaceId] = parts_by.get(&n).map_or(&[], Vec::as_slice);
         // The places that the moves of the run node free.
-        let mut freed: Vec<PlaceId> = parts_at.clone();
-        for &(w, x) in &late.moves {
-            if x != n {
-                continue;
-            }
-            for r in roots_of(facts, w) {
+        let mut freed: Vec<PlaceId> = parts_at.to_vec();
+        for &w in moves_by.get(&n).into_iter().flatten() {
+            for &r in roots_of(w) {
                 if !parts_at.iter().any(|&m| at_or_below(facts, m, r)) {
                     freed.push(r);
                 }
             }
         }
         let moved = late.moves.contains(&(v, n)) && {
-            let roots = roots_of(facts, v);
+            let roots = roots_of(v);
             let mine: Vec<PlaceId> = parts_at
                 .iter()
                 .copied()
@@ -2268,10 +2333,11 @@ pub fn late_uses(facts: &mut FnFacts, late: &LateUses) {
                         .any(|&m| at_or_below(facts, q, m) || at_or_below(facts, m, q))
                 })
         };
-        let into = facts
-            .points_into
-            .iter()
-            .any(|&(x, q)| x == v && freed.iter().any(|&f| at_or_below(facts, q, f)));
+        let into = points
+            .get(&v)
+            .into_iter()
+            .flatten()
+            .any(|&q| freed.iter().any(|&f| at_or_below(facts, q, f)));
         if moved || into {
             out.extend(succ.get(&n).into_iter().flatten().map(|&x| (v, x)));
         }
@@ -2279,23 +2345,18 @@ pub fn late_uses(facts: &mut FnFacts, late: &LateUses) {
     facts.uses.extend(out);
 }
 
-/// True if a use of variable `v` in the clause with the rows `part` and the
-/// nodes `nodes` can see the value of `v` from the site: a path from a node
-/// of the clause with no predecessor in the clause to the use has no new
-/// value of `v` (`rebound_at`) before the use.
-fn exposed(facts: &FnFacts, (part, nodes): (&FnFacts, &HashSet<NodeId>), v: VarId) -> bool {
+/// True if a use of variable `v` in the clause with the rows `part`, the
+/// nodes `nodes` and the edges `preds` between them can see the value of `v`
+/// from the site: a path from a node of the clause with no predecessor in
+/// the clause to the use has no new value of `v` (`rebound_at`) before the
+/// use.
+fn exposed((part, nodes, preds): (&FnFacts, &HashSet<NodeId>, &Preds), v: VarId) -> bool {
     let rebound: HashSet<NodeId> = part
         .rebound_at
         .iter()
         .filter(|(x, n)| *x == v && nodes.contains(n))
         .map(|(_, n)| *n)
         .collect();
-    let mut preds: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-    for &(a, b) in &facts.cfg_edge {
-        if nodes.contains(&a) && nodes.contains(&b) {
-            preds.entry(b).or_default().push(a);
-        }
-    }
     let uses: Vec<NodeId> = part
         .uses
         .iter()
