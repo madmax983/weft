@@ -324,6 +324,64 @@ fn pruned_agrees(f: &FnFacts) -> Result<(), TestCaseError> {
     Ok(())
 }
 
+/// Nodes that lead to one node and give nested sets of variables new values:
+/// the abort shape of stage C1.4b (`prune::share_new_values`).
+#[derive(Clone, Debug)]
+struct Fan {
+    /// The node that the nodes of the fan lead to.
+    to: usize,
+    /// For each node of the fan: its predecessor, the size of its set (the
+    /// first variables of `order`), and another row at the node.
+    arms: Vec<(usize, usize, u8, usize)>,
+    /// The order of the variables in the sets.
+    order: Vec<usize>,
+}
+
+fn fan() -> impl Strategy<Value = Fan> {
+    (
+        0usize..10,
+        prop::collection::vec((0usize..10, 0usize..8, any::<u8>(), 0usize..8), 2..7),
+        prop::collection::vec(0usize..8, 1..8),
+    )
+        .prop_map(|(to, arms, order)| Fan { to, arms, order })
+}
+
+/// Adds the nodes of the fan `fan` to the facts `f`. Some nodes of the fan
+/// have a row of another relation too: `uses`, `reads_at`, or a row that
+/// keeps the node out of a chain (`may_abort`, `multi_at`, `resumes_at`,
+/// `moved_at`, `unset_at`, `scope_end`, `mutates_at`, `spawned_at`).
+fn with_fan(mut f: FnFacts, fan: &Fan) -> FnFacts {
+    let base = f.nodes.len();
+    let nv = f.vars.len();
+    let np = f.places.len();
+    let node = |x: usize| NodeId(u32::try_from(x % base).unwrap());
+    let var = |x: usize| VarId(u32::try_from(x % nv).unwrap());
+    for &(pred, size, other, a) in &fan.arms {
+        let x = f.add_node(Span::default(), "n", "");
+        f.cfg_edge.push((node(pred), x));
+        f.cfg_edge.push((x, node(fan.to)));
+        for &v in fan.order.iter().take(size) {
+            f.rebound_at.push((var(v), x));
+        }
+        let place = PlaceId(u32::try_from(a % np).unwrap());
+        match other % 16 {
+            0 | 1 => f.uses.push((var(a), x)),
+            2 => f.reads_at.push((x, place)),
+            3 => f.may_abort.push(x),
+            4 => f.multi_at.push(x),
+            5 => f.resumes_at.push((x, CapId(0))),
+            6 => f.moved_at.push((var(a), x)),
+            7 => f.unset_at.push((var(a), x)),
+            8 => f.scope_end.push((var(a), x)),
+            9 => f.mutates_at.push((x, place)),
+            10 if !f.tasks.is_empty() => f.spawned_at.push((TaskId(0), x)),
+            _ => {}
+        }
+    }
+    f.normalize();
+    f
+}
+
 /// The evidence of W0301 and W0405 is a derivation of the spec, and each
 /// violation has one piece of it (`weft_check::evidence`).
 fn evidence_agrees(f: &FnFacts) -> Result<(), TestCaseError> {
@@ -447,6 +505,14 @@ proptest! {
     #[test]
     fn pruned_facts_give_the_same_violations(s in shape()) {
         pruned_agrees(&build(&s))?;
+    }
+
+    /// The same for nodes that lead to one node and give nested sets of
+    /// variables new values: the prune puts their rows on a chain of new
+    /// nodes (stage C1.4b, `share_new_values`).
+    #[test]
+    fn shared_new_values_give_the_same_violations(s in shape(), fan in fan()) {
+        pruned_agrees(&with_fan(build(&s), &fan))?;
     }
 
     /// The same, for references that share their witnesses.

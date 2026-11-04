@@ -2226,6 +2226,25 @@ a shorter path or another witness, and the ids of the places can change. The tes
 `agreement_random` (`pruned_facts_give_the_same_violations`) and `scale.rs`
 (`the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts`) check it.
 
+As built (plan stage C1.4b, issue #62): an abort to a local handler gives each captured
+local that no path assigned a new value at the `AbortValue` node of the abort (6.3,
+`handlers::unbound_at_aborts`). After `n` operations in a line the abort of operation
+`i` gives `n - i` locals a new value: `n (n + 1) / 2` rows of `rebound_at`
+(`verify/s5/S5a/x/p/scale_ops.wf`: 1.15 million rows for 1500 operations, 22.6 times
+the old rows). These nodes lead to one node, and their sets of variables are in a
+chain. A last step of the prune (`share_new_values`) puts the rows of such nodes on a
+chain of new nodes (kind `new values`): the node of each set goes to a new node with
+the variables of its set that the next smaller set does not have, then to the node of
+that set, and the last one to the successor. Each path from a node to its successor
+gives the same variables new values, and each variable has one row. A node takes part
+only if it has one successor and no row other than `rebound_at`, `uses`, `empty_at` and
+`reads_at`, and only the rows of a variable that is not `linear` move. The module text
+of `factgen/prune.rs` gives the argument for each rule that reads `rebound_at`
+(`invalid`, `moved`, `unset` forward; `live_in` backward; `live_out` only at a `multi`
+node). Then the nodes with no row leave the graph again. The test
+`agreement_random` (`shared_new_values_give_the_same_violations`) checks it on random
+facts with such fans of nodes, and `scale.rs` checks the rows of the abort shape.
+
 As built (plan stage F12, labels): diagnostics name a node by its label. Each node of a
 `Call` or a `Perform` (each phase, also on an abort path) has the label of its callee, as
 the old lowering: the name of the function item (`push`, not `Vec.push`), the local of a
@@ -2288,7 +2307,7 @@ the path of `q`: for each `Deref`, the place before it. An access of `q` reads t
 
 | Variable | For | Facts |
 | --- | --- | --- |
-| `S(l)` of each local `l` | moves, linear values, ends, owners, unset locals, the references of the whole value | `rebound_at` at each whole assignment and at the entry of a parameter; `uses` at each operand at or below `l`; `moved_at`; `scope_end` at `Dead(l)`; `unwound_at` on cleanup paths; `overwrites`; `empty_at`; `unset_at`; `owner(root(l), S(l))`; `points_into` of the values of the parts of `l` that have no `H` variable |
+| `S(l)` of each local `l` | moves, linear values, ends, owners, unset locals, the references of the whole value | `rebound_at` at each whole assignment and at the entry of a parameter, and, for a captured local that no path assigned, at the `AbortValue` node of an abort to a local handler (after the prune on a chain of nodes that the aborts share, 6.2, stage C1.4b); `uses` at each operand at or below `l`; `moved_at`; `scope_end` at `Dead(l)`; `unwound_at` on cleanup paths; `overwrites`; `empty_at`; `unset_at`; `owner(root(l), S(l))`; `points_into` of the values of the parts of `l` that have no `H` variable |
 | `H(l.q)` of each move path `l.q` that the body assigns on its own and whose type can hold a reference, a function value, a capability or a task | the references of a part (the part holders of today) | `rebound_at` at a new value of `l.q` or of `l`; `points_into` of the value; `uses` at each use of an overlapping place |
 | `U(l.q)` of each place field path that can have no value | W0304 for place fields | `unset_at` where the value is built in place; `rebound_at` at a store into it; `uses` at each read at or below it |
 | `C(x)` | the cell of a `ByRef` capture | see the roots |
@@ -3131,7 +3150,8 @@ As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
 - An abort to a local handler: each local of the body of the terminator that a closure
   captures (`Kept`, `ByRef`), that can hold a reference, and that no path from the entry
   to the terminator assigns binds at the `AbortValue` node (`rebound_at`, `empty_at`;
-  `handlers::unbound_at_aborts`). The analysis joins the values of a closure local of
+  `handlers::unbound_at_aborts`; as built C1.4b, the prune puts these rows on one chain
+  of nodes for the aborts that lead to one node, 6.2). The analysis joins the values of a closure local of
   the site over the paths, so after the `Landing` a run of a closure that the handled
   body made later used a local that the path never bound (D-NEWFP of the F14 preview:
   `s5r/p/scale400.wf`, `S5a/x/p/scale_ops.wf`). The same class with no handler (a

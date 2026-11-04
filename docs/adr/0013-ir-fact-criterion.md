@@ -53,3 +53,8 @@ than 3 times the rows that `weft facts` prints.
   other place ids. The verdicts and the diagnostics do not change.
 - The fact oracle reads the facts before the prune: it checks the facts of the
   generator, and the prune keeps each row that a rule can read.
+- Plan stage C1.4b (issue #62): the prune can also move rows to new nodes when the
+  rules give the same facts at each old node. The nodes that lead to one node and give
+  nested sets of variables new values (`rebound_at` at the aborts to a local handler)
+  share one chain of new nodes (`factgen::prune`, `docs/ir.md` 6.2). The criterion
+  counts the rows that the checker receives, so it counts the rows of the chain.

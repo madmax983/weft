@@ -816,6 +816,23 @@ fn closures_that_call_closures_cost_polynomial_work() {
     }
 }
 
+/// `n` operations of a local handler in a line, each one followed by a new
+/// closure in a local of the site that captures its result
+/// (`verify/s5/S5a/x/p/scale_ops.wf` with `n` = 1500). The clause can stop
+/// with no `resume`: each operation is an abort to the handler, and the
+/// closure runs after the `handle`.
+fn aborts(n: usize) -> String {
+    let mut s = String::from(
+        "effect Pick { fn pick() -> &u64 }\nfn many() {\n    let v = Vec.new()\n    v.push(1)\n    \
+         let f = || print(0)\n    handle Pick { fn pick() { if v.len() > 0 { resume(&v[0]) } } } in {\n",
+    );
+    for i in 0..n {
+        let _ = writeln!(s, "        let r{i} = pick()\n        f = || print(r{i})");
+    }
+    s.push_str("    }\n    f()\n}\nfn main() { many() }\n");
+    s
+}
+
 /// The options of the `ir` pipeline with all groups (plan stage C1, §2.7.4).
 fn ir() -> Options {
     Options {
@@ -839,11 +856,18 @@ fn rows(f: &weft_facts::FnFacts) -> usize {
 /// an input relation of the spec that the checker reads. At stage C1 each
 /// test of a `match` gave each variant test variable of the scrutinee a new
 /// value (a quadratic number of rows: 14 times the old rows for 200
-/// variants), and the facts had rows that no rule reads. The bound is on
-/// rows, not on time, so it does not depend on the load of the machine.
+/// variants), and the facts had rows that no rule reads. At stage C1.4 an
+/// abort of each operation of [`aborts`] gave each captured local that no
+/// path assigned a new value at its own node (3.5 times the old rows for
+/// 200 operations, 22.6 times for 1500); stage C1.4b puts these rows on one
+/// chain of nodes. The bound is on rows, not on time, so it does not depend
+/// on the load of the machine.
 #[test]
 fn the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts() {
-    for (name, src) in many_locals([200, 200, 200, 200, 100]) {
+    let cases = many_locals([200, 200, 200, 200, 100])
+        .into_iter()
+        .chain([("aborts", aborts(200))]);
+    for (name, src) in cases {
         let old = check_source("many.wf", &src, Options::default());
         let new = check_source("many.wf", &src, ir());
         assert!(new.ok() && old.ok(), "{name}: {:?}", new.diags);
