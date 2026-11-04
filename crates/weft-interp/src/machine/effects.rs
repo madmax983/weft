@@ -41,6 +41,39 @@ impl super::Machine<'_, '_> {
             .and_then(|e| e.ops.get(op))
             .is_some_and(|o| o.multi);
         let frames = self.task().frames.split_off(idx);
+        // A5 of the fact oracle: a node of the handled body runs the clause.
+        if let Some(fo) = self.facts.as_mut() {
+            let uids: Vec<u64> = frames
+                .iter()
+                .filter_map(|f| match f {
+                    Frame::Code(cf) if cf.uid != 0 => Some(cf.uid),
+                    _ => None,
+                })
+                .collect();
+            if let Err(m) = fo.clause_run(&uids, self.cur) {
+                return Err(self.fault(m));
+            }
+        }
+        // A4 of copies of the fact oracle: a later `resume` runs copies of
+        // these frames again.
+        if multi {
+            if let Some(fo) = self.facts.as_mut() {
+                let codes: Vec<(u64, &crate::code::Code, &[Option<CellId>])> = frames
+                    .iter()
+                    .filter_map(|f| match f {
+                        Frame::Code(cf) => Some((cf.uid, cf.code.as_ref(), cf.slots.as_slice())),
+                        _ => None,
+                    })
+                    .collect();
+                let site = self.tasks.get(self.cur).and_then(|t| {
+                    t.frames.iter().rev().find_map(|f| match f {
+                        Frame::Code(cf) => Some((cf.uid, cf.code.as_ref(), cf.slots.as_slice())),
+                        _ => None,
+                    })
+                });
+                fo.multi_frames(&codes, site, &self.heap, self.cur);
+            }
+        }
         let k = self.conts.len();
         self.conts.push(ContRec {
             k: Continuation::new(multi),
@@ -140,6 +173,19 @@ impl super::Machine<'_, '_> {
                 return Err(self.fault("a continuation was resumed after it was dropped"));
             }
         }
+        // A4 of the fact oracle: the clause frame waits at its `resume`
+        // while the frames of the continuation run.
+        if let (Some(fo), Some(Frame::Code(cf))) = (
+            self.facts.as_mut(),
+            self.tasks.get(self.cur).and_then(|t| t.frames.last()),
+        ) {
+            if crate::oracle::facts::tracked(cf.uid) {
+                fo.wait_begin(cf.uid, &cf.code, &cf.slots, &self.heap, self.cur);
+            }
+        }
+        let Some(rec) = self.conts.get_mut(k) else {
+            return Err(self.fault("internal: bad continuation"));
+        };
         let frames = if rec.k.multi {
             let tmpl = std::mem::take(&mut rec.frames);
             let copy = self.copy_frames(&tmpl);
@@ -575,7 +621,7 @@ impl super::Machine<'_, '_> {
         let Some(pad) = pad else {
             return Ok(Some(cf));
         };
-        if cf.uid != 0 && self.facts.is_some() {
+        if crate::oracle::facts::tracked(cf.uid) && self.facts.is_some() {
             let live = self.holds_live_linear(&cf);
             if let Some(Err(m)) = self.facts.as_mut().map(|f| f.check_abort(cf.uid, live)) {
                 return Err(self.fault(m));
@@ -1150,6 +1196,17 @@ impl super::Machine<'_, '_> {
         for f in frames {
             out.push(match f {
                 Frame::Code(cf) => {
+                    // A clause frame that waits at its `resume` waits in the
+                    // copy too (A4 of the fact oracle).
+                    let key = if crate::oracle::facts::tracked(cf.uid) {
+                        cf.uid
+                    } else {
+                        cf.wait
+                    };
+                    let wait = match (key, self.facts.as_mut()) {
+                        (0, _) | (_, None) => 0,
+                        (k, Some(fo)) => fo.copy_wait(k, map),
+                    };
                     let stack = cf
                         .stack
                         .iter()
@@ -1170,6 +1227,7 @@ impl super::Machine<'_, '_> {
                         // The fact oracle does not follow a copied frame
                         // (group D, stage F16).
                         uid: 0,
+                        wait,
                     })
                 }
                 Frame::Handle(h) => Frame::Handle(HandleMark {

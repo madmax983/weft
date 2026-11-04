@@ -1,0 +1,15 @@
+// F20.2 F-2 (q05): the other handle goes into a Vec; the write after the join of the result races (W0405).
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn pick<T>(a: T, b: T, c: bool, sink: &Vec<T>) -> T / mut(sink) { if c { sink.push(b); a } else { sink.push(a); b } }
+fn main() / async {
+    let v = mk_v()
+    scope { s =>
+        let hs = Vec.new()
+        let t1 = s.spawn(|| v.push(1))
+        let t2 = s.spawn(|| print(1))
+        let h = pick(t1, t2, false, &hs)
+        h.join()
+        v.push(2)
+        match hs.pop() { Some(o) => o.join(), None => {} }
+    }
+}

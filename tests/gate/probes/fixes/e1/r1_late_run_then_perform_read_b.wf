@@ -1,0 +1,12 @@
+// R2-1: a callee runs a closure that starts a writer, then performs; the clause of the caller reads the place
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn run_note(g: fn()) / Note { g(); note() }
+fn main() / async {
+    let st = Stats { count: 0 }
+    scope { s =>
+        handle Note { fn note() { print(st.count); resume(()) } } in {
+            run_note(|| { s.spawn(|| st.count += 1); () })
+        }
+    }
+}

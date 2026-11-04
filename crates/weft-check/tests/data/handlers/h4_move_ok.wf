@@ -1,0 +1,11 @@
+// Hole C1-H4 (follow-up C1.3), clean twin: the closure moves a captured vector after the multi operation; a resume runs on a copy of the frames.
+effect Pick { multi fn pick() -> bool }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let t = mk_v()
+        let h = || { if pick() { print(1) }; print(take_v(t)) }
+        h()
+    }
+}

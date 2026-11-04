@@ -1,0 +1,13 @@
+// Issue #56 (stage C1, self-attack): a callee runs a once closure in a loop (W0502); the cycle of the loop is no re-entry edge.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn choose() / Pick { let b = pick(); print(b) }
+fn many(f: fn()) { let i = 0; while i < 2 { i += 1; f() } }
+fn main() {
+    handle Pick { fn pick() { resume(true) } } in {
+        let v = [1, 2]
+        let once_c = || { let w = v; print(w.len()) }
+        many(once_c)
+    }
+}

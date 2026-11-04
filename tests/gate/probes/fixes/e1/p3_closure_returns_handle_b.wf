@@ -1,0 +1,11 @@
+// E-3 (bad twin): the write comes before the join
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h = g()
+        v.push(3)
+        h.join()
+    }
+}

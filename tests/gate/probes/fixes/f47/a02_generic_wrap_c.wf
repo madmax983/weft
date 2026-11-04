@@ -1,0 +1,10 @@
+// Issue 47 (follow-up F20.1), clean twin: a generic `wrap` gives a linear closure back in `Some` (n03 of stage F20).
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn wrap<T>(x: T) -> Option<T> { Some(x) }
+fn main() {
+    let t = begin(1)
+    let o = wrap(|| commit(t))
+    match o { Some(g) => g(), None => {} }
+}

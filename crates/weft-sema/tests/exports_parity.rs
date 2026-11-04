@@ -679,6 +679,14 @@ const NESTED_PARAM_MOVE: [&str; 2] = [
     "tests/gate/probes/fixes/f12/h3/hl_e_localmaker.wf",
 ];
 
+/// The programs in which a closure gives back a capture that is itself a
+/// closure that moves a value (`let g = || take(v); let h = || { ..; g }`):
+/// the old lowering puts the move of `v` in `by_value` of the outer closure
+/// too, and the IR moves `g` (the closure that holds `v`) into it. The IR is
+/// right: `h` names `g`, not `v`. Stage C1.3 (probe of hole C1-H4). A new
+/// program in this list needs a review. The filter names the variable `v`.
+const CAPTURED_CLOSURE_MOVE: [&str; 1] = ["tests/gate/probes/fixes/c1/h4_capture_ret_b.wf"];
+
 #[test]
 fn the_by_move_captures_of_the_ir_are_the_by_value_captures() {
     let r = tier1();
@@ -707,6 +715,11 @@ fn the_by_move_captures_of_the_ir_are_the_by_value_captures() {
             !NESTED_PARAM_MOVE
                 .iter()
                 .any(|p| l.starts_with(&format!("{p}:")) && l.contains("`t` is in by_value"))
+        })
+        .filter(|l| {
+            !CAPTURED_CLOSURE_MOVE
+                .iter()
+                .any(|p| l.starts_with(&format!("{p}:")) && l.contains("`v` is in by_value"))
         })
         .cloned()
         .collect();

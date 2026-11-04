@@ -1,0 +1,17 @@
+// F20.4 I-8 control (i08): Copy values two times.
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+struct P { x: u64, y: u64 }
+fn add(a: P, b: P) -> u64 { a.x + b.y }
+fn pair<T>(a: T, b: T) -> (T, T) { (a, b) }
+fn main() {
+    let p = P { x: 1, y: 2 }
+    print(add(p, p))
+    let q = (p, p)
+    let (c, d) = pair(p, p)
+    print(c.x + d.y)
+    let n = 4
+    let m = (n, n, n)
+}

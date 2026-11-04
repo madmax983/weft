@@ -119,6 +119,13 @@ pub struct Sigma {
     /// the value that the callee runs, not through a place that the callee
     /// gives (W0312, follow-up F13.2).
     pub env: Vec<PlaceId>,
+    /// A value that a closure runs through a capture ([`RunKind::Run`]):
+    /// the closure itself gives the places of the run (`args`, `others`),
+    /// not the callee of the node. They are no argument of the node (no
+    /// `call_arg`, except a place of an environment): a change of the
+    /// closure there is code of the closure before or after the run, and
+    /// the body of the closure checks the run (issue #58).
+    pub nested: bool,
     /// A call of a function item whose effects of the row each go to a
     /// local handler (plan stage F15): the node runs the clauses itself
     /// (`clause::call_clauses`), so the operations lend no place; only the
@@ -392,6 +399,11 @@ pub fn closure_sigma(
         .closures
         .get(c.index())
         .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
+    if !super::clause::runs_with_maker(p, decl.maker, body) {
+        return Err(AlphaError::Later(
+            "a closure that a clause gives to the handled body (stage F16)",
+        ));
+    }
     let cb = p
         .bodies
         .get(decl.body.index())
@@ -441,9 +453,18 @@ pub fn closure_sigma(
                 s.captures.push(places);
                 s.cap_helds.push(refs);
             }
-            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => {
+            // A captured capability (plan stage F16): its value is the root
+            // of the capability, which names the handler; the node that runs
+            // the closure runs the clause of the handler.
+            weft_ir::CaptureMode::Cap => {
+                let v = transfer::place_value(cx, decl.maker, st, &cap.source)?.flat();
+                s.captures.push(v.caps.into_iter().collect());
+                s.cap_helds.push(Vec::new());
+                s.cap_deeps.push(Vec::new());
+            }
+            weft_ir::CaptureMode::Kont => {
                 return Err(AlphaError::Later(
-                    "a closure that captures a capability or a continuation (stage F14)",
+                    "a closure that captures a continuation (stage F16)",
                 ))
             }
         }
@@ -848,6 +869,9 @@ pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result
     if !sum.ret.places.is_empty() && sum.ret.uniq {
         top.uniq = true;
     }
+    // The handle of a task that the run starts (follow-up F19.3, E-3).
+    top.tasks
+        .extend(sum.ret.tasks.iter().map(|&s| weft_ir::SpawnId(s)));
     let mut flows = std::collections::BTreeSet::new();
     // A function value can hold references in its environment (stage F12).
     if props.holds_refs || crate::props::ir_has_fns(cx.tys, ret) {
@@ -1180,6 +1204,10 @@ pub fn main(
         for p in places {
             let root = if in_env(cx.facts, p) {
                 crate::body::roots::STORED
+            } else if s.nested {
+                // The closure gives the place to the run, not the callee of
+                // the node: the body of the closure checks it (issue #58).
+                continue;
             } else {
                 g
             };
@@ -1237,11 +1265,10 @@ pub fn main(
     for pf in &sum.performs {
         match pf.cap {
             CapIface::Row => cx.facts.escapes_at.push((n, pf.effect.clone())),
-            CapIface::Cap(_) => {
-                return Err(AlphaError::Later(
-                    "a perform through a capability of the interface (stage F14)",
-                ))
-            }
+            // A perform through a captured capability of a local handler:
+            // the node runs the clause of the handler (plan stage F16,
+            // `clause::call_clauses`); the effect does not leave the body.
+            CapIface::Cap(_) => {}
         }
     }
     if sum.multi {

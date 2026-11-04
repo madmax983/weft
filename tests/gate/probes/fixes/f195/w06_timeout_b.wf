@@ -1,0 +1,14 @@
+// F19.5 (R3-2, issue #50): `with_timeout` in the callee times out while its task writes; the `Fail` clause of the caller reads
+struct Stats { count: u64 }
+fn work(r: &Stats) / fail, async, clock, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        let x = with_timeout(1.ms) { sleep(10.ms); 1 }
+        print(x)
+        t.join()
+    }
+}
+fn main() / async, clock {
+    let st = Stats { count: 0 }
+    handle Fail { fn fail(m) { print(st.count) } } in { work(&st) }
+}

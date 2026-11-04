@@ -1,0 +1,15 @@
+// Stage C1 (self-attack): a store of a linear closure into a function field of a local whose literal held a plain closure. The local holds the linear value, and the drop of the aggregate on the abort does not run the `on abort` of the capture (W0602). Before the fix the `ir` pipeline accepted it, and the run leaked `l`.
+linear struct Lock { id: u64 }
+    on abort = unlock_on_abort
+fn unlock_on_abort(l: Lock) { let Lock(i) = l; print("rollback {i}") }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock {i}") }
+struct Cb { f: fn() }
+fn work() {
+    let l = Lock { id: 6 }
+    let cb = Cb { f: || print(0) }
+    cb.f = || unlock(l)
+    fail("abort")   //~ W0602
+    let g = cb.f
+    g()
+}
+fn main() { handle Fail { fn fail(m) { print("caught: {m}") } } in work() }

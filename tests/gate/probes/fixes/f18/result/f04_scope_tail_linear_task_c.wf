@@ -1,0 +1,8 @@
+// F18-RESULT (clean twin): the result of the tail spawn is plain data
+fn main() / async {
+    scope { s =>
+        print(0)
+        s.spawn(|| 5)
+    }
+    print(1)
+}

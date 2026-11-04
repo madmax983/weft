@@ -215,6 +215,15 @@ fn typo() -> u64 { nope }
 fn plain(n: u64) -> u64 { n + 1 }
 ";
 
+/// A program that the fact generator does not support with each group on:
+/// a `resume` of a captured continuation (follow-up F16.1). Stage F17 put
+/// the W0313 escape of `ESCAPE` in scope.
+const KONT: &str = "effect Ask { fn ask() -> u64 }
+fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }
+fn typo() -> u64 { nope }
+fn plain(n: u64) -> u64 { n + 1 }
+";
+
 #[test]
 fn the_old_pipeline_checks_a_program_out_of_scope_and_says_why() {
     let old = analyze(ESCAPE, Options::default());
@@ -228,8 +237,10 @@ fn the_old_pipeline_checks_a_program_out_of_scope_and_says_why() {
     assert!(!scope.in_scope());
     assert_eq!(shape(&ir.bodies), shape(&old.bodies));
     assert_eq!(diags(&ir), diags(&old));
-    // Every group is on, but the stub fact generator supports none.
-    let ir = analyze(ESCAPE, opts(FactGen::Ir, Groups::ALL));
+    // Every group is on, but the fact generator does not support the
+    // program.
+    let old = analyze(KONT, Options::default());
+    let ir = analyze(KONT, opts(FactGen::Ir, Groups::ALL));
     let why = ir
         .ir_scope
         .as_ref()
@@ -280,8 +291,9 @@ fn the_both_mode_gives_both_fact_sets() {
     assert!(ir.bodies.iter().all(|b| b.facts.nodes.is_empty()));
     assert!(!ir.diags.iter().any(|d| d.code == Code::W0313));
     assert!(ir.diags.iter().any(|d| d.code == Code::W0101));
-    // With the stub fact generator, the ir side is the old side.
-    let stub = analyze(ESCAPE, opts(FactGen::Both, Groups::ALL));
+    // With a program that the fact generator does not support, the ir side
+    // is the old side.
+    let stub = analyze(KONT, opts(FactGen::Both, Groups::ALL));
     assert!(stub.ir_facts.is_none());
     assert!(stub.ir_scope.and_then(|s| s.fallback).is_some());
     // The ir view of the both mode is the analysis of the ir mode.
@@ -438,16 +450,13 @@ fn with_no_group_on_no_program_is_in_scope() {
 }
 
 #[test]
-fn the_groups_a_b_and_c_are_on_by_default() {
-    // Stage F8 turns group A on, stage F10 turns group B (loops) on, and
-    // stage F13 turns group C (closures and function values) on (plan
-    // §2.6): the default options put a program of group A, a program with a
-    // loop and a program with a closure in scope, and keep a program with a
-    // handler (group D) out.
-    assert_eq!(
-        Options::default().ir_groups,
-        Groups::of(Group::A).with(Group::B).with(Group::C)
-    );
+fn each_group_is_on_by_default() {
+    // Stage F8 turns group A on, stage F10 turns group B (loops) on, stage
+    // F13 turns group C (closures and function values) on, stage F17 turns
+    // group D (handlers) on, stage F19 turns group E (tasks) on, and stage
+    // F20 turns group F (type parameters) on (plan §2.6): the default
+    // options put a program of each group in scope.
+    assert_eq!(Options::default().ir_groups, Groups::ALL);
     let o = Options {
         facts: FactGen::Ir,
         ..Options::default()
@@ -460,7 +469,13 @@ fn the_groups_a_b_and_c_are_on_by_default() {
     assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
     let src = "effect Log { fn log(msg: String) }\nfn main() {\n    handle Log { fn log(msg) { resume(()) } } in log(\"a\")\n}\n";
     let a = analyze(src, o);
-    assert!(!a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+    assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+    let src = "fn main() {\n    scope { s =>\n        s.spawn(|| print(1))\n    }\n}\n";
+    let a = analyze(src, o);
+    assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+    let src = "fn id<T>(x: T) -> T { x }\nfn main() { print(id(1)) }\n";
+    let a = analyze(src, o);
+    assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
 }
 
 /// The fallback note of `src` with the `ir` pipeline, group A and the fact

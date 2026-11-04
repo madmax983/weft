@@ -1,0 +1,13 @@
+// F18-JOIN: the task still runs at the access (the handle is not joined there, or a callee or a closure detaches it)
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let a = s.spawn(|| v.push(2))
+        let b = s.spawn(|| print(0))
+        let g = || { b.join()
+ a.detach() }
+        g()
+        v.push(3)
+    }
+}

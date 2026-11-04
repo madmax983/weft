@@ -1,0 +1,17 @@
+// E-1 (clean twin): the helper joins the worker, then validates its input
+fn finish(t: Task<()>, items: &Vec<u64>) / fail, async {
+    t.join()
+    if items.len() < 2 { fail("too few items") }
+}
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    let items = Vec.new()
+    items.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in { finish(t, &items) }
+        v.push(3)
+    }
+}

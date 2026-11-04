@@ -1,0 +1,93 @@
+// Class C-RR: a closure holds a reference to a container of references
+// (`kr: &Vec<&i64>`) and reads through it. A change of `v` ends the
+// references in `keep`. The node that runs the closure uses the variables
+// of the references on the chain (as for a call argument), so a run after
+// the change is W0301.
+fn mk_v() -> Vec<i64> { let v = Vec.new(); v.push(1); v }
+fn show(ks: &Vec<&i64>) { print(ks[0] + 1) }
+fn run(f: fn()) { f() }
+fn mk(k: &Vec<&i64>) -> fn() { || print(k[0] + 1) }
+fn direct() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    v.clear()
+    let g = || print(kr[0] + 1)
+    g() //~ W0301
+}
+fn through_callee() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    v.clear()
+    let g = || show(kr)
+    g() //~ W0301
+}
+fn callee_runs() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let g = || print(kr[0] + 1)
+    v.clear()
+    run(g) //~ W0301
+}
+fn stored() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let ks = Vec.new()
+    ks.push(|| print(kr[0] + 1))
+    v.clear()
+    let h = ks[0]
+    h() //~ W0301
+}
+fn returned() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let g = mk(&keep)
+    v.clear()
+    g() //~ W0301
+}
+fn variant() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let o = Some(&keep)
+    let g = || match o { Some(k) => print(k[0] + 1), None => {} }
+    v.clear()
+    g() //~ W0301
+}
+fn in_loop() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let g = || print(kr[0] + 1)
+    let i = 0
+    while i < 2 {
+        g() //~ W0301
+        v.clear()
+        i += 1
+    }
+}
+// Clean: each run comes before the change.
+fn runs_first() {
+    let v = mk_v()
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let g = || print(kr[0] + 1)
+    g()
+    run(g)
+    let h = mk(kr)
+    h()
+    v.clear()
+}
+fn main() {
+    runs_first()
+}

@@ -95,13 +95,21 @@ fn tier1_has_no_blocker() {
         .filter(|row| {
             row.entry
                 .and_then(|k| ledger.entries.get(k))
-                .is_none_or(|e| e.class != EntryClass::OpenOld)
+                .is_none_or(|e| {
+                    !matches!(
+                        e.class,
+                        EntryClass::Open | EntryClass::Edge | EntryClass::OpenOld
+                    )
+                })
         })
         .map(|row| row.path.as_str())
         .collect();
+    // From stage C1 an `open` program has an entry of class `open` (verdict
+    // "stays") or `edge` (with an issue); `open-old` stays for a program that
+    // waits for its issue (plan §2.5).
     assert!(
         no_entry.is_empty(),
-        "these `open` programs have no ledger entry of class `open-old`:\n{}",
+        "these `open` programs have no ledger entry of class `open`, `edge` or `open-old`:\n{}",
         no_entry.join("\n")
     );
     assert!(

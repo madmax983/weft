@@ -16,8 +16,8 @@
 
 use weft_ir::ty::AdtKind;
 use weft_ir::{
-    BinOp, Const, FieldIdx, IntTy, LocalId, Operand, Place, Proj, Rvalue, StmtKind, TempKind, Ty,
-    TyId, VariantIdx,
+    BinOp, Const, FieldIdx, IntTy, LocalId, LocalKind, Operand, Place, Proj, Rvalue, StmtKind,
+    TempKind, Ty, TyId, VariantIdx,
 };
 use weft_syntax::ast::{Lit, Pattern, PatternKind, Span, StrPart};
 
@@ -54,8 +54,10 @@ enum Act {
     /// `_` over the part at the place, of this type.
     Wild(Span, Place, TyId),
     /// The value at the place is finished if it can be linear: a variant
-    /// with no payload, or a struct that the pattern takes apart.
-    Finish(Span, Place, TyId),
+    /// with no payload, or a struct that the pattern takes apart. The flag
+    /// is true for a variant with no payload: no part of the value is
+    /// there on this path.
+    Finish(Span, Place, TyId, bool),
 }
 
 /// The plan of one pattern.
@@ -198,7 +200,8 @@ impl Builder<'_> {
                     self.plan_into(p, qk, ft, plan)?;
                 }
                 if variant.is_none() || fields.is_empty() {
-                    plan.acts.push(Act::Finish(span, q, t));
+                    let empty = variant.is_some();
+                    plan.acts.push(Act::Finish(span, q, t, empty));
                 }
             }
             PatternKind::Lit(lit, _) => {
@@ -376,8 +379,9 @@ impl Builder<'_> {
                         self.push(StmtKind::Dead(tw), origin);
                     }
                 }
-                Act::Finish(span, q, t) => {
-                    if !through_ref(q) && self.maybe_linear(*t) {
+                Act::Finish(span, q, t, empty) => {
+                    let linear = self.maybe_linear(*t) || (*empty && self.holds_linear_fn(q, *t));
+                    if !through_ref(q) && linear {
                         let origin = self.origin(*span, None);
                         self.push(StmtKind::Consume(q.clone()), origin);
                     }
@@ -385,6 +389,23 @@ impl Builder<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Returns true if the value at place `q` of type `t` can hold a
+    /// linear closure that the type does not show (issue 47): `t` has a
+    /// function part, and the root of `q` is a temporary, or a local that
+    /// holds a linear closure (the flag `linear` that the analysis gives to
+    /// the binding). A temporary has no later use, so its `Consume` cannot
+    /// make a use after a move. A capture is not such a root: a `Consume`
+    /// there would make the capture `ByMove`, and a move of plain data
+    /// breaks rule V9.
+    fn holds_linear_fn(&self, q: &Place, t: TyId) -> bool {
+        if !crate::props::ir_has_fns(self.tys, t) || self.env_fields(q.local).is_some() {
+            return false;
+        }
+        self.locals
+            .get(q.local.index())
+            .is_some_and(|d| d.props.linear || matches!(d.kind, LocalKind::Temp(_)))
     }
 
     /// Lowers `let p: T` with no value (`docs/ir.md` 5.3): `Live(x);

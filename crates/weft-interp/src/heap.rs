@@ -445,14 +445,20 @@ impl Heap {
                     self.dropped_tasks.insert(t);
                 }
                 Value::Vec(c) | Value::Boxed(c) => {
+                    let mut freed = false;
                     if let Some(s) = self.slots.get_mut(c) {
                         if matches!(s.kind, SlotKind::Buf | SlotKind::Boxed) {
                             s.kind = SlotKind::Free;
                             work.push(take_moved(&mut s.val));
+                            freed = true;
                         }
+                    }
+                    if freed {
+                        self.log_fact(|| HeapEvent::Free(c));
                     }
                 }
                 Value::Rc(c) => {
+                    let mut freed = false;
                     if let Some(s) = self.slots.get_mut(c) {
                         if let SlotKind::Rc { strong, weak } = &mut s.kind {
                             *strong = strong.saturating_sub(1);
@@ -462,8 +468,12 @@ impl Heap {
                                     s.kind = SlotKind::Free;
                                 }
                                 work.push(take_moved(&mut s.val));
+                                freed = true;
                             }
                         }
+                    }
+                    if freed {
+                        self.log_fact(|| HeapEvent::Free(c));
                     }
                 }
                 Value::Weak(c) => {
@@ -495,6 +505,7 @@ impl Heap {
     pub fn end_cell_value(&mut self, c: CellId) -> Option<Value> {
         let s = self.slots.get(c)?;
         let copy = self.is_copy(&s.val);
+        self.log_fact(|| HeapEvent::Free(c));
         if let Some(o) = &self.oracle {
             // A reference into the cell dangles now, also for a copy value.
             if s.kind == SlotKind::Local || !copy {

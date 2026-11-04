@@ -112,6 +112,13 @@ pub fn heads(b: &Body, rank: &[usize]) -> Vec<bool> {
 pub struct Cycles {
     /// The blocks in a cycle.
     blocks: BTreeSet<(BodyId, BlockId)>,
+    /// The blocks of `blocks` that only the re-entry edges after code of a
+    /// caller put in a cycle ([`Self::add_code_rows_at`], issue #56).
+    code: BTreeSet<(BodyId, BlockId)>,
+    /// For each block, the run nodes of code of a caller
+    /// ([`Self::add_code_rows_at`]) whose re-entry edges reach the block: a
+    /// resume there runs the block again (hole C1-H1 of stage C1.1).
+    code_from: std::collections::BTreeMap<(BodyId, BlockId), BTreeSet<(BodyId, BlockId)>>,
 }
 
 impl Cycles {
@@ -121,16 +128,216 @@ impl Cycles {
         for &bid in comp {
             if let Some(b) = p.bodies.get(bid.index()) {
                 for blk in cyclic_blocks(b) {
-                    out.blocks.insert((bid, blk));
+                    out.insert((bid, blk), false);
                 }
             }
         }
         out
     }
 
+    /// Adds the cycles of the re-entry edges of the facts (`docs/ir.md` 6.5,
+    /// plan stage F16): each block of the handled body of a handler whose
+    /// clause a `multi` resume can run more than once, and of the bodies that
+    /// splice into it, and each block of the clauses of a handler whose
+    /// clauses can run more than once (their code after `resume` runs at
+    /// `Post`, in a cycle). One-place instances are off there (V097).
+    pub fn add_handlers(
+        &mut self,
+        p: &Program,
+        comp: &[BodyId],
+        frames: &crate::factgen::frames::Frames,
+    ) {
+        for (i, hd) in p.handlers.iter().enumerate() {
+            let h = weft_ir::HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
+            if !comp.contains(&hd.handled) {
+                continue;
+            }
+            let multi = !frames.reentries(h).is_empty();
+            let twice = multi || frames.runs_twice(h);
+            if !twice {
+                continue;
+            }
+            let roots: Vec<BodyId> = hd
+                .clauses
+                .iter()
+                .map(|(_, c)| *c)
+                .chain(multi.then_some(hd.handled))
+                .collect();
+            for &bid in comp {
+                if !roots
+                    .iter()
+                    .any(|&r| crate::analysis::clause::inside(p, bid, r))
+                {
+                    continue;
+                }
+                if let Some(b) = p.bodies.get(bid.index()) {
+                    for i in 0..b.blocks.len() {
+                        self.insert((bid, BlockId(u32::try_from(i).unwrap_or(u32::MAX))), false);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Adds the cycles of the re-entry edges after a node that can wait at a
+    /// `multi` operation of a handler of a caller (OL-R2a, plan stage F16):
+    /// each block of a body of `comp` that such a node of the body reaches,
+    /// and each block of the handled bodies that splice into the body.
+    pub fn add_rows(
+        &mut self,
+        p: &Program,
+        tys: &weft_ir::TyTable,
+        sums: &super::Summaries,
+        comp: &[BodyId],
+    ) {
+        let rows: Vec<(BodyId, BlockId)> = comp
+            .iter()
+            .flat_map(|&bid| {
+                crate::factgen::frames::row_multi_nodes(p, tys, sums, bid)
+                    .into_iter()
+                    .map(move |x| (bid, x))
+            })
+            .collect();
+        self.add_rows_at(p, comp, &rows);
+    }
+
+    /// Adds the cycles after the performs of the closure bodies of `comp`
+    /// through a captured capability whose handler can resume more than
+    /// once (`crate::factgen::frames::captured_multi_nodes`, hole C1-H4).
+    pub fn add_captured(&mut self, p: &Program, tys: &weft_ir::TyTable, comp: &[BodyId]) {
+        let rows: Vec<(BodyId, BlockId)> = comp
+            .iter()
+            .flat_map(|&bid| {
+                crate::factgen::frames::captured_multi_nodes(p, tys, bid)
+                    .into_iter()
+                    .map(move |x| (bid, x))
+            })
+            .collect();
+        self.add_rows_at(p, comp, &rows);
+    }
+
+    /// [`Self::add_rows`] for the nodes `rows` (a body and a block).
+    pub fn add_rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)]) {
+        self.rows_at(p, comp, rows, false);
+    }
+
+    /// [`Self::add_rows_at`] for run nodes that only code of a caller makes
+    /// `multi` (a run of a value of the interface whose value the body does
+    /// not know, issue #56). The blocks are in a cycle, but
+    /// [`Self::has_strict`] does not count them: the caller gives the value
+    /// and applies its `multi` part at its own node.
+    pub fn add_code_rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)]) {
+        self.rows_at(p, comp, rows, true);
+    }
+
+    /// Adds block `key` to the cycles. With `code`, only the re-entry edges
+    /// after code of a caller put it there.
+    fn insert(&mut self, key: (BodyId, BlockId), code: bool) {
+        if code {
+            if !self.blocks.contains(&key) {
+                self.code.insert(key);
+            }
+        } else {
+            self.code.remove(&key);
+        }
+        self.blocks.insert(key);
+    }
+
+    /// The cycles of the re-entry edges after the nodes `rows`; `code` as in
+    /// [`Self::insert`].
+    fn rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)], code: bool) {
+        if code {
+            for &row in rows {
+                self.note_code_row(p, comp, row);
+            }
+        }
+        let bodies: BTreeSet<BodyId> = rows.iter().map(|r| r.0).collect();
+        for bid in bodies {
+            let rows: Vec<BlockId> = rows.iter().filter(|r| r.0 == bid).map(|r| r.1).collect();
+            let Some(b) = p.bodies.get(bid.index()) else {
+                continue;
+            };
+            let mut seen = vec![false; b.blocks.len()];
+            let mut work = rows;
+            while let Some(x) = work.pop() {
+                match seen.get_mut(x.index()) {
+                    Some(s) if !*s => *s = true,
+                    _ => continue,
+                }
+                self.insert((bid, x), code);
+                if let Some(blk) = b.blocks.get(x.index()) {
+                    work.extend(blk.term.kind.unwind());
+                    work.extend(blk.term.kind.normal_successors());
+                }
+            }
+            for &other in comp {
+                if other != bid && crate::factgen::handlers::splice_root(p, other) == bid {
+                    if let Some(ob) = p.bodies.get(other.index()) {
+                        for i in 0..ob.blocks.len() {
+                            let key = (other, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
+                            self.insert(key, code);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The run nodes of code of a caller (a body and a block) whose re-entry
+    /// edges reach block `block` of body `body` ([`Self::add_code_rows_at`]).
+    pub fn code_from(&self, body: BodyId, block: BlockId) -> Option<&BTreeSet<(BodyId, BlockId)>> {
+        self.code_from.get(&(body, block))
+    }
+
+    /// Notes for each block that the re-entry edges after the run node `row`
+    /// of code of a caller reach that the row reaches it ([`Self::code_from`]):
+    /// the successors of the row, their successors, and each block of the
+    /// handled bodies that splice into the body.
+    fn note_code_row(&mut self, p: &Program, comp: &[BodyId], row: (BodyId, BlockId)) {
+        let (bid, x0) = row;
+        let Some(b) = p.bodies.get(bid.index()) else {
+            return;
+        };
+        let mut seen = vec![false; b.blocks.len()];
+        let mut work: Vec<BlockId> = b.blocks.get(x0.index()).map_or_else(Vec::new, |blk| {
+            let mut w = blk.term.kind.unwind().into_iter().collect::<Vec<_>>();
+            w.extend(blk.term.kind.normal_successors());
+            w
+        });
+        while let Some(x) = work.pop() {
+            match seen.get_mut(x.index()) {
+                Some(s) if !*s => *s = true,
+                _ => continue,
+            }
+            self.code_from.entry((bid, x)).or_default().insert(row);
+            if let Some(blk) = b.blocks.get(x.index()) {
+                work.extend(blk.term.kind.unwind());
+                work.extend(blk.term.kind.normal_successors());
+            }
+        }
+        for &other in comp {
+            if other != bid && crate::factgen::handlers::splice_root(p, other) == bid {
+                if let Some(ob) = p.bodies.get(other.index()) {
+                    for i in 0..ob.blocks.len() {
+                        let key = (other, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
+                        self.code_from.entry(key).or_default().insert(row);
+                    }
+                }
+            }
+        }
+    }
+
     /// True if block `block` of body `body` is in a cycle.
     pub fn has(&self, body: BodyId, block: BlockId) -> bool {
         self.blocks.contains(&(body, block))
+    }
+
+    /// True if block `block` of body `body` is in a cycle for a reason other
+    /// than the re-entry edges after code of a caller
+    /// ([`Self::add_code_rows_at`]): a run of a value of the interface there
+    /// runs the value more than once (part `runs`, issue #56).
+    pub fn has_strict(&self, body: BodyId, block: BlockId) -> bool {
+        self.has(body, block) && !self.code.contains(&(body, block))
     }
 }
 

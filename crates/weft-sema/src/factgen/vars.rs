@@ -248,6 +248,41 @@ pub struct Vars {
     capture_refs: HashSet<(BodyId, LocalId)>,
 }
 
+/// The flag `linear` of a value of type `t`, and the type parameters that make it linear in
+/// a generic body (`crate::props::GenericBody`).
+///
+/// `strict` is the flag outside a generic body: such a value has no type parameter here.
+pub fn generic_linear(tys: &TyTable, t: TyId, strict: bool) -> (bool, Vec<u32>) {
+    if strict || !crate::props::params_linear() {
+        return (strict, Vec::new());
+    }
+    let ps: Vec<u32> = crate::props::ir_linear_params(tys, t).into_iter().collect();
+    (!ps.is_empty(), ps)
+}
+
+/// The type parameters that give a linear value of type `t` its `on abort`
+/// in a generic body (`Generic::on_abort`): empty outside a generic body.
+pub fn generic_abort(tys: &TyTable, t: TyId) -> Vec<u32> {
+    if !crate::props::params_linear() {
+        return Vec::new();
+    }
+    crate::props::ir_on_abort_params(tys, t)
+        .into_iter()
+        .collect()
+}
+
+/// The type parameters that make a value of type `t` nonportable in a
+/// generic body (`Generic::nonportable`): empty outside a generic body, and
+/// for a value that is nonportable with no type parameter.
+pub fn generic_nonportable(tys: &TyTable, t: TyId) -> Vec<u32> {
+    if !crate::props::params_linear() {
+        return Vec::new();
+    }
+    crate::props::ir_nonportable_params(tys, t)
+        .into_iter()
+        .collect()
+}
+
 /// The span of the facts for an IR span.
 const fn span(s: weft_ir::Span) -> Span {
     Span { lo: s.lo, hi: s.hi }
@@ -256,6 +291,60 @@ const fn span(s: weft_ir::Span) -> Span {
 /// True if a value of type `t` is a task handle.
 fn is_task(tys: &TyTable, t: TyId) -> bool {
     matches!(tys.lang(t), Some((Lang::Task, _)))
+}
+
+/// True if a spawn of body `b` gives its handle to local `l`.
+fn spawn_dest(p: &Program, b: &weft_ir::Body, l: LocalId) -> bool {
+    b.blocks.iter().any(|blk| match &blk.term.kind {
+        TermKind::Spawn { dest: Some(d), .. } => d.local == l && d.proj.is_empty(),
+        // A call of a closure of the body whose value is the handle of a
+        // spawn on a scope of its maker (plan stage F19): the scope keeps
+        // that task too.
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(Operand::Copy(f) | Operand::Move(f)),
+            dest,
+            ..
+        } if dest.local == l && dest.proj.is_empty() => closures_of(b, f.local)
+            .into_iter()
+            .filter_map(|c| p.closures.get(c.index()).and_then(|d| p.body(d.body)))
+            .any(|cb| spawn_dest(p, cb, cb.ret)),
+        // A scope whose value is such a handle.
+        TermKind::Scope { scope, dest, .. } if dest.local == l && dest.proj.is_empty() => p
+            .scopes
+            .get(scope.index())
+            .and_then(|d| p.body(d.body))
+            .is_some_and(|sb| spawn_dest(p, sb, sb.ret)),
+        _ => false,
+    })
+}
+
+/// The closures that body `b` makes into local `l` (or into a temporary
+/// that copies into it).
+fn closures_of(b: &weft_ir::Body, l: LocalId) -> Vec<weft_ir::ClosureId> {
+    let mut srcs = vec![l];
+    let mut out = Vec::new();
+    for _ in 0..4 {
+        for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+            let StmtKind::Assign(q, rv) = &s.kind else {
+                continue;
+            };
+            if !q.proj.is_empty() || !srcs.contains(&q.local) {
+                continue;
+            }
+            match rv {
+                Rvalue::Aggregate(weft_ir::AggKind::Closure(c), _) => out.push(*c),
+                Rvalue::Use(Operand::Copy(x) | Operand::Move(x))
+                    if x.proj.is_empty() && !srcs.contains(&x.local) =>
+                {
+                    srcs.push(x.local);
+                }
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The name of the variable of `_0` of a body of kind `kind`: the
@@ -444,19 +533,45 @@ impl Vars {
                 }
                 let l = LocalId(u32::try_from(li).unwrap_or(u32::MAX));
                 let task = is_task(tys, d.ty);
-                let once = d.props.once
-                    || task
-                    || matches!(
-                        d.kind,
-                        LocalKind::TaskResult(_) | LocalKind::ScopeCap | LocalKind::Kont(false)
-                    );
+                // The scope capability and the `TaskResult` local of a spawn
+                // statement are not once values (plan stage F19): the IR
+                // engine runs each copy of a scope body that a `multi`
+                // resume copies, with its children, as the old lowering
+                // (I3-8 stays open; `docs/ir.md` 5.29).
+                let once = d.kind != LocalKind::ScopeCap
+                    && (d.props.once || task || matches!(d.kind, LocalKind::Kont(false)));
+                // The handle of a spawn in a discarded temporary (the tail
+                // of a block statement): the scope keeps the task, as for a
+                // spawn statement, and the end of the temporary drops only
+                // the result (plan stage F18, as the old lowering). A bound
+                // handle that moves there is dropped (W0601).
+                let spawned = task && spawn_dest(p, b, l);
+                let (linear, on_abort) = match (spawned, d.kind) {
+                    (true, LocalKind::Temp(TempKind::Discarded)) => {
+                        // A result that is a handle again (a task whose value
+                        // is the handle of a spawn on the scope) drops only
+                        // its own result (plan stage F19).
+                        let mut ret = d.ty;
+                        while let Some((Lang::Task, args)) = tys.lang(ret) {
+                            match args.first() {
+                                Some(&t) => ret = t,
+                                None => break,
+                            }
+                        }
+                        let pr = ir_props(tys, ret);
+                        let strict = crate::props::ir_strict_linear(tys, ret);
+                        (generic_linear(tys, ret, strict), pr.on_abort)
+                    }
+                    _ => (generic_linear(tys, d.ty, d.props.linear), d.props.on_abort),
+                };
+                let (linear, generic) = linear;
                 let info = VarInfo {
                     name: result_text(&b.kind, d).unwrap_or_else(|| local_text(tys, d)),
                     kind: var_kind(tys, d),
                     span: span(d.origin.span),
                     ty: tys.show(d.ty),
-                    linear: d.props.linear,
-                    has_on_abort: d.props.linear && d.props.on_abort,
+                    linear,
+                    has_on_abort: linear && on_abort,
                     once,
                     // A value built in place does not move, unless a call
                     // that does not build it in place takes it (W0604).
@@ -466,6 +581,15 @@ impl Vars {
                     uniq: d.props.uniq,
                     nonportable: d.props.nonportable,
                     callable: d.props.callable,
+                    generic: weft_facts::Generic {
+                        on_abort: if linear && on_abort && generic.is_empty() {
+                            generic_abort(tys, d.ty)
+                        } else {
+                            Vec::new()
+                        },
+                        nonportable: generic_nonportable(tys, d.ty),
+                        linear: generic,
+                    },
                 };
                 v.add(facts, VarKey::S(bid, l), info);
             }
@@ -501,13 +625,16 @@ impl Vars {
             }
         }
         let mut new: Vec<(VarKey, VarInfo)> = Vec::new();
+        // The keys of `new` (stage C1.4: a search of `new` for each key was
+        // quadratic in a `match` with many arms).
+        let mut seen: HashSet<VarKey> = HashSet::new();
         for q in accessed(b) {
             for (base, v) in variant_steps(q) {
                 let Some(&sp) = tests.get(&base) else {
                     continue;
                 };
                 let key = VarKey::W(bid, base.clone(), v);
-                if self.ids.contains_key(&key) || new.iter().any(|(k, _)| *k == key) {
+                if self.ids.contains_key(&key) || !seen.insert(key.clone()) {
                     continue;
                 }
                 let ty = place_ty(p, tys, bid, &base).map_or_else(String::new, |t| tys.show(t));
@@ -542,7 +669,7 @@ impl Vars {
                 }
                 for (base, v) in variant_steps(target) {
                     let key = VarKey::N(bid, t.local, base.clone(), v);
-                    if self.ids.contains_key(&key) || new.iter().any(|(k, _)| *k == key) {
+                    if self.ids.contains_key(&key) || !seen.insert(key.clone()) {
                         continue;
                     }
                     let named = variant_place(&base, v);
@@ -672,9 +799,9 @@ impl Vars {
         }
     }
 
-    /// Adds the drop pair variable of each `Drop` statement of body `bid`.
-    /// It has the flags of the type of the place: the old value can be
-    /// linear.
+    /// Adds the drop pair variable of each `Drop` statement of body `bid`,
+    /// and of each `detach` (the result of the task). It has the flags of
+    /// the type of the place: the old value can be linear.
     fn drop_pairs(&mut self, p: &Program, tys: &mut TyTable, facts: &mut FnFacts, bid: BodyId) {
         let Some(b) = p.bodies.get(bid.index()) else {
             return;
@@ -694,10 +821,42 @@ impl Vars {
                     ty.map_or_else(String::new, |t| tys.show(t)),
                 );
                 info.kind = VarKind::Temp;
-                info.linear = props.linear;
-                info.has_on_abort = props.linear && props.on_abort;
-                info.once = props.linear;
+                let (linear, generic) = ty.map_or((false, Vec::new()), |t| {
+                    generic_linear(tys, t, crate::props::ir_strict_linear(tys, t))
+                });
+                info.linear = linear;
+                info.has_on_abort = linear && props.on_abort;
+                info.once = linear && generic.is_empty();
+                info.generic.linear = generic;
                 self.add(facts, VarKey::D(bid, block, at), info);
+            }
+            // `detach` drops the result of the task (ADR 0007, plan stage
+            // F18): a drop pair at the terminator.
+            if let TermKind::Detach {
+                task: Operand::Copy(q) | Operand::Move(q),
+                ..
+            } = &blk.term.kind
+            {
+                let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+                let ret = place_ty(p, tys, bid, q).and_then(|t| match tys.try_get(t) {
+                    Some(Ty::Adt(_, args)) => args.first().copied(),
+                    _ => None,
+                });
+                let props = ret.map(|t| ir_props(tys, t)).unwrap_or_default();
+                let mut info = Self::plain(
+                    "detach".to_string(),
+                    span(blk.term.origin.span),
+                    ret.map_or_else(String::new, |t| tys.show(t)),
+                );
+                info.kind = VarKind::Dropped;
+                let (linear, generic) = ret.map_or((false, Vec::new()), |t| {
+                    generic_linear(tys, t, crate::props::ir_strict_linear(tys, t))
+                });
+                info.linear = linear;
+                info.has_on_abort = linear && props.on_abort;
+                info.once = linear && generic.is_empty();
+                info.generic.linear = generic;
+                self.add(facts, VarKey::D(bid, block, super::nodes::TERM), info);
             }
         }
     }
@@ -785,6 +944,7 @@ impl Vars {
             uniq: false,
             nonportable: false,
             callable: false,
+            generic: weft_facts::Generic::NONE,
         }
     }
 
@@ -930,9 +1090,16 @@ impl Vars {
                     span(origin),
                     tys.show(t),
                 );
-                info.linear = props.linear;
-                info.has_on_abort = props.linear && props.on_abort;
+                let (linear, generic) =
+                    generic_linear(tys, t, crate::props::ir_strict_linear(tys, t));
+                info.linear = linear;
+                info.has_on_abort = linear && props.on_abort;
                 info.once = props.once || is_task(tys, t);
+                if linear && props.on_abort && generic.is_empty() {
+                    info.generic.on_abort = generic_abort(tys, t);
+                }
+                info.generic.nonportable = generic_nonportable(tys, t);
+                info.generic.linear = generic;
                 info.nonportable = props.nonportable;
                 // A move of the capture in the body moves the value again.
                 info.immovable = props.immovable;

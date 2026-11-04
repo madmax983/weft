@@ -1,0 +1,52 @@
+// Plan stage F20: the part `drops` of a generic body is a query over its
+// facts. A value of a type parameter that the body drops, overwrites, or
+// drops through a container, a struct, a closure or a callee goes to `drops`.
+// A caller that gives a linear type there is W0601 at the call. The generic
+// body itself has no error.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t }
+struct Holder<T> { v: T, n: u64 }
+
+fn forget<T>(x: T) { }
+fn swap<T>(x: T, y: T) -> T { let z = x
+ z = y
+ z }
+fn in_struct<T>(x: T) -> u64 { let h = Holder { v: x, n: 3 }
+ h.n }
+fn in_closure<T>(x: T) { let c = || { let y = x }
+ }
+fn nested<U>(y: U) { forget(y) }
+fn first<A, B>(a: A, b: B) -> A { a }
+fn keep<T>(x: T) -> T { x }
+
+fn drops_value() {
+    forget(begin(1))   //~ W0601
+}
+fn drops_old_value() {
+    commit(swap(begin(1), begin(2)))   //~ W0601
+}
+fn drops_struct() {
+    print(in_struct(begin(1)))   //~ W0601
+}
+fn drops_closure() {
+    in_closure(begin(1))   //~ W0601
+}
+fn drops_nested() {
+    nested(begin(1))   //~ W0601
+}
+fn drops_second() {
+    commit(first(begin(1), begin(2)))   //~ W0601
+}
+fn drops_linear_closure() {
+    let t = begin(1)
+    forget(|| commit(t))   //~ W0601
+}
+// Controls: a plain type argument, a type parameter that the body keeps.
+fn plain_arguments() {
+    forget(7)
+    print(swap(1, 2))
+    commit(first(begin(1), 2))
+    commit(keep(begin(1)))
+}
+fn main() {}

@@ -1,0 +1,7 @@
+// Issue #58 (stage C1): the bad twin of `nested_run_args_ok.wf`. The callee keeps a reference into `v2` across the run of the closure, and the closure changes `v2` (W0312).
+fn call_with2(f: fn(), r: &Vec<u64>) { let x = &r[0]; f(); print(x) }
+fn main() {
+    let v2 = [1, 2]
+    let g3 = || v2.push(3)
+    call_with2(g3, &v2)   //~ W0312
+}

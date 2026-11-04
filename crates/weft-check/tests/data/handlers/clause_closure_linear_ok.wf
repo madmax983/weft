@@ -1,0 +1,8 @@
+effect Tick { fn tick() }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+fn main() {
+    handle Tick { fn tick() { let t = Tx { id: 1 }; let g = || commit(t); g(); resume(()) } } in {
+        tick()
+    }
+}

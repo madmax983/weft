@@ -1,0 +1,17 @@
+// Hole C1-H4 (follow-up C1.3): the closure gives a captured once closure back after the multi operation (W0503).
+effect Pick { multi fn pick() -> bool }
+struct H1 { f: fn() }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn apply(f: fn()) { f() }
+fn call_ret(f: fn() -> fn()) -> fn() { f() }
+fn picky() / Pick { if pick() { print(1) } }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        let g = || take(v)
+        let h = || { if pick() { print(1) }
+ g }
+        let k = h()   //~ W0503
+        k()
+    }
+}

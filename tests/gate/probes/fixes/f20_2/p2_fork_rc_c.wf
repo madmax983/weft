@@ -1,0 +1,12 @@
+// F20.2 P-2 (x01): clean twin; the Rc stays in the body.
+struct R { items: Vec<u64>, n: u64 }
+fn mk_r() -> Rc<R> { let v = Vec.new(); v.push(1); Rc.new(R { items: v, n: 0 }) }
+fn apply(f: fn()) { f() }
+fn fork_it(f: fn(), g: fn()) / par { let _ = fork(f, g) }
+fn main() / par {
+    let rc1 = mk_r()
+    print(rc1.items)
+    apply(|| {
+        fork_it(|| { print(1) }, || { print(0) })
+    })
+}

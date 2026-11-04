@@ -1,0 +1,9 @@
+// Issue 47 (follow-up F20.1), clean twin: the arm `None` comes first.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn main() {
+    let t = begin(1)
+    let o = Some(|| commit(t))
+    match o { None => print("none"), Some(g) => g() }
+}

@@ -118,12 +118,13 @@ pub fn params(
         } else {
             base.get(1).copied().into_iter().collect()
         };
-        let mut v = AbsVal::of_type(d.props.linear);
+        let mut v = AbsVal::of_type(d.props.linear || crate::props::ir_props(tys, d.ty).linear);
         v.refs = refs.into_iter().collect();
         v.uniq = d.props.uniq;
         // A function value of a caller (stage F12): a call of it is code of
-        // a caller, and the summary runs it (part `runs`).
-        if !is_ref(tys, d.ty) && crate::props::ir_has_fns(tys, d.ty) {
+        // a caller, and the summary runs it (part `runs`). A value of a type
+        // parameter can be one too (V075, plan stage F20).
+        if !is_ref(tys, d.ty) && (crate::props::ir_has_fns(tys, d.ty) || tys.mentions_param(d.ty)) {
             v.fns.insert(crate::analysis::FnVal::Param(
                 u32::try_from(i).unwrap_or(u32::MAX),
             ));
@@ -209,10 +210,10 @@ fn arg_params(
             }
         };
         out.bases.push(base);
-        let mut v = AbsVal::of_type(d.props.linear);
+        let mut v = AbsVal::of_type(d.props.linear || crate::props::ir_props(tys, d.ty).linear);
         v.refs = refs.into_iter().collect();
         v.uniq = d.props.uniq;
-        if !is_ref(tys, d.ty) && crate::props::ir_has_fns(tys, d.ty) {
+        if !is_ref(tys, d.ty) && (crate::props::ir_has_fns(tys, d.ty) || tys.mentions_param(d.ty)) {
             v.fns.insert(crate::analysis::FnVal::Param(
                 i32.saturating_sub(u32::try_from(skip).unwrap_or(0)),
             ));

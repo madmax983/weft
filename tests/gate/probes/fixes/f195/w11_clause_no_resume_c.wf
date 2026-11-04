@@ -1,0 +1,15 @@
+// F19.5 (R3-2, issue #50), clean twin: the callee joins its task before the operation whose clause has no resume
+effect Stop { fn stop() }
+struct Stats { count: u64 }
+fn work(r: &Stats) / Stop, async, clock, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        sleep(1.ms)
+        t.join()
+        stop()
+    }
+}
+fn main() / async, clock {
+    let st = Stats { count: 0 }
+    handle Stop { fn stop() { print(st.count) } } in { work(&st) }
+}

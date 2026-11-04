@@ -1,0 +1,10 @@
+// F8.1 (stage F20): a copy of the place-field reference of the source ends where the new owner gets a new value.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn main() {
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    b.cur = &b.buf[1]
+    let r = b.cur
+    let c = b
+    c = Box.new(Frame { buf: [1, 1, 1, 1] })
+    print(r + 0)
+}

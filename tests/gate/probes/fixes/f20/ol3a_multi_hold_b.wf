@@ -1,0 +1,8 @@
+// OL-3a (stage F20): a generic callee holds a value of its type parameter across a multi operation.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+effect Choice { multi fn choose() -> bool }
+fn hold<T>(x: T) -> T / Choice { let b = choose()
+ x }
+fn main() { handle Choice { fn choose() { resume(true); resume(false) } } in { commit(hold(begin(1))) } }

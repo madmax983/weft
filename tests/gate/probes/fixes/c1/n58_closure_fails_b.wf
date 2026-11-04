@@ -1,0 +1,12 @@
+// Issue #58 (stage C1, self-attack): a closure that fails: the clause of the local Fail handler reads a moved local (W0302).
+fn apply(f: fn()) { f() }
+fn boom() { fail("x") }
+fn maybe_fail(n: u64) { if n > 100 { fail("big") } }
+fn main() {
+    let v = [1, 2]
+    handle Fail { fn fail(m) { v.clear(); print(m) } } in {
+        let w = v
+        let f = || fail("x")
+        apply(f)
+    }
+}

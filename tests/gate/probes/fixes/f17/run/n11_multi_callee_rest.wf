@@ -1,0 +1,13 @@
+// D-CONT-RUN: the continuation of a `resume` holds the rest of the callee or closure that performs (the run node is in the region)
+effect Pick { multi fn pick() -> bool }
+fn g(v: &Vec<i64>) / Pick, mut(v) {
+    let b = pick()
+    if b { v.clear() }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { let y = &v[0]; resume(true); print(y + 1); resume(false) } } in {
+        g(&v)
+    }
+}

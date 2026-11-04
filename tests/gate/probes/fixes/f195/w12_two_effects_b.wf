@@ -1,0 +1,18 @@
+// F19.5 (R3-2, issue #50): the callee performs two effects while its task writes; the clause of the outer handler reads
+effect Note { fn note() }
+effect Log { fn log() }
+struct Stats { count: u64 }
+fn work(r: &Stats) / Note, Log, async, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        note()
+        log()
+        t.join()
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Log { fn log() { print(st.count); resume(()) } } in {
+        handle Note { fn note() { print(1); resume(()) } } in { work(&st) }
+    }
+}

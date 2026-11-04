@@ -1,0 +1,11 @@
+// weft: library
+// RT17: `sim.run` as a value in a library installs the root handlers when
+// it runs (W0802 at the value), as a call does.
+fn body() { print(1) }
+fn sim_value() {
+    let r = sim.run   //~ W0802
+    r(1, 4, body)
+}
+fn sim_call() {
+    sim.run(seed: 1) { print(2) }   //~ W0802
+}

@@ -1,0 +1,15 @@
+// F19.5 (R3-2, issue #50): a chain of callees; the inner callee performs while its task writes, the handler is two calls up
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn work(r: &Stats) / Note, async, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        note()
+        t.join()
+    }
+}
+fn mid(r: &Stats) / Note, async, mut(r) { work(r) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { mid(&st) }
+}

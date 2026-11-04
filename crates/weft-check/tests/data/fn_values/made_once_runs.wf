@@ -1,0 +1,49 @@
+// A closure that a callee made holds the values of its captures in its own
+// value. A run of it that runs a capture two times runs a `once` value of
+// the capture two times: W0502 at the run (group C fix C1-ONCE: the run of
+// the made closure did not move the value of the closure). The made closure
+// runs the capture directly, in a loop, on one path, through a callee, or
+// through another made closure; the closure comes from a second maker, from
+// a closure, from a vector or a field that a callee fills. The controls run
+// the capture one time, or give a `many` closure.
+struct Buf { items: Vec<u64> }
+struct Hook { f: fn() }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn twice(g: fn()) { g(); g() }
+fn call0(g: fn()) { g() }
+fn wrap(f: fn()) -> fn() { || { f(); f() } }
+fn wrap1(f: fn()) -> fn() { || f() }
+fn wrap_loop(f: fn()) -> fn() { || { let i = 0; while i < 2 { f(); i += 1 } } }
+fn wrap_if(f: fn(), two: bool) -> fn() { || { f(); if two { f() } } }
+fn wrap_twice(f: fn()) -> fn() { || twice(f) }
+fn wrap_call(f: fn()) -> fn() { || call0(f) }
+fn wrap2(f: fn()) -> fn() { wrap(f) }
+fn wrap_made(f: fn()) -> fn() { let h = wrap1(f); || { h(); h() } }
+fn put(v: &Vec<fn()>, f: fn()) { v.push(f) }
+fn hook(f: fn()) -> Hook { Hook { f: f } }
+
+fn direct() { let b = mkbuf(); let g = wrap(|| eat(b)); g() } //~ W0502
+fn in_loop() { let b = mkbuf(); let g = wrap_loop(|| eat(b)); g() } //~ W0502
+fn on_one_path() { let b = mkbuf(); let g = wrap_if(|| eat(b), true); g() } //~ W0502
+fn by_callee() { let b = mkbuf(); let g = wrap_twice(|| eat(b)); g() } //~ W0502
+fn second_maker() { let b = mkbuf(); let g = wrap2(|| eat(b)); g() } //~ W0502
+fn made_of_made() { let b = mkbuf(); let g = wrap_made(|| eat(b)); g() } //~ W0502
+fn nested() { let b = mkbuf(); let g = wrap(wrap1(|| eat(b))); g() } //~ W0502
+fn via_local() { let b = mkbuf(); let e = || eat(b); let g = wrap(e); g() } //~ W0502
+fn from_closure() { let b = mkbuf(); let mk = || wrap(|| eat(b)); let g = mk(); g() } //~ W0502
+fn in_vec() { let b = mkbuf(); let v: Vec<fn()> = Vec.new(); put(&v, wrap(|| eat(b))); let g = v[0]; g() } //~ W0502
+fn in_field() { let b = mkbuf(); let h = hook(wrap(|| eat(b))); let g = h.f; g() } //~ W0502
+fn callee_runs() { let b = mkbuf(); call0(wrap(|| eat(b))) } //~ W0502
+fn callee_twice() { let b = mkbuf(); twice(wrap1(|| eat(b))) } //~ W0502
+
+// The controls.
+fn direct_once() { let b = mkbuf(); let g = wrap1(|| eat(b)); g() }
+fn by_callee_once() { let b = mkbuf(); let g = wrap_call(|| eat(b)); g() }
+fn nested_once() { let b = mkbuf(); let g = wrap1(wrap1(|| eat(b))); g() }
+fn in_vec_once() { let b = mkbuf(); let v: Vec<fn()> = Vec.new(); put(&v, wrap1(|| eat(b))); let g = v[0]; g() }
+fn callee_once() { let b = mkbuf(); call0(wrap1(|| eat(b))) }
+fn direct_many() { let b = mkbuf(); let g = wrap(|| print(b.items.len())); g() }
+fn in_loop_many() { let b = mkbuf(); let g = wrap_loop(|| print(b.items.len())); g() }
+fn callee_many() { let b = mkbuf(); call0(wrap(|| print(b.items.len()))) }
+fn main() { direct_once() }

@@ -1,0 +1,8 @@
+// Issue 47 (follow-up F20.1), clean twin: control: `Option<Tx>`, a linear type.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn main() {
+    let o = Some(begin(1))
+    match o { Some(t) => commit(t), None => {} }
+}

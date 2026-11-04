@@ -1,0 +1,11 @@
+// E-3: the handle that a closure gives back is the value of an inner scope; the join ends the task
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let g = || s.spawn(|| v.push(2))
+        let h = scope { i => g() }
+        h.join()
+        v.push(3)
+    }
+}

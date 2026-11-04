@@ -1,0 +1,11 @@
+// F19.5 (R3-1, issue #50): a closure starts a task, then performs; a callee of the scope function runs it; the handler is in a caller of the scope function
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn once(g: fn()) / Note { g() }
+fn work(r: &Stats) / Note, async, clock, mut(r) {
+    scope { s => once(|| { s.spawn(|| r.count += 1); sleep(1.ms); note(); () }) }
+}
+fn main() / async, clock {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { work(&st) }
+}

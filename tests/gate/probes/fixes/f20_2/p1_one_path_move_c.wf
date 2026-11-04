@@ -1,0 +1,13 @@
+// F20.2 P-1 (x05): clean twin.
+fn take_v(v: Vec<u64>) { print(v.len()) }
+fn apply(f: fn()) { f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = false
+    apply(|| {
+        let r = &v[0]
+        print(r)
+        if c { print(0) } else { let g = || take_v(v); g() }
+    })
+}

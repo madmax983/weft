@@ -1,0 +1,12 @@
+// The twin of `cap_multi_linear.wf`.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let f = || pick()
+        let b = f()
+        let t = Tx { id: 1 }
+        commit(t)
+    }
+}

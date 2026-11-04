@@ -1,0 +1,27 @@
+// Fork branches run at the same time (plan stage F19): a branch that writes
+// a place that a later branch accesses conflicts with it (W0405). A branch
+// that mutates through a shared-mutable capture is W0403, also when the
+// branches write disjoint fields.
+struct P { x: Vec<u64>, y: Vec<u64> }
+fn mk() -> P { P { x: Vec.new(), y: Vec.new() } }
+
+fn same_place(p: &P) / mut(p), par {
+    fork(|| p.x.push(1), || p.x.push(2))   //~ W0405 W0403 W0403
+}
+
+fn shared_local() / par {
+    let n = 0
+    fork(|| { n += 1; () }, || ())   //~ W0403
+    print(n)
+}
+
+fn disjoint(p: &P) / mut(p), par {
+    fork(|| p.x.push(1), || p.y.push(2))   //~ W0403 W0403
+}
+
+fn main() / par {
+    let p = mk()
+    same_place(&p)
+    shared_local()
+    disjoint(&p)
+}

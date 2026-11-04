@@ -1,0 +1,7 @@
+// V056 (stage F20): a linear closure goes to a parameter of a type parameter that the callee drops.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn sink<T>(x: T) { }
+fn main() { let t = begin(1)
+ sink(|| commit(t)) }

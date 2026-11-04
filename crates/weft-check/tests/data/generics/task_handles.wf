@@ -1,0 +1,24 @@
+// O3-9 (plan stage F20): a task handle goes through a generic identity and
+// comes back; the `join` of the result ends the task, so a write after it
+// is no conflict. A write before the `join` is W0405.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn id<T>(x: T) -> T { x }
+fn write_before_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        let u = id(t)
+        v.push(2)   //~ W0405
+        u.join()
+    }
+}
+fn write_after_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        let u = id(t)
+        u.join()
+        v.push(2)
+    }
+}
+fn main() {}

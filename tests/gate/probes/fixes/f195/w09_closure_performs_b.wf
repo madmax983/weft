@@ -1,0 +1,15 @@
+// F19.5 (R3-2, issue #50): the scope function calls a local closure that performs while the task writes
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn work(r: &Stats) / Note, async, mut(r) {
+    let k = || note()
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        k()
+        t.join()
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { work(&st) }
+}

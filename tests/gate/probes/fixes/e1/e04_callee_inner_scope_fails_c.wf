@@ -1,0 +1,16 @@
+// E-1 (clean twin): the callee joins the handle before its own scope fails
+fn boom() -> u64 / fail { fail("boom"); 2 }
+fn wait(t: Task<()>) / fail, async {
+    t.join()
+    scope { i => i.spawn(|| boom()) }
+}
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in { wait(t) }
+        v.push(3)
+    }
+}

@@ -1,0 +1,13 @@
+// F20.2 F-1 (m03): clean twin.
+effect Choice { fn choose() -> bool }
+struct Hook { f: fn() }
+fn hold<T>(x: T) -> T / Choice { let b = choose()
+ x }
+fn main() {
+    handle Choice { fn choose() { resume(true) } } in {
+        let h = Rc.new(Hook { f: || print(1) })
+        let g = hold(h)
+        let k = g.f
+        k()
+    }
+}

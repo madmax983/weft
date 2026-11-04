@@ -1,0 +1,4 @@
+// F20.2 F-1 (h01): clean twin.
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn hold_call<T>(x: T, f: fn()) -> T { f(); x }
+fn main() { let v = mkv(); let u = mkv(); let f = || print(u.len()); let w = hold_call(v, f); print(w.len()) }

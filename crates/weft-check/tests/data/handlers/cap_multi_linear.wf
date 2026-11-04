@@ -1,0 +1,12 @@
+// A closure performs a `multi` operation whose clause resumes twice: W0503 at the run node.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let t = Tx { id: 1 }
+        let f = || pick()
+        let b = f() //~ W0503 W0602
+        commit(t)
+    }
+}

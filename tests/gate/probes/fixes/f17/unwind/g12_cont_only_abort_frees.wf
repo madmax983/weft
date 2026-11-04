@@ -1,0 +1,15 @@
+// D-CONT-UNWIND: the continuation holds the cleanup path of an abort that lands in a handler inside the handled body
+effect Peek { fn peek(x: &i64) }
+effect Stop { fn stop() }
+fn main() {
+    handle Peek { fn peek(x) { resume(()); print(x + 1) } } in {
+        let n = handle Stop { fn stop() { 0 } } in {
+            let w = Vec.new()
+            w.push(1)
+            peek(&w[0])
+            loop { stop() }
+            1
+        }
+        print(n)
+    }
+}

@@ -1,0 +1,13 @@
+// F20.2 P-1 (x07): the capture moves into an inner closure that runs (W0301).
+fn take_v(v: Vec<u64>) { print(v.len()) }
+fn apply(f: fn()) { f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    apply(|| {
+        let r = &v[0]
+        let g = || take_v(v)
+        g()
+        print(r)
+    })
+}

@@ -1027,17 +1027,24 @@ fn oracle_turns_on_the_strict_run_time_checks() {
 
 #[test]
 fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
-    // Only the groups A, B and C are on by default (stages F8, F10 and F13,
-    // plan §2.6): a program with a handler (group D) goes to the old
-    // pipeline, and the command says why on standard error.
+    // Each group is on by default (stage F20, plan §2.6): a program with a
+    // construct that the fact generator does not support yet (a handler in
+    // a closure body, a fallback of stage F16) goes to the old pipeline, and
+    // the command says why on standard error.
     let dir = scratch(
         "fallback",
-        &[(
-            "handler_bad.wf",
-            "effect Log { fn log(msg: String) }\nfn bad() {\n    let v = [1]\n    let w = v\n    handle Log { fn log(msg) { resume(()) } } in log(\"a\")\n    print(v.len())\n}\nfn main() { bad() }\n",
-        )],
+        &[
+            (
+                "nested_bad.wf",
+                "effect Log { fn log(n: u64) }\nfn quiet() { let f = || { handle Log { fn log(n) { resume(()) } } in log(1) }\n f() }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
+            ),
+            (
+                "nested_run.wf",
+                "effect Log { fn log(n: u64) }\nfn quiet() { let f = || { handle Log { fn log(n) { resume(()) } } in log(1) }\n f() }\nfn main() { quiet() }\ntest \"quiet\" { quiet() }\n",
+            ),
+        ],
     );
-    let path = format!("{dir}/handler_bad.wf");
+    let path = format!("{dir}/nested_bad.wf");
     let path = path.as_str();
     let old = cmd(&["check", path]);
     assert_eq!(old.code, 1, "{}", old.text);
@@ -1047,8 +1054,9 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         let out = cmd(&["check", f, path]);
         assert_eq!(out.text, old.text, "{f}");
         assert_eq!(out.code, old.code, "{f}");
-        let note =
-            format!("note: {f}: the old pipeline checks the program: the program uses group D");
+        let note = format!(
+            "note: {f}: the old pipeline checks the program: the fact generator does not support group D"
+        );
         assert!(out.stderr.starts_with(&note), "{f}: {}", out.stderr);
         assert_eq!(out.stderr.lines().count(), 1, "{}", out.stderr);
     }
@@ -1060,8 +1068,8 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         out.stderr
     );
     // Each command that checks takes the switch.
-    // `sim.wf` uses groups B to E.
-    let run = format!("{INTERP}/sim.wf");
+    // `nested_run.wf` has a handler in a closure body too.
+    let run = format!("{dir}/nested_run.wf");
     let rules = "examples/lints/ref_across_abort.dl";
     for args in [
         vec!["facts", "--facts=ir", path, "bad"],
@@ -1203,13 +1211,31 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         "{}",
         checked.stderr
     );
-    // A program that is not in scope (a `multi` handler, stage F16): the
-    // oracle checks nothing.
+    // A `multi` handler (plan stage F16): the oracle checks the program.
     let multi = format!("{INTERP}/multi_choose.wf");
     let looped = cmd(&["run", "--fact-oracle", &multi]);
+    assert_eq!(looped.code, 0, "{}", looped.stderr);
     assert!(
-        looped.stderr.contains("the oracle checks nothing"),
+        looped.stderr.contains("note: --fact-oracle: 7 frame(s)"),
         "{}",
         looped.stderr
+    );
+    // A `fork` (plan stage F19): the oracle checks the program.
+    let task = format!("{INTERP}/fork.wf");
+    let forked = cmd(&["run", "--fact-oracle", &task]);
+    assert_eq!(forked.code, 0, "{}", forked.stderr);
+    assert!(
+        forked.stderr.contains("note: --fact-oracle: 16 frame(s)"),
+        "{}",
+        forked.stderr
+    );
+    // A program that is not in scope (a handler in a closure body, a
+    // fallback of stage F16): the oracle checks nothing.
+    let nested = format!("{INTERP}/abort_block_cells.wf");
+    let out = cmd(&["run", "--fact-oracle", &nested]);
+    assert!(
+        out.stderr.contains("the oracle checks nothing"),
+        "{}",
+        out.stderr
     );
 }

@@ -274,3 +274,38 @@ fn linear_closures_that_a_loop_pushes_into_a_vector_are_w0601() {
     // gave no `overwrites` and the vector never got a live linear value.
     check("linear_closures_in_loops.wf");
 }
+
+#[test]
+fn a_run_of_a_closure_reads_through_a_captured_reference_to_references() {
+    // Class C-RR (self-attack of stage F16): the closure holds a reference
+    // to a container of references and reads through it. The node that
+    // runs the closure (directly, in a callee, from a container, as a made
+    // closure) uses the variables of the references on the chain, so a run
+    // after a change that ends them is W0301.
+    check("crr_ref_to_ref_container.wf");
+}
+
+#[test]
+fn an_arm_of_a_variant_with_no_payload_consumes_a_linear_closure_in_an_enum() {
+    // Issue 47 (tier 1 c4_generic_clean.wf `closure_in_some`): the type
+    // `Option<fn()>` has no linear part, but the local holds a linear
+    // closure. The arm `None` consumes the local; a closure that a path does
+    // not call is still W0601.
+    check("option_payload.wf");
+}
+
+/// Follow-up F20.2 (P-1 of the review of group F): a move of a `ByMove`
+/// capture in a closure body (or in a closure that the body makes and runs)
+/// frees the value in the environment: a reference into it is W0301 after
+/// the move.
+#[test]
+fn a_move_of_a_capture_in_a_closure_body_invalidates_references_into_it() {
+    check("nested_move.wf");
+}
+
+/// Follow-up F20.3 (I-2 of the second review of group F): one `once` closure
+/// in two operands of one node is W0502.
+#[test]
+fn a_once_closure_in_two_operands_of_one_node_is_w0502() {
+    check("same_operand_twice.wf");
+}

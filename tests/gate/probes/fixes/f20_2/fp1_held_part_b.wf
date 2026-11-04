@@ -1,0 +1,6 @@
+// F20.2 FP-1 (g10): the callee holds B = Tx across an abort (W0602).
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn hold<A, B>(p: (A, B), k: fn(A)) -> B / fail { let (a, b) = p; k(a); fail("x"); b }
+fn main() { handle Fail { fn fail(m) { print(m) } } in { let t = hold((1, begin(2)), |n: u64| print(n)); commit(t) } }

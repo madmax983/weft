@@ -1,0 +1,11 @@
+// The clause keeps a reference into a local of the closure that performs (the frame root of the run node).
+effect Keep { fn keep(r: &u64) }
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in {
+        let f = || { let x = 5; keep(&x) }
+        f()
+    }
+    print(last) //~ W0301
+}

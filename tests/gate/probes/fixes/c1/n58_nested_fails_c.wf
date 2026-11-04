@@ -1,0 +1,13 @@
+// Issue #58 (stage C1, self-attack): a closure that runs a captured closure that cannot fail: the Fail clause does not run.
+fn apply(f: fn()) { f() }
+fn boom() { fail("x") }
+fn maybe_fail(n: u64) { if n > 100 { fail("big") } }
+fn main() {
+    let v = [1, 2]
+    handle Fail { fn fail(m) { v.clear(); print(m) } } in {
+        let w = v
+        let f = || print(1)
+        let g = || f()
+        apply(g)
+    }
+}

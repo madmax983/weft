@@ -1,0 +1,9 @@
+// Issue 47 (follow-up F20.1), clean twin: the `Option` is a part of a tuple.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn main() {
+    let t = begin(1)
+    let p = (Some(|| commit(t)), 1)
+    match p { (Some(g), _) => g(), (None, _) => {} }
+}

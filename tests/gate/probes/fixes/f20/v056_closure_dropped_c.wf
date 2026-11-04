@@ -1,0 +1,8 @@
+// V056 (stage F20), clean twin: the callee gives the closure back and the caller runs it.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn keep<T>(x: T) -> T { x }
+fn main() { let t = begin(1)
+ let f = keep(|| commit(t))
+ f() }

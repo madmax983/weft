@@ -1,0 +1,10 @@
+// FP-OWN: the frame of a clause is alive while it waits at its own `resume`; a reference into a local of the clause stays valid
+effect Op { fn op() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Op { fn op() { let loc = Vec.new(); loc.push(7); resume(()); let y = &loc[0]; print(y + 1) } } in {
+        op()
+        v.clear()
+    }
+}

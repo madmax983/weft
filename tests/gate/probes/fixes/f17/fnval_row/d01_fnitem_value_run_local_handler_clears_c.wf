@@ -1,0 +1,18 @@
+effect Log { fn log(m: i64) }
+fn note(r: &i64) / Log {
+    log(1)
+    print(r + 1)
+}
+fn k(v: &Vec<i64>) / Log, mut(v) {
+    let h = note
+    handle Log { fn log(m) { print(v.len()); resume(()) } } in {
+        h(&v[0])
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { print(100 + m); resume(()) } } in {
+        k(&v)
+    }
+}

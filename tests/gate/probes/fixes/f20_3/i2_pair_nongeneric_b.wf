@@ -1,0 +1,16 @@
+// F20.3 I-2 (f1j2): one once closure in two arguments of a call that is not generic (W0502; the old pipeline misses it).
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn pair(a: fn(), b: fn(), n: u64) -> (fn(), fn()) / fail { if n > 5 { fail("big") }
+ (a, b) }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    handle Fail { fn fail(m) { print(m) } } in {
+        let (g, h) = pair(f, f, 1)
+        g()
+        h()
+    }
+}

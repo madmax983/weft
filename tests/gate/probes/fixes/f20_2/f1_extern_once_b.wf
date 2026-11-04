@@ -1,0 +1,4 @@
+// F20.2 F-1 (e04): a once closure to an extern generic function that holds it; a later call is W0502.
+fn consume(v: Vec<u64>) { print(v.len()) }
+extern fn ext_keep<T>(x: T) -> T
+fn main() { let v = Vec.new(); let f = || consume(v); let g = ext_keep(f); g(); f() }

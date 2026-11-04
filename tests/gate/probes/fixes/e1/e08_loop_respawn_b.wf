@@ -1,0 +1,16 @@
+// E-1: in the first turn of a loop the callee fails before its join; the second turn joins
+fn wait(t: Task<()>, c: bool) / fail, async { if c { fail("stop") }; t.join() }
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let t = s.spawn(|| v.push(2))
+            sleep(1.ms)
+            handle Fail { fn fail(m) { print(m) } } in { wait(t, i == 0) }
+            i += 1
+        }
+        v.push(3)
+    }
+}

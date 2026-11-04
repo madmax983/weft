@@ -1,0 +1,15 @@
+// D-COPY-WAIT: a `multi` re-run copies the frame of the inner clause that waits at its `resume`; the place changes before the copy goes on.
+effect Pick { multi fn pick() -> bool }
+effect Op { fn op() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        handle Op { fn op() { let y = &v[0]; resume(()); print(y + 1) } } in { //~ W0301
+            op()
+            let b = pick()
+            print(b)
+        }
+        v.clear()
+    }
+}

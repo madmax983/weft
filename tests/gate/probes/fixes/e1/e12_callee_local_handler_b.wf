@@ -1,0 +1,17 @@
+// E-1: a handler of the callee stops another effect; the failure before the join leaves the callee
+effect Note { fn note() }
+fn check(c: bool) / fail, Note { note(); if c { fail("stop") } }
+fn wait(t: Task<()>, c: bool) / fail, async {
+    handle Note { fn note() { resume(()) } } in { check(c) }
+    t.join()
+}
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in { wait(t, true) }
+        v.push(3)
+    }
+}

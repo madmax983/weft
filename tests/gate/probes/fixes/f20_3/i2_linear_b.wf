@@ -1,0 +1,12 @@
+// F20.3 I-2 (o7): one linear closure in two arguments; it commits two times (W0502).
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn pair<T>(a: T, b: T) -> (T, T) { (a, b) }
+fn main() {
+    let t = begin(1)
+    let f = || commit(t)
+    let (g, h) = pair(f, f)
+    g()
+    h()
+}

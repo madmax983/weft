@@ -1,0 +1,12 @@
+// Issue #57 (stage C1, self-attack): the shape of the four W0302 rows of tier 2 (h0 of r2/oracle/runs). A function parameter that runs in the body of a local Fail handler can be an item that fails, and the clause reads a moved parameter. The ir pipeline gives W0302; the old pipeline misses it, and the run faults.
+fn apply(f: fn()) { f() }
+fn boom() { fail("x") }
+fn maybe_fail(n: u64) { if n > 100 { fail("big") } }
+fn h0(v: Vec<u64>, p: fn()) {
+    handle Fail { fn fail(m) { v.clear(); print(m) } } in {
+        let w = v
+        let g = || p()
+        apply(g)
+    }
+}
+fn main() { h0([1], boom) }

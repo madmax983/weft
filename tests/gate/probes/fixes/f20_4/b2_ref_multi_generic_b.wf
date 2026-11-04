@@ -1,0 +1,17 @@
+// F20.4 B-2 (b28): the same with a multi clause (W0301).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+effect Choice { multi fn choose() -> bool }
+fn hold_choose<T>(x: T) -> T / Choice { let b = choose()
+ print(b)
+ x }
+fn main() {
+    let v = mkv()
+    let r = &v
+    handle Choice { fn choose() { print(r.len())
+ resume(true)
+ resume(false) } } in { let w = hold_choose(v)
+ print(w.len()) }
+}

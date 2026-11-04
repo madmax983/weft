@@ -1,0 +1,12 @@
+// The twin of `cap_apply.wf`.
+effect Log { fn log(m: u64) }
+fn apply(f: fn()) { f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { print(m); resume(()) } } in {
+        let r = &v[0]
+        apply(|| log(1))
+        print(r + 1)
+    }
+}

@@ -24,9 +24,9 @@
 //!
 //! The other parts of the summary of a function with no stated row come from
 //! its signature: the parameters, the reads, the result, the stores, the
-//! `@ uniq` parameters (`super::sig::build`). A body that the fact generator
-//! supports has no type parameter (stage F20), so its parts `drops` and
-//! `holds` are empty.
+//! `@ uniq` parameters (`super::sig::build`). The parts `drops`, `holds`
+//! and `forks` of a generic body come from its facts
+//! (`crate::factgen::generic`, plan stage F20).
 
 use std::collections::BTreeMap;
 
@@ -180,7 +180,47 @@ pub fn summarize(
             }
         })
     };
-    let runs = runs_of(fv.runs, false, &run_place, ir.body(entry));
+    let mut runs = runs_of(fv.runs, false, &run_place, ir.body(entry));
+    for r in &mut runs {
+        r.then = fv.then_runs.contains(&(r.param, r.capture));
+    }
+    // How the body runs a value of its interface as a task (plan stage F19):
+    // the places of a parameter only (a caller gives the others).
+    let iface =
+        |q: &PlaceId| place(*q).filter(|ip| matches!(ip.root, IRoot::Param(_) | IRoot::Held(_)));
+    // A run that code of a caller can do on another thread (a value that
+    // an unknown function value reaches, `task` with no task of the body):
+    // the worst way, as a foreign function.
+    for r in &mut runs {
+        if r.task
+            && !fv
+                .task_hows
+                .iter()
+                .any(|h| h.param == r.param && h.capture == r.capture)
+        {
+            r.how.foreign = true;
+        }
+    }
+    for h in fv.task_hows {
+        let Some(r) = runs
+            .iter_mut()
+            .find(|r| r.param == h.param && r.capture == h.capture && !r.result)
+        else {
+            continue;
+        };
+        r.task = true;
+        r.how.thread |= h.thread;
+        r.how.twice |= h.twice;
+        r.how.with.extend(h.with.iter().copied());
+        let mut ws: Vec<IPlace> = h.writes.iter().filter_map(iface).collect();
+        let mut rs: Vec<IPlace> = h.reads.iter().filter_map(iface).collect();
+        ws.sort();
+        ws.dedup();
+        rs.sort();
+        rs.dedup();
+        r.how.writes = ws;
+        r.how.reads = rs;
+    }
     changed.multi |= fv.code_multi;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
@@ -190,7 +230,9 @@ pub fn summarize(
         .get(entry.index())
         .and_then(|b| b.local(b.ret))
         .map(|d| d.ty);
-    if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t)) {
+    // A result of a type parameter can be a function value too (plan stage
+    // F20): a caller gives the type.
+    if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t) || tys.mentions_param(t)) {
         let (fns, places, caps) = ret_fns_of(ir, fv.returns, fv.made, entry, &place);
         made_effects(sums, sig, (&fns, &caps), &mut changed);
         changed.ret_fns = fns;
@@ -267,8 +309,26 @@ pub fn summarize(
             if let TermKind::Assert { .. } = blk.term.kind {
                 out.assert = true;
             }
+            // A child failure at a `join`, at `ScopeWait` or at a `fork`
+            // that no local `Fail` handler stops raises past the function
+            // (plan stages F18 and F19).
+            if matches!(
+                blk.term.kind,
+                TermKind::Join { .. } | TermKind::ScopeWait { .. } | TermKind::Fork { .. }
+            ) && !blk.cleanup
+            {
+                let ds = crate::factgen::frames::destinations(ir, tys, sums, b, &blk.term.kind);
+                if !ds.is_empty()
+                    && !ds
+                        .iter()
+                        .any(|d| matches!(d, crate::factgen::frames::Dest::Handler { .. }))
+                {
+                    out.raises = true;
+                }
+            }
             let TermKind::Call {
                 callee: Callee::Fn(f, _),
+                caps,
                 ..
             } = &blk.term.kind
             else {
@@ -277,7 +337,16 @@ pub fn summarize(
             let Ok(s) = sums.get(*f) else {
                 continue;
             };
-            if s.aborts.contains(&Abort::Raises) {
+            // In a program with tasks, a local `Fail` handler stops the
+            // failure of the callee (as the old lowering, `raise_here`;
+            // plan stage F18). The other programs keep the rule of F7.
+            let caught = !ir.spawns.is_empty()
+                && matches!(caps, weft_ir::CapArgs::Lexical(e)
+                if matches!(
+                    crate::factgen::frames::resolve(ir, tys, *e, "Fail", true),
+                    crate::factgen::frames::Dest::Handler { .. }
+                ));
+            if s.aborts.contains(&Abort::Raises) && !caught {
                 out.raises = true;
             }
             if s.aborts.contains(&Abort::Assert) {
@@ -286,9 +355,34 @@ pub fn summarize(
             if s.unknown_multi {
                 out.multi = true;
             }
+            // A program with no spawn keeps the part of the old inference
+            // (a callee of the runtime that pins, `http.serve`).
+            if s.pins && !ir.spawns.is_empty() {
+                out.pins = true;
+            }
         }
     }
+    out.pins |= task_pins(facts, fv.code_opaque);
+    out.joins.extend(fv.joins.iter().copied());
+    out.abort_joins.extend(fv.abort_joins.iter().copied());
+    out.task_effects.extend(fv.task_effects.iter().cloned());
+    // The tasks that run while the body waits at an operation of a handler
+    // of a caller (follow-up F19.5, issue #50).
+    out.waits = super::tasks::waits_of(facts, nodes, fv.waits, &place);
     out
+}
+
+/// True if a task of the facts `facts` is pinned for a reason in the body.
+///
+/// The rule `pinned` of `spec/weft.dl` (plan stage F18): a task captures a nonportable value, writes
+/// through a captured reference that is not `@ uniq`, or runs code that the
+/// analysis does not follow.
+pub fn task_pins(facts: &FnFacts, skip: &[weft_facts::TaskId]) -> bool {
+    facts.opaque.iter().any(|t| !skip.contains(t))
+        || facts.captures.iter().any(|&(t, v)| {
+            let info = facts.var(v);
+            info.nonportable || (facts.mut_through.contains(&(t, v)) && !info.uniq)
+        })
 }
 
 /// True if a body can give a place of its own frame to an operation of a
@@ -379,6 +473,11 @@ pub struct FnParts<'a> {
     /// closure summary, because a caller applies the value that it gives
     /// there.
     pub run_nodes: &'a [weft_facts::NodeId],
+    /// In a closure body: one entry for each `multi_at` row that code of a
+    /// caller adds at a node of `run_nodes` (`Em::run_multi`, issue #56).
+    /// The caller applies the value that it gives there with the `multi`
+    /// part of that value, so these rows are no part `multi` of the closure.
+    pub run_multi: &'a [weft_facts::NodeId],
     /// In a closure body: each node where the body gives a capture a whole
     /// new value (`whole_capture`), with the index of the capture. The
     /// changes at the nodes after them are the part `late_muts`.
@@ -389,6 +488,31 @@ pub struct FnParts<'a> {
     /// closure body they stay `lends` at a run node of `run_nodes`
     /// (follow-up F13.2).
     pub lends: &'a [(weft_facts::NodeId, PlaceId)],
+    /// In a closure body: the `Main` node of each perform through a
+    /// captured capability, with the index of the capture and the identity
+    /// of the effect (plan stage F16). The summary performs through `Cap(k)`: the node that runs the
+    /// closure runs the clause of the handler of the capability.
+    pub cap_performs: &'a [(weft_facts::NodeId, u32, String)],
+    /// The task handles of the interface that the body joins on each path
+    /// (part `joins`, plan stage F18).
+    pub joins: &'a [u32],
+    /// The task handles of the interface that the body joins on each path
+    /// of an abort (part `abort_joins`, follow-up F19.3).
+    pub abort_joins: &'a [u32],
+    /// The values of the interface (index, capture) after whose run the
+    /// body can perform or abort (`Run::then`, follow-up F19.4).
+    pub then_runs: &'a [(u32, bool)],
+    /// How the body runs values of its interface as tasks (plan stage F19).
+    pub task_hows: &'a [crate::analysis::tasks::RawHow],
+    /// The tasks that are `opaque` only because they run code of a caller:
+    /// they do not make the body pin.
+    pub code_opaque: &'a [weft_facts::TaskId],
+    /// The effects that a task of the body performs through a handler of a
+    /// caller (part `task_effects`, plan stage F19).
+    pub task_effects: &'a std::collections::BTreeSet<String>,
+    /// The facts of the part `waits` that the fact generator records at the
+    /// nodes of the body (follow-up F19.5).
+    pub waits: &'a super::tasks::WaitRaw,
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -426,9 +550,12 @@ fn runs_of(
             result: r.result,
             many: *many,
             task: r.task,
+            how: super::summary::TaskHow::default(),
             args,
             multi: r.multi,
             maybe: body.is_none_or(|b| returns_without(b, &blocks)),
+            then: false,
+            after: r.after.clone(),
         };
         // A second run node of the value runs it again.
         if let Some(x) = out
@@ -1148,12 +1275,70 @@ pub fn closure(
         out.performs.insert(pf);
     }
     out.aborts.extend(aborts.iter().cloned());
-    // A closure that performs through the capability of a caller can give
-    // a place of its frame to an operation (plan stage F15).
-    out.gives_frame = !facts.escapes_at.is_empty();
+    // A perform through a captured capability (plan stage F16): an
+    // operation of the handler of the capability, whose clause runs at the
+    // node that runs the closure.
+    for (_, k, effect) in fv.cap_performs {
+        let pf = Perform {
+            effect: effect.clone(),
+            cap: CapIface::Cap(*k),
+        };
+        out.aborts.insert(Abort::Perform(pf.clone()));
+        out.performs.insert(pf);
+    }
+    // A closure that performs through the capability of a caller (or a
+    // captured capability) can give a place of its frame to an operation
+    // (plan stages F15, F16).
+    // A perform through a captured capability gives a place of the frame
+    // if a place that it gives is not a place of the interface (a local of
+    // the closure).
+    let cap_gives = fv.cap_performs.iter().any(|&(n, _, _)| {
+        facts
+            .call_arg
+            .iter()
+            .any(|&(m, q, _)| m == n && place(q).is_none())
+    });
+    out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
+    out.pins = task_pins(facts, &[]);
+    out.joins = fv.joins.iter().copied().collect();
+    out.abort_joins = fv.abort_joins.iter().copied().collect();
+    // The tasks that run while the closure waits at an operation of a
+    // handler of a caller (follow-up F19.5, issue #50).
+    out.waits = super::tasks::waits_of(facts, usize::MAX, fv.waits, &|q| {
+        closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
+    })
+    .into_iter()
+    .map(|(e, (ws, rs))| {
+        (
+            e,
+            super::summary::Wait {
+                writes: ws.into_iter().collect(),
+                reads: rs.into_iter().collect(),
+            },
+        )
+    })
+    .collect();
     // A node of the body that can resume more than once (a `multi`
-    // operation, a callee that can): a run of the closure can.
-    out.multi = !facts.multi_at.is_empty();
+    // operation, a callee that can): a run of the closure can. A perform
+    // through a captured capability is a `multi` point of the node that
+    // runs the closure (the clause of the handler, `clause_multi`), not of
+    // a caller. A row of code of a caller at a run of a value of the
+    // interface is not either: the caller applies the value that it gives,
+    // with its own `multi` part (part `runs`; `Run::multi` keeps the row of
+    // a value that the caller does not know either, issue #56). A node with
+    // more rows than code of a caller added has another reason.
+    let mut code_rows: BTreeMap<weft_facts::NodeId, usize> = BTreeMap::new();
+    for &n in fv.run_multi {
+        *code_rows.entry(n).or_default() += 1;
+    }
+    let mut rows: BTreeMap<weft_facts::NodeId, usize> = BTreeMap::new();
+    for &n in &facts.multi_at {
+        *rows.entry(n).or_default() += 1;
+    }
+    out.multi = rows.iter().any(|(n, &k)| {
+        !fv.cap_performs.iter().any(|(x, _, _)| x == n)
+            && k > code_rows.get(n).copied().unwrap_or(0)
+    });
     for blk in &b.blocks {
         match &blk.term.kind {
             TermKind::Assert { .. } => {
@@ -1183,6 +1368,9 @@ pub fn closure(
         &|q| closure_place(ir, facts, roots, body, q, true).map(|x| x.0),
         Some(b),
     );
+    for r in &mut out.runs {
+        r.then = fv.then_runs.contains(&(r.param, r.capture));
+    }
     out.uses = decl
         .captures
         .iter()

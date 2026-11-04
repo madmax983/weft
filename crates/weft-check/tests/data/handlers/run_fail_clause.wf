@@ -1,0 +1,12 @@
+// Issue #58 (stage C1): a callee runs a closure that can fail (a callee of the closure fails). The failure goes to the local `Fail` handler, and its clause reads `v` after the move (W0302).
+fn apply(f: fn()) { f() }
+fn maybe_fail(n: u64) { if n > 100 { fail("big") } }
+fn main() {
+    let v = [1, 2]
+    handle Fail { fn fail(m) { v.clear(); print(m) } } in {
+        let w = v
+        let f = || maybe_fail(500)
+        apply(f)   //~ W0302
+        print(w.len())
+    }
+}

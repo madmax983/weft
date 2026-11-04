@@ -1,0 +1,13 @@
+// Hole C1-H1 (stage C1.1): the same through a helper that gives a function parameter and a once closure to the callee.
+linear struct Tx { id: u64 }
+effect Pick { multi fn pick() -> bool }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn h2(p0: fn(), p2: Tx) {
+    run_both(p0, || commit(p2))   //~ W0502 W0503
+}
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        h2(|| { if pick() { print(1) } }, Tx { id: 7 })
+    }
+}

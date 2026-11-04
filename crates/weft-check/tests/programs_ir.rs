@@ -93,8 +93,9 @@ fn the_corpus_in_scope_gives_the_markers_of_the_ir_pipeline() {
     }
     eprintln!("{in_scope} programs of the corpus are in scope");
     // Stage F10 turns group B (loops) on: 28 programs at F10b. Stage F13
-    // turns group C (closures and function values) on: 58 programs.
-    assert!(in_scope >= 56, "only {in_scope} programs are in scope");
+    // turns group C (closures and function values) on: 58 programs. Stage
+    // F20 turns group F (type parameters) on: 125 programs.
+    assert!(in_scope >= 125, "only {in_scope} programs are in scope");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -116,6 +117,77 @@ fn the_corpus_in_scope_of_the_groups_a_and_b_gives_the_markers_of_the_ir_pipelin
     eprintln!("{in_scope} programs of the corpus are in scope of the groups A and B");
     assert!(in_scope >= 26, "only {in_scope} programs are in scope");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The groups A to E (plan stage F19 turns group E on): the corpus in
+/// scope gives the markers of the `ir` pipeline.
+#[test]
+fn the_corpus_in_scope_of_the_groups_a_to_e_gives_the_markers_of_the_ir_pipeline() {
+    let all = weft_sema::Groups::parse("ABCDE").expect("the groups parse");
+    let (mut in_scope, mut failures) = (0, Vec::new());
+    for path in corpus_paths() {
+        if let Some(msg) = run_with(&path, Some(all)) {
+            in_scope += 1;
+            if !msg.is_empty() {
+                failures.push(msg);
+            }
+        }
+    }
+    eprintln!("{in_scope} programs of the corpus are in scope of the groups A to E");
+    assert!(in_scope >= 100, "only {in_scope} programs are in scope");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// All groups (plan stage F20 turns group F on): each program of the corpus
+/// is in scope and gives the markers of the `ir` pipeline.
+#[test]
+fn the_corpus_in_scope_of_all_groups_gives_the_markers_of_the_ir_pipeline() {
+    let (mut in_scope, mut failures) = (0, Vec::new());
+    for path in corpus_paths() {
+        if let Some(msg) = run_with(&path, Some(weft_sema::Groups::ALL)) {
+            in_scope += 1;
+            if !msg.is_empty() {
+                failures.push(msg);
+            }
+        }
+    }
+    eprintln!("{in_scope} programs of the corpus are in scope of all groups");
+    // 125 at stage F20: the others keep a fallback of an earlier stage.
+    assert!(in_scope >= 125, "only {in_scope} programs are in scope");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The precision programs of the corpus (plan stage C1): each one gives its
+/// markers with `--facts=ir` and all groups. Four of them are in scope; the
+/// other two keep the old pipeline, because an operation gives a function
+/// value to a handler (stage F14), and the old pipeline gives the markers.
+#[test]
+fn the_precision_programs_of_the_corpus_keep_their_markers_with_the_ir_pipeline() {
+    let in_scope = [
+        "35_wild_places.wf",
+        "102_wild_instances.wf",
+        "103_wild_lend.wf",
+        "125_multi_values.wf",
+    ];
+    let fallback = ["143_arg_roots.wf", "83_kept_values.wf"];
+    for name in in_scope {
+        let path = root().join("tests/programs").join(name);
+        let msg = run_with(&path, Some(weft_sema::Groups::ALL));
+        assert_eq!(msg.as_deref(), Some(""), "{name}");
+    }
+    for name in fallback {
+        let path = root().join("tests/programs").join(name);
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        let opts = Options {
+            facts: FactGen::Ir,
+            ir_groups: weft_sema::Groups::ALL,
+            ..Options::from_markers(&src)
+        };
+        let checked = check_source(name, &src, opts);
+        let file = SourceFile::new(name, src.as_str());
+        let (want, _) = expected_for(&src, Pipeline::Ir);
+        assert_eq!(actual(&checked, &file), want, "{name}");
+    }
 }
 
 #[test]

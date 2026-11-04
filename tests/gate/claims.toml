@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F11", "F12", "F13", "F13.1", "F13.2", "F14", "F15", "F16", "F16.4", "F17", "F17.1", "F17.2", "F18", "F19", "F19.2", "F19.3", "F19.4", "F19.5", "F20", "F20.1", "F20.2", "F20.3", "F20.4", "C1", "C1.1", "C1.2", "C1.3"]
 
 
 # ----------------------------------------------------------------------
@@ -603,7 +603,7 @@ finding = "I3-8"
 kind = "unsound"
 verdict = "construction"
 group = "ACDE"
-stage = "F19"
+stage = "F19.1"
 repro = ["tests/gate/probes/r3/interp/repro/i3_8_multi_scope_fail.wf"]
 code = "W0503"
 note = "the oracle does not see it; the TaskResult local is a once value (W0503)"
@@ -640,9 +640,9 @@ finding = "O3-8"
 kind = "fp"
 verdict = "construction"
 group = "ACD"
-stage = "F16"
+stage = "F16.2"
 repro = ["tests/gate/probes/r3/oracle/repro/O3-8_fp_closure_inner_multi.wf"]
-note = "A closure with its own multi handler is a multi and abort point"
+note = "A closure with its own multi handler is a multi and abort point. A handler in a closure body is not in scope until the follow-up F16.2 (stage F17 moved the claim there)"
 
 [[claim]]
 finding = "O3-9"
@@ -863,9 +863,9 @@ finding = "map-N1"
 kind = "unsound"
 verdict = "one-rule"
 group = "AD"
-stage = "F8"
+stage = "F16.3"
 repro = ["tests/gate/probes/ir/work/map/opres.wf"]
-note = "the result of an operation of a handler of a caller has no places"
+note = "the result of an operation of a handler of a caller has no places. Stage F17 (group D on) moved the claim to the follow-up F16.3: a call that runs a clause whose operation gives a reference back is not in scope (`GIVES_BACK`), so the old pipeline checks the repro (ledger open-old)"
 
 [[claim]]
 finding = "map-N2"
@@ -2279,7 +2279,7 @@ finding = "OR10"
 kind = "fp"
 verdict = "one-rule"
 group = "ACE"
-stage = "F19"
+stage = "F19.1"
 repro = ["tests/gate/probes/r2/oracle/repro/OR10_fp_call_reads_all.wf"]
 note = "A call reads all of its reference arguments (W0405)"
 
@@ -2288,7 +2288,7 @@ finding = "RR12"
 kind = "fp"
 verdict = "construction"
 group = "ACDE"
-stage = "F19"
+stage = "F19.1"
 repro = ["tests/gate/probes/r2/redteam/repro/RR12_unset_closure.wf"]
 note = "W0304 for a local that a closure, a clause or a task sets"
 
@@ -5287,3 +5287,1962 @@ group = "AD"
 stage = "F15"
 repro = ["tests/gate/probes/fixes/f15/part/b17_direct_tuple_slot_c.wf"]
 note = "the clean twin of F15-PART"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/m01_tail_site_move.wf"]
+code = "W0302"
+note = "a `multi` resume runs the rest of the handled body again (the re-entry edge from `Post` to the `Copy` node of the perform): a tail move of a local of the site moves it again (O3-14 class)"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/multi/m02_site_ref_cleared_post.wf",
+    "tests/gate/probes/fixes/f16/multi/m04_clause_holds_result.wf",
+    "tests/gate/probes/fixes/f16/multi/m05_j4.wf",
+]
+code = "W0301"
+note = "the clause code between two `resume`s runs at `Post`, and the `Copy` node keeps the state of a variable that points outside the copied frames (J4 class); the second `resume` runs the rest of the handled body, which invalidates the result of the first `resume` that the clause keeps (an old hole)"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/m03_linear_across.wf"]
+code = "W0503"
+note = "a linear value of the handled body live across a perform whose clause resumes twice (`clause_multi`)"
+
+[[claim]]
+finding = "F16-MULTI"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/multi/m01_tail_site_move_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m02_site_ref_cleared_post_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m03_linear_across_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m04_clause_holds_result_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m05_j4_c.wf",
+    "tests/gate/probes/fixes/f16/multi/m06_abort_in_rerun_c.wf",
+]
+note = "the clean twins of F16-MULTI: the `Copy` node rebinds the variables whose places are all in the copied frames"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a.wf"]
+code = "W0301"
+note = "a function waits at a `multi` operation of a handler of a caller: each `Return` of the function goes to the `Copy` node of the perform, and a reference into a place of a parameter keeps its state (re-entry edges for handlers of a caller, an old hole)"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a_move.wf"]
+code = "W0502"
+note = "a callee runs a `once` closure after a `multi` operation of a caller: the run is on the cycle of the re-entry edge, so the closure runs twice"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a_c.wf"]
+note = "the clean twin of OL-R2a"
+
+[[claim]]
+finding = "OL-R2a"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/multi/olr2a_move_c.wf"]
+note = "the clean twin of OL-R2a (a closure that moves nothing)"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/cap/c01_local_run.wf",
+    "tests/gate/probes/fixes/f16/cap/c02_apply.wf",
+    "tests/gate/probes/fixes/f16/cap/c03_stored.wf",
+    "tests/gate/probes/fixes/f16/cap/c05_keeps_closure_local.wf",
+    "tests/gate/probes/fixes/f16/cap/c08_callee_runs_cap.wf",
+]
+code = "W0301"
+note = "a closure performs through a captured capability of a local handler: the node that runs the closure (a call of the value, or a call of a callee that runs it) runs the clause, with the frame root of the run node and the places that the closure reaches given to the parameters of the clause"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c04_abort_linear.wf"]
+code = "W0602"
+note = "a run of a closure whose clause aborts to its handler unwinds the linear values of the handled body"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c06_multi_linear.wf"]
+code = "W0503"
+note = "a run of a closure whose clause resumes twice is a `multi` point"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/cap/c01_local_run_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c02_apply_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c03_stored_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c05_keeps_closure_local_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c06_multi_linear_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c08_callee_runs_cap_c.wf",
+    "tests/gate/probes/fixes/f16/cap/c09_stored_byref_c.wf",
+]
+note = "the clean twins of F16-CAP"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "unsound"
+verdict = "construction"
+group = "ABCD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c07_byref_given.wf"]
+code = "W0301"
+note = "the clause keeps the reference that a closure with a captured capability gives in a loop: the clause gets the places that the closure reads (a capture by reference gives a place of the variable)"
+
+[[claim]]
+finding = "F16-CAP"
+kind = "sound"
+verdict = "construction"
+group = "ABCD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/cap/c07_byref_given_c.wf"]
+note = "the clean twin of c07: the clause only reads the reference"
+[[claim]]
+finding = "F16-CLAUSE-CLOSURE"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/cl02_closure_clears_site.wf",
+    "tests/gate/probes/fixes/f16/closure/cl03_closure_after_resume.wf",
+]
+code = "W0301"
+note = "a closure that a clause makes starts from the states of the clause, before or after `resume` (the clauses come before the closures in the facts); an old hole for the run after `resume`"
+
+[[claim]]
+finding = "F16-CLAUSE-CLOSURE"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/closure/cl04_linear_in_clause_closure.wf"]
+code = "W0601"
+note = "a linear closure that a clause makes and drops"
+
+[[claim]]
+finding = "F16-CLAUSE-CLOSURE"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/cl02_closure_clears_site_c.wf",
+    "tests/gate/probes/fixes/f16/closure/cl03_closure_after_resume_c.wf",
+    "tests/gate/probes/fixes/f16/closure/cl04_linear_in_clause_closure_c.wf",
+]
+note = "the clean twins of F16-CLAUSE-CLOSURE"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/o1_pre_clear.wf",
+    "tests/gate/probes/fixes/f16/closure/o2_post_clear.wf",
+]
+code = "W0301"
+note = "O3-7: a function value that a perform gives to a local handler runs in the clause, before or after `resume` (the parameter of the clause holds it, `Info::params`)"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/closure/o4_once_twice.wf"]
+code = "W0502"
+note = "a `once` closure that a clause runs twice"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/fixes/f16/closure/o5_linear_dropped.wf"]
+code = "W0601"
+note = "a linear closure that a clause drops"
+
+[[claim]]
+finding = "F16-OPFN"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/fixes/f16/closure/o1_pre_clear_c.wf",
+    "tests/gate/probes/fixes/f16/closure/o2_post_clear_c.wf",
+    "tests/gate/probes/fixes/f16/closure/o4_once_twice_c.wf",
+    "tests/gate/probes/fixes/f16/closure/o5_linear_dropped_c.wf",
+]
+note = "the clean twins of F16-OPFN (the old pipeline rejects the last two: W0502, W0601)"
+
+# ----------------------------------------------------------------------
+# Follow-up F16.4: class C-RR (self-attack of stage F16). A run of a closure
+# that holds a reference to a container of references uses the variables of
+# the references on the chain, as a call argument does.
+
+[[claim]]
+finding = "C-RR"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F16.4"
+repro = [
+    "tests/gate/probes/fixes/crr/crr01_direct.wf",
+    "tests/gate/probes/fixes/crr/crr02_closure_calls_callee.wf",
+    "tests/gate/probes/fixes/crr/crr04_callee_runs.wf",
+    "tests/gate/probes/fixes/crr/crr05_stored.wf",
+    "tests/gate/probes/fixes/crr/crr06_returned.wf",
+    "tests/gate/probes/fixes/crr/crr07_enum_payload.wf",
+    "tests/gate/probes/fixes/crr/crr08_clear_in_loop.wf",
+]
+code = "W0301"
+note = "a run of a closure reads through a captured reference to a container of references after the referent changes"
+
+[[claim]]
+finding = "C-RR"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr09_enum_arg.wf"]
+code = "W0301"
+note = "a call argument of a user enum holds a reference to a container of references"
+
+[[claim]]
+finding = "C-RR"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr03_opfn.wf"]
+code = "W0301"
+note = "a clause runs the function value of a perform after it clears the referent"
+
+[[claim]]
+finding = "C-RR"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F16.4"
+repro = [
+    "tests/gate/probes/fixes/crr/crr01_direct_c.wf",
+    "tests/gate/probes/fixes/crr/crr02_closure_calls_callee_c.wf",
+    "tests/gate/probes/fixes/crr/crr04_callee_runs_c.wf",
+    "tests/gate/probes/fixes/crr/crr05_stored_c.wf",
+    "tests/gate/probes/fixes/crr/crr06_returned_c.wf",
+    "tests/gate/probes/fixes/crr/crr07_enum_payload_c.wf",
+    "tests/gate/probes/fixes/crr/crr08_clear_in_loop_c.wf",
+]
+note = "the clean twins of C-RR"
+
+[[claim]]
+finding = "C-RR"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr09_enum_arg_c.wf"]
+note = "the clean twin of the call argument of C-RR"
+
+[[claim]]
+finding = "C-RR"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F16.4"
+repro = ["tests/gate/probes/fixes/crr/crr03_opfn_c.wf"]
+note = "the clean twin of the clause run of C-RR"
+
+# Stage F17 part 0: the findings of the independent review of group D. The
+# region of the continuation of a `resume` (`factgen::handlers::Region`).
+
+[[claim]]
+finding = "D-CONT-RUN"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/run/n05_callee_rest_after_perform.wf",
+    "tests/gate/probes/fixes/f17/run/n08_two_level_callee_rest.wf",
+    "tests/gate/probes/fixes/f17/run/n10_inferred_callee_rest.wf",
+    "tests/gate/probes/fixes/f17/run/n11_multi_callee_rest.wf",
+    "tests/gate/probes/fixes/f17/run/f04_param_callee_clears_arg.wf",
+]
+code = "W0301"
+note = "the run node of a call that performs is in the region of the continuation: the callee clears the place after the perform"
+
+[[claim]]
+finding = "D-CONT-RUN"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/run/n06_closure_rest_after_perform.wf",
+    "tests/gate/probes/fixes/f17/run/n09_cap_closure_callee_rest.wf",
+]
+code = "W0301"
+note = "the run node of a closure with a captured capability is in the region of the continuation"
+
+[[claim]]
+finding = "D-CONT-NEST"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/nest/n01_outer_perform_in_inner_clause.wf",
+    "tests/gate/probes/fixes/f17/nest/n02_outer_perform_in_inner_clause_ihb.wf",
+    "tests/gate/probes/fixes/f17/nest/n03_outer_param_inner_clause.wf",
+    "tests/gate/probes/fixes/f17/nest/n04_outer_perform_after_inner_post.wf",
+]
+code = "W0301"
+note = "a perform in a clause of an inner handler maps to the nodes that run that clause: the continuation is the rest of the inner and of the outer handled body"
+
+[[claim]]
+finding = "D-CONT-NEST"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/nest/n01_outer_perform_in_inner_clause_c.wf",
+    "tests/gate/probes/fixes/f17/nest/n02_outer_perform_in_inner_clause_ihb_c.wf",
+    "tests/gate/probes/fixes/f17/nest/n03_outer_param_inner_clause_c.wf",
+    "tests/gate/probes/fixes/f17/nest/n04_outer_perform_after_inner_post_c.wf",
+]
+note = "the clean twins of D-CONT-NEST"
+
+[[claim]]
+finding = "D-CONT-UNWIND"
+kind = "unsound"
+verdict = "construction"
+group = "ABD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/unwind/g12_cont_only_abort_frees.wf"]
+code = "W0301"
+note = "the region of the continuation has the cleanup path of an abort that lands in a handler inside the handled body"
+
+[[claim]]
+finding = "D-CONT-UNWIND"
+kind = "sound"
+verdict = "construction"
+group = "ABD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/unwind/g12_cont_only_abort_frees_c.wf"]
+note = "the clean twin of D-CONT-UNWIND"
+
+[[claim]]
+finding = "D-COPY-WAIT"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/copy/m11_multi_copies_waiting_clause.wf"]
+code = "W0301"
+note = "a node of the region runs a clause of an outer `multi` handler: the region has the rest of that handled body (an old hole, ledger `open-old` while group D is off)"
+
+[[claim]]
+finding = "D-COPY-WAIT"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/copy/m11_multi_copies_waiting_clause_c.wf"]
+note = "the clean twin of D-COPY-WAIT"
+
+[[claim]]
+finding = "FP-OWN"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/own/p01_clause_local_ref_across_resume.wf",
+    "tests/gate/probes/fixes/f17/own/p01_clause_local_ref_across_resume_c.wf",
+    "tests/gate/probes/fixes/f17/own/e03_callee_rest_variant.wf",
+    "tests/gate/probes/fixes/f17/own/e03_callee_rest_variant_c.wf",
+]
+note = "the rest of the handled body does not free a local of the clause that waits at its `resume`"
+
+# Stage F17 part 1: W0313 for a capability over the values of the analysis.
+
+[[claim]]
+finding = "D-REBIND"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/w0313/rebind.wf"]
+code = "W0313"
+note = "a callee may run the closure that rebinds the local: the local keeps the closure with the capability (a weak update of `rebinds` for a `late` run)"
+
+[[claim]]
+finding = "D-REBIND"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/w0313/rebind_c.wf"]
+note = "the clean twin of D-REBIND"
+
+# Stage F17 part 2: group D on. A hole that the default gate with group D
+# found (the tier-2 row `verify/partb/S4/run/rec.wf`).
+
+[[claim]]
+finding = "D-CLAUSE-RUNS"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/clause_runs/x01_clause_runs_param_clear.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x03_clause_post_runs_param.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x04_clause_runs_param_nested_callee.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x05_clause_closure_runs_param.wf",
+]
+code = "W0301"
+note = "a clause runs a function parameter of its function: the summary of the function has the run, so the caller applies its change"
+
+[[claim]]
+finding = "D-CLAUSE-RUNS"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/fixes/f17/clause_runs/x02_clause_runs_once_twice.wf"]
+code = "W0502"
+note = "the clause runs the function parameter at each perform: more than once"
+
+[[claim]]
+finding = "D-CLAUSE-RUNS"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/fixes/f17/clause_runs/x01_clause_runs_param_clear_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x02_clause_runs_once_twice_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x03_clause_post_runs_param_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x04_clause_runs_param_nested_callee_c.wf",
+    "tests/gate/probes/fixes/f17/clause_runs/x05_clause_closure_runs_param_c.wf",
+]
+note = "the clean twins of D-CLAUSE-RUNS"
+
+# Follow-up F17.1: the findings of the second review of group D.
+
+[[claim]]
+finding = "D-MULTI-MID"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/multi_mid/v12_multi_waiting_clause_callee_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v14_multi_callee_local_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v18_multi_callee_param_read_pick_clause_pushes.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v22_multi_two_level_callee_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v23_multi_callee_field_ref_clause_reassigns.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v25_multi_callee_post_after_last_resume.wf",
+]
+code = "W0301"
+note = "a copy of a callee frame runs again after a `multi` clause changes the place between two `resume`s: the copy of the frame is used at the `Copy` node"
+
+[[claim]]
+finding = "D-MULTI-MID"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/multi_mid/v20_multi_closure_local_pick_clause_clears.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v21_multi_callee_local_fnparam_pick.wf",
+]
+code = "W0301"
+note = "the copied frame is the frame of a closure, or a callee that runs a function parameter"
+
+[[claim]]
+finding = "D-COPY-WAIT-CALL"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/copy_wait_call/v07_multi_waiting_clause_in_callee.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v09_multi_callee_hb_local_caller_clears.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v10_multi_waiting_param_clause_in_callee.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v11_multi_waiting_clause_callee_two_level.wf",
+]
+code = "W0301"
+note = "the caller changes the place after the call and before the second run of the copied callee frame (an old hole: ledger open-old while group D is off)"
+
+[[claim]]
+finding = "D-MULTI-MID"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17.1"
+repro = [
+    "tests/gate/probes/fixes/f17/multi_mid/v12_multi_waiting_clause_callee_pick_clause_clears_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v14_multi_callee_local_pick_clause_clears_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v18_multi_callee_param_read_pick_clause_pushes_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v22_multi_two_level_callee_pick_clause_clears_c.wf",
+    "tests/gate/probes/fixes/f17/multi_mid/v23_multi_callee_field_ref_clause_reassigns_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v07_multi_waiting_clause_in_callee_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v09_multi_callee_hb_local_caller_clears_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v10_multi_waiting_param_clause_in_callee_c.wf",
+    "tests/gate/probes/fixes/f17/copy_wait_call/v11_multi_waiting_clause_callee_two_level_c.wf",
+]
+note = "the clean twins of D-MULTI-MID and D-COPY-WAIT-CALL"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/d01_fnitem_value_run_local_handler_clears.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d02_fnitem_value_made_in_hb_clears.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d03_fnparam_run_local_handler_clears.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d07_middleware_callback_vec.wf",
+]
+code = "W0312"
+note = "a function item or a function parameter runs with the handlers of the call: the clause of the local handler of its row runs at the run node and clears the place that the argument points into"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/d06_fnparam_hb_holds_ref_across_run.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d10_fnparam_abort_clause_ref_after_handle.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d11_fnparam_multi_local_handler.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/c1_closure_in_hb_calls_rowfn_holds_ref.wf",
+]
+code = "W0301"
+note = "the clause of the local handler that the run of the function value runs (also after an abort, and between two resumes of a multi clause), or that a call of a closure body runs through the captured capability, invalidates a held reference"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/d14_fnparam_clause_moves_site_value_resume.wf",
+]
+code = "W0302"
+note = "the clause that the run of the function parameter runs moves a value of the site"
+
+[[claim]]
+finding = "D-FNVAL-ROW"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/fnval_row/c1_closure_in_hb_calls_rowfn_holds_ref_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d01_fnitem_value_run_local_handler_clears_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d02_fnitem_value_made_in_hb_clears_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d03_fnparam_run_local_handler_clears_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d06_fnparam_hb_holds_ref_across_run_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d07_middleware_callback_vec_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d10_fnparam_abort_clause_ref_after_handle_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d11_fnparam_multi_local_handler_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/d14_fnparam_clause_moves_site_value_resume_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/w01_fp_closure_in_hb_calls_rowfn_main_c.wf",
+    "tests/gate/probes/fixes/f17/fnval_row/w02_fp_fnitem_local_run_in_hb_main_c.wf",
+]
+note = "the clean twins of D-FNVAL-ROW, and FP-W0805-FNVAL: a closure or a function item that runs in the handled body of main performs to the local handler (no W0805)"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r01_row_mid_frame_clears_after_call.wf",
+    "tests/gate/probes/fixes/f17/row_mid/r13_row_backtrack_undo.wf",
+    "tests/gate/probes/fixes/f17/row_mid/k02_container_vec_of_refs_multi_row.wf",
+    "tests/gate/probes/fixes/f17/row_mid/t02_refref_struct_holds_ref_multi_row.wf",
+    "tests/gate/probes/fixes/f17/row_mid/e04_enum_user_multi_row_mid_reassign.wf",
+]
+code = "W0301"
+note = "a known callee waits at a multi operation of a handler of a caller; the function changes the place after the call, before the second run of the copied callee frame (an old hole)"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r06_row_mid_closure_runs_g_then_clears.wf",
+]
+code = "W0301"
+note = "the copied frame is the frame of a closure of the function"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r01_row_mid_frame_clears_after_call_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/r13_row_backtrack_undo_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/k02_container_vec_of_refs_multi_row_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/t02_refref_struct_holds_ref_multi_row_c.wf",
+    "tests/gate/probes/fixes/f17/row_mid/e04_enum_user_multi_row_mid_reassign_c.wf",
+]
+note = "the clean twins of D-ROW-MID: the function only reads the place after the call"
+
+[[claim]]
+finding = "D-ROW-MID"
+kind = "sound"
+verdict = "construction"
+group = "ACD"
+stage = "F17.2"
+repro = [
+    "tests/gate/probes/fixes/f17/row_mid/r06_row_mid_closure_runs_g_then_clears_c.wf",
+]
+note = "the clean twin of the closure case of D-ROW-MID"
+
+# ----------------------------------------------------------------------
+# Stage F18: tasks (group E, part 1). Group E is a preview until stage F19,
+# so these claims are off (F18 is not in `done`).
+
+[[claim]]
+finding = "O3-4"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/o34_statement_spawn.wf"]
+code = "W0601"
+note = "a spawn statement gives a linear result to its TaskResult local, and nothing consumes it"
+
+[[claim]]
+finding = "F3-7"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/scope/f37_scope_value.wf"]
+code = "W0602"
+note = "the linear value of a scope body is live across ScopeWait, which can abort"
+
+[[claim]]
+finding = "V084"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/scope/v084_scope_abort.wf"]
+note = "the cleanup chain of a scope body cancels and joins its tasks (UnwindValue of the ScopeCap local)"
+
+[[claim]]
+finding = "issues-N1"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/f36_detach.wf"]
+exact = ["W0601"]
+note = "the drop pair of `detach` ends at the next node: one W0601, no W0602"
+
+[[claim]]
+finding = "O3-6"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/rc/o36_rc_handle.wf"]
+code = "W0405"
+note = "a task reads through an Rc handle that the parent moves, rebinds or ends (no generic callee)"
+
+[[claim]]
+finding = "V096"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/join/v096_must_set.wf"]
+code = "W0405"
+note = "a join does not end a task that another handle can hold"
+
+[[claim]]
+finding = "O3-9"
+kind = "fp"
+verdict = "one-rule"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/join/o39_joins.wf"]
+note = "a join through a callee, a tuple, an Option and a closure ends the task (no generic `id`)"
+
+[[claim]]
+finding = "F18-RESULT"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/f04_scope_tail_linear_task.wf"]
+code = "W0601"
+note = "a spawn as the tail of a scope body gives a linear result that nothing consumes"
+
+[[claim]]
+finding = "F18-RESULT"
+kind = "sound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/fixes/f18/result/f04_scope_tail_linear_task_c.wf"]
+note = "the clean twin: the result of the tail spawn is plain data"
+
+[[claim]]
+finding = "F18-JOIN"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/fixes/f18/join/a02_tuple_two.wf",
+    "tests/gate/probes/fixes/f18/join/a03_struct_field.wf",
+    "tests/gate/probes/fixes/f18/join/a04_option_none_arm.wf",
+    "tests/gate/probes/fixes/f18/join/k01_closure_join_twice.wf",
+    "tests/gate/probes/fixes/f18/join/k03_callee_detach.wf",
+    "tests/gate/probes/fixes/f18/join/k04_callee_join_one_path.wf",
+    "tests/gate/probes/fixes/f18/join/k05_callee_chain_join.wf",
+    "tests/gate/probes/fixes/f18/join/k06_closure_two_handles_one_joined.wf",
+]
+code = "W0405"
+note = "the task still runs at the access: the handle is not joined there, or a callee or a closure detaches it"
+
+[[claim]]
+finding = "F18-JOIN"
+kind = "fp"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/fixes/f18/join/a02_tuple_two_c.wf",
+    "tests/gate/probes/fixes/f18/join/a03_struct_field_c.wf",
+    "tests/gate/probes/fixes/f18/join/a04_option_none_arm_c.wf",
+    "tests/gate/probes/fixes/f18/join/k01_closure_join_twice_c.wf",
+    "tests/gate/probes/fixes/f18/join/k03_callee_detach_c.wf",
+    "tests/gate/probes/fixes/f18/join/k04_callee_join_one_path_c.wf",
+    "tests/gate/probes/fixes/f18/join/k05_callee_chain_join_c.wf",
+    "tests/gate/probes/fixes/f18/join/k06_closure_two_handles_one_joined_c.wf",
+]
+note = "a join through a pattern, a callee or a closure ends the task before the access (O3-9)"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.2: class C1-ONCE, a closure that a callee made runs a
+# `once` capture two times (scratchpad f19/or3c1.wf; probes
+# tests/gate/probes/fixes/c1once).
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c01_direct_b.wf",
+    "tests/gate/probes/fixes/c1once/c03_second_maker_b.wf",
+    "tests/gate/probes/fixes/c1once/c04_made_of_made_b.wf",
+    "tests/gate/probes/fixes/c1once/c05_nested_b.wf",
+    "tests/gate/probes/fixes/c1once/c06_from_closure_b.wf",
+    "tests/gate/probes/fixes/c1once/c07_closure_maker_b.wf",
+    "tests/gate/probes/fixes/c1once/c08_callee_twice_b.wf",
+    "tests/gate/probes/fixes/c1once/c09_linear_b.wf",
+    "tests/gate/probes/fixes/c1once/c10_via_local_b.wf",
+    "tests/gate/probes/fixes/c1once/c11_callee_runs_b.wf",
+    "tests/gate/probes/fixes/c1once/c12_made_calls_twice_b.wf",
+    "tests/gate/probes/fixes/c1once/c13_one_path_b.wf",
+    "tests/gate/probes/fixes/c1once/c15_two_captures_many_b.wf",
+    "tests/gate/probes/fixes/c1once/c16_vec_b.wf",
+    "tests/gate/probes/fixes/c1once/c17_tuple_b.wf",
+    "tests/gate/probes/fixes/c1once/c18_field_b.wf",
+]
+code = "W0502"
+note = "a closure that a callee or a closure made holds a `once` closure in its own value, and runs the capture two times (directly, on one path, through a callee or another made closure); the run moves the value of the made closure and the run again uses it (`transfer::apply_runs` with `made`)"
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c02_loop_b.wf",
+]
+code = "W0502"
+note = "the made closure runs the `once` capture in a loop"
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c01_direct_c.wf",
+    "tests/gate/probes/fixes/c1once/c01_direct_many_c.wf",
+    "tests/gate/probes/fixes/c1once/c03_second_maker_c.wf",
+    "tests/gate/probes/fixes/c1once/c05_nested_c.wf",
+    "tests/gate/probes/fixes/c1once/c06_from_closure_c.wf",
+    "tests/gate/probes/fixes/c1once/c07_closure_maker_many_c.wf",
+    "tests/gate/probes/fixes/c1once/c10_via_local_c.wf",
+    "tests/gate/probes/fixes/c1once/c11_callee_runs_c.wf",
+    "tests/gate/probes/fixes/c1once/c11_callee_runs_many_c.wf",
+    "tests/gate/probes/fixes/c1once/c12_made_calls_twice_c.wf",
+    "tests/gate/probes/fixes/c1once/c14_two_captures_c.wf",
+    "tests/gate/probes/fixes/c1once/c16_vec_c.wf",
+    "tests/gate/probes/fixes/c1once/c17_tuple_c.wf",
+    "tests/gate/probes/fixes/c1once/c18_field_c.wf",
+]
+note = "the clean twins of C1-ONCE: the made closure runs the `once` capture one time, two captures one time each, or the argument is a `many` closure"
+
+[[claim]]
+finding = "C1-ONCE"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F19.2"
+repro = [
+    "tests/gate/probes/fixes/c1once/c02_loop_many_c.wf",
+]
+note = "the made closure runs a `many` capture in a loop"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.3: the independent review of group E (scratchpad
+# ereview/review.md). E-1: a callee or a closure that can abort before its
+# `join` ends the task only on the normal path. E-2: a task that a closure
+# starts, where a callee runs the closure, conflicted with its run node.
+# E-3: a closure that gives back the handle of its task. Probes
+# tests/gate/probes/fixes/e1.
+
+[[claim]]
+finding = "E-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/e01_callee_fail_first_b.wf",
+    "tests/gate/probes/fixes/e1/e02_closure_fail_first_b.wf",
+    "tests/gate/probes/fixes/e1/e03_callee_clause_no_resume_b.wf",
+    "tests/gate/probes/fixes/e1/e04_callee_inner_scope_fails_b.wf",
+    "tests/gate/probes/fixes/e1/e05_callee_chain_b.wf",
+    "tests/gate/probes/fixes/e1/e06_stored_closure_b.wf",
+    "tests/gate/probes/fixes/e1/e07_closure_two_handles_b.wf",
+    "tests/gate/probes/fixes/e1/e10_validate_then_join_b.wf",
+    "tests/gate/probes/fixes/e1/e11_closure_calls_callee_b.wf",
+    "tests/gate/probes/fixes/e1/e12_callee_local_handler_b.wf",
+]
+code = "W0405"
+note = "a callee, a closure, a chain of callees or a closure in a second local can fail, perform an operation whose clause does not resume, or fail in its own scope before its `join`; a handler of the caller stops the abort, and the caller writes the place of the task after it"
+
+[[claim]]
+finding = "E-1"
+kind = "unsound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/e08_loop_respawn_b.wf",
+    "tests/gate/probes/fixes/e1/e09_callee_loop_fail_b.wf",
+    "tests/gate/probes/fixes/e1/e13_loop_direct_join_b.wf",
+]
+code = "W0405"
+note = "E-1 with a loop: the callee fails in a loop before its `join`, or the task of an earlier turn whose callee failed first still runs when a later turn joins its own handle"
+
+[[claim]]
+finding = "E-2"
+kind = "fp"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p2_callee_runs_spawner_c.wf",
+    "tests/gate/probes/fixes/e1/p2_timeout_block_spawn_c.wf",
+]
+note = "a callee (or `with_timeout`) runs a closure that starts a writer in a scope of the caller: the task does not conflict with the node that runs the closure"
+
+[[claim]]
+finding = "E-2"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p2_callee_runs_spawner_twice_b.wf",
+    "tests/gate/probes/fixes/e1/p2_write_after_call_b.wf",
+]
+code = "W0405"
+note = "the bad twins of E-2: the callee runs the closure two times, or the caller writes the place after the call"
+
+[[claim]]
+finding = "E-3"
+kind = "fp"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p3_closure_returns_handle_c.wf",
+    "tests/gate/probes/fixes/e1/p3_inner_scope_tail_c.wf",
+]
+note = "a closure starts a task and gives back its handle (part `ret.tasks`): the `join` of the result ends the task before the write"
+
+[[claim]]
+finding = "E-3"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19.3"
+repro = [
+    "tests/gate/probes/fixes/e1/p3_closure_returns_handle_b.wf",
+    "tests/gate/probes/fixes/e1/p3_two_runs_one_join_b.wf",
+]
+code = "W0405"
+note = "the bad twins of E-3: the write comes before the join, or two runs of the closure start two writers and only the second handle is joined"
+
+# ----------------------------------------------------------------------
+# Follow-up F19.4: the second review of group E (scratchpad
+# ereview/review_r2.md). R2-1: a task that a call starts runs while a
+# clause of a local handler runs at the call (the callee performs or fails
+# after it runs the closure, or runs a value while its task runs). R2-2: a
+# clause that ends the callee loses the handle that the callee joins only
+# on the normal path. The clean twins of E-1 that the review signed.
+
+[[claim]]
+finding = "R2-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/r1_callee_task_and_clause_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_chain_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_fail_clause_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_then_perform_b.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_then_perform_read_b.wf",
+    "tests/gate/probes/fixes/e1/r1_reader_task_clause_writes_b.wf",
+    "tests/gate/probes/fixes/e1/r1_reader_task_fail_clause_b.wf",
+]
+code = "W0405"
+note = "a callee runs a closure that starts a task (or runs a value as a task), then performs, fails or calls code that does, while the task runs; the clause of the caller accesses the place of the task"
+
+[[claim]]
+finding = "R2-1"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/r1_late_run_chain_c.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_fail_clause_c.wf",
+    "tests/gate/probes/fixes/e1/r1_late_run_then_perform_read_c.wf",
+]
+note = "the clean twins of R2-1: the callee performs or fails before it runs the closure, not after (`Run::then` is false)"
+
+[[claim]]
+finding = "R2-2"
+kind = "unsound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.4"
+repro = ["tests/gate/probes/fixes/e1/r2_loop_fail_then_join_reader_b.wf"]
+code = "W0405"
+note = "turn 0 gives a handle to a callee that fails before its join; a local handler stops the failure through its clause; turn 1 joins its own handle of the same site and writes what the task of turn 0 reads"
+
+[[claim]]
+finding = "R2-2"
+kind = "sound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.4"
+repro = ["tests/gate/probes/fixes/e1/r2_loop_fail_then_join_reader_c.wf"]
+note = "the clean twin of R2-2: the callee joins, then fails"
+
+[[claim]]
+finding = "E-1"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/e01_callee_fail_first_c.wf",
+    "tests/gate/probes/fixes/e1/e02_closure_fail_first_c.wf",
+    "tests/gate/probes/fixes/e1/e03_callee_clause_no_resume_c.wf",
+    "tests/gate/probes/fixes/e1/e04_callee_inner_scope_fails_c.wf",
+    "tests/gate/probes/fixes/e1/e05_callee_chain_c.wf",
+    "tests/gate/probes/fixes/e1/e06_stored_closure_c.wf",
+    "tests/gate/probes/fixes/e1/e10_validate_then_join_c.wf",
+    "tests/gate/probes/fixes/e1/e11_closure_calls_callee_c.wf",
+    "tests/gate/probes/fixes/e1/e12_callee_local_handler_c.wf",
+]
+note = "the clean twins of E-1 (signed by the second review of group E): the callee or the closure joins before it can abort, or a handler of the callee stops the abort"
+
+[[claim]]
+finding = "E-1"
+kind = "sound"
+verdict = "construction"
+group = "ABCDE"
+stage = "F19.4"
+repro = [
+    "tests/gate/probes/fixes/e1/e08_loop_respawn_c.wf",
+    "tests/gate/probes/fixes/e1/e09_callee_loop_fail_c.wf",
+]
+note = "the clean twins of E-1 with a loop (signed by the second review of group E)"
+
+# Follow-up F19.5 (issue #50: R3-1 and R3-2 of the third review of group E,
+# ereview/review_r3.md; issue #51: R3-3 and R3-4). R3-2: a task of a callee
+# runs while the callee waits at an operation that a handler of a caller
+# handles (a perform, `fail`, a timeout, a clause with no `resume`, a callee
+# or a closure that performs); the clause of the caller accesses the place
+# of the task (part `waits`). R3-1: a callee of the scope function runs a
+# closure that starts a task, then performs to a handler of a caller of the
+# scope function. R3-3 and R3-4: a task of a late run does not conflict with
+# its own run node, and does not start on a branch before the call.
+
+[[claim]]
+finding = "R3-2"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_b.wf",
+    "tests/gate/probes/fixes/f195/w03_chain_b.wf",
+    "tests/gate/probes/fixes/f195/w04_deep_perform_b.wf",
+    "tests/gate/probes/fixes/f195/w05_fail_b.wf",
+    "tests/gate/probes/fixes/f195/w06_timeout_b.wf",
+    "tests/gate/probes/fixes/f195/w09_closure_performs_b.wf",
+    "tests/gate/probes/fixes/f195/w11_clause_no_resume_b.wf",
+    "tests/gate/probes/fixes/f195/w12_two_effects_b.wf",
+    "tests/gate/probes/fixes/f195/w13_middle_handles_other_b.wf",
+]
+code = "W0405"
+note = "a task of the callee changes the place of an argument while the callee waits at an operation; the clause of the handler of the caller reads the place"
+
+[[claim]]
+finding = "R3-2"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_c.wf",
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_first_c.wf",
+    "tests/gate/probes/fixes/f195/w01_callee_task_perform_other_c.wf",
+    "tests/gate/probes/fixes/f195/w03_chain_c.wf",
+    "tests/gate/probes/fixes/f195/w04_deep_perform_c.wf",
+    "tests/gate/probes/fixes/f195/w05_fail_c.wf",
+    "tests/gate/probes/fixes/f195/w06_timeout_c.wf",
+    "tests/gate/probes/fixes/f195/w09_closure_performs_c.wf",
+    "tests/gate/probes/fixes/f195/w11_clause_no_resume_c.wf",
+    "tests/gate/probes/fixes/f195/w12_two_effects_c.wf",
+    "tests/gate/probes/fixes/f195/w13_middle_handles_other_c.wf",
+]
+note = "the clean twins of R3-2: the task ends before the operation, starts after it, or the clause reads another place"
+
+[[claim]]
+finding = "R3-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w02_handler_in_caller_of_scope_fn_b.wf",
+    "tests/gate/probes/fixes/f195/w07_stored_closure_b.wf",
+    "tests/gate/probes/fixes/f195/w08_runner_chain_b.wf",
+    "tests/gate/probes/fixes/f195/w10_value_spawns_then_performs_b.wf",
+]
+code = "W0405"
+note = "a callee of the scope function runs a closure that starts a task, then performs to a handler of a caller of the scope function (also through a field, two runners, or the closure itself)"
+
+[[claim]]
+finding = "R3-1"
+kind = "sound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/w02_handler_in_caller_of_scope_fn_c.wf",
+    "tests/gate/probes/fixes/f195/w07_stored_closure_c.wf",
+    "tests/gate/probes/fixes/f195/w08_runner_chain_c.wf",
+]
+note = "the clean twins of R3-1: the callee performs before it runs the closure"
+
+[[claim]]
+finding = "R3-3"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/r33_clause_other_place_b.wf",
+    "tests/gate/probes/fixes/f195/r33_fail_after_run_b.wf",
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_b.wf",
+]
+code = "W0405"
+note = "the bad twins of R3-3: the clause or the code after the `handle` accesses the place of the task of the late run"
+
+[[claim]]
+finding = "R3-3"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/r33_clause_other_place_c.wf",
+    "tests/gate/probes/fixes/f195/r33_fail_after_run_c.wf",
+    "tests/gate/probes/fixes/f195/r33_timeout_after_run_c.wf",
+    "tests/gate/probes/fixes/f195/r33_value_performs_before_spawn_c.wf",
+    "tests/gate/probes/fixes/f195/r33_value_performs_before_spawn_reads_c.wf",
+]
+note = "a task of a late run does not conflict with its own run node: the clause of the call runs at the task nodes of the call (`templates::wait_tasks`), and the code after the `handle` of an abort sees the task from the `FrameEnd` of the abort"
+
+[[claim]]
+finding = "R3-4"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19.5"
+repro = [
+    "tests/gate/probes/fixes/f195/r34_branch_pred_c.wf",
+]
+note = "a task of a late run does not start on the predecessors of the call node (a branch)"
+
+[[claim]]
+finding = "OL-3a"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDEF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_task_hold_b.wf"]
+code = "W0602"
+note = "a generic callee holds a `Task<T>` handle across an abort (part `holds` through `on abort`: the handle has `on abort` only if the type argument has it); the old pipeline misses it"
+
+[[claim]]
+finding = "OL-3a"
+kind = "unsound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_multi_hold_b.wf"]
+code = "W0503"
+note = "a generic callee holds a value of its type parameter across a `multi` operation (part `holds` as a query over its facts)"
+
+[[claim]]
+finding = "OL-3a"
+kind = "sound"
+verdict = "one-rule"
+group = "ACDEF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_task_hold_c.wf"]
+note = "the clean twin of the task shape: the type argument is plain data"
+
+[[claim]]
+finding = "OL-3a"
+kind = "sound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/ol3a_multi_hold_c.wf"]
+note = "the clean twin of the `multi` shape: the type argument is plain data"
+
+[[claim]]
+finding = "OL-R2c-3"
+kind = "fp"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20"
+repro = ["tests/gate/probes/fixes/f20/olr2c3_rc_wrapper_c.wf"]
+note = "a generic wrapper holds `Rc<T>` across a `multi` operation; `holds` applies with the type argument of the call (`u64`), not the worst case"
+
+[[claim]]
+finding = "F8.1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/f81_box_move_copy_b.wf",
+    "tests/gate/probes/fixes/f20/f81_box_move_old_b.wf",
+]
+code = "W0301"
+note = "a copy of a place-field reference of a `!Move` value behind a `Box` ends where the owner of the `Box` gets a new value (the old pipeline misses the first one)"
+
+[[claim]]
+finding = "F8.1"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/f81_box_move_copy_c.wf",
+    "tests/gate/probes/fixes/f20/f81_box_move_old_c.wf",
+]
+note = "a place-field reference of a `!Move` value behind a `Box` goes with a move of the `Box`, also into a place that had a value (154 `move_set`)"
+
+[[claim]]
+finding = "V056"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/v056_closure_dropped_b.wf",
+    "tests/gate/probes/fixes/f20/ret_keep_closure_b.wf",
+]
+code = "W0601"
+note = "a linear closure goes to a parameter of a type parameter that the callee drops, or comes back from a generic identity and the caller drops it"
+
+[[claim]]
+finding = "V056"
+kind = "sound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/v056_closure_dropped_c.wf",
+    "tests/gate/probes/fixes/f20/ret_keep_closure_c.wf",
+]
+note = "the clean twins: the linear closure comes back from the generic callee and runs"
+
+[[claim]]
+finding = "GEN-DROPS"
+kind = "unsound"
+verdict = "one-rule"
+group = "AF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/drop_behind_ref_b.wf",
+    "tests/gate/probes/fixes/f20/two_params_b.wf",
+]
+code = "W0601"
+note = "part `drops` as a query: a generic body overwrites a value of its type parameter behind a reference; a callee with two type parameters drops the second"
+
+[[claim]]
+finding = "GEN-DROPS"
+kind = "sound"
+verdict = "one-rule"
+group = "AF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/fixes/f20/drop_behind_ref_c.wf",
+    "tests/gate/probes/fixes/f20/two_params_c.wf",
+]
+note = "the clean twins: plain data behind the reference; the linear type goes to the type parameter that the callee gives back (the type parameters of `drops` are apart)"
+
+
+# Follow-up F20.1 (issue #47): a linear closure in an `Option`. The type
+# `Option<fn()>` has no linear part, so the arm of a variant with no payload
+# (`None`) did not consume the local, and the `ir` pipeline gave a false
+# W0601. Now the arm consumes a local that holds a linear closure, or a
+# temporary scrutinee. A closure that a path does not run is still W0601.
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "fp"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/fixes/f47/a01_some_call_c.wf",
+    "tests/gate/probes/fixes/f47/a03_none_first_c.wf",
+    "tests/gate/probes/fixes/f47/a04_nested_c.wf",
+    "tests/gate/probes/fixes/f47/a06_copied_c.wf",
+    "tests/gate/probes/fixes/f47/a07_by_ref_c.wf",
+    "tests/gate/probes/fixes/f47/a08_one_path_c.wf",
+    "tests/gate/probes/fixes/f47/a12_tuple_c.wf",
+    "tests/gate/probes/fixes/f47/b02_block_scrutinee_c.wf",
+    "tests/gate/probes/fixes/f47/b03_reassigned_c.wf",
+]
+code = "W0601"
+note = "the arm `Some(g)` runs the linear closure, the arm `None` consumes the `Option` (also nested, in a tuple, a copy of the local, a temporary scrutinee, a new value)"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "fp"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/verify/partb/S4/p/c4_generic_clean.wf",
+    "tests/gate/probes/fixes/f47/a02_generic_wrap_c.wf",
+    "tests/gate/probes/fixes/f47/a10_generic_match_c.wf",
+    "tests/gate/probes/fixes/f47/b07_generic_hold_c.wf",
+]
+code = "W0601"
+note = "the `Option` of the linear closure comes from a generic callee (n03 of stage F20, `c4_generic_clean.wf` `closure_in_some`)"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/fixes/f47/a01_some_call_b.wf",
+    "tests/gate/probes/fixes/f47/a03_none_first_b.wf",
+    "tests/gate/probes/fixes/f47/a04_nested_b.wf",
+    "tests/gate/probes/fixes/f47/a06_copied_b.wf",
+    "tests/gate/probes/fixes/f47/a07_by_ref_b.wf",
+    "tests/gate/probes/fixes/f47/a08_one_path_b.wf",
+    "tests/gate/probes/fixes/f47/a12_tuple_b.wf",
+    "tests/gate/probes/fixes/f47/b02_block_scrutinee_b.wf",
+    "tests/gate/probes/fixes/f47/b03_reassigned_b.wf",
+]
+code = "W0601"
+note = "the bad twins: a path does not run the linear closure in the `Option`"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.1"
+repro = [
+    "tests/gate/probes/fixes/f47/a02_generic_wrap_b.wf",
+    "tests/gate/probes/fixes/f47/a10_generic_match_b.wf",
+    "tests/gate/probes/fixes/f47/b07_generic_hold_b.wf",
+]
+code = "W0601"
+note = "the bad twins with a generic callee: a path does not run the linear closure, or the callee drops it"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "sound"
+verdict = "one-rule"
+group = "A"
+stage = "F20.1"
+repro = ["tests/gate/probes/fixes/f47/a13_linear_type_c.wf"]
+note = "control: `Option<Tx>` with a linear type (no change)"
+
+[[claim]]
+finding = "ISSUE-47"
+kind = "unsound"
+verdict = "one-rule"
+group = "A"
+stage = "F20.1"
+repro = ["tests/gate/probes/fixes/f47/a13_linear_type_b.wf"]
+code = "W0601"
+note = "control: `Option<Tx>`, the arm `Some(_)` drops the linear value (no change)"
+
+# Follow-up F20.2: the blockers of the review of group F (F-1, F-2, FP-1, P-1, P-2).
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_held_linear_read_b.wf",
+    "tests/gate/probes/fixes/f20_2/f1_held_vec_read_b.wf",
+]
+code = "W0302"
+note = "a closure reads an argument that a generic callee holds, during the call: the argument moves at `Main`"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_once_held_twice_b.wf",
+    "tests/gate/probes/fixes/f20_2/f1_extern_once_b.wf",
+]
+code = "W0502"
+note = "a `once` closure that a generic callee holds moves into it: a later call is a second call"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_once_multi_b.wf",
+    "tests/gate/probes/fixes/f20_2/f1_rc_multi_b.wf",
+]
+code = "W0503"
+note = "a `once` closure or an `Rc` that a generic callee holds across a `multi` operation: a held variable of its own"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "sound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_held_linear_read_c.wf",
+    "tests/gate/probes/fixes/f20_2/f1_held_vec_read_c.wf",
+    "tests/gate/probes/fixes/f20_2/f1_once_held_twice_c.wf",
+]
+note = "clean twins: the closure does not read the held argument, the `once` closure runs once"
+
+[[claim]]
+finding = "F20.2-F1"
+kind = "sound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f1_once_multi_c.wf",
+    "tests/gate/probes/fixes/f20_2/f1_rc_multi_c.wf",
+]
+note = "clean twins: a `many` value held across a `multi` operation"
+
+[[claim]]
+finding = "F20.2-FP1"
+kind = "fp"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/fp1_held_part_c.wf"]
+code = "W0602"
+note = "the callee holds `B = i64` of a tuple `(Tx, i64)`: the variable comes from the type argument, not from the type of the argument"
+
+[[claim]]
+finding = "F20.2-FP1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/fp1_held_part_b.wf"]
+code = "W0602"
+note = "the bad twin: the callee holds `B = Tx` across an abort"
+
+[[claim]]
+finding = "F20.2-F2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACEF"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/f2_pick_handle_b.wf",
+    "tests/gate/probes/fixes/f20_2/f2_pick_sink_b.wf",
+]
+code = "W0405"
+note = "a callee with two handle arguments gives one back and the other away: the `join` of the result ends no task"
+
+[[claim]]
+finding = "F20.2-F2"
+kind = "sound"
+verdict = "one-rule"
+group = "ABCEF"
+stage = "F20.2"
+repro = ["tests/gate/probes/r3/oracle/probes/x8_id_join.wf"]
+note = "control: one handle through a generic identity; its `join` ends the task (O3-9)"
+
+[[claim]]
+finding = "F20.2-P1"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/p1_nested_move_b.wf",
+    "tests/gate/probes/fixes/f20_2/p1_inner_closure_move_b.wf",
+    "tests/gate/probes/fixes/f20_2/p1_one_path_move_b.wf",
+]
+code = "W0301"
+note = "a move of a `ByMove` capture in a closure body frees the value in the environment"
+
+[[claim]]
+finding = "F20.2-P1"
+kind = "sound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/p1_inner_closure_move_c.wf",
+    "tests/gate/probes/fixes/f20_2/p1_one_path_move_c.wf",
+]
+note = "clean twins: the read comes before the move"
+
+[[claim]]
+finding = "F20.2-P2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/p2_fork_rc_b.wf"]
+code = "W0401"
+note = "a `fork` that a closure body starts through a callee captures an `Rc` of the maker"
+
+[[claim]]
+finding = "F20.2-P2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F20.2"
+repro = ["tests/gate/probes/fixes/f20_2/p2_fork_shared_mut_b.wf"]
+code = "W0403"
+note = "the `fork` branches change a `ByRef` and a `Kept` capture of the maker"
+
+[[claim]]
+finding = "F20.2-P2"
+kind = "sound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F20.2"
+repro = [
+    "tests/gate/probes/fixes/f20_2/p2_fork_rc_c.wf",
+    "tests/gate/probes/fixes/f20_2/p2_fork_shared_mut_c.wf",
+]
+note = "clean twins: the `Rc` stays in the body, the branches only read"
+
+# Follow-up F20.3: B-1 and I-2 of the second review of group F.
+
+[[claim]]
+finding = "F20.3-B1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/b1_generic_send_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_clause_reads_held_b.wf",
+]
+code = "W0302"
+note = "a clause reads an argument that a generic call moved: the use of the clause goes after the move"
+
+[[claim]]
+finding = "F20.3-B1"
+kind = "unsound"
+verdict = "one-rule"
+group = "AD"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/b1_callee_fails_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_linear_twice_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_clause_writes_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_consume_direct_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_ctl_fail_after_move_b.wf",
+    "tests/gate/probes/fixes/f20_3/b1_ctl_move_before_b.wf",
+]
+code = "W0302"
+note = "a clause uses an argument that a call moved (the callee is not generic), and the controls with the move at an earlier node"
+
+[[claim]]
+finding = "F20.3-B1"
+kind = "sound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/b1_callee_fails_c.wf",
+    "tests/gate/probes/fixes/f20_3/b1_clause_reads_held_c.wf",
+]
+note = "clean twins: the clause does not use the moved argument"
+
+[[claim]]
+finding = "F20.3-I2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/i2_tuple_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_pair_nongeneric_b.wf",
+]
+code = "W0502"
+note = "one `once` closure in two operands of one node (a tuple, a call that is not generic)"
+
+[[claim]]
+finding = "F20.3-I2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20.3"
+repro = [
+    "tests/gate/probes/fixes/f20_3/i2_generic_pair_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_generic_pair_fail_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_two_params_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_push2_b.wf",
+    "tests/gate/probes/fixes/f20_3/i2_linear_b.wf",
+]
+code = "W0502"
+note = "one `once` or linear closure in two arguments of a generic call"
+
+[[claim]]
+finding = "F20.3-I2"
+kind = "sound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.3"
+repro = ["tests/gate/probes/fixes/f20_3/i2_ctl_twice_c.wf"]
+note = "control: the closure runs at two nodes, one time each"
+
+# Follow-up F20.4: B-2 and I-8 of the third review of group F.
+
+[[claim]]
+finding = "F20.4-B2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ADF"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/b2_ref_generic_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_multi_generic_b.wf",
+]
+code = "W0301"
+note = "a clause reads a reference into an argument that a generic call moved"
+
+[[claim]]
+finding = "F20.4-B2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/b2_ref_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_resume_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_part_b.wf",
+    "tests/gate/probes/fixes/f20_4/b2_ref_closure_b.wf",
+]
+code = "W0301"
+note = "a clause reads a reference into an argument that a call moved: the whole value, a part, through a closure, a clause that resumes"
+
+[[claim]]
+finding = "F20.4-B2"
+kind = "sound"
+verdict = "one-rule"
+group = "AD"
+stage = "F20.4"
+repro = ["tests/gate/probes/fixes/f20_4/b2_ref_other_c.wf"]
+note = "control: the reference points into another value"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/i8_part_b.wf",
+    "tests/gate/probes/fixes/f20_4/i8_capture_b.wf",
+]
+code = "W0302"
+note = "one place moved two times at one node: a part of a tuple, a capture in a closure body"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/i8_part_generic_b.wf",
+    "tests/gate/probes/fixes/f20_4/i8_part_args_generic_b.wf",
+    "tests/gate/probes/fixes/f20_4/i8_capture_generic_b.wf",
+]
+code = "W0302"
+note = "the same with a generic call"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F20.4"
+repro = ["tests/gate/probes/fixes/f20_4/i8_perform_b.wf"]
+code = "W0502"
+note = "one `once` closure in two arguments of a perform"
+
+[[claim]]
+finding = "F20.4-I8"
+kind = "sound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20.4"
+repro = [
+    "tests/gate/probes/fixes/f20_4/i8_ctl_copy_c.wf",
+    "tests/gate/probes/fixes/f20_4/i8_ctl_ref_c.wf",
+    "tests/gate/probes/fixes/f20_4/i8_ctl_param_c.wf",
+]
+note = "controls: `Copy` values, a shared reference and a function parameter two times"
+
+# Stage C1: the precision causes of the tier-2 new-fp rows (issues #56 to #59).
+
+[[claim]]
+finding = "C1-56"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n56_nested_run_c.wf",
+    "tests/gate/probes/fixes/c1/n56_nested_run_once_c.wf",
+    "tests/gate/probes/fixes/c1/n56_two_levels_c.wf",
+    "tests/gate/probes/fixes/c1/n56_rc_ref_closure_c.wf",
+]
+note = "a closure that runs a captured value is a `multi` point only for the value that the caller gives; a reference into an `rc` object with no function part reaches no function value (issue #56)"
+
+[[claim]]
+finding = "C1-56"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n56_nested_run_multi_b.wf",
+    "tests/gate/probes/fixes/c1/n56_nested_run_param_b.wf",
+    "tests/gate/probes/fixes/c1/n56_made_b.wf",
+    "tests/gate/probes/fixes/c1/n56_outer_param_b.wf",
+]
+code = "W0503"
+note = "a known value or a value of a caller that resumes two times: the run of the closure is still a `multi` point"
+
+[[claim]]
+finding = "C1-56"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n56_loop_b.wf",
+    "tests/gate/probes/fixes/c1/n56_twice_b.wf",
+]
+code = "W0502"
+note = "a `once` closure that a callee runs two times or in a loop: a cycle that is no re-entry edge after code of a caller still runs it again"
+
+[[claim]]
+finding = "C1-57"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n57_cap_nested_run_c.wf"]
+note = "a closure that captures the capability of a local handler and runs a known closure that performs nothing does not run the clause (issue #57)"
+
+[[claim]]
+finding = "C1-57"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n57_cap_nested_run_b.wf",
+    "tests/gate/probes/fixes/c1/n57_param_in_handle_b.wf",
+    "tests/gate/probes/fixes/c1/n57_direct_cap_b.wf",
+]
+code = "W0602"
+note = "a captured item that performs the effect, a function parameter, a perform through the captured capability: the clause runs, and its `resume` can abort"
+
+[[claim]]
+finding = "C1-57"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n57_param_fails_b.wf"]
+code = "W0302"
+note = "a function parameter in the body of a local `Fail` handler can be an item that fails: the clause reads a moved parameter (the shape of the 4 tier-2 rows that stay, `stricter`)"
+
+[[claim]]
+finding = "C1-58"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n58_run_fail_clause_c.wf",
+    "tests/gate/probes/fixes/c1/n58_nested_fails_c.wf",
+    "tests/gate/probes/fixes/c1/n58_nested_run_args_c.wf",
+]
+note = "the clause of a local `Fail` handler runs only for a value that can fail; the places that a closure gives to a captured value are no arguments of the call (issue #58)"
+
+[[claim]]
+finding = "C1-58"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1"
+repro = [
+    "tests/gate/probes/fixes/c1/n58_run_fail_clause_b.wf",
+    "tests/gate/probes/fixes/c1/n58_closure_fails_b.wf",
+    "tests/gate/probes/fixes/c1/n58_item_fails_b.wf",
+    "tests/gate/probes/fixes/c1/n58_callee_fails_b.wf",
+    "tests/gate/probes/fixes/c1/n58_nested_fails_b.wf",
+]
+code = "W0302"
+note = "a closure that fails, an item that fails, a callee of a closure that fails, a captured item that fails: the clause runs"
+
+[[claim]]
+finding = "C1-58"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n58_nested_run_args_b.wf"]
+code = "W0312"
+note = "a callee keeps a reference across the run of a closure that changes the place"
+
+[[claim]]
+finding = "C1-59"
+kind = "fp"
+verdict = "one-rule"
+group = "AC"
+stage = "C1"
+repro = ["tests/gate/probes/fixes/c1/n59_made_rebinds_plain_c.wf"]
+note = "a run of a closure that changes a captured `u64` gives it no linear value (issue #59)"
+
+# Follow-up C1.1: hole C1-H1 of the independent review of stage C1.
+
+[[claim]]
+finding = "C1-H1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.1"
+repro = [
+    "tests/gate/probes/fixes/c1/h1_min_b.wf",
+    "tests/gate/probes/fixes/c1/h1_helper_b.wf",
+    "tests/gate/probes/fixes/c1/h1_let_b.wf",
+    "tests/gate/probes/fixes/c1/h1_order_b.wf",
+    "tests/gate/probes/fixes/c1/h1_nested_call_b.wf",
+    "tests/gate/probes/fixes/c1/h1_callee_of_callee_b.wf",
+    "tests/gate/probes/fixes/c1/h1_item_row_b.wf",
+]
+code = "W0502"
+note = "a callee runs a value that can resume more than once, then a `once` closure: the closure runs again (`Run::after`)"
+
+[[claim]]
+finding = "C1-H1"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "C1.1"
+repro = ["tests/gate/probes/fixes/c1/h1_generic_b.wf"]
+code = "W0502"
+note = "the same with a generic callee"
+
+# Follow-up C1.2: holes C1-H2 and C1-H3 of the second review of stage C1.
+
+[[claim]]
+finding = "C1-H2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.2"
+repro = ["tests/gate/probes/fixes/c1/h2_made_b.wf"]
+code = "W0502"
+note = "a closure that a callee made runs a value that resumes two times, then a `once` capture"
+
+[[claim]]
+finding = "C1-H3"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.2"
+repro = [
+    "tests/gate/probes/fixes/c1/h3_ret_b.wf",
+    "tests/gate/probes/fixes/c1/h3_ret_first_b.wf",
+    "tests/gate/probes/fixes/c1/h3_field_b.wf",
+    "tests/gate/probes/fixes/c1/h3_struct_b.wf",
+    "tests/gate/probes/fixes/c1/h3_option_b.wf",
+    "tests/gate/probes/fixes/c1/h3_tuple_b.wf",
+    "tests/gate/probes/fixes/c1/h3_box_b.wf",
+    "tests/gate/probes/fixes/c1/h3_nested_b.wf",
+    "tests/gate/probes/fixes/c1/h3_made_after_b.wf",
+]
+code = "W0503"
+note = "a callee runs a value that resumes two times and gives a `once` closure argument out again: back, in a field, a struct, an `Option`, a tuple, through a callee, in a made closure; a closure that moves a `Box`"
+
+# Follow-up C1.3: hole C1-H4 of the third review of stage C1.
+
+[[claim]]
+finding = "C1-H4"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.3"
+repro = [
+    "tests/gate/probes/fixes/c1/h4_apply_b.wf",
+    "tests/gate/probes/fixes/c1/h4_direct_b.wf",
+    "tests/gate/probes/fixes/c1/h4_param_b.wf",
+    "tests/gate/probes/fixes/c1/h4_cap_b.wf",
+]
+code = "W0502"
+note = "a closure performs a `multi` operation through a captured capability, then runs a `once` closure: a capture or a parameter, called directly or through a callee"
+
+[[claim]]
+finding = "C1-H4"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "C1.3"
+repro = [
+    "tests/gate/probes/fixes/c1/h4_param_ret_b.wf",
+    "tests/gate/probes/fixes/c1/h4_capture_ret_b.wf",
+]
+code = "W0503"
+note = "the closure gives the `once` closure back after the `multi` operation"

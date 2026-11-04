@@ -1,0 +1,12 @@
+// R2-1: a callee runs a closure that starts a writer of v, then performs; the clause of the caller writes v
+effect Note { fn note() }
+fn run_note(g: fn()) / Note { g(); note() }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        handle Note { fn note() { v.push(3); resume(()) } } in {
+            run_note(|| { s.spawn(|| v.push(2)); () })
+        }
+    }
+}

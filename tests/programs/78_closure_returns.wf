@@ -31,8 +31,8 @@ fn kept_once() {
 }
 fn returns_local() -> fn() {
     let b = Buf { items: Vec.new() }
-    || eat(b)   //~ W0204
+    || eat(b)   //~ old: W0204
 }
 fn returns_param(b: Buf) -> fn() {
-    || eat(b)   //~ W0204
+    || eat(b)   //~ old: W0204
 }

@@ -177,6 +177,8 @@ pub struct Run {
     pub many: bool,
     /// The body runs it as a task.
     pub task: bool,
+    /// How the body runs it as a task (plan stage F19, OR7).
+    pub how: TaskHow,
     /// The interface places that the body gives to the runs (the places of
     /// their arguments): the run node gives each parameter of the value
     /// that runs these places.
@@ -189,6 +191,53 @@ pub struct Run {
     /// passes no run node (hole H5 of the review of the ABC preview). A
     /// linear closure that goes there can go away with no run.
     pub maybe: bool,
+    /// After a run of it, the body can perform an operation or abort (a
+    /// node after a run node has `escapes_at` of an effect other than
+    /// `Async`, `performs_at` or `may_abort`; follow-up F19.4, R2-1): a
+    /// clause of a handler of a caller can run while a task that the value
+    /// starts runs.
+    pub then: bool,
+    /// The values of the interface (by parameter, or by capture) whose run
+    /// comes before this run on a path, where code of a caller can resume
+    /// more than once (a re-entry edge after that run reaches this run;
+    /// hole C1-H1 of stage C1.1). If the caller gives such a value that can
+    /// resume more than once, this run happens again (`many`).
+    pub after: std::collections::BTreeSet<(u32, bool)>,
+}
+
+/// How a body runs a function value of its interface as a task.
+///
+/// It is in the part `runs` (`docs/ir.md` 6.7, plan stage F19; the
+/// `task_runs` part of the old inference). A run node applies the value as
+/// a task with these facts (OR7, V126, V127, V132).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TaskHow {
+    /// The task is a branch of a `fork`: it runs on another thread
+    /// (`fork_task`: W0401, W0403).
+    pub thread: bool,
+    /// Two tasks of the value can run at the same time (a spawn in a loop,
+    /// two spawns): each run of the task conflicts with the other one.
+    pub twice: bool,
+    /// The function values of the interface (by parameter, or by capture
+    /// for a closure body) that the body runs while the task runs.
+    pub with: BTreeSet<u32>,
+    /// The interface places that the body changes while the task runs.
+    pub writes: Vec<IPlace>,
+    /// The interface places that the body reads while the task runs.
+    pub reads: Vec<IPlace>,
+    /// The body is code of a caller with no body (a foreign function): it
+    /// runs the value in the worst way.
+    pub foreign: bool,
+}
+
+/// The places of the tasks that can run while a body waits at an operation
+/// of one effect (part `waits`, follow-up F19.5).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Wait {
+    /// The interface places that the tasks change.
+    pub writes: Vec<IPlace>,
+    /// The interface places that the tasks read.
+    pub reads: Vec<IPlace>,
 }
 
 /// A function value that the result can be (part `ret`, stage F12).
@@ -230,6 +279,11 @@ pub struct Ret {
     /// linear closure in a value of a type with a function part (hole H3 of
     /// the review of the ABC preview).
     pub linear: bool,
+    /// The spawn sites of the part `tasks` whose handle the result holds,
+    /// and no other value of the body at a `Return` (follow-up F19.3, E-3):
+    /// a closure that gives back the handle of a task that it starts. A
+    /// `join` of the result can end the task.
+    pub tasks: Vec<u32>,
 }
 
 /// How a value of an argument flows into the pointee of a reference
@@ -284,6 +338,39 @@ pub struct Summary {
     /// The tasks that the body starts in a scope that it does not own
     /// (stage F18 fills this part).
     pub tasks: Vec<u32>,
+    /// The body can start a pinned task (a task that captures a
+    /// nonportable value, writes through a reference that is not `@ uniq`,
+    /// or runs code that the analysis does not follow), or it calls a
+    /// function that can: a task that runs the body is pinned too (part
+    /// `pins` of the signature, plan stage F18).
+    pub pins: bool,
+    /// The task handles of the interface (parameters of a function,
+    /// captures of a closure) that the body joins on each path to its
+    /// `Return` (a must part; plan stage F18, O3-9): a run node ends their
+    /// tasks.
+    pub joins: BTreeSet<u32>,
+    /// The task handles of the interface that the body joins on each path
+    /// where an abort leaves it (a must part; follow-up F19.3, E-1). A call
+    /// ends the task of a handle of `joins` at its `Main` node only if the
+    /// handle is here too; else at its `Ret` node, because an abort of the
+    /// call can leave the task running.
+    pub abort_joins: BTreeSet<u32>,
+    /// The effects that a task of the body (or of a callee) performs
+    /// through a handler of a caller (plan stage F19): a call where a
+    /// handler of this task handles such an effect is W0314.
+    pub task_effects: BTreeSet<String>,
+    /// The tasks that can run while the body waits at an operation that a
+    /// handler of a caller handles (follow-up F19.5, issue #50): for each
+    /// effect, the interface places that such tasks change and read. The
+    /// operation is a perform through the row (also a `fail` and a
+    /// timeout), a call of a callee or a run of a value that waits there, or
+    /// a run of a value that starts a task before such an operation of the
+    /// callee. A key with no places says that a task runs there, but that
+    /// it accesses no place of the interface. A call that runs a clause of a
+    /// local handler of the effect gives these places to the tasks of the
+    /// call that run while the clause runs
+    /// (`factgen::templates::wait_tasks`).
+    pub waits: std::collections::BTreeMap<String, Wait>,
     /// The value of `_0`.
     pub ret: Ret,
     /// The values that the body writes behind a reference parameter.
@@ -293,6 +380,10 @@ pub struct Summary {
     /// The type parameters of the values that the body holds across a node
     /// that can abort or resume more than once.
     pub holds: BTreeSet<u32>,
+    /// The type parameters of the values that a `fork` branch of the body
+    /// captures (plan stage F20, OL-NR-ptrfork): the branch runs on another
+    /// thread, so a nonportable type argument is W0401 at a call.
+    pub forks: BTreeSet<u32>,
     /// The captures and upvars that the body uses.
     pub uses: BTreeSet<u32>,
     /// The captures and upvars that the body moves.

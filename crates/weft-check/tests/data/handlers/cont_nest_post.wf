@@ -1,0 +1,13 @@
+// D-CONT-NEST: the outer perform is in the code of the inner clause after its `resume`.
+effect Peek { fn peek() }
+effect Op { fn op() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek() { let y = &v[0]; resume(()); print(y + 1) } } in { //~ W0301
+        handle Op { fn op() { resume(()); peek() } } in {
+            op()
+        }
+        v.clear()
+    }
+}

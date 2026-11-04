@@ -1,0 +1,49 @@
+// W0314 (6.9, plan stage F19): a task that performs through a handler on
+// the stack of this task. A task of a closure that performs an effect that
+// only a caller can handle is W0314 at the spawn. The task of a callee that
+// performs a standard effect goes to a handler of the caller (part
+// `task_effects`): a local handler there is W0314 at the call. `Fail` goes
+// to the task that joins.
+effect Note { fn note(x: u64) }
+
+fn spawn_note() / async, Note {
+    scope { s =>
+        s.spawn(|| note(1))   //~ W0314
+    }
+}
+
+fn local_handler() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        scope { s =>
+            s.spawn(|| note(2))   //~ W0314
+        }
+    }
+}
+
+fn spawn_log() / async, log {
+    scope { s =>
+        s.spawn(|| log.info("x"))
+    }
+}
+
+fn callee_task() / async {
+    handle Log { fn info(m) { print(m); resume(()) } fn warn(m) { resume(()) } } in {
+        spawn_log()   //~ W0314
+    }
+}
+
+fn root_log() / async, log {
+    spawn_log()
+}
+
+fn fail_joins() / async, fail {
+    scope { s =>
+        s.spawn(|| fail("x"))
+    }
+}
+
+fn main() / async, log {
+    local_handler()
+    callee_task()
+    root_log()
+}

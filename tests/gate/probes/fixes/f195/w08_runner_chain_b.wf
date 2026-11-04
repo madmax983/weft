@@ -1,0 +1,13 @@
+// F19.5 (R3-1, issue #50): the spawner closure goes through two runners; the outer runner performs after the run
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn once(g: fn()) { g() }
+fn run_note(g: fn()) / Note { once(g); note() }
+fn work(r: &Stats) / Note, async, mut(r) {
+    scope { s => run_note(|| { s.spawn(|| r.count += 1); () }) }
+}
+fn mid(r: &Stats) / Note, async, mut(r) { work(r) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { mid(&st) }
+}

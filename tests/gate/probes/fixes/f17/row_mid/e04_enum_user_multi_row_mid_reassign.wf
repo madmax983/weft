@@ -1,0 +1,25 @@
+effect Pick { multi fn pick() -> bool }
+enum Slot { Full(Vec<i64>), Empty }
+struct Hd { s: Slot }
+fn g(o: &Slot) / Pick {
+    match o {
+        Slot.Full(w) => {
+            let r = &w[0]
+            let b = pick()
+            print(r + 1)
+        }
+        Slot.Empty => {}
+    }
+}
+fn k(hd: &Hd) / Pick, mut(hd) {
+    g(&hd.s)
+    hd.s = Slot.Empty
+}
+fn main() {
+    let w = Vec.new()
+    w.push(3)
+    let hd = Hd { s: Slot.Full(w) }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        k(&hd)
+    }
+}

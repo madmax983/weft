@@ -1,0 +1,11 @@
+// F19.5 (R3-1, issue #50): a callee of the scope function runs a spawner closure, then performs to a handler of a caller of the scope function
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn run_note(g: fn()) / Note { g(); note() }
+fn work(r: &Stats) / Note, async, mut(r) {
+    scope { s => run_note(|| { s.spawn(|| r.count += 1); () }) }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { work(&st) }
+}

@@ -1,0 +1,15 @@
+// D-MULTI-MID: a `multi` clause changes a place between two `resume`s while a copied callee or closure frame holds a reference into it (the copy of the frame is used at the `Copy` node)
+effect Pick { multi fn pick() -> bool }
+fn g(v: &Vec<i64>) / Pick {
+    let r = &v[0]
+    let b = pick()
+    print(r + 1)
+}
+fn k(v: &Vec<i64>) / Pick { g(v) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); print(v.len()); resume(false) } } in {
+        k(&v)
+    }
+}

@@ -153,8 +153,12 @@ fn unsupported(sig: &FnSig, body: bool) -> Option<&'static str> {
     {
         return Some("a call of a function that runs or keeps function values (stage F12)");
     }
-    if e.pins || !e.tasks.is_empty() || !e.task_runs.is_empty() || !e.task_effects.is_empty() {
-        return Some("a call of a function that starts tasks (stage F18)");
+    // A body gives the parts `pins` and `task_effects` (plan stage F18),
+    // and the part `runs` with its tasks (plan stage F19).
+    if !body
+        && (e.pins || !e.task_effects.is_empty() || !e.tasks.is_empty() || !e.task_runs.is_empty())
+    {
+        return Some("a call of a function that starts tasks (stage F19)");
     }
     None
 }
@@ -199,8 +203,33 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
         }
     }
     args.sort();
+    // Code of a caller runs each function value as a task, two times at
+    // once, at the same time as the others, and while it changes and reads
+    // each place that it gets (the worst way, plan stage F19). The runtime
+    // pins such a task (`opaque`), as the old lowering.
+    let fns: BTreeSet<u32> = decl
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, &t)| crate::props::ir_has_fns(tys, t))
+        .map(|(i, _)| u(i))
+        .collect();
+    let mut access: Vec<IPlace> = args
+        .iter()
+        .filter(|a| a.root != IRoot::Caller)
+        .cloned()
+        .collect();
+    access.sort();
     for (i, &t) in decl.params.iter().enumerate() {
         if crate::props::ir_has_fns(tys, t) {
+            let how = super::summary::TaskHow {
+                thread: false,
+                twice: true,
+                with: fns.iter().copied().filter(|&j| j != u(i)).collect(),
+                writes: access.clone(),
+                reads: access.clone(),
+                foreign: true,
+            };
             join_run(
                 &mut inf.runs,
                 &Run {
@@ -209,9 +238,12 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     result: false,
                     many: true,
                     task: true,
+                    how,
                     args: args.clone(),
                     multi: fn_multi(tys, t),
                     maybe: false,
+                    then: true,
+                    after: std::collections::BTreeSet::new(),
                 },
             );
             inf.ret_fns.insert(RetFn::Param(u(i)));
@@ -221,6 +253,61 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
         inf.ret_fns.insert(RetFn::Unknown);
         inf.ret_places.extend(args);
     }
+}
+
+/// The summary of the intrinsic `i` with the declaration `decl`
+/// (`docs/ir.md` 5.30, 5.31; plan stage F19).
+///
+/// It runs its function parameter (the block) once, with no argument.
+/// `with_timeout` can fail (the block fails, or the deadline passes): it
+/// performs `Fail` through the row, and can abort there. `sim.run` runs the block with the root handlers
+/// of the simulation: the call node gives the facts of these handlers
+/// (`crate::factgen::templates`), and its abort edges are those of a call
+/// of an intrinsic (`crate::factgen::frames`).
+pub fn intrinsic(decl: &FnDecl, tys: &TyTable, i: weft_ir::Intrinsic) -> Summary {
+    let mut s = Summary {
+        params: decl
+            .params
+            .iter()
+            .enumerate()
+            .map(|(k, _)| ParamIface {
+                name: format!("parameter {k}"),
+                root: u32_of(k),
+                in_place: None,
+            })
+            .collect(),
+        ..Summary::default()
+    };
+    for (k, &t) in decl.params.iter().enumerate() {
+        if crate::props::ir_has_fns(tys, t) {
+            s.runs.push(Run {
+                param: u32_of(k),
+                capture: false,
+                result: false,
+                many: false,
+                task: false,
+                how: super::summary::TaskHow::default(),
+                args: Vec::new(),
+                multi: false,
+                maybe: false,
+                // `with_timeout` can fail after the block started (5.31).
+                then: i == weft_ir::Intrinsic::WithTimeout,
+                after: std::collections::BTreeSet::new(),
+            });
+        }
+    }
+    // A failure of the block and a timeout perform `Fail` through the
+    // capabilities of the call (5.31): a local `Fail` handler there stops
+    // it.
+    if i == weft_ir::Intrinsic::WithTimeout {
+        let fail = Perform {
+            effect: "Fail".to_string(),
+            cap: CapIface::Row,
+        };
+        s.performs.insert(fail.clone());
+        s.aborts.insert(Abort::Perform(fail));
+    }
+    s
 }
 
 /// True if an operation of the effect with identity `e` takes a reference
@@ -267,6 +354,9 @@ pub struct Inferred {
     /// The type parameters of the values that the body holds across a node
     /// that can abort or resume more than once.
     pub holds: BTreeSet<u32>,
+    /// The type parameters of the values that a `fork` branch of the body
+    /// captures (plan stage F20).
+    pub forks: BTreeSet<u32>,
     /// The function values of the interface that the body runs (part
     /// `runs`, stage F12), one entry for each parameter.
     pub runs: Vec<Run>,
@@ -297,6 +387,21 @@ pub struct Inferred {
     /// The body can give a place of its own frame to an operation of a
     /// caller (`Summary::gives_frame`, plan stage F15).
     pub gives_frame: bool,
+    /// The body can start a pinned task (`Summary::pins`, plan stage F18).
+    pub pins: bool,
+    /// The task handle parameters that the body joins on each path
+    /// (`Summary::joins`, plan stage F18).
+    pub joins: BTreeSet<u32>,
+    /// The task handle parameters that the body joins on each path of an
+    /// abort (`Summary::abort_joins`, follow-up F19.3).
+    pub abort_joins: BTreeSet<u32>,
+    /// The effects that a task of the body performs through a handler of a
+    /// caller (`Summary::task_effects`, plan stage F19).
+    pub task_effects: BTreeSet<String>,
+    /// The places that tasks change and read while the body waits at an
+    /// operation of each effect that a handler of a caller handles
+    /// (`Summary::waits`, follow-up F19.5).
+    pub waits: BTreeMap<String, (BTreeSet<IPlace>, BTreeSet<IPlace>)>,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -324,20 +429,119 @@ pub fn covers(a: &IPlace, b: &IPlace) -> bool {
     true
 }
 
+/// The steps `steps` with no texts: two steps that [`covers`] compares as
+/// the same step are equal.
+fn bare(steps: &[IStep]) -> Vec<IStep> {
+    steps
+        .iter()
+        .map(|x| match x {
+            IStep::Step(s, _) => IStep::Step(*s, String::new()),
+            other => other.clone(),
+        })
+        .collect()
+}
+
+/// An index of the places of a row for [`covers`] (stage C1.4: a body that
+/// changes many fields compared each new place with each place of the row).
+#[derive(Default)]
+struct CoverIndex {
+    /// The count of the places of each root, with the bare steps before the
+    /// first wildcard step and a flag for that wildcard step.
+    keys: BTreeMap<(IRoot, Vec<IStep>, bool), usize>,
+    /// The count of the places of each root with all their bare steps.
+    full: BTreeMap<(IRoot, Vec<IStep>), usize>,
+}
+
+impl CoverIndex {
+    /// The index of the places `ps`.
+    fn of(ps: &[(IPlace, u32)]) -> Self {
+        let mut idx = Self::default();
+        for (p, _) in ps {
+            idx.add(p);
+        }
+        idx
+    }
+
+    /// Adds place `p`.
+    fn add(&mut self, p: &IPlace) {
+        let b = bare(&p.steps);
+        let w = b.iter().position(|x| *x == IStep::Wild);
+        let pre = b.get(..w.unwrap_or(b.len())).unwrap_or_default().to_vec();
+        *self
+            .keys
+            .entry((p.root.clone(), pre, w.is_some()))
+            .or_default() += 1;
+        *self.full.entry((p.root.clone(), b)).or_default() += 1;
+    }
+
+    /// True if a place of the index covers `m` (`covers(k, m)`): its steps
+    /// before its first wildcard step are the first steps of `m`, and `m`
+    /// has a step at the wildcard step.
+    fn covered(&self, m: &IPlace) -> bool {
+        let b = bare(&m.steps);
+        (0..=b.len()).any(|l| {
+            let pre = b.get(..l).unwrap_or_default().to_vec();
+            let exact = (m.root.clone(), pre, false);
+            if self.keys.contains_key(&exact) {
+                return true;
+            }
+            let (r, pre, _) = exact;
+            l < b.len() && self.keys.contains_key(&(r, pre, true))
+        })
+    }
+
+    /// True if `m` covers a place of the index (`covers(m, k)`).
+    fn covers_some(&self, m: &IPlace) -> bool {
+        let b = bare(&m.steps);
+        let w = b.iter().position(|x| *x == IStep::Wild);
+        let pre = b.get(..w.unwrap_or(b.len())).unwrap_or_default().to_vec();
+        self.full
+            .range((m.root.clone(), pre.clone())..)
+            .take_while(|((r, s), _)| *r == m.root && s.starts_with(&pre))
+            .any(|((_, s), _)| w.is_none() || s.len() > pre.len())
+    }
+}
+
+/// Adds the changed places `o` to the changed places `muts` (part `muts`
+/// of [`Inferred::join`]): a place that a place of `muts` covers adds
+/// nothing, and a new place removes the places that it covers. Returns true
+/// if `muts` grows.
+fn join_muts(muts: &mut Vec<(IPlace, u32)>, o: &[(IPlace, u32)]) -> bool {
+    let mut grew = false;
+    // A few places: compare them one by one.
+    if o.len() <= 8 && muts.len() <= 64 {
+        for (m, idx) in o {
+            if muts.iter().any(|(k, _)| covers(k, m)) {
+                continue;
+            }
+            muts.retain(|(k, _)| !covers(m, k));
+            muts.push((m.clone(), *idx));
+            grew = true;
+        }
+        return grew;
+    }
+    let mut index = CoverIndex::of(muts);
+    for (m, idx) in o {
+        if index.covered(m) {
+            continue;
+        }
+        if index.covers_some(m) {
+            muts.retain(|(k, _)| !covers(m, k));
+            index = CoverIndex::of(muts);
+        }
+        muts.push((m.clone(), *idx));
+        index.add(m);
+        grew = true;
+    }
+    grew
+}
+
 impl Inferred {
     /// Adds the parts of `o`. Returns true if a part grows. A changed place
     /// that a place of the row covers adds nothing; a new place removes the
     /// places that it covers.
     pub fn join(&mut self, o: &Self) -> bool {
-        let mut grew = false;
-        for (m, idx) in &o.muts {
-            if self.muts.iter().any(|(k, _)| covers(k, m)) {
-                continue;
-            }
-            self.muts.retain(|(k, _)| !covers(m, k));
-            self.muts.push((m.clone(), *idx));
-            grew = true;
-        }
+        let mut grew = join_muts(&mut self.muts, &o.muts);
         for n in &o.named {
             grew |= self.named.insert(n.clone());
         }
@@ -346,6 +550,9 @@ impl Inferred {
         }
         for h in &o.holds {
             grew |= self.holds.insert(*h);
+        }
+        for h in &o.forks {
+            grew |= self.forks.insert(*h);
         }
         if o.raises && !self.raises {
             self.raises = true;
@@ -362,6 +569,31 @@ impl Inferred {
         if o.gives_frame && !self.gives_frame {
             self.gives_frame = true;
             grew = true;
+        }
+        if o.pins && !self.pins {
+            self.pins = true;
+            grew = true;
+        }
+        for &j in &o.joins {
+            grew |= self.joins.insert(j);
+        }
+        for &j in &o.abort_joins {
+            grew |= self.abort_joins.insert(j);
+        }
+        for e in &o.task_effects {
+            grew |= self.task_effects.insert(e.clone());
+        }
+        for (e, ps) in &o.waits {
+            if !self.waits.contains_key(e) {
+                grew = true;
+            }
+            let mine = self.waits.entry(e.clone()).or_default();
+            for x in &ps.0 {
+                grew |= mine.0.insert(x.clone());
+            }
+            for x in &ps.1 {
+                grew |= mine.1.insert(x.clone());
+            }
         }
         for r in &o.runs {
             grew |= join_run(&mut self.runs, r);
@@ -444,18 +676,55 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         runs.sort();
         return true;
     };
-    let before = (x.many, x.task, x.multi, x.maybe, x.args.len());
+    let before = (
+        x.many,
+        x.task,
+        x.multi,
+        x.maybe,
+        x.then,
+        x.args.len(),
+        x.how.clone(),
+        x.after.len(),
+    );
     x.many |= r.many;
     x.task |= r.task;
+    x.then |= r.then;
+    x.how.thread |= r.how.thread;
+    x.how.foreign |= r.how.foreign;
+    x.how.twice |= r.how.twice;
+    x.how.with.extend(r.how.with.iter().copied());
+    for w in &r.how.writes {
+        if !x.how.writes.contains(w) {
+            x.how.writes.push(w.clone());
+        }
+    }
+    for w in &r.how.reads {
+        if !x.how.reads.contains(w) {
+            x.how.reads.push(w.clone());
+        }
+    }
+    x.how.writes.sort();
+    x.how.reads.sort();
     x.multi |= r.multi;
     x.maybe |= r.maybe;
+    x.after.extend(r.after.iter().copied());
     for a in &r.args {
         if !x.args.contains(a) {
             x.args.push(a.clone());
         }
     }
     x.args.sort();
-    before != (x.many, x.task, x.multi, x.maybe, x.args.len())
+    before
+        != (
+            x.many,
+            x.task,
+            x.multi,
+            x.maybe,
+            x.then,
+            x.args.len(),
+            x.how.clone(),
+            x.after.len(),
+        )
 }
 
 /// True if code of a caller of the function values of type `t` can resume
@@ -621,6 +890,7 @@ pub fn build(
     }
     s.drops.clone_from(&inf.drops);
     s.holds.clone_from(&inf.holds);
+    s.forks.clone_from(&inf.forks);
     s.runs.clone_from(&inf.runs);
     s.ret.fns = inf.ret_fns.iter().cloned().collect();
     s.ret.linear = inf.ret_linear;
@@ -631,6 +901,11 @@ pub fn build(
     }
     put_parts(&mut s, inf);
     s.gives_frame = inf.gives_frame;
+    s.pins = inf.pins;
+    s.joins.clone_from(&inf.joins);
+    s.abort_joins.clone_from(&inf.abort_joins);
+    s.task_effects.clone_from(&inf.task_effects);
+    s.waits = waits_part(inf);
     s.only_self = inf.named.is_empty()
         && inf.runs.is_empty()
         && !inf.multi
@@ -643,6 +918,23 @@ pub fn build(
             .iter()
             .all(|l| matches!(l.root, IRoot::Param(0) | IRoot::Held(0)));
     s
+}
+
+/// The part `waits` of a summary from the inferred parts `inf` (follow-up
+/// F19.5).
+pub fn waits_part(inf: &Inferred) -> BTreeMap<String, super::summary::Wait> {
+    inf.waits
+        .iter()
+        .map(|(e, (ws, rs))| {
+            (
+                e.clone(),
+                super::summary::Wait {
+                    writes: ws.iter().cloned().collect(),
+                    reads: rs.iter().cloned().collect(),
+                },
+            )
+        })
+        .collect()
 }
 
 /// Gives summary `s` the parts `puts`, `put_fns` and the inferred `reads`
@@ -690,7 +982,10 @@ pub fn put_parts(s: &mut Summary, inf: &Inferred) {
 /// with the text of the parameter and of its steps, at most
 /// [`crate::infer::SIG_PLACE_STEPS`] steps (as the old inference).
 pub fn to_effect_sig(prog: &crate::Program, sum: &Summary) -> EffectSig {
-    let mut out = EffectSig::default();
+    let mut out = EffectSig {
+        pins: sum.pins,
+        ..EffectSig::default()
+    };
     let most = crate::infer::SIG_PLACE_STEPS as usize;
     for (m, _) in &sum.muts {
         let name = |i: u32| {
@@ -749,6 +1044,7 @@ pub fn to_effect_sig(prog: &crate::Program, sum: &Summary) -> EffectSig {
     }
     out.raises = sum.aborts.contains(&Abort::Raises);
     out.multi = sum.unknown_multi;
+    out.task_effects.clone_from(&sum.task_effects);
     out.drops = sum.drops.iter().map(|&j| j as usize).collect();
     out.holds = sum.holds.iter().map(|&j| j as usize).collect();
     out
@@ -797,4 +1093,74 @@ fn ret_of(sig: &FnSig, decl: &FnDecl, tys: &TyTable) -> Ret {
         }
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{covers, join_muts, IPlace, IRoot, IStep};
+    use weft_facts::{Step, StepKind};
+
+    /// [`join_muts`] with a comparison of each pair (its first form).
+    fn join_slow(muts: &mut Vec<(IPlace, u32)>, o: &[(IPlace, u32)]) -> bool {
+        let mut grew = false;
+        for (m, idx) in o {
+            if muts.iter().any(|(k, _)| covers(k, m)) {
+                continue;
+            }
+            muts.retain(|(k, _)| !covers(m, k));
+            muts.push((m.clone(), *idx));
+            grew = true;
+        }
+        grew
+    }
+
+    /// The index of [`join_muts`] gives the result of the comparisons of
+    /// each pair, on random rows (also with wildcard steps, splits, texts
+    /// that differ, and rows of more than eight places).
+    #[test]
+    fn join_muts_is_the_join_of_each_pair() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            u32::try_from((seed >> 33) % m).unwrap_or(0)
+        };
+        let place = |next: &mut dyn FnMut(u64) -> u32| {
+            let root = if next(2) == 0 {
+                IRoot::Param(next(2))
+            } else {
+                IRoot::Held(0)
+            };
+            let len = next(4);
+            let steps = (0..len)
+                .map(|_| match next(6) {
+                    0 => IStep::Wild,
+                    1 => IStep::Seg {
+                        label: next(2),
+                        hi: next(2) == 0,
+                        unstable: true,
+                    },
+                    k => IStep::Step(
+                        Step {
+                            kind: StepKind::Field { id: next(3) },
+                            unstable: k == 5,
+                        },
+                        format!(".f{}", next(2)),
+                    ),
+                })
+                .collect();
+            IPlace { root, steps }
+        };
+        for _ in 0..2000 {
+            let a: Vec<(IPlace, u32)> = (0..next(20)).map(|i| (place(&mut next), i)).collect();
+            let b: Vec<(IPlace, u32)> = (0..next(20)).map(|i| (place(&mut next), i)).collect();
+            let mut start: Vec<(IPlace, u32)> = Vec::new();
+            join_slow(&mut start, &a);
+            let (mut fast, mut slow) = (start.clone(), start);
+            let g1 = join_muts(&mut fast, &b);
+            let g2 = join_slow(&mut slow, &b);
+            assert_eq!((g1, &fast), (g2, &slow), "{a:?} {b:?}");
+        }
+    }
 }

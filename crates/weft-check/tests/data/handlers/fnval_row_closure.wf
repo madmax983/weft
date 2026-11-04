@@ -1,0 +1,14 @@
+// D-FNVAL-ROW (F17.2): a closure of the handled body calls a function with the effect in its row. The call gets the captured capability, so the clause runs at the call while the closure holds a reference.
+effect Log { fn log(m: i64) }
+fn note() / Log { log(1) }
+fn k(v: &Vec<i64>) / Log, mut(v) {
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let f = || { let r = &v[0]; note(); print(r + 1) }   //~ W0301
+        f()
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { resume(()) } } in { k(&v) }
+}

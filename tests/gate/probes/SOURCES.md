@@ -433,3 +433,346 @@ pipeline checks them by default.
   the handled body.
 - `fixes/f15/part/*.wf`: class F15-PART, a clause puts its parameter into a part of a
   local of the site (an old hole of F14 and of the old pipeline; ledger `open-old`).
+
+## Stage F16: `resume`, continuations, `multi` (group D, part 3)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class, and
+each faulting program has a clean twin (`_c`). They use group D, which is off until
+stage F17: the old pipeline checks them by default.
+
+- `fixes/f16/multi/m*.wf`: class F16-MULTI, a `multi` resume runs the rest of the
+  handled body again (the re-entry edge from `Post` to the `Copy` node of the
+  perform). Ledger `open-old` for the old hole `m04_clause_holds_result.wf`.
+  `m06_abort_in_rerun_c.wf` has no faulting twin: the clause of an outer handler
+  aborts in the second run of the handled body (fact oracle).
+- `fixes/f16/multi/olr2a*.wf`: class OL-R2a, a function waits at a `multi` operation
+  of a handler of a caller (the re-entry edge from its `Return`). Ledger `open-old`
+  for the old hole `olr2a.wf`.
+- `fixes/f16/cap/*.wf`: class F16-CAP, a closure performs through a capability that it
+  captures: the node that runs the closure runs the clause of the handler. The clause
+  gets the places that the closure reads (`c07`, `c09`), also when a callee runs the
+  closure (`c08`).
+- `fixes/f16/closure/cl*.wf`: class F16-CLAUSE-CLOSURE, a closure that a clause makes
+  (ledger `open-old` for the old hole `cl03_closure_after_resume.wf`).
+- `fixes/f16/closure/o*.wf`: class F16-OPFN (O3-7), a function value that a perform
+  gives to a local handler runs in the clause.
+
+## Follow-up F16.4: class C-RR (a run of a closure reads through a reference to references)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class, and
+each faulting program has a clean twin (`_c`). The self-attack of stage F16 found the
+class (scratchpad `f16/open/crr_*.wf`).
+
+- `fixes/crr/crr0[1-8]*.wf`: a closure captures a reference to a container of
+  references (`kr: &Vec<&i64>`, also in an enum payload) and reads through it. The
+  node that runs the closure (directly, in a callee, from a vector, as a closure that
+  a function returns, in a loop) uses the variables of the references on the chain,
+  so a run after `v.clear()` is W0301. `crr03_opfn.wf` uses group D (a clause runs
+  the function value of a perform): ledger `open-old`, because the old pipeline
+  checks it while group D is off and misses it.
+- `fixes/crr/crr09*.wf`: a call argument of a user enum whose payload is a reference
+  to a container of references. The read through a call argument now also looks
+  into the fields and payloads of a struct or an enum.
+
+## Stage F17 part 0: the findings of the independent review of group D
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one has one line of header that names the class. They
+come from the review of group D (scratchpad `dreview/variants`). They use group D,
+which is off until part 2 of stage F17: the old pipeline checks them by default.
+
+- `fixes/f17/run/*.wf`: class D-CONT-RUN, a callee or a closure performs, and its
+  code after the perform changes the place that the clause holds a reference into
+  across its `resume`. The run node is in the region of the continuation. The clean
+  twins write the element or clear the vector after the perform: the old pipeline
+  rejects them too (W0301), so they have no claim.
+- `fixes/f17/nest/*.wf`: class D-CONT-NEST, a clause of an inner handler performs the
+  operation of an outer handler.
+- `fixes/f17/unwind/*.wf`: class D-CONT-UNWIND, the local of an inner handled body
+  ends only on the abort path to the inner handler.
+- `fixes/f17/copy/*.wf`: class D-COPY-WAIT, a `multi` re-run copies the frame of an
+  inner clause that waits at its `resume` (ledger `open-old` for the old hole
+  `m11_multi_copies_waiting_clause.wf`).
+- `fixes/f17/own/*.wf`: class FP-OWN, a reference into a local of a clause across its
+  own `resume` (false positives of the preview).
+- `fixes/f17/w0313/*.wf`: class D-REBIND (part 1 of stage F17), found by the W0313
+  check over the values of the analysis: a callee may run the closure that gives a
+  local of the site a new value, so the local keeps its old value too (a weak update).
+  The old pipeline rejects `rebind.wf` (W0313); the preview with group D accepted it.
+- `fixes/f17/clause_runs/*.wf`: class D-CLAUSE-RUNS (part 2 of stage F17), found when
+  group D went on (the tier-2 row `verify/partb/S4/run/rec.wf` lost a W0502): a clause
+  runs a function parameter of its function, and the summary of the function did not
+  have the run. The caller missed the change and the move of the value. The old
+  pipeline rejects the five faulting programs.
+
+## Follow-up F17.1: the findings of the second review of group D
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They come from the second review of group D (scratchpad
+`dreview2/variants`).
+
+- `fixes/f17/multi_mid/*.wf`: class D-MULTI-MID, a `multi` clause changes a place
+  between two `resume`s while a copied callee or closure frame holds a reference into
+  it. `v20_c` is not a probe (the old pipeline rejects it with a false W0301, a
+  lost-clean row with no signature). The clean twins `v21_c` and `v25_c` have no claim
+  (`v25_c` is rejected by both pipelines).
+- `fixes/f17/copy_wait_call/*.wf`: class D-COPY-WAIT-CALL, the caller changes the place
+  after the call, before the second run of the copied callee frame (old holes: ledger
+  `open-old` while group D is off).
+
+## Follow-up F17.2: the findings of the third review of group D
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They come from the third review of group D (scratchpad
+`dreview3/variants`), except `c1_*` (the self-attack of F17.2).
+
+- `fixes/f17/fnval_row/*.wf`: class D-FNVAL-ROW, a function item or a function
+  parameter runs in the handled body of a local handler of its row, and the clause
+  changes, frees or moves a place that a reference of the body (or of the value) points
+  into. `c1_*`: a closure of the handled body calls a function with the effect in its
+  row while it holds a reference. `w01_c` and `w02_c`: class FP-W0805-FNVAL, a closure
+  or a function item runs in the handled body of `main`.
+- `fixes/f17/row_mid/*.wf`: class D-ROW-MID, a callee waits at a `multi` operation of
+  a handler of a caller, and the function changes the place after the call, before the
+  second run of the copied callee frame (old holes).
+
+## Stage F18: tasks (group E, part 1)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They use group E, which is off until stage F19: the old pipeline
+checks them by default, and their claims are off.
+
+- `fixes/f18/scope/*.wf`: F3-7 (the value of a scope body across `ScopeWait`) and V084
+  (the cleanup chain of a scope body joins its tasks).
+- `fixes/f18/result/*.wf`: O3-4 (a spawn statement drops a linear result), the
+  `detach` control of F3-6 (N1), and class F18-RESULT (a spawn as the tail of a scope
+  body, with a clean twin `_c`).
+- `fixes/f18/rc/*.wf`: O3-6 with no generic callee.
+- `fixes/f18/join/*.wf`: V096 (the must rule of a `join`), O3-9 with no generic `id`,
+  and class F18-JOIN from the self-attack of stage F18: the handle in a tuple, a
+  struct, an `Option`, a closure or a callee; each bad program has a clean twin
+  (`_c`) that the old pipeline rejects (W0405).
+
+## Follow-up F19.2: a closure that a callee made runs a `once` capture two times
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the class. They come
+from the fix of the group C hole `f19/or3c1.wf` (scratchpad `c1once/v`).
+
+- `fixes/c1once/*_b.wf`: class C1-ONCE (claim C1-ONCE). A function or a closure makes
+  a closure that runs its capture two times (directly, in a loop, on one path, through
+  a callee, or through another made closure), and the caller gives it a `once`
+  closure. The made closure comes back through a second maker, a closure, a local, a
+  tuple, or a vector or a field that a callee fills; a callee runs it one or two times.
+  The `ir` pipeline accepted most of them, and each one faults ("a value is used after
+  it was moved"). `c01_direct_b.wf` is `f19/or3c1.wf`.
+- `fixes/c1once/*_c.wf`: the clean twins. The made closure runs the capture one time,
+  two captures one time each (`c14`), or the argument is a `many` closure (`*_many_c`).
+
+## Follow-up F19.3: the independent review of group E
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the fix of the findings of the independent review of group E (scratchpad
+`ereview/review.md`; self-attack in scratchpad `e1fix/att`).
+
+- `fixes/e1/e*_b.wf`: class E-1 (claim E-1). A callee, a closure, a chain of callees, a
+  closure in a second local, or a closure that gives its handle to a callee can fail,
+  perform an operation whose clause does not resume, or fail in its own scope before
+  its `join` (also after a loop, and in an earlier turn of a loop that joins its own
+  handle later). A handler of the caller stops the abort, and the caller writes the
+  place of the task after it. The `ir` pipeline of stage F19 accepted each one, and
+  each one faults (a data race). `e07_closure_two_handles_c.wf` is a control: the closure joins
+  both handles before it fails, and both pipelines reject it (an abort of the first
+  `join` leaves the second task running). The clean twins of the other `e*_b.wf`
+  files are lost-clean rows of the old pipeline (W0405): they were in
+  `crates/weft-check/tests/data/tasks/e1_twins/` until the second review signed them
+  (follow-up F19.4).
+- `fixes/e1/p2_*.wf`: class E-2 (claim E-2). A callee or `with_timeout` runs a closure
+  that starts a writer in a scope of the caller (`_c`, clean), and the bad twins (the
+  callee runs the closure two times, or the caller writes the place after the call).
+- `fixes/e1/p3_*.wf`: class E-3 (claim E-3). A closure starts a task and gives back
+  its handle; the `join` of the result ends the task (`_c`), and the bad twins (the
+  write before the `join`, two runs and one `join`).
+
+## Follow-up F19.4: the second review of group E
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. They come from the second review of group E (scratchpad
+`ereview/review_r2.md`, `variants_r2/`) and the self-attack of the fix (scratchpad
+`e1fix/r2`).
+
+- `fixes/e1/r1_*_b.wf`: class R2-1 (claim R2-1). A callee runs a closure that starts a
+  task (a writer or a reader) in a scope of the caller, then performs, fails, or the
+  outer callee of a chain performs; or a callee runs a value as a task and another value
+  that performs while it runs. A clause of a local handler of the caller accesses the
+  place of the task. `r1_late_run_then_perform_b`, `_read_b`, `r1_late_run_chain_b` and
+  `r1_late_run_fail_clause_b` are R04, R05, R07 and R08 of the review.
+- `fixes/e1/r1_*_c.wf`: the clean twins (R05, R07, R08 of the review): the callee
+  performs or fails before it runs the closure, not after.
+- `fixes/e1/r2_loop_fail_then_join_reader_b.wf` and `_c.wf`: class R2-2 (claim R2-2),
+  R13 of the review and its clean twin.
+- `fixes/e1/e*_c.wf` (but `e07`): the clean twins of E-1 that the second review signed
+  (they were in `crates/weft-check/tests/data/tasks/e1_twins/`). `e13_loop_direct_join_c`
+  stays there.
+
+## Follow-up F19.5: issue #50 (R3-1, R3-2) and issue #51 (R3-3, R3-4)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the third review of group E (scratchpad `ereview/review_r3.md`, `variants_r3/`)
+and the self-attack of the fix (scratchpad `f195/att`).
+
+- `fixes/f195/w*_b.wf`: classes R3-1 and R3-2 (claims R3-1, R3-2). A task of a callee
+  changes the place of an argument while the callee waits at an operation that a
+  handler of a caller handles: a perform, a `fail`, a timeout of `with_timeout`, an
+  operation whose clause has no `resume`, a callee or a local closure that performs, a
+  chain of callees, a middle callee that handles another effect, two effects. Or a
+  callee of the scope function runs a closure that starts the task (also from a field,
+  through two runners, or a closure that starts the task and then performs), then
+  performs. The clause of the caller reads the place. Both pipelines of follow-up F19.4
+  accept each one, and each one faults (a data race). `w01_callee_task_perform_b.wf`
+  is `P19` of the review, `w02_handler_in_caller_of_scope_fn_b.wf` is `P15`.
+- `fixes/f195/w*_c.wf`: the clean twins: the task ends before the operation, starts
+  after it, the clause reads another place, or the callee performs before it runs the
+  closure.
+- `fixes/f195/r33_*.wf`, `r34_branch_pred_c.wf`: classes R3-3 and R3-4 (claims R3-3,
+  R3-4): a task of a late run conflicted with its own run node when the call runs code
+  of a local handler (`P01_c`, `P01_probe`, `P08_c`, `P09_c`, `P12_c` of the review),
+  or started on a branch before the call (`P13_c`). The `_b` files are the bad twins
+  (`P08`, `P09`, `P12`), which both pipelines reject.
+
+## Stage F20: generic bodies (group F) and follow-up F8.1
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the self-attack of stage F20 (scratchpad `f20/att`).
+
+- `fixes/f20/ol3a_*_b.wf`: OL-3a (claim OL-3a). A generic callee holds a `Task<T>`
+  handle across an abort (the old pipeline misses it), or a value of its type
+  parameter across a `multi` operation; the type argument is linear. `_c.wf`: the type
+  argument is plain data.
+- `fixes/f20/olr2c3_rc_wrapper_c.wf`: OL-R2c-3 (claim OL-R2c-3). A generic wrapper holds
+  `Rc<T>` across a `multi` operation with `T = u64`.
+- `fixes/f20/f81_*.wf`: follow-up F8.1 (claim F8.1). A place-field reference of a
+  `!Move` value behind a `Box` goes with a move of the `Box` (`_c.wf`, also into a place
+  that had a value); a copy of the reference ends where the owner gets a new value
+  (`_b.wf`; the old pipeline misses `f81_box_move_copy_b.wf`).
+- `fixes/f20/v056_*.wf`, `ret_keep_closure_*.wf`: V056 (claim V056). A linear closure
+  goes to a parameter of a type parameter that the callee drops, or comes back from a
+  generic identity and the caller drops it (`_b.wf`); the clean twins run it.
+- `fixes/f20/drop_behind_ref_*.wf`, `two_params_*.wf`: the part `drops` as a query (claim
+  GEN-DROPS): a value of a type parameter behind a reference gets a new value; a callee
+  with two type parameters drops the second. `drop_behind_ref_c.wf` was a failure of the
+  fact oracle (C5) before `Drop` changed its place.
+
+## Follow-up F20.1: a linear closure in an `Option` (issue 47)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the self-attack of follow-up F20.1 (scratchpad `f47/att`).
+
+- `fixes/f47/*_c.wf` (claim ISSUE-47, `fp`): a linear closure in `Some`. The arm
+  `Some(g)` runs it, and the arm `None` consumes the `Option`: in the first arm, in the
+  second arm, nested (`Some(None)`), in a tuple, after a copy of the local, after a
+  `match` by reference, on each branch of an `if`, in a temporary scrutinee, after a new
+  value of the local, and through a generic callee (`a02`, `a10`, `b07`). Before the fix
+  the `ir` pipeline gave W0601 for each one.
+- `fixes/f47/*_b.wf` (claim ISSUE-47, `unsound`): the bad twins. A path does not run
+  the closure (the arm `Some(_)`, a branch with no `match`, a generic callee that drops
+  it). The `ir` pipeline gives W0601, as before.
+- `fixes/f47/a13_*.wf`: `Option<Tx>` with a linear type (no change).
+- Not in the gate (each clean twin is `lost-clean`: the old pipeline rejects it): the
+  pairs `a09` (struct field), `a14` (a plain closure matched twice), `a16` and `b04`
+  (a function gives back `Some` of a linear closure, old W0204), `b01` (a handled body
+  matches the `Option`, old W0602), `b05` (a `match` in a loop, old W0601). Also not in
+  the gate: the pair `a11` (a closure captures the `Option` and copies the payload; a
+  new case of the class `closure-copy` of `exports_parity.rs`, which needs a review).
+  They are in scratchpad `f47/att`.
+
+## Follow-up F20.2: the blockers of the review of group F
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the variants of the review of group F (scratchpad `freview/variants/`, the review
+`freview/review.md`). Before the fix the `ir` pipeline accepted each `_b.wf` but
+`fp1_held_part_b.wf`, and rejected `fp1_held_part_c.wf`.
+
+- `fixes/f20_2/f1_*.wf` (claims F20.2-F1): an argument that a generic callee holds
+  moves at `Main`. A closure that reads it during the call (`h07`, `h01`: W0302, the
+  old pipeline says W0301), a `once` closure that the callee holds and a later call
+  (`m06`, and `e04` with an `extern` callee: W0502), a `once` closure or an `Rc` held
+  across a `multi` operation (`m01`, `m03`: W0503). The `_c.wf` twins are clean.
+- `fixes/f20_2/fp1_*.wf` (claims F20.2-FP1): the callee holds one part of a tuple. The
+  type argument gives the held variable (`g10`).
+- `fixes/f20_2/f2_*.wf` (claim F20.2-F2): a callee with two handle arguments gives one
+  back and the other to a closure or into a `Vec` (`q01`, `q05`): W0405 after the `join`
+  of the result. The control is `r3/oracle/probes/x8_id_join.wf` (accepted).
+- `fixes/f20_2/p1_*.wf` (claims F20.2-P1, not of group F): a move of a `ByMove` capture
+  in a closure body, in an inner closure, on one path (`x08`, `x07`, `x05`): W0301.
+- `fixes/f20_2/p2_*.wf` (claims F20.2-P2, not of group F): a `fork` through a callee in
+  a closure body. The branch captures an `Rc` (`x01`: W0401) or changes a `ByRef` and a
+  `Kept` capture of the maker (`x09`: 2 x W0403).
+
+## Follow-up F20.3: B-1 and I-2 of the second review of group F
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the variants of the second review of group F (scratchpad `freview2/v/`, the review
+`freview2/review.md`). Before the fix the `ir` pipeline accepted each `_b.wf` but the
+two controls `b1_ctl_*`.
+
+- `fixes/f20_3/b1_*.wf` (claims F20.3-B1): a clause of a local handler uses an argument
+  that the call moved, while the call waits: a generic callee (`cl8`, `r1m`), a callee
+  that is not generic (`cl3`), a linear value (`cl4`), a change in the clause (`cl5`), a
+  callee that consumes the value (`r1m2`). W0302. The controls `b1_ctl_*` (`cl1`, `cl7`)
+  move the value at an earlier node (no change). The `_c.wf` twins are clean.
+- `fixes/f20_3/i2_*.wf` (claims F20.3-I2): one `once` or linear closure in two operands
+  of one node: a tuple (`o1`), a call that is not generic (`f1j2`; the old pipeline
+  misses it), generic calls (`f1j3`, `f1j`, `o6`, `o3`, `o7`). W0502. `i2_ctl_twice_c.wf`
+  (`o2`) is the clean control.
+
+## Follow-up F20.4: B-2 and I-8 of the third review of group F
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the finding. They come
+from the variants of the third review of group F (scratchpad `freview3/v/`, the review
+`freview3/review.md`). Before the fix the `ir` pipeline accepted each `_b.wf`.
+
+- `fixes/f20_4/b2_*.wf` (claims F20.4-B2): a clause reads a reference into an argument
+  that the call moved, while the call waits: a generic callee (`b04g`, `b28`), a callee
+  that is not generic (`b04`), a clause that resumes (`b04r`), a reference to a part
+  (`b04p`), a closure that captures the reference (`b27`). W0301. `b2_ref_other_c.wf`
+  (`b04c`) is the clean control.
+- `fixes/f20_4/i8_*.wf` (claims F20.4-I8): one place moved two times at one node: a
+  part of a tuple (`i21u`, `i21t`, `i21g`), a capture in a closure body (`i22`, `i22g`;
+  W0302, the old pipeline says W0502), two arguments of a perform (`i15`). The controls
+  `i8_ctl_*` (`i08`, `i12`, `i13`) are clean.
+- Not in the gate (I-10 of the review; the old pipeline gives a false W0302, so each one
+  is `lost-clean`): `c03`, `c03g` and `c05` of `freview3/v`. The `ir` pipeline accepts
+  them now.
+
+## Stage C1: the precision causes of the tier-2 new-fp rows (issues #56 to #59)
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add them
+again if it runs. Each one has one line of header that names the issue. Most come from
+the tests of the stage (`crates/weft-check/tests/data/handlers/` and `fn_values/`); the
+others come from the self-attack of the stage (scratchpad `c1/att/`). Before the fix the
+`ir` pipeline rejected each `_c.wf`.
+
+- `fixes/c1/n56_*.wf` (claims C1-56): a closure that runs a captured value is a `multi`
+  point only for the value that the caller gives; a re-entry edge after code of a caller
+  does not run the values of the interface again; a reference into an `rc` object with
+  no function part reaches no function value. The `_b.wf` programs resume two times
+  (W0503) or run a `once` closure two times (W0502).
+- `fixes/c1/n57_*.wf` (claims C1-57): a call in a handled body runs the clause of a
+  handler whose capability a closure captures only for a value that can perform through
+  it. `n57_param_fails_b.wf` is the shape of the four tier-2 rows of `h0` that stay
+  (`stricter`): a function parameter can be an item that fails.
+- `fixes/c1/n58_*.wf` (claims C1-58): the clause of a local `Fail` handler runs only for
+  a value that can fail; the places that a closure gives to a captured value are no
+  arguments of the call (W0312).
+- `fixes/c1/n59_*.wf` (claim C1-59): a run of a closure that changes a captured `u64`
+  gives it no linear value.

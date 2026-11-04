@@ -1,0 +1,13 @@
+// F20.4 I-8 (i15): keep2(f, f) at a perform (W0502).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+effect Keep { fn keep2(a: fn(), b: fn()) }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    handle Keep { fn keep2(a, b) { a()
+ b()
+ resume(()) } } in { keep2(f, f) }
+}

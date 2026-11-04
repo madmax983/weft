@@ -76,12 +76,60 @@ fn check_bodies(analysis: Analysis, files: &[SourceFile]) -> Checked {
         reports.push(r);
     }
     diags.sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
+    fold(&mut diags);
     dedup_diags(&mut diags);
     Checked {
         analysis,
         reports,
         diags,
         ir: None,
+    }
+}
+
+/// Folds the facts of each diagnostic with a [`crate::diagnose::FOLD`]
+/// message into the W0204 of the signature check of the same parameter
+/// before it (the nearest one in the same unit), and removes it. With no
+/// such diagnostic, it stays as a W0204 at its own span. `diags` must be
+/// sorted.
+fn fold(diags: &mut Vec<Diagnostic>) {
+    use crate::diagnose::FOLD;
+    let mut i = 0;
+    while i < diags.len() {
+        let Some(name) = diags
+            .get(i)
+            .and_then(|d| d.message.strip_prefix(FOLD))
+            .map(str::to_string)
+        else {
+            i += 1;
+            continue;
+        };
+        let unit = diags.get(i).map_or(0, |d| d.unit);
+        let text = format!("by-value parameter `{name}`");
+        let host = (0..i).rev().find(|&j| {
+            diags.get(j).is_some_and(|d| {
+                d.unit == unit
+                    && d.code == weft_syntax::diag::Code::W0204
+                    && d.message.contains(&text)
+                    && d.facts.is_empty()
+            })
+        });
+        if let Some(j) = host {
+            let facts = diags
+                .get_mut(i)
+                .map(|d| std::mem::take(&mut d.facts))
+                .unwrap_or_default();
+            if let Some(h) = diags.get_mut(j) {
+                h.facts.extend(facts);
+            }
+            diags.remove(i);
+        } else {
+            if let Some(d) = diags.get_mut(i) {
+                d.message = format!(
+                    "a returned reference cannot point into the by-value parameter `{name}`: it goes out of scope at the return"
+                );
+            }
+            i += 1;
+        }
     }
 }
 

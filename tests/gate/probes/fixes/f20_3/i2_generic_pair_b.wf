@@ -1,0 +1,13 @@
+// F20.3 I-2 (f1j3): one once closure in two arguments of a generic call (W0502).
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn pair<T>(a: T, b: T) -> (T, T) { (a, b) }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    let (g, h) = pair(f, f)
+    g()
+    h()
+}

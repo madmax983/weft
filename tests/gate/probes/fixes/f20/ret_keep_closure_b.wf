@@ -1,0 +1,9 @@
+// F20-RET (stage F20): a linear closure goes through a generic identity and the result is dropped.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn keep<T>(x: T) -> T { x }
+fn main() {
+    let t = begin(1)
+    let g = keep(|| commit(t))
+}

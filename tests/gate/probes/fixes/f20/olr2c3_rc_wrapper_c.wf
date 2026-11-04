@@ -1,0 +1,5 @@
+// OL-R2c-3 (stage F20): a generic wrapper holds Rc<T> across a multi operation; T = u64 is many (the type argument, not the worst case).
+effect Choice { multi fn choose() -> bool }
+fn wrap<T>(x: Rc<T>) -> Rc<T> / Choice { let b = choose()
+ x }
+fn main() { handle Choice { fn choose() { resume(true); resume(false) } } in { let r = wrap(Rc.new(5)); print("ok") } }

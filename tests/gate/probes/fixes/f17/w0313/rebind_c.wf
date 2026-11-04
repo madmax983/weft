@@ -1,0 +1,10 @@
+// D-REBIND: a callee may run the closure that gives a local a new value; the local keeps the closure that performs through the capability too (W0313)
+effect Log { fn log(m: String) }
+fn maybe(c: bool, g: fn()) { if c { g() } }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        maybe(false, || { f = || print(1) })
+    }
+    f()
+}

@@ -1,0 +1,14 @@
+// F19.5 (R3-4, issue #51): the call is on one branch; the other branch writes the place of the task
+effect Note { fn note() }
+fn f(g: fn()) / Note { g(); note() }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let c = false
+    scope { s =>
+        let g = || { s.spawn(|| v.push(2)); () }
+        handle Note { fn note() { resume(()) } } in {
+            if c { f(g) } else { v.push(3) }
+        }
+    }
+}

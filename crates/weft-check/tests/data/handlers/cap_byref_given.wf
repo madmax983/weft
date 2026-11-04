@@ -1,0 +1,16 @@
+// The clause keeps the reference that the closure gives, into a variable that the
+// closure captures by reference. The body then frees the place.
+effect Keep { fn keep(r: &i64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(7)
+    let o: Option<&i64> = Some(&w[0])
+    handle Keep { fn keep(r) { o = Some(r); resume(()) } } in {
+        let h = || keep(&v[0])
+        h()
+        v.clear()
+    }
+    match o { Some(x) => print(x + 1), None => {} } //~ W0301
+}

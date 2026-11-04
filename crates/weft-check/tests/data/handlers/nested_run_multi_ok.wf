@@ -1,0 +1,15 @@
+// Issue #56 (stage C1): a closure runs a captured closure that performs nothing. The program declares a `multi` operation, but no run resumes more than once: the run of the closure is not a `multi` point.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn apply(f: fn()) { f() }
+fn then(f: fn()) { f() }
+fn main() {
+    let tx = Tx { id: 1 }
+    let f1 = || print(0)
+    let g = || f1()
+    apply(g)
+    let h = || then(f1)
+    apply(h)
+    commit(tx)
+}

@@ -1,0 +1,6 @@
+// Out of scope of the ir pipeline: a handler in a closure body (a fallback of
+// stage F16).
+effect Log { fn log(n: u64) }
+fn quiet() { let f = || { handle Log { fn log(n) { resume(()) } } in log(1) }
+ f() }
+fn main() { quiet() }

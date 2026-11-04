@@ -1,0 +1,11 @@
+// R2-1: a callee runs a closure that starts a reader, then fails; the Fail clause of the caller writes the place
+fn run_fail(g: fn()) / fail { g(); fail("x") }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        handle Fail { fn fail(m) { v.push(3) } } in {
+            run_fail(|| { s.spawn(|| print(v.len())); () })
+        }
+    }
+}

@@ -352,3 +352,48 @@ fn a_value_that_a_body_runs_and_that_no_caller_gives_changes_the_places_of_the_c
     // (no W0312).
     check("unknown_runs.wf");
 }
+
+#[test]
+fn a_closure_that_a_callee_made_and_that_runs_a_once_capture_two_times_is_w0502() {
+    // Group C fix C1-ONCE (scratchpad f19/or3c1.wf): `fn wrap(f: fn()) ->
+    // fn() { || { f(); f() } }` and `let g = wrap(|| eat(b)); g()`. The made
+    // closure holds the `once` closure in its own value, and its run runs the
+    // capture two times, but the run did not move the value of the closure:
+    // the `ir` pipeline accepted it, and the run faults. The run now moves the
+    // value of the closure and the run again uses it (W0502), also in a
+    // loop, through a callee, a second maker, another made closure, a vector
+    // or a field. The controls run the capture one time, or give a `many`
+    // closure.
+    check("made_once_runs.wf");
+}
+
+/// Issue #58 (stage C1): the places that a closure gives to a run of a
+/// captured value are no places that the callee of the node gives. A change
+/// of the closure there (before or after the run) is no W0312 at the call
+/// that runs the closure. A callee that keeps a reference across the run of
+/// a closure that changes the place is still W0312.
+#[test]
+fn the_places_that_a_closure_gives_to_a_captured_value_are_not_given_by_the_callee() {
+    check("nested_run_args.wf");
+    check("nested_run_args_ok.wf");
+}
+
+/// Issue #59 (stage C1): a run of a closure that changes a captured
+/// variable gives it a value of its type. A variable that can hold no linear
+/// value and no function value stays plain data, also when the callee that
+/// made the closure got a linear argument. A variable that can hold a
+/// linear value gets one (W0601).
+#[test]
+fn a_change_of_a_capture_of_plain_data_gives_no_linear_value() {
+    check("made_rebinds_plain.wf");
+    check("made_rebinds_plain_ok.wf");
+}
+
+/// Stage C1 (self-attack): a closure that gives a captured function variable
+/// a new closure that moves a linear value makes the variable linear (the
+/// part `rebinds`): W0601 if nothing runs it.
+#[test]
+fn a_closure_that_rebinds_a_capture_to_a_linear_closure_makes_it_linear() {
+    check("rebind_linear_closure.wf");
+    check("rebind_linear_closure_ok.wf");
+}

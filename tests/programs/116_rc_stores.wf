@@ -80,8 +80,8 @@ fn closure_param_hof(c: Rc<Calls>) / mut(Calls) {
 fn clause_param(c: Rc<Calls>) / mut(Calls) {
     let v: Vec<u64> = Vec.new()
     v.push(7)
-    handle Keep { fn keep(x) { c.refs.push(x)
- resume(()) } } in keep(&v[0])   //~ W0204
+    handle Keep { fn keep(x) { c.refs.push(x)   //~ ir: W0204
+ resume(()) } } in keep(&v[0])   //~ old: W0204
 }
 // A reference behind a local `Rc` handle of another `rc` type: the object can
 // go away with the handle.
@@ -128,11 +128,11 @@ fn main() {
     let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
     fill_self(c.clone())
     fill_value(c.clone())
-    print(c.refs.len(), c.data.len())
+    print(c.refs.len(), c.data.len())   //~ ir: W0301
     let k = Rc.new(Calls { fs: Vec.new(), refs: Vec.new(), data: Vec.new() })
     closure_param_group(k.clone())
     store_closure_value(k.clone())
     let f = k.fs[0]
     f()
-    print(k.refs.len())
+    print(k.refs.len())   //~ ir: W0301
 }

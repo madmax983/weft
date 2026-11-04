@@ -1,0 +1,14 @@
+// The clause keeps the reference that the closure gives. Nothing changes the
+// place: no error, and a lend of the argument of the perform is no change.
+effect Keep { fn keep(r: &i64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let o: Option<&i64> = None
+    handle Keep { fn keep(r) { o = Some(r); resume(()) } } in {
+        let h = || keep(&v[0])
+        h()
+        h()
+    }
+    match o { Some(x) => print(x + 1), None => {} }
+}

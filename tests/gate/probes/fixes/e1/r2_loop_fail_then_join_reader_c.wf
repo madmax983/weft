@@ -1,0 +1,20 @@
+// R2-2 (clean twin): the callee joins, then fails
+fn wait(t: Task<()>, c: bool) / fail, async { t.join(); if c { fail("stop") } }
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let t = s.spawn(|| print(v.len()))
+            sleep(1.ms)
+            if i == 0 {
+                handle Fail { fn fail(m) { print(m) } } in { wait(t, true) }
+            } else {
+                t.join()
+                v.push(3)
+            }
+            i += 1
+        }
+    }
+}

@@ -398,14 +398,29 @@ fn the_phases_of_each_terminator_follow_ir_6_2() {
                 &[Main, AbortValue, FrameEnd],
                 &[],
             ),
-            "perform" | "join" | "fork" => (&[Main, Ret], &[Main], &[Main, AbortValue], &[]),
+            "perform" | "join" => (&[Main, Ret], &[Main], &[Main, AbortValue], &[]),
+            // A `Task` node for each branch and one where they end (plan
+            // stage F19).
+            "fork" => {
+                let k = match &t {
+                    TermKind::Fork { branches, .. } => u32::try_from(branches.len()).unwrap_or(0),
+                    _ => 0,
+                };
+                let mut v = vec![Main];
+                v.extend((1..=k + 1).map(Phase::Task));
+                v.push(Ret);
+                assert_eq!(normal, v, "{name}: normal path");
+                (&[Main, Ret], &[Main], &[Main, AbortValue], &[])
+            }
             "handle" => (&[Main, Exit, Post], &[Main], &[Main], &[Landing]),
             "scope" => (&[Main, Exit, FrameEnd], &[Main], &[Main], &[]),
             "scope wait" => (&[Main], &[Main], &[Main, AbortValue], &[]),
             "assert" => (&[Main], &[Main], &[Main], &[]),
             _ => (&[Main], &[], &[], &[]),
         };
-        assert_eq!(normal, want.0, "{name}: normal path");
+        if name != "fork" {
+            assert_eq!(normal, want.0, "{name}: normal path");
+        }
         assert_eq!(abort, want.1, "{name}: abort path");
         assert_eq!(valued, want.2, "{name}: abort path with a value");
         assert_eq!(landing, want.3, "{name}: landing");
@@ -416,7 +431,12 @@ fn the_phases_of_each_terminator_follow_ir_6_2() {
 
 /// The analysis and the IR of `src`.
 fn built(src: &str) -> (Analysis, Built) {
-    let a = analyze_source(src, Options::default())
+    built_with(src, Options::default())
+}
+
+/// The analysis and the IR of `src` with the options `opts`.
+fn built_with(src: &str, opts: Options) -> (Analysis, Built) {
+    let a = analyze_source(src, opts)
         .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
     let b = irbuild::build(&a);
     assert!(b.broken.is_empty(), "{:?}", b.broken);
@@ -798,7 +818,8 @@ fn each_local_with_storage_has_an_owner_variable_with_its_flags() {
         .find(|(_, cap)| cap.mode == weft_ir::CaptureMode::ByRef)
         .expect("a capture by reference");
     assert_eq!(var(VarKey::C(c.maker, cap.source.local)).name, "k (cell)");
-    // The task handle is `once`; the scope capability too.
+    // The task handle is `once`; the scope capability is not (plan stage
+    // F19: a `multi` resume runs a copy of the scope body).
     let scope_body = comp
         .iter()
         .copied()
@@ -806,7 +827,7 @@ fn each_local_with_storage_has_an_owner_variable_with_its_flags() {
         .expect("a scope body");
     let sb = &p.bodies[scope_body.index()];
     let cap = sb.params[0];
-    assert!(var(VarKey::S(scope_body, cap)).once);
+    assert!(!var(VarKey::S(scope_body, cap)).once);
     let h = sb
         .locals
         .iter()
@@ -1164,9 +1185,12 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
 }
 
 /// The relations that the code of a clause gives to a node that runs it
-/// (plan stage F14, `factgen::handlers::project`).
-const CLAUSE_PART: [&str; 15] = [
+/// (plan stage F14, `factgen::handlers::project`), and `spared_at` (`Post`
+/// of a `multi` handler, plan stage F16).
+const CLAUSE_PART: [&str; 17] = [
     "cfg_edge",
+    // A task that the clause starts in a scope of the site (plan stage F19).
+    "task",
     "uses",
     "moved_at",
     "rest_linear",
@@ -1181,6 +1205,7 @@ const CLAUSE_PART: [&str; 15] = [
     "performs_at",
     "may_abort",
     "multi_at",
+    "spared_at",
 ];
 
 /// The relations that the template of each node label can emit
@@ -1198,15 +1223,21 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // `Live` of the temporary that the value of an assignment starts
         // with binds the `N` variables of the variant steps of the target
         // (stage F8d, `docs/ir.md` 6.3).
-        "live" => (&["cfg_edge", "rebound_at"], &[]),
-        "unwind continuation" | "goto" | "unreachable" | "resume frame end" => (&["cfg_edge"], &[]),
+        // The `Copy` node of a `handle` whose clauses can run more than once
+        // (plan stages F15, F16): `Post` runs again after it.
+        "live" | "handle copy" => (&["cfg_edge", "rebound_at"], &[]),
+        "unwind continuation" | "goto" | "unreachable" | "resume frame end" | "scope frame end" => {
+            (&["cfg_edge"], &[])
+        }
         // The end of an abort to a local handler: the frames of the clauses
         // end (plan stage F14).
         "handle landing" => (&["cfg_edge", "releases_at"], &[]),
         // The unwinder finishes the `ByMove` captures of a closure body
         // (stage F11).
         "unwind exit" => (&["cfg_edge"], &["unwound_at"]),
-        "dead" => (&["cfg_edge", "scope_end"], &["unwound_at"]),
+        // The node after a `ScopeWait` (its first `Dead`): the writes of the
+        // tasks of the scope change there (plan stage F18).
+        "dead" => (&["cfg_edge", "scope_end", "lends_mut"], &["unwound_at"]),
         "assign" => (
             &[
                 "cfg_edge",
@@ -1230,15 +1261,43 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             ],
             &[],
         ),
-        "drop" => (&["cfg_edge", "reads_at", "rebound_at", "uses"], &[]),
+        // `Drop` changes the place (plan stage F20).
+        "drop" => (
+            &["cfg_edge", "mutates_at", "reads_at", "rebound_at", "uses"],
+            &[],
+        ),
+        // The node before an assignment that moves a `Box` with a place
+        // field: the old value of the destination goes (follow-up F8.1).
+        "overwrite" => (&["cfg_edge", "mutates_at"], &[]),
+        // The nodes of their own of a value that a generic callee holds or
+        // drops (plan stage F20, `factgen::generic`).
+        "held" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "may_abort",
+                "multi_at",
+                "uses",
+                "moved_at",
+            ],
+            &[],
+        ),
+        "dropped" => (&["cfg_edge", "rebound_at", "scope_end"], &[]),
         // Not a use: a pattern moved the parts before it.
-        "consume" => (&["cfg_edge", "moved_at", "moved_part", "rest_linear"], &[]),
+        // A `Consume` of a value with no handle on this path ends the
+        // tasks that only it can hold (O3-9, plan stage F18).
+        "consume" => (
+            &["cfg_edge", "moved_at", "moved_part", "rest_linear", "task"],
+            &[],
+        ),
         "uninit" => (&["cfg_edge", "unset_at"], &[]),
         // A mention reads the pointers and the index locals of its place
         // (stage F9).
         "bounds" | "switch" | "print" | "mention" => (&["cfg_edge", "reads_at", "uses"], &[]),
         // An `on abort` function: the summary of the function at the node,
         // with the root handlers (plan stage F7).
+        // The `UnwindValue` of the `ScopeCap` local of a scope body cancels
+        // and joins the tasks of the scope (V084, plan stage F18).
         "unwind value" => (
             &[
                 "cfg_edge",
@@ -1246,6 +1305,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "reads_at",
                 "mutates_at",
                 "lends_mut",
+                "task",
             ],
             &[],
         ),
@@ -1296,6 +1356,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "performs_at",
                 "releases_at",
                 "unset_at",
+                // A call of `sim.run`, and a run of a closure that starts a
+                // task in a scope of its maker (plan stage F19).
+                "sim_run_at",
+                "task",
             ],
             &[],
         ),
@@ -1306,6 +1370,8 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // F14) has the code of the clause before its resume points too.
         "perform" => (
             &[
+                // A clause that starts a task (plan stage F19).
+                "task",
                 "cfg_edge",
                 "reads_at",
                 "uses",
@@ -1367,10 +1433,14 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "lends_mut",
                 "multi_at",
                 "escapes_at",
+                // A closure that runs again starts its tasks again (F19).
+                "task",
             ],
             &[],
         ),
-        "call frame end" => (&["cfg_edge", "scope_end"], &[]),
+        // The writes of a task that a callee joins only on the normal path
+        // end after `Ret` (follow-up F19.3, E-1).
+        "call frame end" => (&["cfg_edge", "scope_end", "lends_mut"], &[]),
         "call frame end (abort)" => (&["cfg_edge", "scope_end", "unwound_at"], &[]),
         // Handlers (plan stage F14, `docs/ir.md` 6.4). `Exit`: the value of
         // the handled body is used and the value of the `handle` binds, as
@@ -1380,7 +1450,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         "handle exit"
         | "perform abort value (abort)"
         | "call abort value (abort)"
-        | "resume abort value (abort)" => (
+        | "resume abort value (abort)"
+        | "join abort value (abort)"
+        | "scope wait abort value (abort)" => (
             &[
                 "cfg_edge",
                 "uses",
@@ -1400,11 +1472,164 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // `Post`: the code of the clauses after their resume points
-        // (`factgen::handlers::project`); the frames of the clauses end.
-        // `PostAgain`: the code of a clause that can run more than once runs
-        // again (plan stage F15).
-        "handle post" | "handle post again" => (&CLAUSE_PART, &[]),
+        // (`factgen::handlers::project`); the frames of the clauses end. A
+        // later `resume` of a `multi` clause runs the handled body again
+        // there: the values outside it are spared (plan stage F16).
+        "handle post" => (&CLAUSE_PART, &[]),
+        // The `Copy` node of a node that a `multi` resume runs again (plan
+        // stage F16): the locals of the copied frames get new values, a call
+        // runs the code of its callee after the perform again, and the
+        // linear value of the `handle` of the first run ends. The copy of
+        // the frame of a call is used again (follow-up F17.1, D-MULTI-MID).
+        "perform copy" | "call copy" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "lends_mut",
+                "releases_at",
+                "moved_at",
+                "uses",
+            ],
+            &[],
+        ),
         "resume frame end (abort)" => (&["cfg_edge", "unwound_at"], &[]),
+        // Tasks (plan stage F18, `docs/ir.md` 6.4). `Main` of a `scope`:
+        // the scope capability binds; the scope can abort (a cancel).
+        "scope" => (&["cfg_edge", "rebound_at", "empty_at", "may_abort"], &[]),
+        // `Exit`: the value of the scope body is used and binds.
+        "scope exit" => (
+            &[
+                "cfg_edge",
+                "uses",
+                "rebound_at",
+                "empty_at",
+                "mutates_at",
+                "reads_at",
+                "moved_at",
+                "overwrites",
+                "unset_at",
+            ],
+            &[],
+        ),
+        // The scope ends its tasks; the `TaskResult` locals get the results;
+        // a child failure runs the `fail` clause of a local handler.
+        "scope wait" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "task",
+                "may_abort",
+                "rebound_at",
+                "empty_at",
+                "performs_at",
+                "releases_at",
+            ],
+            &[],
+        ),
+        // A spawn: the operands, the task (its run at the node), and the
+        // handle (or the `TaskResult` local) binds.
+        "spawn" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "lends_mut",
+                "call",
+                "rebound_at",
+                "empty_at",
+                "overwrites",
+                "task",
+            ],
+            &[],
+        ),
+        // `Main` of a `fork` (plan stage F19): its abort; a branch starts
+        // at its `Task` node as a spawn, and the last `Task` node ends the
+        // branches; `Ret` binds the tuple of the results.
+        "fork" => (&["cfg_edge", "may_abort"], &[]),
+        "fork task" | "call task" => (
+            &[
+                "cfg_edge",
+                "empty_at",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "lends_mut",
+                "call",
+                "rebound_at",
+                "overwrites",
+                "task",
+            ],
+            &[],
+        ),
+        "fork ret" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "uses",
+                "moved_at",
+                "overwrites",
+                "unset_at",
+            ],
+            &[],
+        ),
+        // A `join`: the handle moves (the machine takes the task out of its
+        // place), the tasks that only it holds end.
+        "join" => (
+            &[
+                "cfg_edge",
+                "mutates_at",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "task",
+                "may_abort",
+                "performs_at",
+                "releases_at",
+            ],
+            &[],
+        ),
+        // The result binds; the writes of the ended tasks change.
+        "join ret" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "uses",
+                "moved_at",
+                "mutates_at",
+                "reads_at",
+                "overwrites",
+                "lends_mut",
+                "unset_at",
+            ],
+            &[],
+        ),
+        // `detach`: the handle moves; the drop pair of the result.
+        "detach" => (
+            &[
+                "cfg_edge",
+                "mutates_at",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "rebound_at",
+            ],
+            &[],
+        ),
         // A `resume`: its operand, the continuation, and the rest of the
         // handled body (`factgen::handlers::continuations`).
         "resume" => (
@@ -1430,13 +1655,22 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
 /// its label. Returns the relations of each label.
 fn check_templates(f: &FnFacts, what: &str) -> BTreeMap<String, BTreeSet<&'static str>> {
     let mut seen: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
+    // A task that a call starts while code of a local handler can run at
+    // its `Main` starts on each edge into that node too (follow-up F19.4):
+    // a node with an edge into a `call` node can have `spawned_at`.
+    let before_call = |n: NodeId| {
+        !f.joined_at.iter().any(|&(_, m)| m == n)
+            && f.cfg_edge
+                .iter()
+                .any(|&(a, b)| a == n && f.node(b).kind == "call")
+    };
     for (n, rels) in node_rels(f) {
         let label = f.node(n).kind.clone();
         let (normal, cleanup) =
             template_of(&label).unwrap_or_else(|| panic!("{what}: no template for `{label}`"));
         for r in &rels {
             assert!(
-                normal.contains(r) || cleanup.contains(r),
+                normal.contains(r) || cleanup.contains(r) || (*r == "task" && before_call(n)),
                 "{what}: `{label}` emits {r}"
             );
         }
@@ -2082,21 +2316,36 @@ fn writes_via_at_a_method_call_through_one_reference() {
     assert!(g.writes_via.is_empty(), "{:?}", g.writes_via);
 }
 
+/// Follow-up F20.2 (F-1 of the review of group F): a held argument moves at
+/// `Main`, as each argument. A variable of the type argument stands for the
+/// held value: it is live across a node of its own that has the abort of
+/// `Main`.
 #[test]
-fn a_held_argument_moves_at_ret() {
+fn a_held_argument_moves_at_main_and_a_held_value_is_live_across_a_node_of_its_own() {
     let f = call_facts("holds");
     let t = var_named(&f, "t");
     let main = call_phase(&f, "call", 0);
     let ret = call_phase(&f, "call ret", 0);
     assert!(has(&f.uses, t, main), "the call reads its argument");
-    assert!(
-        !has(&f.moved_at, t, main),
-        "a held argument stays live at `Main`"
-    );
-    assert!(has(&f.moved_at, t, ret), "{:?}", f.moved_at);
-    // The callee can abort (`log`), so the value is live across an abort.
+    assert!(has(&f.moved_at, t, main), "{:?}", f.moved_at);
+    assert!(!has(&f.moved_at, t, ret), "{:?}", f.moved_at);
+    // The callee can abort (`log`).
     assert!(f.may_abort.contains(&main));
     assert!(f.escapes_at.iter().any(|(n, e)| *n == main && e == "Log"));
+    // The held value: `held by the callee`, the node of the callee, and
+    // `given back by the callee`. The node of the callee can abort, as
+    // `Main` can.
+    let held = nodes_labelled(&f, "held");
+    assert_eq!(held.len(), 3, "{held:?}");
+    let (b, a, r) = (held[0], held[1], held[2]);
+    assert!(f.cfg_edge.contains(&(b, a)) && f.cfg_edge.contains(&(a, r)));
+    assert!(f.may_abort.contains(&a), "{:?}", f.may_abort);
+    let v = (0..f.vars.len())
+        .map(|i| VarId(id(i)))
+        .find(|&v| has(&f.rebound_at, v, b))
+        .unwrap_or_else(|| panic!("no held variable: {:?}", f.rebound_at));
+    assert!(f.vars[v.0 as usize].linear);
+    assert!(has(&f.uses, v, r) && has(&f.moved_at, v, r));
     // `keep` can drop a value of its type parameter: a linear type argument
     // goes away at the call (W0601).
     let dropped: Vec<VarId> = (0..f.vars.len())
@@ -2852,13 +3101,17 @@ fn a_perform_aborts_to_its_handler_only_if_the_clause_can_end_with_no_resume() {
         "{some:?}"
     );
     // The clause of `twice` runs at two performs: its code after `resume`
-    // runs at `Post` and again at `PostAgain`.
+    // runs at `Post` once for each run, in a cycle through the `Copy` node
+    // of the `handle` (plan stage F16).
     let f = ir_facts_with(RESUMES, abcd(), "twice");
     check_templates(&f, "twice");
-    assert_eq!(nodes_labelled(&f, "handle post").len(), 1);
-    assert_eq!(nodes_labelled(&f, "handle post again").len(), 1);
+    let post = nodes_labelled(&f, "handle post");
+    let copy = nodes_labelled(&f, "handle copy");
+    assert_eq!((post.len(), copy.len()), (1, 1));
+    assert!(f.cfg_edge.contains(&(post[0], copy[0])));
+    assert!(f.cfg_edge.contains(&(copy[0], post[0])));
     let g = ir_facts_with(RESUMES, abcd(), "each");
-    assert!(nodes_labelled(&g, "handle post again").is_empty());
+    assert!(nodes_labelled(&g, "handle copy").is_empty());
     assert!(nodes_labelled(&g, "handle landing").len() <= 1);
     assert!(nodes_labelled(&g, "perform abort value (abort)").is_empty());
 }
@@ -2892,7 +3145,8 @@ fn a_call_gives_a_clause_the_places_of_the_callee_frame_and_of_its_arguments() {
 // ------------------------------------------------------- the fact oracle
 
 /// The components of the fact oracle (`docs/ir.md` 8.5) have the facts that
-/// the checker reads in the `ir` pipeline, on each corpus program in scope:
+/// the checker reads in the `ir` pipeline, before the prune of the rows that
+/// no rule reads (`factgen::prune`, stage C1.4), on each corpus program in scope:
 /// the oracle maps the IR to the node ids of those facts. The components are
 /// made from the analysis of the old pipeline, as the interpreter does.
 #[test]
@@ -2928,7 +3182,11 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
         for c in &comps {
             checked += 1;
             let want = &ir.bodies[c.index].facts;
-            if &c.facts != want {
+            // The checker reads the facts after the prune of the rows that no
+            // rule reads (stage C1.4); the fact oracle reads them before it.
+            let mut pruned = c.facts.clone();
+            weft_sema::factgen::prune::prune(&mut pruned);
+            if &pruned != want {
                 bad.push(format!("{} {}", f.display(), c.facts.name));
             }
             // The entry node is `n0`, and each node of the table is a node
@@ -3110,4 +3368,325 @@ fn a_closure_that_runs_a_capture_applies_the_value_of_the_capture() {
         .find(|&n| f.node(n).span == span)
         .unwrap_or_else(|| panic!("no `Ret` of the call of `f`"));
     assert!(f.uses.contains(&(r, ret)), "{:?}", f.uses);
+}
+
+/// Programs with `multi` handlers (plan stage F16): a local handler whose
+/// clause resumes twice, and a function that performs a `multi` operation
+/// of a handler of a caller (OL-R2a).
+const MULTI: &str = "effect Pick { multi fn pick() -> bool }
+fn local(o: &Vec<u64>) / mut(o) {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let w = Vec.new()
+        w.push(1)
+        let r = &o[0]
+        let q = &w[0]
+        let b = pick()
+        print(r + q)
+    }
+}
+fn row(o: &Vec<u64>) / Pick {
+    let w = Vec.new()
+    w.push(1)
+    let r = &o[0]
+    let b = pick()
+    print(w[0] + r)
+}
+fn main() {}
+";
+
+#[test]
+fn a_multi_resume_runs_the_code_after_the_perform_again_from_copied_frames() {
+    // A local handler: `Post` goes to the `Copy` node of the perform, then
+    // to its `Ret`. The copy rebinds `q` (it points into a local of the
+    // handled body), not `r` (it points into a place of the parameter).
+    let f = ir_facts_with(MULTI, abcd(), "local");
+    check_templates(&f, "local");
+    let post = nodes_labelled(&f, "handle post");
+    let copy = nodes_labelled(&f, "perform copy");
+    let ret = nodes_labelled(&f, "perform ret");
+    assert_eq!((post.len(), copy.len(), ret.len()), (1, 1, 1));
+    assert!(f.cfg_edge.contains(&(post[0], copy[0])));
+    assert!(f.cfg_edge.contains(&(copy[0], ret[0])));
+    let (q, r) = (var_named(&f, "q"), var_named(&f, "r"));
+    assert!(f.rebound_at.contains(&(q, copy[0])));
+    assert!(!f.rebound_at.contains(&(r, copy[0])));
+    // The clause resumes twice: each perform of its operation is a `multi`
+    // point (W0503).
+    assert_eq!(f.clause_multi.len(), 1);
+    // A handler of a caller (OL-R2a): each `Return` of the function goes to
+    // the `Copy` node of the perform.
+    let g = ir_facts_with(MULTI, abcd(), "row");
+    check_templates(&g, "row");
+    let copy = nodes_labelled(&g, "perform copy");
+    let ret = nodes_labelled(&g, "perform ret");
+    let returns = nodes_labelled(&g, "return");
+    assert_eq!((copy.len(), ret.len()), (1, 1));
+    assert!(!returns.is_empty());
+    for x in returns {
+        assert!(g.cfg_edge.contains(&(x, copy[0])));
+    }
+    assert!(g.cfg_edge.contains(&(copy[0], ret[0])));
+    let (w, r) = (var_named(&g, "w"), var_named(&g, "r"));
+    assert!(g.rebound_at.contains(&(w, copy[0])));
+    assert!(!g.rebound_at.contains(&(r, copy[0])));
+}
+
+/// The options of the `ir` pipeline with the groups A to E on (plan stage
+/// F18: group E is a preview).
+fn abcde() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("ABCDE").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::default()
+    }
+}
+
+const SCOPES: &str = "\
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn join_it(t: Task<()>) { t.join() }
+fn maybe(t: Task<()>, c: bool) { if c { t.join() } else { t.detach() } }
+
+fn kept() / async {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| print(n))
+        }
+        print(0)
+    }
+}
+
+fn work(v: &Vec<u64>) / mut(v), async {
+    scope { s =>
+        let h = s.spawn(|| v.push(1))
+        h.join()
+        s.spawn(|| v.push(2))
+        let d = s.spawn(|| begin())
+        d.detach()
+        v.push(3)
+    }
+}
+
+fn two(v: &Vec<u64>, c: bool) / mut(v), async {
+    scope { s =>
+        let a = s.spawn(|| v.push(1))
+        let b = s.spawn(|| print(1))
+        if c { let x = a; a = b; b = x }
+        a.join()
+        b.join()
+    }
+}
+
+fn main() {}
+";
+
+#[test]
+fn a_task_that_captures_a_kept_variable_keeps_its_root() {
+    // `docs/ir.md` 6.4: `kept(T, root(x))` for each `Kept` capture of the
+    // task; the end of `n` is no free for the task (ADR 0006).
+    let f = ir_facts_with(SCOPES, abcde(), "kept");
+    check_templates(&f, "kept");
+    let n = var_named(&f, "n");
+    assert_eq!(f.spawned_at.len(), 1);
+    let t = f.spawned_at[0].0;
+    assert!(f.captures.contains(&(t, n)), "{:?}", f.captures);
+    let root = f
+        .owner
+        .iter()
+        .find(|(_, v)| *v == n)
+        .map_or_else(|| panic!("no root of `n`"), |(p, _)| *p);
+    assert!(f.kept.contains(&(t, root)), "{:?}", f.kept);
+    assert!(f.task_reads.contains(&(t, root)));
+}
+
+#[test]
+fn a_scope_joins_each_task_at_its_wait_and_on_its_cleanup_chain() {
+    // `ScopeWait` ends each task of the scope; the `UnwindValue` of the
+    // `ScopeCap` local on the cleanup chain cancels and joins them (V084).
+    // A `join` of a handle that must hold its task ends it at `Main`, and
+    // the writes of a task are `lends_mut` after its end.
+    let f = ir_facts_with(SCOPES, abcde(), "work");
+    check_templates(&f, "work");
+    assert_eq!(f.spawned_at.len(), 3);
+    let wait = nodes_labelled(&f, "scope wait");
+    let join = nodes_labelled(&f, "join");
+    let unwind: Vec<NodeId> = nodes_labelled(&f, "unwind value");
+    assert_eq!((wait.len(), join.len()), (1, 1));
+    for &(t, _) in &f.spawned_at {
+        assert!(f.joined_at.contains(&(t, wait[0])), "{t:?}");
+        assert!(unwind.iter().any(|&u| f.joined_at.contains(&(t, u))));
+    }
+    // The tasks in the order of their spawns.
+    let mut order = f.spawned_at.clone();
+    order.sort_by_key(|(_, n)| *n);
+    let h = order[0].0;
+    assert!(f.joined_at.contains(&(h, join[0])));
+    let ret = nodes_labelled(&f, "join ret");
+    let writes: Vec<PlaceId> = f
+        .task_writes
+        .iter()
+        .filter(|(t, _)| *t == h)
+        .map(|(_, p)| *p)
+        .collect();
+    assert!(!writes.is_empty());
+    for p in writes {
+        assert!(f.lends_mut.contains(&(ret[0], p)));
+    }
+    // The detached task runs on: its handle ends at `detach` only.
+    let d = order[2].0;
+    assert!(!f.joined_at.contains(&(d, join[0])));
+}
+
+#[test]
+fn a_join_ends_a_task_only_if_no_other_handle_can_hold_it() {
+    // V096: after the swap `a` and `b` can each hold either task, so the
+    // first `join` ends neither; the second ends both (no other handle
+    // holds them then).
+    let f = ir_facts_with(SCOPES, abcde(), "two");
+    check_templates(&f, "two");
+    let mut join = nodes_labelled(&f, "join");
+    join.sort();
+    assert_eq!(join.len(), 2);
+    assert_eq!(f.spawned_at.len(), 2);
+    for &(t, _) in &f.spawned_at {
+        assert!(!f.joined_at.contains(&(t, join[0])), "{t:?}");
+        assert!(f.joined_at.contains(&(t, join[1])), "{t:?}");
+    }
+}
+
+#[test]
+fn a_function_that_joins_its_handle_parameter_on_each_path_has_part_joins() {
+    // O3-9: `join_it` joins its parameter on each path (part `joins`); a
+    // body that detaches it on one path does not.
+    let (a, b) = built_with(SCOPES, abcde());
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let f = |name: &str| {
+        let i = b
+            .fns
+            .iter()
+            .find(|(k, _)| a.program.fns.get(k.index()).is_some_and(|d| d.name == name))
+            .map_or_else(|| panic!("no `{name}`"), |(_, v)| *v);
+        sums.get(i)
+            .cloned()
+            .unwrap_or_else(|why| panic!("{name}: {why}"))
+    };
+    assert_eq!(f("join_it").joins.iter().copied().collect::<Vec<_>>(), [0]);
+    assert!(f("maybe").joins.is_empty());
+}
+
+/// Callees that join a handle before or after they can fail (E-1 of the
+/// review of group E, follow-up F19.3).
+const ABORT_JOINS: &str = "\
+fn early(t: Task<()>, c: bool) / fail, async { t.join(); if c { fail(\"x\") } }
+fn late(t: Task<()>, c: bool) / fail, async { if c { fail(\"x\") }; t.join() }
+fn plain(t: Task<()>) / async { t.join() }
+
+fn caller() / async {
+    let v = Vec.new()
+    scope { s =>
+        let a = s.spawn(|| v.push(1))
+        let b = s.spawn(|| v.push(2))
+        handle Fail { fn fail(m) { print(m) } } in { early(a, true) }
+        handle Fail { fn fail(m) { print(m) } } in { late(b, true) }
+    }
+}
+
+fn main() {}
+";
+
+#[test]
+fn a_join_after_an_abort_of_the_callee_ends_the_task_at_ret_only() {
+    // Part `abort_joins`: `early` and `plain` join their handle on each
+    // path of an abort too (the abort of the `join` itself ends the task);
+    // `late` can fail before its `join`.
+    let (a, b) = built_with(ABORT_JOINS, abcde());
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let f = |name: &str| {
+        let i = b
+            .fns
+            .iter()
+            .find(|(k, _)| a.program.fns.get(k.index()).is_some_and(|d| d.name == name))
+            .map_or_else(|| panic!("no `{name}`"), |(_, v)| *v);
+        sums.get(i)
+            .cloned()
+            .unwrap_or_else(|why| panic!("{name}: {why}"))
+    };
+    let parts = |name: &str| {
+        let s = f(name);
+        (
+            s.joins.iter().copied().collect::<Vec<_>>(),
+            s.abort_joins.iter().copied().collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(parts("early"), (vec![0], vec![0]));
+    assert_eq!(parts("plain"), (vec![0], vec![0]));
+    assert_eq!(parts("late"), (vec![0], vec![]));
+    // The call of `early` ends its task at `Main`; the call of `late` at
+    // `Ret`, so the abort edge of its `Main` keeps the task running.
+    let g = ir_facts_with(ABORT_JOINS, abcde(), "caller");
+    check_templates(&g, "caller");
+    let kinds: Vec<(String, String)> = g
+        .joined_at
+        .iter()
+        .map(|&(_, n)| {
+            (
+                g.nodes[n.index()].label.clone(),
+                g.nodes[n.index()].kind.clone(),
+            )
+        })
+        .filter(|(l, _)| l == "early" || l == "late")
+        .collect();
+    assert!(
+        kinds.contains(&("early".to_string(), "call".to_string())),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.contains(&("late".to_string(), "call ret".to_string())),
+        "{kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&("late".to_string(), "call".to_string())),
+        "{kinds:?}"
+    );
+}
+
+/// Callees that perform before or after they run a function parameter
+/// (R2-1 of the second review of group E, follow-up F19.4).
+const RUN_THEN: &str = "\
+effect Note { fn note() }
+fn run_note(g: fn()) / Note { g(); note() }
+fn note_run(g: fn()) / Note { note(); g() }
+fn run_fail(g: fn()) / fail { g(); fail(\"x\") }
+fn once(g: fn()) { g() }
+fn outer(g: fn()) / Note { once(g); note() }
+fn main() {}
+";
+
+#[test]
+fn a_run_that_the_callee_follows_with_a_perform_or_an_abort_has_then() {
+    // Part `runs`, `then`: after the run of `g`, the body can perform or
+    // abort, so a clause of a caller can run while a task of `g` runs.
+    let (a, b) = built_with(RUN_THEN, abcde());
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let then = |name: &str| {
+        let i = b
+            .fns
+            .iter()
+            .find(|(k, _)| a.program.fns.get(k.index()).is_some_and(|d| d.name == name))
+            .map_or_else(|| panic!("no `{name}`"), |(_, v)| *v);
+        let s = sums
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|why| panic!("{name}: {why}"));
+        s.runs
+            .iter()
+            .find(|r| r.param == 0)
+            .map_or_else(|| panic!("{name}: no run"), |r| r.then)
+    };
+    assert!(then("run_note"));
+    assert!(then("run_fail"));
+    assert!(then("outer"));
+    assert!(!then("note_run"));
+    assert!(!then("once"));
 }

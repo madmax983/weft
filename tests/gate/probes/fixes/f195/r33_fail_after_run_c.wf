@@ -1,0 +1,10 @@
+// F19.5 (R3-3, issue #51): a fail after the run; the clause writes another place
+fn f(g: fn()) / fail { g(); fail("x") }
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        handle Fail { fn fail(m) { print(m) } } in { f(|| { s.spawn(|| v.push(2)); () }) }
+    }
+    v.push(3)
+}

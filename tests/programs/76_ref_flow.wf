@@ -126,8 +126,8 @@ fn popped(world: &World) / mut(world.entities) {
     rs.push(&world.entities[0])
     let o = rs.pop()
     world.entities.push(Entity { hp: 1 })
-    match o {   //~ W0301
-        Some(r) => print(r.hp),
+    match o {   //~ old: W0301
+        Some(r) => print(r.hp),   //~ ir: W0301
         None => {}
     }
 }
@@ -172,8 +172,8 @@ fn use_find() {
     v.push(1)
     let o = find(&v)
     v.push(2)
-    match o {   //~ W0301
-        Some(r) => print(r),
+    match o {   //~ old: W0301
+        Some(r) => print(r),   //~ ir: W0301
         None => {}
     }
 }
@@ -182,8 +182,8 @@ fn use_find_in() {
     v.push(1)
     let o = find_in(&v)
     v.push(2)
-    match o {   //~ W0301
-        Some(r) => print(r),
+    match o {   //~ old: W0301
+        Some(r) => print(r),   //~ ir: W0301
         None => {}
     }
 }

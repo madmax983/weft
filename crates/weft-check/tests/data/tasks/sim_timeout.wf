@@ -1,0 +1,37 @@
+// `sim.run` runs its block once with the root handlers of the simulation:
+// no standard effect of the block leaves the call (5.30). `with_timeout`
+// runs its block once and performs `Fail` through the handlers at the call
+// (5.31): a local `Fail` handler stops it, and else the signature must allow
+// it (W0702). A change of the block is a change of the call (W0301).
+fn sim_block() {
+    let v = Vec.new()
+    v.push(1)
+    sim.run(seed: 3) {
+        v.push(2)
+        sleep(1.ms)
+    }
+    print(v.len())
+}
+
+fn timeout_handled() / clock {
+    handle Fail { fn fail(m) { print(m) } } in {
+        with_timeout(5.ms) { sleep(10.ms) }
+    }
+}
+
+fn timeout_leaves() / clock {
+    with_timeout(5.ms) { sleep(10.ms) }   //~ W0702
+}
+
+fn block_changes() / clock, fail {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    with_timeout(5.ms) { v.clear() }
+    print(r + 1)   //~ W0301
+}
+
+fn main() / clock {
+    sim_block()
+    timeout_handled()
+}

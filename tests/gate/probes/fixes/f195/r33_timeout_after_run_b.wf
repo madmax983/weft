@@ -1,0 +1,10 @@
+// F19.5 (R3-3, issue #51): with_timeout after the run; the code after the handler writes the place of the task
+fn f(g: fn()) / clock, fail { let x = with_timeout(1.ms) { g(); sleep(10.ms); 1 }; print(x) }
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        handle Fail { fn fail(m) { print(m) } } in { f(|| { s.spawn(|| { sleep(2.ms); v.push(2) }); () }) }
+        v.push(3)
+    }
+}

@@ -1,0 +1,18 @@
+// F19.5 (R3-2, issue #50): a middle callee handles another effect; the effect of the inner callee goes on to the caller
+effect Note { fn note() }
+effect Log { fn log() }
+struct Stats { count: u64 }
+fn work(r: &Stats) / Note, Log, async, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        note()
+        t.join()
+    }
+}
+fn mid(r: &Stats) / Note, async, mut(r) {
+    handle Log { fn log() { resume(()) } } in { work(r) }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { mid(&st) }
+}

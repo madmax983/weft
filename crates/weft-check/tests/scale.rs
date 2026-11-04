@@ -498,6 +498,23 @@ fn many_locals_check_in_time() {
         let time = start.elapsed();
         assert!(c.ok(), "{name}: {:?}", c.diags);
         assert!(time.as_millis() < 2000, "{name}: {time:?}");
+        // The facts of the IR (plan stage C1): the same verdict, in a bound
+        // of time. The time criterion of §2.7.4 (at most two times the time
+        // of the old pipeline) is on the sum over tier 1; the gate record of
+        // stage C1.4 in `docs/plan/core-ir.md` §5 gives the times of these
+        // shapes (about 1 s to 2 s in a release build).
+        let start = std::time::Instant::now();
+        let c = check_source("many.wf", &src, ir());
+        let ir_time = start.elapsed();
+        // At stage C1 the `ir` check of `variants` took about 26 s: each
+        // test of the chain gave the variant tests of the scrutinee new
+        // values (a quadratic number of facts).
+        eprintln!("{name}: ir {ir_time:?}, old {time:?}");
+        assert!(c.ok(), "{name} (ir): {:?}", c.diags);
+        assert!(
+            ir_time.as_secs() < 15,
+            "{name}: ir {ir_time:?}, old {time:?}"
+        );
     }
 }
 
@@ -796,5 +813,115 @@ fn closures_that_call_closures_cost_polynomial_work() {
             wb.closure_queries <= 8 * wa.closure_queries + 64,
             "back {back}: {wa:?} {wb:?}"
         );
+    }
+}
+
+/// The options of the `ir` pipeline with all groups (plan stage C1, §2.7.4).
+fn ir() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::ALL,
+        ..Options::default()
+    }
+}
+
+/// The rows of all input relations of the spec in the facts `f`: each fact
+/// that the checker reads (`weft_check::bridge::each_fact`).
+fn rows(f: &weft_facts::FnFacts) -> usize {
+    let mut n = 0;
+    weft_check::bridge::each_fact(f, &mut |_, _| n += 1);
+    n
+}
+
+/// The facts criterion of the plan (`docs/plan/core-ir.md` §2.7.4, stage
+/// C1.4): on the large shapes of this file, the `ir` facts of each function
+/// have at most three times the rows of the old facts. A row is a fact of
+/// an input relation of the spec that the checker reads. At stage C1 each
+/// test of a `match` gave each variant test variable of the scrutinee a new
+/// value (a quadratic number of rows: 14 times the old rows for 200
+/// variants), and the facts had rows that no rule reads. The bound is on
+/// rows, not on time, so it does not depend on the load of the machine.
+#[test]
+fn the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts() {
+    for (name, src) in many_locals([200, 200, 200, 200, 100]) {
+        let old = check_source("many.wf", &src, Options::default());
+        let new = check_source("many.wf", &src, ir());
+        assert!(new.ok() && old.ok(), "{name}: {:?}", new.diags);
+        assert!(
+            new.analysis
+                .ir_scope
+                .as_ref()
+                .is_some_and(weft_sema::Scope::in_scope),
+            "{name}"
+        );
+        for b in &new.analysis.bodies {
+            let Some(o) = old
+                .analysis
+                .bodies
+                .iter()
+                .find(|x| x.facts.name == b.facts.name)
+            else {
+                continue;
+            };
+            let (r_new, r_old) = (rows(&b.facts), rows(&o.facts));
+            assert!(
+                r_new <= 3 * r_old.max(1),
+                "{name} {}: {r_new} rows, old {r_old}",
+                b.facts.name
+            );
+        }
+    }
+}
+
+/// The programs of this file at a size that a debug build checks quickly,
+/// with their names.
+fn ir_cases() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = vec![("rebind".to_string(), rebind(300))];
+    for (name, _, src, _, _) in causes_of([100, 100, 60, 200, 60, 60, 60]) {
+        out.push((format!("cause {name}"), src));
+    }
+    for (name, src, _, _) in long_lived(100) {
+        out.push((format!("long {name}"), src));
+    }
+    for (name, src) in many_locals([300, 100, 300, 300, 40]) {
+        out.push((format!("many {name}"), src));
+    }
+    out.push(("walk".to_string(), walk(40, 10, true)));
+    out.push(("loops".to_string(), seq_loops(40)));
+    out.push(("closures".to_string(), helper_closures(20, 3)));
+    out
+}
+
+/// Stage C1 (plan §2.7.4): each program of this file checks with the facts
+/// of the IR too. The program is in scope, the `ir` pipeline gives the
+/// verdict of the old pipeline, and the work of the checker on each body is
+/// linear in its nodes. (The number of facts is bounded in
+/// [`the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts`].)
+#[test]
+fn the_programs_of_this_file_check_with_the_ir_facts() {
+    for (name, src) in ir_cases() {
+        let old = check_source("scale.wf", &src, Options::default());
+        let new = check_source("scale.wf", &src, ir());
+        assert!(
+            new.analysis
+                .ir_scope
+                .as_ref()
+                .is_some_and(weft_sema::Scope::in_scope),
+            "{name}: {:?}",
+            new.analysis
+                .ir_scope
+                .as_ref()
+                .and_then(|s| s.fallback.clone())
+        );
+        assert_eq!(new.ok(), old.ok(), "{name}: {:?}", new.diags);
+        for b in &new.analysis.bodies {
+            let (_, work) = check_counted(&b.facts);
+            let nodes = b.facts.nodes.len() as u64;
+            assert!(
+                work.part_nodes <= 3 * nodes,
+                "{name} {}: {work:?}",
+                b.facts.name
+            );
+        }
     }
 }

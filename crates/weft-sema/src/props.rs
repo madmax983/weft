@@ -575,17 +575,22 @@ pub const fn ir_prop(p: Prop) -> TyProp {
 /// it can be. And `uniq` is false: the mode `@ uniq` is in the declaration, not
 /// in the type. A type parameter is not linear here; `generic` tells that a
 /// caller can give it a linear type.
+///
+/// In a generic body ([`GenericBody`]) a type parameter is linear for
+/// `linear`, but not for `once`: the fact generator then finds the values that
+/// the body drops or holds (`docs/ir.md` 6.7, parts `drops` and `holds`).
 pub fn ir_props(table: &TyTable, t: TyId) -> Props {
     let has = |p| ir_has(table, t, p);
     let top = table.try_get(t);
-    let linear = has(TyProp::Linear);
+    let strict = has(TyProp::Linear);
+    let linear = strict || (params_linear() && ir_maybe_linear(table, t));
     Props {
         // One source of the copy property: the verifier of the IR uses it too.
         copy: !table.not_copy(t),
         linear,
         on_abort: !has(TyProp::NoOnAbort),
         // A value that a `multi` resume cannot copy is not `many` either.
-        once: linear || has(TyProp::Resource) || matches!(top, Some(IrTy::Cont(..))),
+        once: strict || has(TyProp::Resource) || matches!(top, Some(IrTy::Cont(..))),
         immovable: has(TyProp::Immovable),
         nonportable: has(TyProp::Nonportable),
         uniq: false,
@@ -612,6 +617,167 @@ pub fn ir_promotes(table: &TyTable, t: TyId) -> bool {
 /// The analysis keeps the function values of such a value (`docs/ir.md` 6.6).
 pub fn ir_has_fns(table: &TyTable, t: TyId) -> bool {
     ir_has(table, t, TyProp::Fns)
+}
+
+thread_local! {
+    /// A type parameter is linear in [`ir_props`] ([`GenericBody`]).
+    static PARAMS_LINEAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True while a [`GenericBody`] is live on this thread.
+pub fn params_linear() -> bool {
+    PARAMS_LINEAR.with(std::cell::Cell::get)
+}
+
+/// The mode of the facts of a generic body: a type parameter is linear.
+///
+/// The fact generator works on the component of a generic body (plan stage F20,
+/// `docs/ir.md` 6.7): while the value lives, a type parameter is linear in [`ir_props`], as
+/// in the old lowering of a generic body (`Lower::generic`).
+/// A caller can give a linear type there. The fact generator then finds the values of a
+/// type parameter that the body drops, or holds across a node that can abort or resume more
+/// than once (`crate::factgen::generic`). The value sets the old mode again when it goes
+/// away.
+#[derive(Debug)]
+pub struct GenericBody {
+    /// The mode before this value.
+    before: bool,
+}
+
+impl GenericBody {
+    /// Starts the mode of a generic body on this thread.
+    #[must_use]
+    pub fn enter() -> Self {
+        Self {
+            before: PARAMS_LINEAR.with(|c| c.replace(true)),
+        }
+    }
+}
+
+impl Drop for GenericBody {
+    fn drop(&mut self) {
+        PARAMS_LINEAR.with(|c| c.set(self.before));
+    }
+}
+
+/// Returns true if a value of the final type `t` is linear with no type
+/// parameter: the property `linear` of [`ir_props`] outside a generic body.
+pub fn ir_strict_linear(table: &TyTable, t: TyId) -> bool {
+    ir_has(table, t, TyProp::Linear)
+}
+
+/// The type parameters that can make a value of the final type `t` linear, if a caller
+/// gives them a linear type: each type parameter in a part of `t` that passes `linear` on
+/// (not behind a reference).
+///
+/// Empty if `t` is linear with no type parameter.
+pub fn ir_linear_params(table: &TyTable, t: TyId) -> std::collections::BTreeSet<u32> {
+    let mut out = std::collections::BTreeSet::new();
+    if !ir_strict_linear(table, t) {
+        linear_params_into(table, t, &mut out, 0);
+    }
+    out
+}
+
+/// The type parameters that give a value of the final type `t` its `on abort`: each type
+/// parameter in a part that passes the property "no `on abort`" on.
+///
+/// Empty if a part of `t` has no `on abort` with no type parameter.
+pub fn ir_on_abort_params(table: &TyTable, t: TyId) -> std::collections::BTreeSet<u32> {
+    let mut out = std::collections::BTreeSet::new();
+    if !ir_has(table, t, TyProp::NoOnAbort) {
+        row_params_into(table, t, TyProp::NoOnAbort, &mut out, 0);
+    }
+    out
+}
+
+/// The type parameters that make a value of the final type `t` nonportable:
+/// each type parameter in a part that passes `nonportable` on. Empty if `t`
+/// is nonportable with no type parameter.
+pub fn ir_nonportable_params(table: &TyTable, t: TyId) -> std::collections::BTreeSet<u32> {
+    let mut out = std::collections::BTreeSet::new();
+    if !ir_has(table, t, TyProp::Nonportable) {
+        row_params_into(table, t, TyProp::Nonportable, &mut out, 0);
+    }
+    out
+}
+
+/// Adds the type parameters of `t` in the parts that pass property `p` on.
+fn row_params_into(
+    table: &TyTable,
+    t: TyId,
+    p: TyProp,
+    out: &mut std::collections::BTreeSet<u32>,
+    depth: u32,
+) {
+    if depth > 64 {
+        return;
+    }
+    let Some(ty) = table.try_get(t) else {
+        return;
+    };
+    let mut go = |x: TyId| row_params_into(table, x, p, out, depth + 1);
+    match ty {
+        IrTy::Param(j) => {
+            out.insert(*j);
+        }
+        IrTy::Adt(a, args) => {
+            if let Some(d) = table.adts().get(a.index()) {
+                for &j in &d.row(p).params {
+                    if let Some(&x) = args.get(j as usize) {
+                        go(x);
+                    }
+                }
+            }
+        }
+        IrTy::Tuple(ts) => {
+            for &x in ts {
+                go(x);
+            }
+        }
+        IrTy::Array(x, _) => go(*x),
+        // A reference to a nonportable value is nonportable.
+        IrTy::Ref(x) | IrTy::Slice(x) | IrTy::Iter(x) if p == TyProp::Nonportable => go(*x),
+        _ => {}
+    }
+}
+
+/// Adds the type parameters of `t` in the parts that pass `linear` on
+/// ([`ir_linear_params`]). `depth` stops a type that grows.
+fn linear_params_into(
+    table: &TyTable,
+    t: TyId,
+    out: &mut std::collections::BTreeSet<u32>,
+    depth: u32,
+) {
+    if depth > 64 {
+        return;
+    }
+    let Some(ty) = table.try_get(t) else {
+        return;
+    };
+    let mut go = |x: TyId| linear_params_into(table, x, out, depth + 1);
+    match ty {
+        IrTy::Param(j) => {
+            out.insert(*j);
+        }
+        IrTy::Adt(a, args) => {
+            if let Some(d) = table.adts().get(a.index()) {
+                for &j in &d.row(TyProp::Linear).params {
+                    if let Some(&x) = args.get(j as usize) {
+                        go(x);
+                    }
+                }
+            }
+        }
+        IrTy::Tuple(ts) => {
+            for &x in ts {
+                go(x);
+            }
+        }
+        IrTy::Array(x, _) => go(*x),
+        _ => {}
+    }
 }
 
 /// Returns true if a value of the final type `t` can be linear.

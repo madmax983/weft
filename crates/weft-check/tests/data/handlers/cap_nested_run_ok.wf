@@ -1,0 +1,17 @@
+// Issue #57 (stage C1): the clean twin of `cap_nested_run.wf`. The captured value is a closure of `main` that performs nothing: the run of the closure does not run the clause, and nothing can abort there.
+effect Grab { fn grab(r: &u64) -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(i) = l; print("unlock {i}") }
+fn apply(f: fn()) { f() }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn main() {
+    let f4 = || print(1)
+    handle Grab { fn grab(r) { let k = r + 0; resume(k) } } in {
+        let lk5 = Lk { id: 5 }
+        let g6 = || run_both(f4, f4)
+        apply(g6)
+        let g7 = || f4()
+        apply(g7)
+        unlock(lk5)
+    }
+}

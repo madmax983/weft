@@ -13,8 +13,9 @@
 //! handlers come after it (`super::frames`, stage F7). A terminator with no
 //! destination has no abort edge. A handled body splices into its site
 //! ([`NodeTable::splice`], plan stage F14), with the `Landing` of an abort to
-//! its handler. The splice of a scope body (F18) and the `Copy` nodes of
-//! re-entry edges (F16) come later.
+//! its handler, and the `Copy` nodes of the re-entry edges of a clause that
+//! runs more than once (plan stage F16). A scope body splices into its
+//! site in the same way, with no `Landing` (plan stage F18).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,17 +47,23 @@ pub enum Phase {
     /// After `Exit` of a `handle`: the code of each clause after its `resume`
     /// runs; then the capability and the frames of the clauses end.
     Post,
-    /// After `Post` of a `handle` whose clauses can run more than once in
-    /// one run of the handled body: the code of each clause after its
-    /// `resume` runs again (once for each run of the clause, plan stage
-    /// F15).
-    PostAgain,
     /// The unwinding of a handled body ended at its `handle`: the capability
     /// and the frames of the clauses end.
     Landing,
     /// A `multi` resume runs the code after a suspension point again: the
     /// locals of the copied frames get their copies.
     Copy,
+    /// A node of the tasks of a terminator, between `Main` and `Ret` (plan
+    /// stage F19): a branch of a `fork` after the first one, the join of
+    /// the branches, or a node of a function value that a callee runs as a
+    /// task (`docs/ir.md` 6.7, OR7).
+    Task(u32),
+    /// Before `Main` of an assignment that moves a `Box` with a place field
+    /// (follow-up F8.1): the old value of the destination goes away here, so
+    /// the references of the new value, which point into the target of the
+    /// `Box` below the destination now (`transfer::relocate_moved`), stay
+    /// valid at `Main`.
+    Overwrite,
 }
 
 impl Phase {
@@ -69,10 +76,74 @@ impl Phase {
             Self::AbortValue => "abort value",
             Self::Exit => "exit",
             Self::Post => "post",
-            Self::PostAgain => "post again",
             Self::Landing => "landing",
             Self::Copy => "copy",
+            Self::Task(_) => "task",
+            Self::Overwrite => "overwrite",
         }
+    }
+}
+
+/// The statements of body `b` that move a whole local whose type can hold
+/// a place field behind a `Box` (`place = move t`): they get a node of
+/// [`Phase::Overwrite`] (follow-up F8.1). The test is coarse: a program with
+/// a place field, and a type with a `Box` part.
+fn moves_boxed_place_field(tys: &TyTable, b: &Body) -> std::collections::BTreeSet<(BlockId, u32)> {
+    use weft_ir::ty::AdtKind;
+    let mut out = std::collections::BTreeSet::new();
+    let place_fields = tys.adts().iter().any(|d| match &d.kind {
+        AdtKind::Struct(fs) => fs.iter().any(|f| f.place),
+        _ => false,
+    });
+    if !place_fields {
+        return out;
+    }
+    let mut memo: BTreeMap<weft_ir::TyId, bool> = BTreeMap::new();
+    for (bi, blk) in b.blocks.iter().enumerate() {
+        for (si, s) in blk.stmts.iter().enumerate() {
+            let StmtKind::Assign(_, weft_ir::Rvalue::Use(weft_ir::Operand::Move(t))) = &s.kind
+            else {
+                continue;
+            };
+            let Some(ty) = b.local(t.local).map(|d| d.ty).filter(|_| t.proj.is_empty()) else {
+                continue;
+            };
+            if *memo.entry(ty).or_insert_with(|| has_box(tys, ty, 0)) {
+                out.insert((
+                    BlockId(u32::try_from(bi).unwrap_or(u32::MAX)),
+                    u32::try_from(si).unwrap_or(u32::MAX - 1),
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// True if type `t` has a `Box` part: the type, a field of a struct, a
+/// payload of an enum, a type argument, a part of a tuple or an element of
+/// an array (not behind a reference). `depth` stops a type that grows.
+fn has_box(tys: &TyTable, t: weft_ir::TyId, depth: u32) -> bool {
+    use weft_ir::ty::{AdtKind, Lang};
+    if depth > 8 {
+        return false;
+    }
+    let go = |x: &weft_ir::TyId| has_box(tys, *x, depth + 1);
+    match tys.try_get(t) {
+        Some(weft_ir::Ty::Adt(a, args)) => {
+            let Some(d) = tys.adts().get(a.index()) else {
+                return false;
+            };
+            d.lang == Some(Lang::Box)
+                || args.iter().any(go)
+                || match &d.kind {
+                    AdtKind::Struct(fs) => fs.iter().any(|f| go(&f.ty)),
+                    AdtKind::Enum(vs) => vs.iter().flat_map(|v| v.fields.iter()).any(go),
+                    AdtKind::Extern { .. } => false,
+                }
+        }
+        Some(weft_ir::Ty::Tuple(ts)) => ts.iter().any(go),
+        Some(weft_ir::Ty::Array(x, _)) => go(x),
+        _ => false,
     }
 }
 
@@ -229,10 +300,14 @@ fn stmt_span(b: &Body, s: &weft_ir::Stmt) -> Span {
         {
             return span(b.origin.span);
         }
+        // The end of the `TaskResult` local of a spawn statement has the
+        // span of the spawn (plan stage F18): W0601 of a linear result is
+        // there.
         if let Some(d) = d.filter(|d| {
             matches!(
                 d.kind,
                 weft_ir::LocalKind::Temp(weft_ir::TempKind::Discarded)
+                    | weft_ir::LocalKind::TaskResult(_)
             )
         }) {
             return span(d.origin.span);
@@ -261,12 +336,32 @@ const fn stmt_name(s: &StmtKind) -> &'static str {
 /// The nodes of terminator `t` on the normal path, in order. The handled body
 /// (`handle`) and the scope body (`scope`) run between `Main` and `Exit`.
 pub fn normal_phases(t: &TermKind) -> Vec<Phase> {
-    use Phase::{Exit, FrameEnd, Main, Post, Ret};
+    phases_with(t, 0)
+}
+
+/// The nodes of terminator `t` on the normal path, with `tasks` task nodes.
+///
+/// The [`Phase::Task`] nodes of a call come after `Main`. A `fork` has a node
+/// for each branch and a node where the branches end, between `Main` and
+/// `Ret` (plan stage F19): the abort edge of `Main` has no task that runs.
+pub fn phases_with(t: &TermKind, tasks: u32) -> Vec<Phase> {
+    use Phase::{Exit, FrameEnd, Main, Post, Ret, Task};
     match t {
-        TermKind::Call { .. } | TermKind::Resume { .. } => vec![Main, Ret, FrameEnd],
-        TermKind::Perform { .. } | TermKind::Join { .. } | TermKind::Fork { .. } => {
-            vec![Main, Ret]
+        TermKind::Call { .. } => {
+            let mut v = vec![Main];
+            v.extend((1..=tasks).map(Task));
+            v.extend([Ret, FrameEnd]);
+            v
         }
+        TermKind::Resume { .. } => vec![Main, Ret, FrameEnd],
+        TermKind::Fork { branches, .. } => {
+            let k = u32::try_from(branches.len()).unwrap_or(u32::MAX);
+            let mut v = vec![Main];
+            v.extend((1..=k.saturating_add(1)).map(Task));
+            v.push(Ret);
+            v
+        }
+        TermKind::Perform { .. } | TermKind::Join { .. } => vec![Main, Ret],
         TermKind::Handle { .. } => vec![Main, Exit, Post],
         TermKind::Scope { .. } => vec![Main, Exit, FrameEnd],
         _ => vec![Main],
@@ -359,6 +454,9 @@ pub struct NodeTable {
     /// The first node of each copy of a block: the body, the block and the
     /// destination.
     firsts: BTreeMap<(BodyId, BlockId, u32), NodeId>,
+    /// The statements of the body of now that get a node of
+    /// [`Phase::Overwrite`] ([`moves_boxed_place_field`]).
+    overwrites: std::collections::BTreeSet<(BlockId, u32)>,
 }
 
 impl NodeTable {
@@ -394,6 +492,7 @@ impl NodeTable {
             return;
         };
         let names = callee_names(p, tys, body, b);
+        self.overwrites = moves_boxed_place_field(tys, b);
         let copies = cleanup_copies(b, body, frames);
         let copies_of = |block: BlockId, cleanup: bool| -> Vec<u32> {
             if cleanup {
@@ -408,9 +507,13 @@ impl NodeTable {
         // The nodes of each copy of each block, and the edges inside it.
         for (bi, blk) in b.blocks.iter().enumerate() {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
-            let twice = matches!(blk.term.kind, TermKind::Handle { handler, .. } if frames.runs_twice(handler));
             for dest in copies_of(block, blk.cleanup) {
-                self.block_nodes(body, b, (block, twice), dest, names.get(&block), facts);
+                let tasks = if dest == NORMAL {
+                    frames.task_nodes(body, block)
+                } else {
+                    0
+                };
+                self.block_nodes(body, b, block, dest, names.get(&block), tasks, facts);
             }
         }
         // The edges between blocks.
@@ -418,22 +521,32 @@ impl NodeTable {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
             for dest in copies_of(block, blk.cleanup) {
                 let dests = frames.dests(body, block);
-                self.block_edges(body, b, block, dest, dests, names.get(&block), facts);
+                let open = !frames.no_return(body, block);
+                self.block_edges(
+                    body,
+                    b,
+                    block,
+                    (dest, open),
+                    dests,
+                    names.get(&block),
+                    facts,
+                );
             }
         }
     }
 
     /// Adds the nodes of copy `dest` of block `block` and the edges between them.
     /// `callee` is the name of the callee of the terminator: the label of
-    /// each of its nodes. With `twice`, a `handle` gets a `PostAgain` node
-    /// after its `Post` node (its clauses can run more than once).
+    /// each of its nodes. A call has `tasks` nodes of [`Phase::Task`].
+    #[allow(clippy::too_many_arguments)]
     fn block_nodes(
         &mut self,
         body: BodyId,
         b: &Body,
-        (block, twice): (BlockId, bool),
+        block: BlockId,
         dest: u32,
         callee: Option<&String>,
+        tasks: u32,
         facts: &mut FnFacts,
     ) {
         let Some(blk) = b.blocks.get(block.index()) else {
@@ -461,18 +574,27 @@ impl NodeTable {
                 _ => None,
             };
             let label = label.as_deref().unwrap_or(name);
+            let at = u32::try_from(i).unwrap_or(u32::MAX - 1);
+            if self.overwrites.contains(&(block, at)) {
+                let pre = NodeKey {
+                    phase: Phase::Overwrite,
+                    ..key
+                };
+                let o = self.node(facts, pre, stmt_span(b, s), [label, "overwrite", &detail]);
+                self.chain(facts, &mut last, o, body, block, dest);
+            }
             let n = self.node(facts, key, stmt_span(b, s), [label, name, &detail]);
             self.chain(facts, &mut last, n, body, block, dest);
         }
         let name = term_name(&blk.term.kind);
-        // The handled body runs between `Main` and `Exit` of a `handle`
-        // (the splice, [`NodeTable::splice`]): no edge from `Main` to `Exit`.
-        let handle = matches!(blk.term.kind, TermKind::Handle { .. });
-        let mut phases = normal_phases(&blk.term.kind);
-        if handle && twice {
-            phases.push(Phase::PostAgain);
-        }
-        for phase in phases {
+        // The handled body runs between `Main` and `Exit` of a `handle`,
+        // and the scope body between `Main` and `Exit` of a `scope` (the
+        // splice, [`NodeTable::splice`]): no edge from `Main` to `Exit`.
+        let handle = matches!(
+            blk.term.kind,
+            TermKind::Handle { .. } | TermKind::Scope { .. }
+        );
+        for phase in phases_with(&blk.term.kind, tasks) {
             if handle && phase == Phase::Exit {
                 last = None;
             }
@@ -489,12 +611,13 @@ impl NodeTable {
                 format!("{name} {}", phase.name())
             };
             let label = callee.map_or(kind.as_str(), String::as_str);
-            let n = self.node(
-                facts,
-                key,
-                span(blk.term.origin.span),
-                [label, &kind, &detail],
-            );
+            // `ScopeWait` has the span of the `scope` (its body), as the
+            // scope end of the old lowering (plan stage F18).
+            let at = match blk.term.kind {
+                TermKind::ScopeWait { .. } => span(b.origin.span),
+                _ => span(blk.term.origin.span),
+            };
+            let n = self.node(facts, key, at, [label, &kind, &detail]);
             if handle && phase == Phase::Exit {
                 last = Some(n);
                 continue;
@@ -545,14 +668,15 @@ impl NodeTable {
 
     /// Adds the edges from copy `dest` of block `block` to its successors, and
     /// the paths of its aborts. `callee` is the name of the callee of the
-    /// terminator (see [`Self::block_nodes`]).
+    /// terminator (see [`Self::block_nodes`]). With `open` false the
+    /// terminator has no normal successor.
     #[allow(clippy::too_many_arguments)]
     fn block_edges(
         &mut self,
         body: BodyId,
         b: &Body,
         block: BlockId,
-        dest: u32,
+        (dest, open): (u32, bool),
         dests: &[Dest],
         callee: Option<&String>,
         facts: &mut FnFacts,
@@ -568,11 +692,12 @@ impl NodeTable {
             phase,
             dest,
         };
-        let last = self.get(at(Phase::PostAgain, dest)).or_else(|| {
-            normal_phases(kind)
-                .last()
-                .and_then(|ph| self.get(at(*ph, dest)))
-        });
+        // A perform whose clause has no `resume` does not go on (plan stage
+        // F19).
+        let last = normal_phases(kind)
+            .last()
+            .and_then(|ph| self.get(at(*ph, dest)))
+            .filter(|_| open);
         // The `Landing` of a `handle` goes on with the next block too.
         let landing = self.get(at(Phase::Landing, dest));
         for from in last.into_iter().chain(landing) {
@@ -602,7 +727,11 @@ impl NodeTable {
         };
         let detail = format!("b{} bb{}", body.0, block.0);
         let name = term_name(kind);
-        for dst in dests {
+        // The `Main` node of a `scope` aborts past the function only (a
+        // cancel): an abort of the scope body goes through its cleanup
+        // chain to the cleanup chain of the site (plan stage F18).
+        let scope = matches!(kind, TermKind::Scope { .. });
+        for dst in dests.iter().filter(|d| !scope || matches!(d, Dest::Past)) {
             let d = dst.id();
             let mut prev = main;
             for phase in abort_phases(kind, dst.value()).into_iter().skip(1) {
@@ -630,10 +759,11 @@ impl NodeTable {
     /// cleanup chain of the handled body for each destination past the
     /// handler to the copy of the cleanup block of the `handle` for that
     /// destination. The nodes of both bodies must be in the table.
-    pub fn splice(&self, p: &Program, facts: &mut FnFacts, site: BodyId) {
+    pub fn splice(&mut self, p: &Program, facts: &mut FnFacts, site: BodyId, frames: &Frames) {
         let Some(b) = p.bodies.get(site.index()) else {
             return;
         };
+        self.splice_scopes(p, facts, site, b);
         for (bi, blk) in b.blocks.iter().enumerate() {
             let TermKind::Handle {
                 handler, unwind, ..
@@ -697,6 +827,7 @@ impl NodeTable {
             if let (Some(from), Some(to)) = (self.get(end(own)), self.get(at(Phase::Landing))) {
                 facts.cfg_edge.push((from, to));
             }
+            self.reentry_edges(facts, (site, block), *handler, frames);
             let Some(u) = unwind else {
                 continue;
             };
@@ -707,6 +838,75 @@ impl NodeTable {
                 let end = NodeKey {
                     body: hb,
                     block: h.unwind_exit,
+                    at: TERM,
+                    phase: Phase::Main,
+                    dest: d,
+                };
+                if let (Some(from), Some(to)) = (self.get(end), self.first(site, *u, d)) {
+                    facts.cfg_edge.push((from, to));
+                }
+            }
+        }
+    }
+
+    /// The splice of each scope body of the `scope` terminators of body
+    /// `site` (body `b`; `docs/ir.md` 6.5, plan stage F18): an edge from
+    /// `Main` of the `scope` to the entry of the scope body, from each
+    /// `Return` of the scope body to `Exit` of the `scope`, and from the end
+    /// of the cleanup chain of the scope body for each destination to the
+    /// copy of the cleanup block of the `scope` for that destination. No
+    /// clause stops an abort there: a scope has no `Landing`.
+    fn splice_scopes(&self, p: &Program, facts: &mut FnFacts, site: BodyId, b: &Body) {
+        for (bi, blk) in b.blocks.iter().enumerate() {
+            let TermKind::Scope { scope, unwind, .. } = &blk.term.kind else {
+                continue;
+            };
+            if blk.cleanup {
+                continue;
+            }
+            let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+            let Some(sb) = p.scopes.get(scope.index()).map(|d| d.body) else {
+                continue;
+            };
+            let Some(s) = p.bodies.get(sb.index()) else {
+                continue;
+            };
+            let at = |phase| NodeKey {
+                body: site,
+                block,
+                at: TERM,
+                phase,
+                dest: NORMAL,
+            };
+            if let (Some(main), Some(first)) =
+                (self.get(at(Phase::Main)), self.first(sb, s.entry, NORMAL))
+            {
+                facts.cfg_edge.push((main, first));
+            }
+            if let Some(exit) = self.get(at(Phase::Exit)) {
+                for (ri, rb) in s.blocks.iter().enumerate() {
+                    if rb.cleanup || !matches!(rb.term.kind, TermKind::Return) {
+                        continue;
+                    }
+                    let r = NodeKey {
+                        body: sb,
+                        block: BlockId(u32::try_from(ri).unwrap_or(u32::MAX)),
+                        at: TERM,
+                        phase: Phase::Main,
+                        dest: NORMAL,
+                    };
+                    if let Some(n) = self.get(r) {
+                        facts.cfg_edge.push((n, exit));
+                    }
+                }
+            }
+            let Some(u) = unwind else {
+                continue;
+            };
+            for d in self.copies(sb, s.unwind_exit) {
+                let end = NodeKey {
+                    body: sb,
+                    block: s.unwind_exit,
                     at: TERM,
                     phase: Phase::Main,
                     dest: d,
@@ -729,6 +929,125 @@ impl NodeTable {
         let n = facts.add_ir_node(span, label, kind, at);
         self.ids.insert(key, n);
         n
+    }
+
+    /// The re-entry edges of the `handle` of handler `h` at the end of block
+    /// `block` of body `site` (`docs/ir.md` 6.5, plan stage F16).
+    ///
+    /// - A clause that can run more than once in one run of the handled
+    ///   body runs its code after `resume` once for each run: a cycle from
+    ///   `Post` through a `Copy` node of the `handle` back to `Post`.
+    /// - A `multi` resume runs the code after each node of the handled body
+    ///   that runs its clause again, from a copy of the frames of the
+    ///   handled body: an edge from `Post` (the clause code between two
+    ///   `resume`s ran there) to the `Copy` node of that node, then to its
+    ///   `Ret`.
+    fn reentry_edges(
+        &mut self,
+        facts: &mut FnFacts,
+        (site, block): (BodyId, BlockId),
+        h: weft_ir::HandlerId,
+        frames: &Frames,
+    ) {
+        let at = |body, block, phase| NodeKey {
+            body,
+            block,
+            at: TERM,
+            phase,
+            dest: NORMAL,
+        };
+        let Some(post) = self.get(at(site, block, Phase::Post)) else {
+            return;
+        };
+        let info = facts.node(post).clone();
+        if frames.runs_twice(h) {
+            let c = self.node(
+                facts,
+                at(site, block, Phase::Copy),
+                info.span,
+                ["handle copy", "handle copy", &info.at],
+            );
+            facts.cfg_edge.push((post, c));
+            facts.cfg_edge.push((c, post));
+        }
+        for &(pb, pblk) in frames.reentries(h) {
+            let Some(ret) = self.get(at(pb, pblk, Phase::Ret)) else {
+                continue;
+            };
+            let r = facts.node(ret).clone();
+            let kind = r
+                .kind
+                .strip_suffix(" ret")
+                .map_or_else(|| "copy".to_string(), |k| format!("{k} copy"));
+            let c = self.node(
+                facts,
+                at(pb, pblk, Phase::Copy),
+                r.span,
+                [&r.label, &kind, &r.at],
+            );
+            facts.cfg_edge.push((post, c));
+            facts.cfg_edge.push((c, ret));
+        }
+    }
+
+    /// The re-entry edges after the nodes `rows` (of body `root` and of the
+    /// handled bodies that splice into it) that can wait
+    /// at a `multi` operation of a handler of a caller (OL-R2a, plan stage
+    /// F16, `docs/ir.md` 6.5): a later `resume` runs the code after each of
+    /// them again, up to the `Return` of the body. An edge from each
+    /// `Return` of the body to the `Copy` node of the node, then to its
+    /// `Ret`.
+    pub fn row_reentry_edges(
+        &mut self,
+        p: &Program,
+        facts: &mut FnFacts,
+        root: BodyId,
+        rows: &[(BodyId, BlockId)],
+    ) {
+        let Some(b) = p.bodies.get(root.index()) else {
+            return;
+        };
+        let at = |body, block, phase| NodeKey {
+            body,
+            block,
+            at: TERM,
+            phase,
+            dest: NORMAL,
+        };
+        let returns: Vec<NodeId> = b
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, blk)| !blk.cleanup && matches!(blk.term.kind, TermKind::Return))
+            .filter_map(|(i, _)| {
+                self.get(at(
+                    root,
+                    BlockId(u32::try_from(i).unwrap_or(u32::MAX)),
+                    Phase::Main,
+                ))
+            })
+            .collect();
+        for &(pb, pblk) in rows {
+            let at = |block, phase| at(pb, block, phase);
+            let Some(ret) = self.get(at(pblk, Phase::Ret)) else {
+                continue;
+            };
+            let r = facts.node(ret).clone();
+            let kind = r
+                .kind
+                .strip_suffix(" ret")
+                .map_or_else(|| "copy".to_string(), |k| format!("{k} copy"));
+            let c = self.node(
+                facts,
+                at(pblk, Phase::Copy),
+                r.span,
+                [&r.label, &kind, &r.at],
+            );
+            for &x in &returns {
+                facts.cfg_edge.push((x, c));
+            }
+            facts.cfg_edge.push((c, ret));
+        }
     }
 
     /// The node of `key`, if it exists.

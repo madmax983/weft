@@ -1,0 +1,16 @@
+// F20.4 I-8 (i21t): a part of a tuple two times at one node (W0302).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn run2(a: fn(), b: fn()) { a()
+ b() }
+fn pair<T>(a: T, b: T) -> (T, T) { (a, b) }
+fn main() {
+    let v = mkv()
+    let p = (|| consume(v), 1)
+    let q = (p.0, p.0)
+    let (g, h) = q
+    g()
+    h()
+}

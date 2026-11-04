@@ -1257,6 +1257,18 @@ test_n+1: Unreachable                    (W0120 says that the arms cover each va
   Dead(t)`.
 - An arm that matches a variant with no payload consumes a linear local scrutinee:
   `Consume(s)` (ADR 0007 `empty`).
+  As built (follow-up F20.1, issue 47): a type with a function part (`Option<fn()>`) has
+  no linear part, but its value can hold a linear closure. The arm also consumes such a
+  value if the root of the place is a temporary, or a local that has the flag `linear`
+  from the analysis (`binding_props_of`, 2.3). On this path the value holds no closure,
+  so the `Consume` is sound. Before the fix the arm `None` did not end the value, and a
+  `match o { Some(g) => g(), None => {} }` was W0601 at the end of the scope of `o`. A
+  temporary has no later use, so its `Consume` cannot make a use after a move. A
+  capture (`env.k`, `u.k`) does not get it: a `Consume` there would make the capture
+  `ByMove`, and a move of plain data breaks V9. A struct pattern does not get it
+  either: a `_` over a part of a function type does not move it, so a `Consume` would
+  hide a lost closure. The bad case stays W0601: an arm `Some(_)` does not run the
+  closure, and the local is still linear at its end.
 - W0120 (exhaustiveness) stays in `typeck`. A variant pattern in a `let` is W0113 in
   `typeck`: a `let` pattern never fails.
 
@@ -1446,6 +1458,151 @@ the template.
 - A generic function item as a value is `Const::Fn(f, tys)`. A value that code outside
   the body can run gets the summary check of `f` with those type arguments where it is
   made (RR9, V081).
+
+As built (plan stage F20): the fact generator writes the facts of the component of a
+generic body with each type parameter linear (`props::GenericBody`; `once` stays as the
+type says). A variable that is linear only through a type parameter names them
+(`VarInfo::generic`). The queries `drops`, `holds` and `forks` of section 6.7 run over
+these facts (`factgen::generic::finish`), and then such a variable loses `linear`: the
+generic body has no error for it. A value of a type parameter can be a function value
+(`FnVal::Param` of a parameter of a type parameter, `reach_fns`, the result of a type
+parameter; V075, V056). Each `Const::Fn(f, tys)` gets the checks of a call of `f` with
+`tys` in a part of the graph of its own (`generic::item_values`): a variable of a type
+argument in `holds` across a node that can abort or resume more than once, and a dropped
+value of a type argument in `drops`. A call of `f` applies the parts with its type
+arguments (6.4 `Call`).
+
+As built (follow-up F20.2, the review of group F at a813be3): five changes.
+
+- F-1. An argument that the callee holds (part `holds`) moves at `Main`, as each
+  argument. Before the fix it moved at `Ret`, so a closure that the callee ran during
+  the call could read the moved value, and a `once` closure (plain data in the IR)
+  did not move at all. Now a variable of its own stands for the held value
+  (`templates::held_args`): a variable of the type argument if the argument can hold
+  a linear value (`None` holds none), or if the type is not `many` (`once`, `!Move`);
+  else a variable of a linear or `once` closure in the argument. The variable is live
+  across a node of its own (`generic::held_node`). After the clauses of the local
+  handlers are in the facts, that node gets the abort and the `multi` of `Main`
+  (`generic::copy_held`). A value that no argument gives keeps the abort and the
+  `multi` of the summary.
+- FP-1. The type argument gives the held variable, not the type of the argument. A
+  tuple `(Tx, u64)` with only `B = u64` in `holds` is no W0602.
+- F-2. A `join` of a result of a type parameter ends a task only if one parameter
+  names a type parameter, the parameter is not a reference, and the argument holds
+  the handle of one task site (`transfer::call_out`, `back_tasks`). A callee with two
+  handle arguments can give one back and the other away. The O3-9 case
+  (`id(t).join()`) stays accepted.
+- P-1 (not of group F). A move of a `ByMove` capture in a closure body also frees the
+  places of the capture (`moved_part`): they have no owner, so before the fix a
+  reference into the capture stayed valid after the move.
+- P-2 (not of group F). A `fork` branch that a closure body makes and gives to a
+  callee gets the captures of a branch of a function body (`task_captures`), if the
+  maker is the body that the template emits. A `Kept` or a `ByRef` capture of the
+  maker is the variable of its source (`alpha::capture_source`). So W0401 and W0403
+  apply. The task stays pinned, and the cell of a variable of another body is not
+  `kept`: a closure can take the task out of the scope of that body (RR4).
+
+As built (follow-up F20.3, the second review of group F at b6a417f): two changes.
+
+- B-1. A clause of a local handler runs while the call waits, so it runs after the call
+  moved its arguments at `Main`. The facts of the clause go to the run node
+  (`handlers::project`), and the spec gives `moved` only at a node after the node of the
+  move. So a clause that used a moved argument was no use after the move. Now a use of
+  the clause of a variable that the run node moves also goes to each successor of the
+  run node (W0302). This is also true for a call that is not generic: the hole was
+  there before group F.
+- I-2. One `once` or linear closure in two operands of one node (`(f, f)`,
+  `pair(f, f)`) moves two times at that node. For each second move of a whole local,
+  the variable moves and then is used in a part of the graph of its own
+  (`templates::dup_moves`): W0502 (W0302 for a value that is not a closure). A closure
+  that moves nothing is plain data and can go two times.
+
+As built (follow-up F20.4, the third review of group F at d1ddac6): two changes.
+
+- B-2. A clause that reads a reference into an argument that the call moved got no
+  W0301: the fix of B-1 looked only at a use of the moved variable. The check of the
+  uses of a clause now runs after the owners and the versions of the parts are in the
+  facts (`handlers::late_uses`). A use of the clause also goes to each successor of the
+  run node if the run node moves the variable (all of it, or a part that the clause
+  reads, changes or lends), or if the variable points into a place that a move of the
+  run node frees (the root of a variable that moves, or a part that moves). A closure
+  that captures the reference points there too. The use must see the value of the site:
+  a clause that gives the variable a new value on each path to the use does not use the
+  moved value (`handlers::exposed`). So the false W0302 of I-10 (a new value first, or
+  another field than the moved part) is gone too.
+- I-8. `templates::dup_moves` compares the whole place of each operand (the local and
+  its projection, no index step), so `(p.0, p.0)` is two moves. A capture of a closure
+  body is the variable of the capture (`E`, or the source of a `Kept` capture). A
+  perform calls it for its arguments.
+
+As built (stage C1, issues #56 to #59): the precision causes of the tier-2 new-fp rows.
+Code of a caller for a value of the interface (a run of a parameter or of a capture) is a
+worst case in the body that runs it, but the caller gives the value and applies its own
+summary there (part `runs`). Six changes keep that worst case out of the summaries and of
+the nodes of the caller.
+
+- #56. The part `multi` of a closure summary does not count a `multi_at` row that code of
+  a caller adds at a run node of a value of the interface (`Em::run_multi`,
+  `FnParts::run_multi`). `Run::multi` still gives the row of a value that the caller does
+  not know.
+- #56. A run node is a `dyn_rows` node of its own reason (`Handlers::real_rows`) only if
+  a summary other than such code is `multi`. The re-entry edges after a node of code of a
+  caller only still go into the facts and the cycles of the analysis, but they do not set
+  the flag `many` of the runs after them (`Cycles::add_code_rows_at`, `Cycles::has_strict`).
+  Instead each such run gets the part `after` (follow-up C1.1, hole C1-H1 of the review of
+  C1): the values of the interface whose run node of code of a caller reaches it
+  (`Cycles::code_from`, `factgen::runs_after`). Where a caller applies the summary
+  (`transfer::apply_runs`), a run happens again (`again`, no order) if a value that the
+  caller gives for a key of `after` can resume more than once: its summary is `multi`, or
+  it performs a `multi` operation through a captured capability. So
+  `run_both(|| { pick() }, || commit(t))` is W0502 again, and `run_both(|| print(0), ..)`
+  is not. A run of a capture of a closure that a callee made moves the value of the
+  closure for a `once` capture value there too (follow-up C1.2, hole C1-H2: `mk(m, g)`
+  gives `|| { m(); g() }`).
+- Follow-up C1.2, hole C1-H3 (older than C1). A callee that gives a function value of an
+  argument back or puts it into a place (part `ret.fns` with `RetFn::Param(i)`, or each
+  argument for a made closure or a value that the summary does not know; part
+  `put_fns`) gives a `once` closure there out again if the call resumes more than once:
+  the caller can run it two times. The closure gets a variable that is live across a
+  node of its own with the `multi` of the call node (`templates::given_out`, as
+  `held_args` for the part `holds`): W0503. A value of a type parameter in `holds` has
+  its node from `held_args` already.
+- Follow-up C1.3, hole C1-H4. A closure body that performs through a captured capability
+  whose handler can resume more than once (`frames::captured_multi_nodes`) runs the code
+  after the perform again on a second resume. The blocks after such a perform are in a
+  cycle (`Cycles::add_captured`), so the runs of the values of the interface there are
+  `many`; there is no re-entry edge, because the copy of the frames gives a value that
+  the closure moved a new copy (a moved capture of plain data is no error). A `ByMove`
+  capture is a value in the value of the closure, as for a closure that a callee made:
+  a run of it that happens again moves the value of the closure (W0502 at the run of the
+  closure). A call of a function value gives out again a `once` closure of an argument or
+  of a capture that the value gives back or puts into a place
+  (`templates::captures_given_out`, and `given_out` for a value call): W0503.
+- #56. A place of the `rc` group of a definition with no function part (row `Fns` with no
+  parameter) reaches no function value (`transfer::fns_of_role`).
+- #57, #58. A call runs the clauses of a handler that it reaches only through the values
+  that the callee runs (a handler whose capability a closure captures, or the local
+  `Fail` handler of a failure of such a value; `frames::own_clause_handlers` does not give
+  them) only if the analysis finds a value at the node that can reach it
+  (`clause::note_cap_apps`, `Handlers::cap_active`, `clause::run_handlers`): code of a
+  caller, a summary that performs the effect, or a summary that can fail. The frames and
+  the abort edges stay as before.
+- #58. The places that a closure gives to a run of a captured value are no arguments of
+  the node (`Sigma::nested`: no `call_arg`, except a place of an environment). The body
+  of the closure checks that run.
+- #59. A change of a closure through a capture gives the place of the capture a value of
+  the type of the capture (`transfer::plain_env`): a capture of a type that can hold no
+  linear value and no function value gets no linear value.
+
+The self-attack of the stage found two old holes of the `ir` pipeline (the old pipeline
+rejects each program, the `ir` pipeline accepted it, and the run leaks a linear value):
+
+- A closure that gives a captured function variable a new closure that moves a value
+  that can be linear (`let set = || { g = || commit(tx) }; set()`): the new value of
+  the part `rebinds` is linear now (`transfer::linear_closure`).
+- A store of a linear closure into a function part of a local whose value was plain
+  data (`cb.f = || unlock(l)` after `Cb { f: || print(0) }`): the store gives
+  `overwrites` of the variable of the local, as a store of a linear part does.
 
 ### 5.21 Calls of function values [2.20]
 
@@ -1655,7 +1812,10 @@ I3-1). Its `TaskResult` local is a once value of the scope body from the `Spawn`
 `Spawn` gives it `rebound_at` and `empty_at` (no linear value yet), and `ScopeWait`
 gives it the result. So a `multi` node of the scope body between the spawn and
 `ScopeWait` is W0503: a `multi` resume cannot copy a scope that has children (I3-8). A
-task handle `h` is a once value too (`once_var`).
+task handle `h` is a once value too (`once_var`). As built (plan stage F19): the
+`TaskResult` local and the scope capability are not once values; the IR engine runs
+each copy of the scope body with its children, and the probes of the shape run clean.
+I3-8 is open (plan follow-up F19.1).
 
 As built (`irbuild/task.rs`, plan stage B11):
 
@@ -1870,7 +2030,7 @@ pub struct NodeKey {
 | `Call`, `Resume` | `Main` → `Ret` → `FrameEnd` → next | `Main` → [`AbortValue(d)` if `d` is a local handler whose clause gives a value] → `FrameEnd(d)` → the cleanup copy for `d` |
 | `Perform` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)`] → the cleanup copy for `d` |
 | `Join`, `Fork` | `Main` → `Ret` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler: a child failure, 6.5] → the cleanup copy for `d` |
-| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → [`PostAgain` if a clause can run more than once] → next | the end of an abort to this handler: `Landing` → next |
+| `Handle` | `Main` → (the spliced handled body) → `Exit` → `Post` → next; [`Post` → `Copy` → `Post` if a clause can run more than once] | the end of an abort to this handler: `Landing` → next |
 | `Scope` | `Main` → (the spliced scope body) → `Exit` → `FrameEnd` → next | through the chain of the scope body to the cleanup copy of the `Scope` |
 | `ScopeWait` | `Main` → next | `Main` → [`AbortValue(d)` if `d` is a local `Fail` handler] → the cleanup copy for `d` |
 | `Assert` | `Main` → next | `Main` → the cleanup copy past the function (a failed `assert` ends the task, `abort_task`) |
@@ -1887,6 +2047,33 @@ node of each successor, the phases in the order of the table, the `unwind` edges
 the fact generator keeps (6.5), the splice edges and the re-entry edges. A statement
 node with no facts and one successor may merge with its successor; this changes no
 derivation of the spec.
+
+As built (plan stage C1.4, issue #62, the cost criterion of plan §2.7.4): after the fact
+generator, the summaries and the post-passes, `factgen::prune` removes the rows that no
+rule of the spec can read. The fact oracle (8.5) reads the facts before this step; the
+checker, `weft facts` and the gate read the facts after it. The module text of
+`factgen/prune.rs` gives the argument for each step:
+
+- the rows of a variable that no rule reads: `empty_at`, `overwrites` and `rest_linear`
+  of a variable that is not `linear`; `spared_at` of a variable that is not `linear`,
+  `once_var` or `immovable`; `scope_end` and `unwound_at` of a variable with no `owner`
+  row that is not `linear`; `rebound_at` and `uses` of a variable with no
+  `points_into`, `moved_at` or `unset_at` row that is not `linear`, `once_var` or
+  `immovable` (a temporary of plain data);
+- the rows of a place tree that no rule reads: a tree with no place in a `points_into`,
+  `task_reads`, `task_writes` or `call_arg` row, no `param_rooted` place and no
+  `shared_root` loses its `mutates_at`, `reads_at`, `lends_mut` and `releases_at` rows,
+  and the `owner` rows of a variable whose roots are all in such trees go;
+- a node with no row of a relation other than `cfg_edge` and at most one predecessor or
+  at most one successor leaves the graph (its predecessors get edges to its
+  successors); the entry node and the `handler clause` nodes stay;
+- a tree that is not read and that no row names leaves the place table; the other
+  places keep their order with new ids.
+
+So the verdicts and the diagnostics do not change; a derivation of `--explain` can take
+a shorter path or another witness, and the ids of the places can change. The tests
+`agreement_random` (`pruned_facts_give_the_same_violations`) and `scale.rs`
+(`the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts`) check it.
 
 As built (plan stage F12, labels): diagnostics name a node by its label. Each node of a
 `Call` or a `Perform` (each phase, also on an abort path) has the label of its callee, as
@@ -1957,7 +2144,7 @@ the path of `q`: for each `Deref`, the place before it. An access of `q` reads t
 | `F(n)`, `K(h)`, `R(n)` | frames that the body cannot see | see the roots |
 | a heap slot variable | a function value or a capability stored behind a reference, in a `Box`, a `Vec` or an `rc` object | `points_into` of the places that its values hold; `uses` at each node that runs a value from the slot; a store is a weak update: no `rebound_at` |
 | a drop pair | `Drop(p)` behind a pointer of a maybe-linear type | `rebound_at` at the `Drop` node, `scope_end` at the `Assign` after it (W0601) |
-| `W(b, v)` of each base place `b` with a `Discriminant(b)` and each variant `v` that the body reads through `(b as v)` | the variant test of a place (as built F8d) | `rebound_at` and `points_into(α(b as v))` at each `Discriminant(b)`; `uses` at each access through the step `(b as v)` |
+| `W(b, v)` of each base place `b` with a `Discriminant(b)` and each variant `v` that the body reads through `(b as v)` | the variant test of a place (as built F8d) | `rebound_at` and `points_into(α(b as v))` at each `Discriminant(b)` whose `Switch` can select `v` (as built C1.4: a `match` is a chain of tests, one for each arm; a test of another form binds each `W` variable of `b`); `uses` at each access through the step `(b as v)` |
 | `N(t, b, v)` of the target of an assignment `p = move t` or `t2 := Op(copy p, move t)` with a step `(b as v)` | the variant that the target names before the value (5.6, 5.7; as built F8d) | `rebound_at` and `points_into(α(b as v))` at `Live(t)`; `uses` at the write (or the read) of the target |
 
 During the migration the move and linear facts use `S(l)` of the whole local, as the R3a
@@ -1977,7 +2164,8 @@ origin.
 the value of `b` that the test of the variant saw, in the same way as a reference into
 `b.v`: the step is unstable, so a write of `b` or of a place above it, a move or the end
 of `b`, and a change of `b` by a call (`mutates_at`, `lends_mut`) end it. The `W`
-variable of the step points into `α(b as v)` from each test of `b`, and each access
+variable of the step points into `α(b as v)` from each test of `b` that can select `v`
+(as built C1.4), and each access
 through the step uses it (the operands, a borrow, a `Discriminant` of a place below it,
 a write). So an access after such a change, with no new test, is W0301 with the text
 ``the variant test of `b` used after it was invalidated``. Only a receiver place (5.19)
@@ -2081,8 +2269,11 @@ Terminators:
 | `Switch` | Main | cfg_edge, reads_at, uses |
 | `Return` | Main | cfg_edge, uses (of `_0`), ref_at, ref_in |
 | `Call` | Main | the operands; the summary parts (points_into, mutates_at, reads_at, performs_at, uses, moved_at, moved_part, rest_linear, releases_at, may_abort, multi_at, spared_at, resumes_at, escapes_at, spawned_at, task_reads, task_writes, captures, mut_through, kept, spawns_in, opaque, call_mut, call_arg, lends_mut); handler, sim_root, sim_run_at (`sim.run`); arg_at, param_in, uniq_param, arg_aliased, fn_arg_effect, param_effect |
-| `Call` | Ret | cfg_edge, points_into, rebound_at, moved_at (held arguments), empty_at; a second apply of a `Many` callback |
-| `Call` | FrameEnd | cfg_edge, scope_end (the callee frame `F(n)`) |
+| `Call` | Ret | cfg_edge, points_into, rebound_at, moved_at (held arguments), empty_at; a second apply of a `Many` callback; joined_at (a task whose handle the callee joins only on the normal path, follow-up F19.3) |
+| `Call` | FrameEnd | cfg_edge, scope_end (the callee frame `F(n)`); lends_mut (the writes of a task that ends at `Ret`, follow-up F19.3) |
+| any | (a node with an edge into `Main` of a call) | spawned_at of a task that the call starts while code of a local handler can run at `Main` (follow-up F19.4); from follow-up F19.5 only for a `multi` resume, or a call with no wait nodes |
+| `Call` | Task (wait nodes, follow-up F19.5) | for each local handler whose clause runs while a task of the call can run, four nodes after the other task nodes: spawned_at and joined_at of the two tasks of `WaitTask`, task_writes (the changes of the tasks of the call; the changes of the clause), reads_at (what the clause accesses; what the tasks read) |
+| `Call` | FrameEnd (of an abort to a local handler) | spawned_at of a task of a late run that can run while the callee aborts after the run (follow-up F19.5) |
 | `Call`, `Join`, `Fork`, `ScopeWait` | AbortValue | cfg_edge, points_into, rebound_at, empty_at (the `dest` of the `Handle`) |
 | `Call`, `Perform`, `Handle` | Copy | cfg_edge, rebound_at, empty_at |
 | `Perform` | Main | as `Call` `Main` without the `sim.run` facts |
@@ -2156,6 +2347,15 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
   - `rv` holds `Const::Fn(sim.run)`: `sim_run_at(n)` (RT17).
 - `Drop(p)`: `uses` and `reads_at` of `ptr(p)`; `rebound_at` of a new drop-pair variable
   with the props of the old value (its `scope_end` is at the next node, the `Assign`).
+  As built (plan stage F20): `mutates_at(n, α(p))` too (the IR engine clears the cell).
+- As built (plan stage F20, follow-up F8.1): `Assign(place, Use(move t))` of a whole
+  local `t`: the references of the value that point behind a `Box` of `t` point into the
+  same places below `place` (the target of the `Box` does not move,
+  `transfer::relocate_moved`). In a program with a place field, such an assignment of a
+  local with a `Box` part has a node of `Phase::Overwrite` before `Main`: the
+  `mutates_at` of the old value of the destination is there, so the relocated
+  references bind valid at `Main`. A new value of a part rebinds the `H` and `U`
+  variables below it, also behind a pointer of the old value.
 - `Consume(p)`: `uses(S(l), n)` and `moved_at(S(l), n)`: the linear value is finished.
 - `Uninit(p)`: `unset_at(U(p), n)`, or `unset_at(S(l), n)` for a whole local.
 - `Bounds(q, i)`: `reads_at(n, α(q))` (the length and the buffer, OR5) and the operand.
@@ -2241,13 +2441,101 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
 (each effect can abort, ADR 0005), a call or a resume whose summary can abort, `Join`,
 `ScopeWait`, `Fork`, `Assert`, `Scope` (it performs `Async`).
 
+As built (plan stage F18, `factgen/templates.rs`, `analysis/tasks.rs`; group E is a
+preview until F19): the writes of a task that ends become `lends_mut` at `Join` `Ret`
+and at the node after `ScopeWait` (at `ScopeWait` itself the task is still active).
+`ScopeWait` of a scope with no spawn cannot abort, and its node has the span of the
+scope body. The end of a `TaskResult` local has the span of its spawn. A `join` or a
+`detach` of a handle in a parameter (or, in the instantiated facts, a capture) changes
+its place (`mutates_at`, C5 of the fact oracle). A spawn as the tail of a scope body
+gives a handle of an ended task: with a result that cannot be linear, the value is
+not linear. A discarded temporary that a spawn gives a handle to drops only the
+result. The spawn performs `Async`.
+
+As built (plan stage F19): `Fork` has the nodes `Main`, a `Task(i)` node for each
+branch, a `Task` node where the branches end (`joined_at`), and `Ret` (the tuple of
+the results, IP6). Branch `i` starts at its node with the facts of a spawn
+(`templates::task_start`): a later branch runs at the same time as the earlier ones
+(W0405), and each branch is a `fork_task` (W0401, W0403). The abort edge of `Main` has
+no task that runs. A call of a callee whose part `runs` runs a value as a task has four
+`Task` nodes for each such run between `Main` and `Ret`: the start of a task of the
+call (the values of the argument apply there), a second start if two tasks of the
+value can run at the same time, a node that changes and reads the places of the values
+that the callee runs at the same time and the places that the callee itself changes
+and reads while the task runs (`TaskHow`, 6.7), and the end. A spawn in a closure body
+or a clause on a scope of the maker starts its task at the node that runs the closure
+(part `tasks`) or the part of the clause with the spawn; the scope ends it. A task
+whose run applies a `multi` summary has no `multi_at` (O3-10). A task that performs
+through a handler of this task is W0314 (6.9).
+
+As built (follow-up F19.3, the review of group E): a call of a callee or a closure
+whose part `joins` holds a handle ends its task at `Main` only if the part
+`abort_joins` (6.7) holds the handle too: the callee joins it on each path where an
+abort leaves it. Else the callee can abort before its `join` (a failure, a clause that
+does not resume, a failed scope of the callee), and the abort edge of `Main` must keep
+the task running: a handler of the caller can stop the abort, and the code after the
+`handle` then runs while the task runs (E-1). The call then has `joined_at(T, Ret)`,
+and the writes of the task are `lends_mut` at the normal `FrameEnd`
+(`templates::call_joins`). The abort edge of a terminator loses the task sites of the
+handles that it takes, unless the callee joins them on each path of an abort
+(`transfer::lose_given`): a later `join` of a handle of the same site does not end such
+a task. A run at `Ret` of a closure that a callee runs (a late run) starts the tasks of
+the part `tasks` at `Main` too only if a linear value with no `on abort` moves into the
+call there (W0602, corpus 163) or another run or task node of the call can run while
+the task runs (E-2): else the task conflicted with its own run node, whose summary has
+the writes of the task.
+
+As built (follow-up F19.4, the second review of group E): the code of a local handler
+that a call runs (a clause of an operation that the callee performs, the `Fail` clause of
+an abort of the callee, the code after the call again for a `multi` resume:
+`CallNodes::local_code`) is at the `Main` node of the call, and a task is active only
+after the node that starts it. So a task that a late run starts, and that can still run
+when such code runs, starts on each edge into `Main` too (`templates::preds`), and at
+`Main` (R2-1). That is the case when the callee can perform or abort after the run (the
+new field `Run::then` of the part `runs`: a node after a run node has `may_abort`,
+`performs_at`, or `escapes_at` of an effect other than `Async`; `factgen::then_runs`), or
+when the value itself can (its summary performs or aborts). A callee that performs only
+before the run (`note(); g()`) keeps the start at `Ret`. A task of a value that a callee
+runs as a task (its `Task` start node) starts on the edges into `Main` too when the call
+runs code of a local handler. A clause that ends the callee with no `resume` starts from
+the state after the call with the task sites of the handles that the call takes lost,
+unless the callee joins them on each path of an abort (`clause::call_clauses`,
+`transfer::given_tasks`; R2-2): a later `join` of a handle of the same site does not end
+the task of the turn that failed.
+
+As built (follow-up F19.5, issue #50: R3-1 and R3-2 of the third review of group E;
+issue #51: R3-3 and R3-4). The rule of F19.4 saw only a handler of the same component.
+A task of a callee (or a task that a closure starts in a scope of the callee) can run
+while the callee waits at an operation that a handler of a caller handles, and the
+clause of that handler then runs at the same time as the task. The summary part
+`waits` (6.7) gives, for each effect, the interface places that such tasks change and
+read: at each node of the body that sends the effect past the function (`escapes_at`,
+not `Async`), the tasks that are active there and do not end there, the tasks that a
+late run of the node starts when the callee can wait after the run (`Run::then`) or the
+value itself can, the tasks of a value that the callee runs as a task, and σ of the part
+`waits` of each summary that the node applies (`tasks::waits_of`,
+`templates::waits_at`). A call that runs a clause of a local handler of the effect gets
+four `Task` nodes for the handler after its other task nodes
+(`Frames::wait_handlers`), and two tasks (`templates::WaitTask`): the first one starts
+at the first node, ends at the second one, and changes the places of `waits` and of the
+tasks of the late runs of the call; the second node reads each place that the code of
+the clause accesses at `Main` (`handlers::project`). The second task starts at the third
+node, ends at the fourth one, and changes what the code of the clause changes; the
+fourth node reads what the tasks read. So the clause conflicts with these tasks
+(W0405), but the parts of the call itself at `Main` do not: a task of a late run no
+longer starts on the edges into `Main` for a clause (R3-3, R3-4). For an abort of the
+callee to a local handler, such a task starts at the `FrameEnd` node of the abort
+(`Em::abort_starts`), so the code after the `handle` sees it. The start on the edges
+into `Main` stays for a `multi` resume. A value that the call runs itself (not a callee)
+orders its own operations and spawns: its body in the component, or its part `waits`.
+
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
 
 - `emit` writes the facts of a body of group A with no `Call`, `Perform` or `Resume`, no
   loop and no `OnAbort` action. Another construct gives `Unsupported`, and the old pipeline
   checks the program. `factgen::preview` gives the facts of one body.
-- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B, from F13 the groups A, B and C), no program is in scope, also a program
+- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B, from F13 the groups A, B and C, from F17.1 the groups A to D, from F19 the groups A to E), no program is in scope, also a program
   whose bodies have no IR and so use no group. `weft check|facts|agree|lint|run|test`
   take `--groups=LETTERS` to turn groups on.
 - A node `entry` before the entry block binds the parameters: `rebound_at`, `points_into`
@@ -2688,6 +2976,7 @@ As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
   another handler that can run more than once: `Frames::runs_twice`) runs its code
   after `resume` once for each run: `Post` and `PostAgain` both get the `post` part,
   and the frames of the clauses end at each (F15-TWICE: a move there is a second move).
+  Stage F16 replaces `PostAgain` with a cycle `Post` → `Copy` → `Post`.
 - An abort to a local handler: each local of the body of the terminator that a closure
   captures (`Kept`, `ByRef`), that can hold a reference, and that no path from the entry
   to the terminator assigns binds at the `AbortValue` node (`rebound_at`, `empty_at`;
@@ -2706,6 +2995,151 @@ As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
   (`crates/weft-check/tests/ir_handlers.rs`), but a version of a part or of a heap slot
   binds at each node where it is not current, also at a node that invalidates it (also
   in the default pipeline: `h.0 = &v[0]; h.0 = &w[0]; v.clear()`).
+
+As built (plan stage F16, `analysis/clause.rs`, `analysis/mod.rs`,
+`factgen/frames.rs`, `factgen/nodes.rs`, `factgen/handlers.rs`; group D stays a
+preview with `--groups ABCD` until stage F17):
+
+- `multi` handlers. A clause *resumes twice* if its continuation is `multi` and a
+  path from its entry passes two `Resume`s (or one in a cycle), or a body inside the
+  clause can resume (`clause::resumes_twice`); a handler of such a clause is
+  `clause::multi_twice`. `Handle` `Main` gives `clause_multi` of its capability, so
+  each node that runs the clause is a `multi` point (W0503 by the rule of the spec).
+- Re-entry edges of a local handler. The nodes of the handled body (and of the
+  handled bodies that splice into it) that run such a clause
+  (`Frames::reentries`) get a `Copy` node: `Post` → `P.Copy` → `P.Ret`. The clause
+  code between two `resume`s runs at `Post` (the `post` part), then the rest of the
+  handled body runs again. A node in a clause or a closure inside the handled body
+  is not in scope.
+- Re-entry edges of a handler of a caller (OL-R2a). A node that can wait at a
+  `multi` operation of a caller (`frames::row_multi`: a perform of a `multi`
+  operation through the row; a call whose summary performs one through the row that
+  no local handler handles, or runs a function value, or is `multi` for another
+  reason; a call of a function value that can perform the effects of the caller)
+  gets a `Copy` node with an edge from each `Return` of the function (or closure)
+  body: `Return` → `P.Copy` → `P.Ret`. Only in a program that declares a `multi`
+  operation and a handler: with no handler (group D off) the facts do not change.
+  A node in a clause is not in scope.
+- The `Copy` rule (`handlers::copy_node`). The copied frames are the frames of the
+  handled body (local handler) or of the function (handler of a caller), with the
+  handled bodies that splice into them, and the callee frame of a call. Each variable
+  of a local of these frames whose value before the node points only into them
+  (or that has no value there) gets `rebound_at` and `empty_at` at `Copy`; a linear
+  value gets no `empty_at` (its copy is linear, W0503 at the node). A variable that
+  points outside keeps its state (J4). At the `Copy` node of a call the changes and
+  the frees of the call apply again (the callee runs its code after the perform
+  again), and the linear value that the first run gave to the destination of the
+  `handle` ends (`moved_at`): it went to the `resume` of the clause. `Exit` moves a
+  linear `_0` of the handled body.
+- A clause that runs more than once in one run of the handled body (F15-TWICE) runs
+  its code after `resume` at `Post` once for each run: a cycle `Post` → `Copy` (of
+  the `handle`) → `Post`, in place of the two-run node `PostAgain`.
+- The analysis runs the handled body again from the block after each such node
+  (`clause::handle_run`): the locals of the handled body get their values at the
+  node, the locals of the site the values at a later `resume` of the clause code
+  after its first resume point, and the destination of a perform the values of the
+  later `resume`s too; the runs go on until these states do not change
+  (`MULTI_ROUNDS`; a node in a handled body inside the handled body gets its seed
+  through `Handlers::extra`). The analysis of a function or closure body runs the
+  code after a node of `row_multi` again from the state of the node and the heap
+  slots of the `Return`s (`analysis::run`). The state of each re-entry goes to the
+  `Copy` node, and to `Ret` and `FrameEnd` of the node (joined with the state of
+  the first run), for the versions of the part holders.
+- One-place instances are off on the cycles of the re-entry edges
+  (`Cycles::add_handlers`, `Cycles::add_rows`; V097).
+- Captured capabilities. A closure that captures the capability of a local handler
+  (`CaptureMode::Cap`) and performs through it: in the closure body the perform is an
+  operation of a handler outside the closure (the template of a perform through the
+  row, with no `escapes_at`), and the node also runs the code of the clause before
+  its resume points (a `ClauseRun` at the node, so a reference of the closure across
+  the perform sees the changes of the clause). The summary of the closure performs
+  through `Cap(k)` (`FnParts::cap_performs`): no `escapes_at` and no `multi` at a run
+  node; σ of the capture is the capability root. A node of the handled body (or of a
+  handled body that splices into it) that can run a function value
+  (`frames::runs_values`) runs the clauses of each handler whose capability a closure
+  captures (`clause::captured_handlers`): its destinations and `clause_handlers` have
+  the handler, and `clause::call_clauses` runs the clauses there, with the places that
+  the arguments and the value reach and the frame root of the run node
+  (`clause::given_value`). The clauses also get the places that the summaries of
+  these closures read or change at the node (`clause::cap_given`: a capture by
+  reference gives a place of the variable), also at a call of a callee that runs the
+  closure. The closure gives its frame (`Summary::gives_frame`) only if a perform
+  through a captured capability gives a place that is not a place of its interface.
+  These places are exact places (not wildcards): the perform lends them, so a
+  reference that the clause keeps into one of them stays valid at the lend. A
+  closure that captures a capability or a continuation is nonportable: code of a
+  caller that can run it on another thread is stage F18 (W0314). A run
+  of such a closure at a node that does not run the clauses of its handler (the
+  capability left its handler, W0313) is not in scope until stage F17, and so is a
+  closure that captures the capability and leaves the `handle` (in its value, in a
+  local of the site or in a heap slot).
+- Closures that a clause makes. The clause bodies come before the closure bodies in
+  the facts of a component (`emit_parts`), and a closure that a clause makes starts
+  from the join of the states of the clause before its literals and terminators. A run
+  of such a closure at a node outside the clause (a closure that the clause gives to
+  the handled body through `resume` or a place of the site) is not in scope
+  (`clause::runs_with_maker`).
+- A function value that a perform gives to a local handler (O3-7). The parameter of
+  the clause holds the function values of the arguments of the performs
+  (`Info::params`, with the linear flag at the entry node of the clause), so a run
+  of it in the clause applies the closure there, and its changes reach the perform
+  (before `resume`) or `Post` (after it) with the code of the clause. A change at a
+  node of the clause that runs parameter `i` has the root of argument `i` of the
+  perform (`fn_arg`), and the places that the environment of the value reaches are
+  call arguments of the perform with that root: a change of the clause itself there
+  is W0312, as for a call; the closure does not conflict with itself.
+- The heap slot of a callee frame that a call gives to its clauses holds only while
+  the clauses run: the records that outlive the runs of a clause (the seed of the
+  facts of the clause, the states at its resume points for the code after them, its
+  ends with no `resume`) do not have the slots of the frames of the calls in the
+  handled body, also in a nested run of a clause of another handler
+  (`Handlers::frames`).
+- `body_multi` counts a node that runs a clause of a `clause_multi` capability as a
+  `multi` point.
+- `Post` of a `multi` handler spares the variables outside the handled bodies that
+  an abort of a re-run of the handled body unwinds (`Frames::rerun_spares`): a
+  `resume` in the clause code after the first one runs the handled body again
+  (OR4).
+- The fact oracle does not follow a copied frame of a continuation (its frames have
+  `uid` 0). The summary oracle does not check the clause frame directly below the
+  copied frames (it resumes them again: the facts give the accesses of that run to
+  the re-entry nodes), and a clause that an op of a copied frame runs has no known
+  site.
+
+As built (plan stage F17 part 0, the findings of the independent review of group D;
+`factgen/handlers.rs` `Region`): the region of the continuation of a `resume` is the
+set of nodes that can run while the clause waits at it. A `Resume` lends and frees
+what the nodes of the region change and free (also through the parameters of the
+clause).
+
+- D-CONT-RUN. A node that runs the clause and also runs code after the perform (a
+  call that runs a clause, the run of a closure with a captured capability) is in
+  the region itself, not only the nodes after it: the callee or the closure goes on
+  after the perform. The changes of the callee before the perform count too (an
+  over-approximation; the old pipeline does the same).
+- D-CONT-NEST. A perform in a clause of an inner handler (or in a closure that such
+  a clause makes) maps to the nodes that run that clause (`clause::enclosing_clause`),
+  and these nodes are in the region with the nodes after them, also through more
+  levels. A perform of the clause in a closure body with no clause maps to the run
+  node of the closure in the handled body (a call that runs the clause). A run that
+  maps to no node of the handled body is not in scope (`AlphaError::Later`).
+- D-CONT-UNWIND. The region has the cleanup nodes of the bodies of the handled body
+  whose abort lands in a handler inside the handled body (its `Landing` goes on in
+  the handled body).
+- D-COPY-WAIT. If a node of the region runs a clause of an outer `multi` handler `H`
+  (the handle is inside the handled body of `H`), a copy of the frame of the clause
+  waits while the rest of the handled body of `H` runs, and while the handled body
+  of `H` runs again from the node. The region has the nodes after `Exit` and `Post`
+  of the `handle` in the handled body of `H`, and `Exit` and `Post` of `H`. For a
+  `multi` operation of a handler of a caller (`multi_at`) the region has the nodes of
+  the function after `Post`.
+- FP-OWN. The frame of the clause is alive while it waits at its `resume`: the region
+  frees no root of a local of the clause or of a body inside it (the release of the
+  clause frames at `Post` and `Landing` is for the clauses of the handlers inside the
+  handled body).
+- E-POST-ROUNDS. If the values of the clauses after their resume points do not reach
+  a fixpoint in `POST_ROUNDS` rounds, the program is not in scope, as for
+  `MULTI_ROUNDS`.
 
 ### 6.6 The analysis
 
@@ -2938,6 +3372,22 @@ program stayed with the old pipeline ("a function value stored behind a referenc
   each value that it is asked to apply into `Apps::reached`, also a value that it applied
   before, and `apply_runs` gives the app of such a value `again` without `order` (not for
   an item, which has no `once` part).
+  As built (follow-up F19.2, class C1-ONCE): a closure that a callee made (`Made`)
+  holds the values of its captures in its own value (`transfer::made_held`). A run of
+  such a closure that runs a capture more than once (an entry of `runs` with `many`)
+  runs a `once` value of the capture again. `apply_runs` (with `made`) gives the app of
+  the `once` value the operand of the run node, which holds the made closure, in
+  `once_args`: the run moves the value of the made closure, and the run again uses it
+  (W0502; `fn wrap(f: fn()) -> fn() { || { f(); f() } }`, `let g = wrap(|| eat(b));
+  g()`). Before, only a run of a parameter gave `once_args`, and the run of a capture of
+  a `Made` closure moved nothing (the run faulted). A `once` value that an earlier run
+  of the same node applied one time (`wrap(wrap1(|| eat(b)))`: `wrap1` runs it one
+  time) gets the move too. The value of the made closure does not tell which capture
+  holds which value. So a capture that runs more than once counts each `once` value of
+  the made closure (`|| { f(); f(); h() }` with a `once` closure for `h` is W0502, as in
+  the old pipeline), and two captures that run one time each are not a second run
+  (`both(e, e)` of `fn both(f: fn(), h: fn()) -> fn() { || { f(); h() } }` is not
+  W0502; the old pipeline does not see it either).
 - A copy of a function value through a pointer is a copy of the references of its
   environment (`templates::copied_refs`; F13-fix, classes H-S1 and H-RC1): a read back of a
   closure from a heap slot (`let g = cb.f`, `let g = h.f`) uses the variables of the slot.
@@ -3007,11 +3457,13 @@ the body that leaves it), `Caller` (a place of a caller), `Group(adt)`.
 | `performs` | the operations and their capability interface, with their arguments | `performs`, `op_args`, `cap_runs`, `callee_ops` |
 | `aborts` | the abort destinations (by capability interface), `assert`, failures (`raises`) | `abortive`, `abortive_local`, `raises` |
 | `multi` | the capability interfaces through which the body can resume more than once | `multi`, `reach_repeats` |
-| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
-| `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9) | `spawns`, `tasks`, `task_effects`, `pins` |
-| `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks, results of code of a caller | `ret`, `RetFn`, `ret_refs` |
+| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), and if the body can perform or abort after the run (`then`, follow-up F19.4) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
+| `waits` | for each effect: the places that the tasks that can run while the body waits at an operation of the effect for a handler of a caller change and read (follow-up F19.5, 6.4). A key with no places: such a task runs, but it touches no place of the interface | none (the old pipeline misses R3-1 and R3-2) |
+| `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9), and those of them that it joins on each path of an abort too (`abort_joins`, a must part, follow-up F19.3: else `joined_at` at `Ret` of the run node) | `spawns`, `tasks`, `task_effects`, `pins` |
+| `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks (`ret.tasks`, follow-up F19.3: the spawn sites of the part `tasks` whose handle `_0` holds at each `Return`, and no other value), results of code of a caller | `ret`, `RetFn`, `ret_refs` |
 | `stores` | the values that the body writes behind a reference parameter, into an environment field, or into an `rc` object | `stores`, `fn_stores`, `group_stores`, `stored_behind` |
 | `drops`, `holds` | the type parameters (and, for `holds`, each parameter) of values that the body drops, or holds across a node that can abort or resume more than once | `drops`, `holds` |
+| `forks` | the type parameters of values that a `fork` branch of the body captures (plan stage F20, OL-NR-ptrfork): a nonportable type argument is W0401 at a call | none (the old pipeline misses OL-NR-ptrfork) |
 | `uses`, `moves` | the environment fields and upvars that the body uses or moves when it runs | `late_join` uses, `moved_captures` |
 | `rebinds` | the `ByRef` captures and upvars that the body gives a whole new value on each path to its `Return` (a must part). At the run node they get `rebound_at` at `Ret`, before the `points_into` of the new value from `stores`, so an old place does not stay (F3-11). A path that can abort has no `Ret`, so it needs no new value | none (F3-11 is open today) |
 | `uniq_needs` | interface places that the body gives to a `@ uniq` parameter | `uniq_needs` |
@@ -3111,7 +3563,19 @@ As built (plan stage F6, `crates/weft-sema/src/analysis/`):
   applies nothing). `escapes_at` gives `performs` and `aborts` through `Row`; a callee
   that `raises` gives `raises`; a callee that can resume more than once with no effect
   of its row (an unknown function value) gives `multi`. A body that the fact generator
-  supports has no type parameter, so `drops` and `holds` are empty.
+  supports has no type parameter, so `drops` and `holds` are empty. As built (plan
+  stage F20): a generic body is supported; its parts `drops`, `holds` and `forks` come
+  from its facts with each type parameter linear (5.20, `factgen::generic`). `drops`:
+  a value of a type parameter is live where its variable ends, gets a new value or is
+  overwritten (`unconsumed`, `overwritten` of the spec). `holds`: such a value is live
+  at a node that can abort or resume more than once (`abort_unhandled`, W0503), or it
+  moves into a task; also a linear value whose `on abort` comes from a type argument (a
+  `Task<T>` handle, OL-3a). At a call: a linear type argument in `drops` is a dropped
+  value (also a linear closure in an argument of the type parameter, V056); a type
+  argument in `holds` is a variable of a node of its own that can abort or resume more
+  than once (an argument of the type parameter moves at `Main`, and the node gets the
+  abort and the `multi` of `Main`; follow-up F20.2, 5.20); a nonportable type argument
+  in `forks` is a `fork` branch of its own.
 - The other parts of the summary of a function with no stated row come from its
   signature (`sig::build`): the parameters, the reads (the root of each parameter), the
   result (the stated places and the flows of 6.7 above), the stores and the `@ uniq`
@@ -3614,7 +4078,7 @@ the IR and the analysis, not a surface walk:
 | --- | --- |
 | W0313 (capability) | At the end of the capability root of handler `h` (the `Dead` of the `Cap` local at the frame end of the handled body, and on each cleanup copy of its chain), a value that holds that root leaves: `_0` of the handled body, the value of a clause, a variable of the site that has a cell, a heap slot that a site variable or a parameter reaches, or a `stores` entry. Each leak is W0313 at the span of the `handle` expression, as today. An `error(R, P)` of the spec whose evidence free is a capability root folds into that diagnostic as a note (its fact key goes into `Diagnostic::facts`). This keeps the escape rule of `codes.rs` and the 61 corpus markers (feasibility judge, 3.2). |
 | W0313 (continuation) | The same at the end of the continuation root (the frame end of the clause): a value that holds the root leaves through an upvar, `_0` of the clause, a store, or an argument of `resume`. The span is the leaking statement, as today. |
-| W0314 | A task (a `Spawn`, a `Fork` branch, or the `tasks` and `runs` parts at a run node) holds or uses a capability or a continuation of a handler that is on the stack of another task. A query over the `tasks` part and the abstract values. |
+| W0314 | A task (a `Spawn`, a `Fork` branch, or the `tasks` and `runs` parts at a run node) holds or uses a capability or a continuation of a handler that is on the stack of another task. A query over the `tasks` part and the abstract values. As built (F19, `templates::task_w0314`): an operation of the summaries that the task runs through a captured capability, an effect of the row that a local handler of the body handles, an effect that is not standard of a closure, or (with no runtime) any effect, except `Fail` and `Async`, is W0314 at the task; another effect goes to the summary part `task_effects`, and a call whose callee has a `task_effects` effect that a local handler handles is W0314 at the call. |
 | W0204 (local forms) | Not a Rust check any more: `uses(S(_0), Return)` makes the spec derive `error(_0, Return)`. `diagnose.rs` reports an `error` of `_0` at a `Return` node as W0204 for a function or a closure, at the span of the `Return` origin (the returned expression, V18). In a handled body, a scope body or a clause, the same `error` is W0301 with the text "the value leaves after its place ends". |
 | W0204 (store forms) | A `stores` entry of a reference into a root that ends at an exit, behind a reference parameter or into an `rc` object. A query over the summary of each body, also of closures and clauses (V087, V108, FD3). |
 | W0204 (signature) | A returned reference must state its place. A signature check. |
@@ -3623,6 +4087,105 @@ the IR and the analysis, not a surface walk:
 | W0303 | the old lowering; the body gets no IR (5.36) |
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
+
+As built (follow-up F17.1, D-MULTI-MID and D-COPY-WAIT-CALL of the second review of
+group D; `handlers::copy_node`): a `multi` `resume` runs a copy of the callee frame (or of
+the frame of a closure that the node runs) again from its `multi` point. The copy holds
+the references that it made into the places of its arguments. At the `Copy` node of a
+call, a new variable `copy of the frame that f runs` points into the wildcard place under
+each place that the variables that `Main` uses point into (a variable that the `Copy`
+rule binds again, and a moved one, do not count; a capture of a closure by reference adds
+the root of the local). It binds at `Ret` (after the changes of the call itself, which the
+callee checks across its own `multi` point) and is used at `Copy`. So a change between
+two `resume`s (at `Post`) or after the node in the caller (before the second run) is W0301
+at the node. The old pipeline gives W0312 for the first shape and misses the second.
+Only for a local handler: for a `multi` operation of a handler of a caller (the re-entry
+edge from `Return`) the copied frames are the frames of the function, and the callee
+checks its own references across its `multi` point (corpus 102 `bump` keeps no false
+W0301).
+
+As built (follow-up F17.2, the third review of group D):
+
+- D-FNVAL-ROW (`frames::reach`, `value_effects`). A function item or a function
+  parameter runs with the handlers of the call; a closure runs with the handlers where
+  it was made. A call of a function value with the capability environment `e` now has
+  the destinations of the effects that the value can perform through `e`: each effect
+  of the stated row of its function type, or, for a type with no stated row, each effect
+  of a handled body on the chain of `e` (not for a local that only a closure can give,
+  `closure_only`: a new closure, or the result of a call whose summary gives only
+  closures that call and perform nothing), and a failure through `e`. A local handler there gives
+  `Dest::Handler`: the node runs the clauses of the handler (`call_clauses`,
+  `performs_at`, no `escapes_at` of the effect), its abort edges and its re-entry
+  edges. The past destination stays (a closure made outside the handled body). The
+  clauses get the state before the call (`transfer::term`).
+- A call in a closure body that gets the capability of an effect of its row from the
+  environment of the closure (a captured capability, `handlers::captured_calls`) runs
+  the clauses of the handler of the capture at the node, as a perform through the
+  capture does. The summary of the closure performs through the capture
+  (`cap_performs`), so no `escapes_at` stays in the function (class FP-W0805-FNVAL: a
+  closure or a function item that runs in the handled body of `main` gave W0805).
+- The copy of the callee frame (D-MULTI-MID) also counts a variable that the node moves
+  at `Main` (an argument of a call of a function value). A node that runs a clause of a
+  local `multi` handler and can also wait at a `multi` operation of a caller (a function
+  value with a `multi` effect in its row) takes the copied frames of the local handler;
+  the copy of the frame binds again at the `Return` nodes of the function (on that path
+  each frame of the function is copied).
+- D-ROW-MID (`factgen::emit`, `frames::runs_closure`). A re-entry through a handler of a
+  caller at a call of a known function, of a function value with a `multi` effect in its
+  stated row, or of a closure (`clause::Handlers::dyn_rows` with a local that only a
+  closure can give) also gets the copy of the callee frame: the code of the function
+  after the call runs before the second run of the copy, so a change there is W0301 at
+  the call. An unknown function value with no stated row does not (corpus 102 `bump`).
+
+As built (plan stage F17 part 2): the preview with group D on (`--groups ABCD`, the
+default groups of the follow-up F17.1) found one more hole (class D-CLAUSE-RUNS): a
+clause that runs a function value of the interface of its function (a parameter) gave
+no entry to the part `runs` of the summary of the function, so a caller did not apply
+the changes and the moves of the value that it gave. The runs of the clause bodies now
+join the runs of the function, each one `many` (the clause runs at each perform of its
+operation). The ledger has entries for the rows of the group-D classes (D-POST, D-TEMP,
+D-C, D-FN, D-ABORT, D-R3RT7, D-MOVED, D-MULTI-DUP, F16-PROBE, D-DUP, D-W0313, D-GEN,
+D-EFF, D-MORE, and one `new-fp` of the linear rules); they accept rows only when group D
+is on. The claims O3-8 and map-N1 moved to the follow-ups F16.2 and F16.3 (a handler in
+a closure body, and a clause whose operation gives a reference back to a call, are not
+in scope). Group D went on in the follow-up F17.1, after the second independent review
+of group D signed the twelve `lost-clean` rows: `DEFAULT_GROUPS` is A to D, `done` has
+F14 to F17.1, and the `open-old` entries of the old holes that group D closes are gone
+(also D-COPY-WAIT-CALL, which F17.1 closes).
+
+As built (plan stage F17, W0313 for a capability; `analysis::clause::Escape`,
+`factgen::checks::cap_escapes`): the analysis checks the escape at the end of each
+`handle` (`clause::handle_run`), not at the `Dead` of the `Cap` local. A closure that
+captures the capability of the handler leaves the `handle` if it is in the value of the
+`handle` (the value of the handled body, of a clause, or of a landing), in a local of
+the site or in a heap slot in the states where the handled body ends (its exit and the
+landing of a clause that ends with no `resume`). The IR gives a closure of the handled
+body each capability in scope, so a closure counts only if its summary performs through
+the capture, runs a value of a capture that can (with the values of the locals where the
+handled body ends; follow-up F17.1, FP-W0313-RUN of the second review), runs a parameter,
+or gives a function value back or away (with no summary, each capture of the capability
+counts; `clause::performs_cap`). The states of the code of a clause
+after its `resume` are not used: there a local of the site has its value at the resume
+point too. A run of a closure with a captured capability in a clause of the same
+handler (V046: the perform gives the closure to its own handler) is an escape too
+("the body gives it to code that can keep it"). Each escape is one W0313 at the span of
+the `handle` terminator, with the texts of the old lowering (`check_cap_escape`). After
+an escape, a run of a closure whose capability left its handler is not checked
+(`transfer::check_cap_apps`), because W0313 rejects the program; with no escape such a
+run is not in scope, as before. A closure that a callee runs (`late`) gives the local
+that it rebinds a weak update (class D-REBIND of stage F17: `maybe(c, || { f = .. })`
+kept only the new value of `f`, so a closure with the capability that `f` held was
+lost). The facts have no capability root yet: no `error` of the spec has a capability
+root as its evidence free, so nothing folds into the W0313 diagnostic. W0313 for a
+continuation stays with the old pipeline: a closure that captures a continuation is
+not in scope (follow-up F16.1), and the corpus programs 83 and 122 use other
+constructs that are not in scope (a function value that an operation gives to a
+handler of a caller, group E).
+
+The `error` of the spec for a returned reference into a by-value parameter that the
+signature states has the W0204 of the signature check: the diagnosis gives a fold
+diagnostic (`diagnose::FOLD`), and the driver moves its fact keys into that W0204
+(`driver::fold`), so `each_violation_has_one_diagnostic` holds in IR mode too.
 
 As built (plan stage F13, the W0204 store forms): the check (`factgen::stored_behind`)
 reads the stores of each body of the component, also of the instantiated closure bodies,
@@ -3726,6 +4289,18 @@ only, and only at `print` and at call arguments. Both pipelines accepted the pro
   scalar operand holds no reference and gives nothing). A call argument and a `perform`
   argument get `deep_uses` (the callee or the handler can read through them).
 
+As built (follow-up F16.4, class C-RR of the self-attack of stage F16): a run of a
+closure can read through a capture too. `transfer::Applied::deep` holds σ(`CaptureHeld(k)`)
+of each capture whose value can hold a reference to a value that holds a reference
+(`kr: &Vec<&i64>`). The run node (`templates::emit_apps`: a direct call, a run in a
+callee, a stored or a made closure, a run in a clause) follows the chain from these
+places as `deep_uses` does (`templates::deep_chain`). So
+`keep.push(&v[0]); let kr = &keep; let g = || print(kr[0] + 1); v.clear(); g()` is
+W0301 at the run (before, both pipelines accepted the shape through a callee or a
+returned closure, and the `ir` pipeline accepted the direct run). The type test
+(`templates::refs_to_refs`) also looks into the fields of a struct and the payloads of
+an enum (`enum E { A(&Vec<&i64>) }`), for a call argument too.
+
 The entry node of a component is node `n0`, as in the old lowering: the hypothesis
 `bound_before_use` of the proof link starts there.
 
@@ -3738,6 +4313,39 @@ Tier 2 of stage F8 found two false positives of the facts of group A, fixed in F
   state) and the moved part, by type: `let (a, b) = p` ends `p` at the move of `p.1`
   (it gave W0601, because the top of the value of a parameter keeps the whole value). A
   move of an element (`a[0]`) leaves the other elements.
+
+As built (follow-up F19.3, the review of group E): W0405 of a task whose handle goes to
+a callee or a closure that joins it. The `join` of the callee ends the task at the
+`Main` node of the call only if the callee joins the handle on each path where an abort
+leaves it (part `abort_joins`); else at `Ret` (6.4). So a callee that can fail, perform
+an operation whose clause does not resume, or fail in its own scope before its `join`
+leaves the task running on the abort edge, and the code after a `handle` of the caller
+that stops the abort is W0405 (E-1; the old pipeline rejects these programs, and the
+`ir` pipeline of stage F19 accepted them). A callee that joins first and then aborts
+still ends the task at `Main`. A closure that joins two handles ends both at `Ret` if
+an abort can come between the two joins (one `abort_joins` test for the closure value;
+a precision loss that the old pipeline has too). A closure that gives back the handle
+of a task that it starts (part `ret.tasks`, 6.7) gives the handle its task site: a
+`join` of it ends the task (E-3; before, W0405 after the `join`). A task that a closure
+starts, where a callee runs the closure at `Ret`, does not conflict with the run node
+itself (E-2, 6.4).
+
+As built (follow-up F19.4): a task that a callee or a closure starts at a call
+conflicts with the code of a clause of a local handler that the call runs after the
+start (the callee performs, fails, or calls code that does, after the run of the
+closure; R2-1), and a handle that a callee joins only on the normal path is lost after a
+clause that ends the callee (R2-2): both gave no W0405 before.
+
+As built (follow-up F19.5): a task of a callee that runs while the callee waits at an
+operation, and a task that a closure starts before a callee of the scope function
+performs, conflict with the clause of a handler of a caller (part `waits`, 6.4; R3-1 and
+R3-2, which the old pipeline misses too). The error is at the call of the caller. A
+task of a late run does not conflict with its own run node when the call runs a clause
+of a local handler (R3-3), and does not start on a branch before the call (R3-4). Known
+precision losses: the part `waits` of a run takes each task of a value that performs,
+also when the value performs before its spawn (the facts of a closure body in the
+summary pass have no task); and the tasks of a call stand for each task of the call,
+for each local handler of the call.
 
 `diagnose.rs` names a variable by its local and a temporary by its kind and origin
 ("the temporary of `mk_v()` at line 3"). The corpus markers keep their lines: the spans
@@ -4343,6 +4951,95 @@ stage F13 found that A3 did not check the parts `puts` and `put_fns` (a missing
   reference itself points into: the facts had `reads_at` of `fs.entities`, a place that
   does not exist (`so04`).
 
+**As built (F17 part 0): the resume cover (A4).** The review of group D found that no
+oracle checked the summary of a `resume` (ORACLE-GAP): A3 checks a clause frame that waits
+at its `resume` with the nodes of the frame above it, not with the `Resume` node. A4 does:
+
+- When a clause frame calls its continuation, the oracle records the references that the
+  locals of the frame (with variables in the facts) hold (`FactOracle::wait_begin`).
+- Each access of an op of the same task while the frame waits (a write that is not a
+  first value, a take, the end of a cell: `HeapEvent::Free`, which the heap logs when a
+  buffer, a box or an `rc` object is freed and when the cell of a local ends) that
+  reaches the target of such a reference (the same cell, and a place at, above or below
+  the target) is a hit of the wait. The accesses of ops of copied frames, of unwind
+  steps and of the end of a `handle` count too.
+- When the frame goes on after its `resume`, each hit must be covered: a `lends_mut`, a
+  `mutates_at` or a free at the `Resume` (`Main`) node of a place that overlaps a
+  `points_into` place of a variable of the local. Else the run fails with "summary
+  oracle (A4)". A local with no `points_into` place is counted, not checked
+  (`FactReport::resume_unnamed`).
+- A copy of a waiting clause frame in a `multi` continuation waits too, with the hits of
+  the frame so far and the cells of the copy (`FactOracle::copy_wait`, the key in
+  `CodeFrame::wait`). The original frame stays in the template of the continuation; its
+  copies go on.
+
+A4 failed on each hole program of the review (D-CONT-RUN, D-CONT-NEST, D-CONT-UNWIND,
+D-COPY-WAIT) before the fix of the region, and on the clean twins whose write after the
+perform the region did not have.
+
+**As built (F17.1): A4 of copies (ORACLE-GAP-2 of the second review of group D).** When a
+`multi` operation takes frames into its continuation, each frame `g` of the continuation
+that the frame `f` below it runs (a callee or a closure) gets a wait too
+(`FactOracle::multi_frames`): the references of the locals of `g`, named in the terms of
+`f` (or of the frame of the site of the handler, through the text of the place and its
+nearest parent that the facts of `f` have), and the `Copy` nodes of the run node of `f`.
+A copy of `g` waits with the hits so far. A write strictly above a target, a move at or
+above it, and a free of its cell are hits; a write at or below a target keeps a
+reference to it. When a copy of `g` goes on, each hit must be covered by a `uses` at a
+`Copy` node of a variable whose `points_into` place overlaps the name. A4 of copies failed
+on each hole of the review (D-MULTI-MID: v12, v14, v18, v20 to v23, v25; D-COPY-WAIT-CALL:
+v07, v09, v10, v11) before the fix, and on no clean twin.
+
+**As built (F17.2): the clause cover (A5, ORACLE-GAP-3 of the third review of group
+D).** When a perform finds a local handler, the oracle looks at the code frames above
+the `handle` that are of the component of the handled body, from the handled body up
+(a frame of another component ends them). A frame whose current node has `escapes_at`
+of the effect of the handler and no `performs_at` with the capability of the handler
+(`Emitted::handler_caps`) is a failure: "clause oracle (A5)". The facts send the effect
+past the function, so the clause does not run at the node. A5 failed on each hole of
+D-FNVAL-ROW (d01, d02, d03, d06, d07, d08, d10, d11, d14, e02, k03, p01, s04, a02) and on
+their clean twins before the fix, and on one program of the gate
+(`probes/r2/interp/repro/holds/ip_lexical.wf`). A closure that runs from a callee (a
+frame of another component) is not checked.
+
+**As built (F19.3): the task check (ORACLE-GAP of the review of group E).** The oracle
+records each task that a frame starts at a node with one `spawned_at(T, _)` as a task of
+`T` of the run of the frame (a handled body and a scope body run in the run of their
+site), and for each task of the run the tasks that it knows are done (a join, the end
+of a scope or of a `fork`, an unwinding that waits for a child, and what its parent
+knew at the spawn). When a frame leaves a node `n` of its own body on any edge, each
+task of `T` of its run with `joined_at(T, n)` must be known done: "fact oracle (task
+end)". The oracle follows the frames of scope bodies for this check only (`LIGHT`):
+the other checks do not run there, as before. The task check failed on each E-1 hole of
+the review (D0, D1, D2, D4, D9, L04 to L07, L09, L16, L17) and on the probes
+`fixes/e1/*_b.wf` before the fix, and on no clean twin.
+
+**As built (F19.4): the task start check (R2-5 of the second review of group E).** A
+task of the run also belongs to the run of each frame below the frame of the spawn
+whose nodes start it (a call that runs a closure that spawns, or a callee that runs a
+value as a task). When a clause of a local handler runs, the frames of the component of
+the handled body wait at their nodes; for each task of such a run that can still run (no
+join ordered its end before), the innermost frame that has it must have the task active
+(`active` of the spec over its facts) at the node that runs the clause, or at its
+current nodes for a frame that does not run it: "fact oracle (task start)". The frames
+of scope bodies count for this check. It failed on R04, R05, R07 and R08 of the review
+and on the probes `fixes/e1/r1_*_b.wf` with the facts of follow-up F19.3, and on no
+clean twin.
+
+**As built (F19.5): the task start check for the tasks of a callee (R3-6 of the third
+review of group E).** The check of F19.4 looked only at the frames of the component of
+the handled body. Now the frames above them (the callees, other components) count too:
+if a task of the run of such a frame can still run when the clause runs, the innermost
+frame of the component of the handler must wait at a call with a `WaitTask` of the
+handler (`Emitted::wait_tasks`, 6.4; its task must have `spawned_at`) at the node that
+runs the clause: "fact oracle
+(task start) ... the call has no task that stands for it". A `WaitTask` that stands for
+a task `T` of the component also passes the check of F19.4 for `T`. The tasks of a
+`WaitTask` are no tasks of a run. With the facts of follow-up F19.4 the check failed on
+R3-1 (`P15`) and R3-2 (`P19`) of the review and on each bad probe
+`fixes/f195/w*_b.wf`; with the facts of F19.5 it fails on no program of the review sets
+and of tier 1.
+
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program
 and a concrete step, found before a review finds it.
@@ -4658,12 +5355,12 @@ a repro of group E uses group C too; the claims file holds the set of groups tha
 
 | Id | Kind | Verdict | Mechanism | Repro | Group | Claim |
 | --- | --- | --- | --- | --- | --- | --- |
-| I3-8 | U (edge) | construction | the `TaskResult` local of a spawn statement is a once value from the `Spawn` on (5.29): W0503 | `r3/interp/repro/i3_8_multi_scope_fail.wf` | D, E | F19 |
+| I3-8 | U (edge) | construction | the `TaskResult` local of a spawn statement is a once value from the `Spawn` on (5.29): W0503. Open (plan F19.1): the IR engine runs the copies of the scope clean, and W0503 there gives eight `new-fp` probes | `r3/interp/repro/i3_8_multi_scope_fail.wf` | D, E | F19.1 |
 | R3RT5 | FP | construction | a `ByMove` field has no tie to the variable (5.1.7) | `r3/redteam/repro/R3RT5_byvalue_capture_scope.wf` | C | F11 |
 | R3RT6 | FP | partly | `from_signature` gives a `mut` place only the held references of the other arguments whose types fit (F5); the flow before the call stays until reference versions (11) | `r3/redteam/repro/R3RT6_ref_arg_flow_fp.wf` | A | P1 |
 | O3-7 | FP | one rule | `call_mut` with the root of the function argument that the change comes from (6.4) | `r3/oracle/repro/O3-7_fp_op_closure_w0312.wf` | C, D | F14 |
-| O3-8 | FP | construction | a handled body inside a closure is spliced into the closure component; its performs do not leave the summary (6.1) | `r3/oracle/repro/O3-8_fp_closure_inner_multi.wf` | C, D | F16 |
-| O3-9 | FP | one rule | task sets as abstract values; the must half of the `tasks` part (6.6, 6.7) | `r3/oracle/repro/O3-9_fp_join_not_seen.wf` | C, E | F18 |
+| O3-8 | FP | construction | a handled body inside a closure is spliced into the closure component; its performs do not leave the summary (6.1) | `r3/oracle/repro/O3-8_fp_closure_inner_multi.wf` | C, D | F16.2 |
+| O3-9 | FP | one rule | task sets as abstract values; the must half of the `tasks` part (6.6, 6.7). Follow-up F19.3 (E-1 of the review of group E): a join of a callee or a closure ends the task at `Main` only if the callee also joins on each path of an abort (`abort_joins`), else at `Ret`; a closure that gives back a handle gives its task site (`ret.tasks`, E-3) | `r3/oracle/repro/O3-9_fp_join_not_seen.wf` | C, E | F18 |
 | O3-10 | FP | construction | a `Spawn` has no `multi_at` (6.4) | `r3/oracle/repro/O3-10_fp_spawn_param_multi.wf` | C, E | F19 |
 | O3-11 | FP | construction | the cell root `C(x)` (5.1.7) | `r3/oracle/repro/O3-11_fp_move_then_refill.wf` | C | F11 |
 | O3-12 | FP | one rule | a clause reads only what its nodes read; a task that it starts has its own footprint (6.7) | `r3/oracle/repro/O3-12_fp_clause_spawn_self.wf` | D, E | F19 |

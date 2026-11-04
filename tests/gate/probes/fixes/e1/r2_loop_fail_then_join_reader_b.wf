@@ -1,0 +1,20 @@
+// R2-2: turn 0 gives a reader handle to a callee that fails before its join; turn 1 joins its own handle, then writes
+fn wait(t: Task<()>, c: bool) / fail, async { if c { fail("stop") }; t.join() }
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let t = s.spawn(|| print(v.len()))
+            sleep(1.ms)
+            if i == 0 {
+                handle Fail { fn fail(m) { print(m) } } in { wait(t, true) }
+            } else {
+                t.join()
+                v.push(3)
+            }
+            i += 1
+        }
+    }
+}

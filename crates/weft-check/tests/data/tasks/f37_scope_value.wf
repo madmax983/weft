@@ -1,0 +1,24 @@
+// F3-7: the value of a scope body is live across `ScopeWait`, which can
+// abort (a child fails). A linear value with no `on abort` is W0602.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+fn work() / async, fail {
+    let t = scope { s => //~ W0602
+        s.spawn(|| boom())
+        begin()
+    }
+    commit(t)
+}
+fn ok() / async {
+    let t = scope { s =>
+        s.spawn(|| print(1))
+        7
+    }
+    print(t)
+}
+fn main() / async {
+    ok()
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+}

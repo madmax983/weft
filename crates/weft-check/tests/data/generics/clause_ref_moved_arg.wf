@@ -1,0 +1,58 @@
+// Follow-up F20.4 (B-2 of the third review of group F): a clause runs while
+// the call waits, after the call moved its arguments. A clause that reads a
+// reference into a moved argument is W0301: a generic callee (`send`), a
+// callee that is not generic (`eat_fail`), a reference to a part, and a
+// closure that captures the reference. A clause that gives the variable a
+// new value first, or that reads another field than the moved part, does
+// not use the moved value (I-10).
+struct Msg { body: Vec<u64>, n: u64 }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn send<T>(x: T, ok: bool) -> T / fail { if !ok { fail("closed") }
+ x }
+fn eat_fail(v: Vec<u64>) / fail { print(v.len())
+ fail("x") }
+fn eat_msg(m: Msg) / fail { print(m.n)
+ fail("x") }
+
+fn generic_callee() {
+    let v = mkv()
+    let r = &v
+    handle Fail { fn fail(e) { print(r.len()) } } in { let w = send(v, false)   //~ W0301
+ print(w.len()) }
+}
+fn callee_that_fails() {
+    let v = mkv()
+    let r = &v
+    handle Fail { fn fail(e) { print(r.len()) } } in { eat_fail(v) }   //~ W0301
+}
+fn reference_to_a_part() {
+    let m = Msg { body: mkv(), n: 1 }
+    let r = &m.body
+    handle Fail { fn fail(e) { print(r.len()) } } in { eat_msg(m) }   //~ W0301
+}
+fn closure_with_the_reference() {
+    let v = mkv()
+    let r = &v
+    let g = || print(r.len())
+    handle Fail { fn fail(e) { g() } } in { eat_fail(v) }   //~ W0301
+}
+// Clean: the reference points into another value.
+fn reference_to_another_value() {
+    let v = mkv()
+    let w = mkv()
+    let r = &w
+    handle Fail { fn fail(e) { print(r.len()) } } in { eat_fail(v) }
+}
+// Clean (I-10): a new value first, and another field than the moved part.
+fn new_value_first() {
+    let v = mkv()
+    handle Fail { fn fail(e) { v = mkv()
+ print(v.len()) } } in { eat_fail(v) }
+}
+fn another_field() {
+    let m = Msg { body: mkv(), n: 1 }
+    handle Fail { fn fail(e) { print(m.n) } } in { eat_fail(m.body) }
+}
+fn main() {}

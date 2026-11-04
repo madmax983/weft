@@ -1,0 +1,16 @@
+// F20.4 I-8 (i22): (f, f) in a closure body (W0302; the old pipeline says W0502).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn run2(a: fn(), b: fn()) { a()
+ b() }
+fn main() {
+    let v = mkv()
+    let f = || consume(v)
+    let g = || { let p = (f, f)
+ let (a, b) = p
+ a()
+ b() }
+    g()
+}

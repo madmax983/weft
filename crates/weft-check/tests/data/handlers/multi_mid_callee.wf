@@ -1,0 +1,14 @@
+// D-MULTI-MID (F17.1): the clause clears the place between two resumes; a copy of the callee frame reads its reference again.
+effect Pick { multi fn pick() -> bool }
+fn g(v: &Vec<i64>) / Pick {
+    let r = &v[0]
+    let b = pick()
+    print(r + 1)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); v.clear(); resume(false) } } in {
+        g(&v)   //~ W0301
+    }
+}

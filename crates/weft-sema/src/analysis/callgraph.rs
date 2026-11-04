@@ -188,6 +188,7 @@ fn stated(
     out.multi = body.multi;
     out.drops.clone_from(&body.drops);
     out.holds.clone_from(&body.holds);
+    out.forks.clone_from(&body.forks);
     out.runs.clone_from(&body.runs);
     out.ret_fns.clone_from(&body.ret_fns);
     out.ret_places.clone_from(&body.ret_places);
@@ -197,6 +198,11 @@ fn stated(
     out.put_fns.clone_from(&body.put_fns);
     out.lends.clone_from(&body.lends);
     out.gives_frame = body.gives_frame;
+    out.pins = body.pins;
+    out.joins.clone_from(&body.joins);
+    out.abort_joins.clone_from(&body.abort_joins);
+    out.task_effects.clone_from(&body.task_effects);
+    out.waits.clone_from(&body.waits);
     out
 }
 
@@ -239,6 +245,12 @@ fn summary_of(
             }
             sig::put_parts(&mut sum, inf);
             sum.gives_frame = inf.gives_frame;
+            sum.pins = inf.pins || sig.effects.pins;
+            sum.joins.clone_from(&inf.joins);
+            sum.abort_joins.clone_from(&inf.abort_joins);
+            sum.task_effects.clone_from(&inf.task_effects);
+            sum.waits = sig::waits_part(inf);
+            sum.forks.clone_from(&inf.forks);
             sum.only_self &= inf.runs.is_empty()
                 && inf
                     .lends
@@ -263,6 +275,10 @@ fn effect_sig(a: &Analysis, sema: crate::FnId, inf: &Inferred, sum: &Summary) ->
             multi: inf.multi,
             drops: inf.drops.iter().map(|&j| j as usize).collect(),
             holds: inf.holds.iter().map(|&j| j as usize).collect(),
+            // A stated signature keeps the part `pins` of the old
+            // inference too (a callee of the runtime, `http.serve`).
+            pins: inf.pins || sig.effects.pins,
+            task_effects: inf.task_effects.clone(),
             ..EffectSig::default()
         },
         _ => sig::to_effect_sig(&a.program, sum),
@@ -341,9 +357,8 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
         else {
             continue;
         };
-        if decl.intrinsic.is_some() {
-            out.sums
-                .insert(f, Err("a call of `sim.run` or `with_timeout` (stage F19)"));
+        if let Some(i) = decl.intrinsic {
+            out.sums.insert(f, Ok(sig::intrinsic(decl, tys, i)));
             continue;
         }
         let entry =
@@ -514,10 +529,23 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 code_multi: e.code_multi,
                                 made: e.made.as_ref(),
                                 run_nodes: &[],
+                                run_multi: &[],
                                 rebind_nodes: &[],
                                 lends: &e.own_lends,
+                                cap_performs: &[],
+                                joins: &e.joins,
+                                abort_joins: &e.abort_joins,
+                                then_runs: &e.then_runs,
+                                task_hows: &e.task_hows,
+                                code_opaque: &e.code_opaque,
+                                task_effects: &e.task_effects,
+                                waits: &e.waits,
                             },
                         );
+                        let mut body = body;
+                        body.drops.clone_from(&e.drops);
+                        body.holds.clone_from(&e.holds);
+                        body.forks.clone_from(&e.forks);
                         add_steps(&mut steps, &facts);
                         let new = if sig.declared {
                             stated(sig, decl, tys, &body)

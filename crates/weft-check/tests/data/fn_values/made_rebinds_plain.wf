@@ -1,0 +1,9 @@
+// Issue #59 (stage C1): the bad twin of `made_rebinds_plain_ok.wf`. The closure puts a linear value into a captured variable of a type that can hold one: the variable is linear after the run (W0601).
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn main() {
+    let o: Option<Tx> = None
+    let put = || { o = Some(Tx { id: 3 }) }   //~ W0601
+    put()
+    print(1)
+}   //~ W0601

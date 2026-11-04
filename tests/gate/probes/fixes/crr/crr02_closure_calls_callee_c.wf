@@ -1,0 +1,12 @@
+// C-RR: a closure reads through a captured reference to a container of references
+fn show(ks: &Vec<&i64>) { print(ks[0] + 1) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let g = || show(kr)
+    g()
+    v.clear()
+}

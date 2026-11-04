@@ -1,0 +1,9 @@
+effect Run { fn run(f: fn()) }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print(i) }
+fn main() {
+    let t = Tx { id: 1 }
+    handle Run { fn run(f) { resume(()) } } in { //~ W0602 W0601
+        run(|| commit(t))
+    }
+}

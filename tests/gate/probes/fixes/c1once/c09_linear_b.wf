@@ -1,0 +1,13 @@
+// Follow-up F19.2, class C1-ONCE (a closure that a callee made runs a `once` capture two times): the capture holds a closure that consumes a linear value (scratchpad c1once/v/v07c_linear_made2_b.wf).
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn wrap(f: fn()) -> fn() { || {
+    f()
+    f() } }
+fn once_returned() {
+    let t = Token { id: 1 }
+    let g = wrap(|| spend(t))
+    g()
+}
+fn main() { once_returned() }

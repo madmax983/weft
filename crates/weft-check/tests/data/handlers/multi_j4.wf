@@ -1,0 +1,15 @@
+// J4: a reference of the handled body points into a place of the site. The
+// first run clears the place; the copy of the reference in the second run
+// points into the cleared place (it keeps its state at the `Copy` node).
+effect Pick { multi fn pick() -> bool }
+
+fn main() {
+    let o = Vec.new()
+    o.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let r = &o[0]
+        let b = pick()
+        print(r + 1) //~ W0301
+        o.clear()
+    }
+}

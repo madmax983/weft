@@ -1,0 +1,13 @@
+// F20.4 B-2 (b27): the clause runs a closure that captures the reference (W0301).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn eat_fail(v: Vec<u64>) / fail { print(v.len())
+ fail("x") }
+fn main() {
+    let v = mkv()
+    let r = &v
+    let g = || print(r.len())
+    handle Fail { fn fail(e) { g() } } in { eat_fail(v) }
+}

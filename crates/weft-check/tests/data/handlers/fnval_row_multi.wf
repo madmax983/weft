@@ -1,0 +1,19 @@
+// D-FNVAL-ROW (F17.2): a function parameter runs a `multi` operation of a local handler. The clause clears the place between two resumes, and a copy of the frame of the value reads its reference again.
+effect Pick { multi fn pick() -> bool }
+fn choose(v: &Vec<i64>) / Pick {
+    let r = &v[0]
+    let b = pick()
+    print(r + 1)
+}
+fn k(h: fn(&Vec<i64>) / Pick, v: &Vec<i64>) / Pick, mut(v) {
+    handle Pick { fn pick() { resume(true); v.clear(); resume(false) } } in {
+        h(v)   //~ W0301
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true) } } in {
+        k(choose, &v)
+    }
+}

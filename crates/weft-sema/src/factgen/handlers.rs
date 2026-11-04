@@ -35,9 +35,13 @@
 //!   (`clause::given`), and a change through it has the callee root of the
 //!   argument that reaches it ([`call_clauses`]).
 //! - A clause that can run more than once runs its `post` part at `Post`
-//!   and again at `PostAgain` ([`handle_post`]); an abort to a local
-//!   handler binds the captured locals that no path assigned
-//!   ([`unbound_at_aborts`], plan stage F15).
+//!   once for each run (`Post` is in a cycle through a `Copy` node); an
+//!   abort to a local handler binds the captured locals that no path
+//!   assigned ([`unbound_at_aborts`], plan stage F15).
+//! - A `multi` resume runs the code after each node that runs its clause
+//!   again: an edge from `Post` to the `Copy` node of the node, where the
+//!   locals of the copied frames get new values ([`copy_node`], plan stage
+//!   F16).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -118,7 +122,8 @@ impl Index {
 }
 
 /// The body that the nodes of body `b` splice into: the site of a handled
-/// body (through each handled body on the way), or `b` itself.
+/// body or of a scope body (through each such body on the way, plan stage
+/// F18), or `b` itself.
 pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
     let mut at = b;
     for _ in 0..=p.bodies.len() {
@@ -126,11 +131,66 @@ pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
             return at;
         };
         match (x.kind, x.parent) {
-            (BodyKind::Handled(_), Some(site)) => at = site,
+            (BodyKind::Handled(_) | BodyKind::Scope(_), Some(site)) => at = site,
             _ => return at,
         }
     }
     at
+}
+
+/// True if body `b` splices into a function body, a test body or a clause.
+///
+/// `b` is such a body, or a handled body or a scope body whose site is one (through each
+/// such body on the way). A scope and the task terminators are in scope
+/// only there (plan stage F18; a clause from plan stage F19: the facts of
+/// a clause body splice its scope bodies too).
+pub fn spliceable(p: &Program, b: BodyId) -> bool {
+    p.body(splice_root(p, b)).is_some_and(|r| {
+        matches!(
+            r.kind,
+            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Clause(..)
+        )
+    })
+}
+
+/// True if the spawn site `site` starts its task in a scope whose scope
+/// body splices into a function or a test body (plan stage F19): the
+/// facts of the component see the scope and end the task there.
+pub fn maker_scope(p: &Program, site: weft_ir::SpawnId) -> bool {
+    p.spawns
+        .get(site.index())
+        .and_then(|d| d.scope)
+        .and_then(|k| p.scopes.get(k.index()))
+        .is_some_and(|d| spliceable(p, d.body))
+}
+
+/// True if the spawn site `site` of body `b` starts its task in a scope
+/// whose scope body is `b` or a body that `b` splices into (plan stage
+/// F18): the facts of the body see each task of the scope.
+pub fn own_spawn(p: &Program, b: BodyId, site: weft_ir::SpawnId) -> bool {
+    let Some(sb) = p
+        .spawns
+        .get(site.index())
+        .and_then(|d| d.scope)
+        .and_then(|k| p.scopes.get(k.index()))
+        .map(|d| d.body)
+    else {
+        return false;
+    };
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        if at == sb {
+            return true;
+        }
+        let Some(x) = p.bodies.get(at.index()) else {
+            return false;
+        };
+        match (x.kind, x.parent) {
+            (BodyKind::Handled(_) | BodyKind::Scope(_), Some(site)) => at = site,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The bodies whose nodes splice into body `root` (`root` first), in the
@@ -144,6 +204,38 @@ pub fn spliced(p: &Program, comp: &[BodyId], root: BodyId) -> Vec<BodyId> {
     out.sort();
     out.dedup();
     out
+}
+
+/// [`spliced`] for each body of a component, made one time (stage C1.4: a
+/// component with many clauses asked [`spliced`] for each clause).
+#[derive(Debug, Default)]
+pub struct Splices(HashMap<BodyId, Vec<BodyId>>, HashSet<BodyId>);
+
+impl Splices {
+    /// The index of the bodies `comp`.
+    pub fn new(p: &Program, comp: &[BodyId]) -> Self {
+        let mut by: HashMap<BodyId, Vec<BodyId>> = HashMap::new();
+        for &b in comp {
+            by.entry(splice_root(p, b)).or_default().push(b);
+        }
+        for v in by.values_mut() {
+            v.sort();
+            v.dedup();
+        }
+        Self(by, comp.iter().copied().collect())
+    }
+
+    /// The bodies whose nodes splice into body `root`: [`spliced`] with the
+    /// bodies of the index.
+    pub fn of(&self, root: BodyId) -> Vec<BodyId> {
+        let mut out = self.0.get(&root).cloned().unwrap_or_default();
+        if self.1.contains(&root) {
+            if let Err(i) = out.binary_search(&root) {
+                out.insert(i, root);
+            }
+        }
+        out
+    }
 }
 
 /// The handler id and the capability id of handler `h` in the facts: made
@@ -188,6 +280,12 @@ pub fn handle_main(em: &mut Em<'_>, n: NodeId, h: HandlerId) -> R {
             .get(h.index())
             .map(|d| d.handled)
             .ok_or_else(|| AlphaError::BadPlace(format!("no handler h{}", h.0)))?;
+    // A clause that can resume a `multi` continuation more than once: each
+    // node that runs it is a `multi` point (`multi_at`, W0503).
+    if clause::multi_twice(em.p, h) {
+        let (_, cap) = ids(em, h);
+        em.facts.clause_multi.push(cap);
+    }
     let caps: Vec<_> =
         em.p.body(hb)
             .map(|b| b.caps.iter().map(|(_, l)| *l).collect())
@@ -227,6 +325,12 @@ pub fn handle_exit(
         let k = transfer::key(em.p, hb, ret)?;
         if let Some(s) = em.s_var(k) {
             em.facts.uses.push((s, n));
+            // The value leaves the handled body (to a `resume` of a clause,
+            // or to the destination): a linear value of `_0` ends there, so
+            // a re-run of a `multi` handler gives `_0` a new one.
+            if em.facts.var(s).linear {
+                em.facts.moved_at.push((s, n));
+            }
         }
         let vars = em.vars;
         em.facts.uses.extend(
@@ -242,9 +346,15 @@ pub fn handle_exit(
 /// `Handle` `Post` (`docs/ir.md` 6.4).
 ///
 /// The code of each clause after its resume points runs at each node of
-/// `posts` ([`project`]): `Post`, and `PostAgain` if a clause can run more
-/// than once (plan stage F15). The frames of the clauses end at each one.
-pub fn handle_post(em: &mut Em<'_>, exit: Option<NodeId>, posts: &[NodeId], h: HandlerId) {
+/// `posts` ([`project`]): `Post` (in a cycle if a clause can run more than
+/// once, plan stages F15 and F16). The frames of the clauses end at each
+/// one.
+pub fn handle_post(
+    em: &mut Em<'_>,
+    exit: Option<NodeId>,
+    posts: &[NodeId],
+    (h, spares): (HandlerId, Option<Vec<BodyId>>),
+) {
     let clauses: Vec<BodyId> =
         em.p.handlers
             .get(h.index())
@@ -261,7 +371,7 @@ pub fn handle_post(em: &mut Em<'_>, exit: Option<NodeId>, posts: &[NodeId], h: H
                 helds: Vec::new(),
                 deps: Vec::new(),
                 at: em.body,
-                spares: None,
+                spares: spares.clone(),
                 ins: Vec::new(),
                 given: None,
             });
@@ -309,13 +419,11 @@ pub fn perform_local(
         ));
     };
     let body = em.body;
-    for a in args {
-        if !transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
-            return Err(AlphaError::Later(
-                "a function value that an operation gives to a local handler (stage F16)",
-            ));
-        }
-    }
+    // A function value that the perform gives to the clause (O3-7, plan
+    // stage F16): the parameter of the clause holds it in the facts of the
+    // clause (`Info::params`), so a run of it in the clause changes the
+    // places of its environment there, and the changes reach the perform
+    // with the code of the clause.
     let out = clause::perform_run(&mut em.cx(), body, st, cap, *op, args)?;
     let n = nodes.main;
     // The perform reads the capability.
@@ -333,6 +441,9 @@ pub fn perform_local(
         let refs = named_refs(em, v.flat().refs);
         deep_uses(em, n, st, a, &refs)?;
     }
+    // One value in two arguments of the perform (I-8, follow-up F20.4).
+    let at = em.facts.node(n).span;
+    super::templates::dup_moves(em, st, &args.iter().collect::<Vec<_>>(), at)?;
     let params: Vec<(weft_ir::TyId, weft_ir::TyId)> =
         em.p.body(out.clause)
             .map(|b| {
@@ -357,6 +468,27 @@ pub fn perform_local(
         }
     }
     check_in_places(em, (n, out.clause), &s, args, &places)?;
+    // A function value that the perform gives to the clause: the places of
+    // its environment are an argument (O3-7, plan stage F16; a change of the
+    // clause there is W0312, as for a call).
+    for (i, a) in args.iter().enumerate() {
+        if transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
+            continue;
+        }
+        let root = crate::body::roots::fn_arg(i);
+        let mut refs: Vec<PlaceId> = transfer::operand(&mut em.cx(), body, st, a)?
+            .flat()
+            .refs
+            .into_iter()
+            .collect();
+        refs.extend(transfer::reach_refs(&mut em.cx(), body, st, a)?);
+        refs.sort();
+        refs.dedup();
+        for q in refs {
+            em.facts.reads_at.push((n, q));
+            em.facts.call_arg.push((n, q, root));
+        }
+    }
     let (_, cap_id) = ids(em, out.handler);
     em.facts.performs_at.push((n, cap_id));
     if nodes.may_abort {
@@ -384,7 +516,13 @@ pub fn perform_local(
         given: None,
     });
     if let Some(r) = nodes.ret {
-        bind_dest(em, r, &out.after, dest, &out.value)?;
+        // A `multi` resume gives the perform the values of the later
+        // `resume`s too (plan stage F16).
+        let mut value = out.value.clone();
+        if let Some((_, v)) = em.hx.reentry.get(&(body, block)) {
+            value.join(v);
+        }
+        bind_dest(em, r, &out.after, dest, &value)?;
     }
     Ok(())
 }
@@ -509,6 +647,7 @@ fn spares(em: &Em<'_>, body: BodyId, t: &TermKind) -> Option<Vec<BodyId>> {
 /// the call (no `call_mut`: the callee gives the place, as it lends a place
 /// to an operation of a caller).
 pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
+    captured_calls(em, nodes, st, t)?;
     let n = nodes.main;
     let body = em.body;
     let block = em.at.0;
@@ -524,7 +663,7 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
             bind_handle(em, *av, st, h, &v)?;
         }
     }
-    let hs = clause::call_handlers(&em.cx(), body, t);
+    let hs = clause::run_handlers(&em.cx(), body, block, t);
     let gv = if hs.is_empty() {
         clause::Given::default()
     } else {
@@ -551,6 +690,96 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                 .unwrap_or_default();
         for clause in clauses {
             let (args, deps) = gv.sigma(em.p, em.tys, clause);
+            em.hx.runs.push(ClauseRun {
+                node: n,
+                handler: h,
+                clause,
+                post: false,
+                helds: args.clone(),
+                args,
+                deps,
+                at: body,
+                spares: None,
+                ins: Vec::new(),
+                given: Some(gv.roots.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A call in a closure body whose effect goes to a capability that the
+/// closure captures (plan stage F17.2, FP-W0805-FNVAL and D-FNVAL-ROW).
+///
+/// The call gets the capability of an effect of its row from the
+/// environment of the closure: the operation goes to the handler of the
+/// captured capability, as a perform through the capability does
+/// (`templates::perform`). The effect does not leave the function (no
+/// `escapes_at`), the summary of the closure performs through the capture,
+/// and the node runs the code of each clause of the handler before its
+/// resume points.
+fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
+    let TermKind::Call {
+        caps: weft_ir::CapArgs::Lexical(env),
+        ..
+    } = t
+    else {
+        return Ok(());
+    };
+    let p = em.p;
+    let body = em.body;
+    let Some((c, _)) = p.closure_of(body) else {
+        return Ok(());
+    };
+    let Some(own) = p.body(body).map(|b| b.cap_env) else {
+        return Ok(());
+    };
+    let n = nodes.main;
+    let at = |x: &NodeId| *x == n || Some(*x) == nodes.ret;
+    let mut effects: Vec<String> = em
+        .facts
+        .escapes_at
+        .iter()
+        .filter(|(x, _)| at(x))
+        .map(|(_, e)| e.clone())
+        .collect();
+    effects.sort();
+    effects.dedup();
+    let mut hs: Vec<HandlerId> = Vec::new();
+    for e in effects {
+        let Some((id, q)) = super::frames::adding_env(p, em.tys, *env, &e) else {
+            continue;
+        };
+        if id != own {
+            continue;
+        }
+        let Some((k, _)) = clause::captured_cap(p, em.tys, body, &q) else {
+            continue;
+        };
+        let Some(h) = clause::capture_handler(p, c, k) else {
+            continue;
+        };
+        em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+        em.hx.cap_performs.push((n, k, e));
+        hs.push(h);
+    }
+    hs.sort();
+    hs.dedup();
+    if hs.is_empty() {
+        return Ok(());
+    }
+    let block = em.at.0;
+    let gv = clause::given(&mut em.cx(), body, block, st, t)?;
+    for h in hs {
+        let (_, cap) = ids(em, h);
+        em.facts.performs_at.push((n, cap));
+        let clauses: Vec<BodyId> = p
+            .handlers
+            .get(h.index())
+            .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
+            .unwrap_or_default();
+        for clause in clauses {
+            let (args, deps) = gv.sigma(p, em.tys, clause);
             em.hx.runs.push(ClauseRun {
                 node: n,
                 handler: h,
@@ -780,6 +1009,329 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
     Ok(())
 }
 
+/// The `Copy` node `c` of a node of a handled body that runs a clause that
+/// can resume more than once (`docs/ir.md` 6.5, plan stage F16).
+///
+/// A later `resume` runs the code after the node again, from a copy of the
+/// frames of the handled body (`copy_frames` of the machine). Each
+/// variable of a local of the copied frames whose value at the node points
+/// only into the copied frames gets `rebound_at` and `empty_at`: the copy
+/// is a new value. A variable that points outside them (a place of the
+/// site, a parameter) keeps its state, so a reference that the first run
+/// invalidates stays invalid in the second run (J4). A linear variable
+/// gets no `empty_at`: the copy holds a copy of the linear value (W0503 at
+/// the node). The node is terminator `t` of block `block` of the body of
+/// `em` (a perform, or a call that runs the clause, or a node that waits
+/// at a `multi` operation of a caller), and `st` is the state before it:
+/// the frames are copied while the node waits. For a call, the
+/// callee frame is a copied frame too, and the callee runs its code after
+/// the perform again: the changes and the frees of the call apply again at
+/// `c`.
+/// With `local`, the node also runs a clause of a local `multi` handler
+/// that can resume more than once (`Frames::reentry_root`), or runs a known
+/// callee that can wait at a `multi` operation of a caller: the node gets
+/// a variable for the copy of the callee frame. `row_returns`
+/// are the `Return` nodes of the function if the node can also wait at a
+/// `multi` operation of a caller.
+pub fn copy_node(
+    em: &mut Em<'_>,
+    (c, main): (NodeId, NodeId),
+    (block, root, local): (BlockId, BodyId, bool),
+    row_returns: &[NodeId],
+    st: &State,
+    t: &TermKind,
+) {
+    let p = em.p;
+    let body = em.body;
+    // The copied frames: the frames of body `root` (the handled body of a
+    // local handler, or the body of a function or of a closure for a
+    // handler of a caller), and of the bodies that splice into it.
+    let hb = root;
+    let frame = matches!(t, TermKind::Call { .. }).then(|| transfer::run_inst(body, block));
+    let roots = &*em.roots;
+    let facts = &*em.facts;
+    let copied = |q: PlaceId| match roots.role(facts.place(q).root) {
+        Some(Role::Local(k) | Role::Cell(k)) => {
+            inside(p, k.0, hb) && !in_clause_or_closure(p, k.0, hb)
+        }
+        Some(Role::Frame(i)) => Some(i) == frame,
+        _ => false,
+    };
+    // The locals whose value at the node points outside the copied frames
+    // (or holds a task, which a copy cannot hold), and the locals that hold
+    // a linear value. A closure value points into the places of its
+    // captures.
+    let mut outside: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
+    let mut held_linear: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
+    for (k, tree) in st.trees() {
+        if !inside(p, k.0, hb) || in_clause_or_closure(p, k.0, hb) {
+            continue;
+        }
+        let v = tree.flat();
+        if !(v.tasks.is_empty()
+            && v.refs.iter().all(|&q| copied(q))
+            && v.caps.iter().all(|&q| copied(q)))
+        {
+            outside.insert(*k);
+        }
+        if v.linear {
+            held_linear.insert(*k);
+        }
+    }
+    // The locals that the node moves at `Main` (its callee value and its
+    // arguments): the frames are
+    // copied while the node waits, after these moves, so the copies do not
+    // hold them.
+    let moved = moved_at_main(em, t);
+    let fresh = |k: &(BodyId, weft_ir::LocalId)| {
+        inside(p, k.0, hb)
+            && !in_clause_or_closure(p, k.0, hb)
+            && !outside.contains(k)
+            && !moved.contains(k)
+    };
+    let mut vars: Vec<VarId> = Vec::new();
+    let mut linear: HashSet<VarId> = HashSet::new();
+    for key in em.vars.keys() {
+        let local = match key {
+            VarKey::S(b, l) | VarKey::C(b, l) => Some((*b, *l)),
+            VarKey::H(b, q) | VarKey::U(b, q) | VarKey::W(b, q, _) => Some((*b, q.local)),
+            _ => None,
+        };
+        let Some((b, l)) = local else {
+            continue;
+        };
+        let Ok(k) = super::alpha::owner_local(p, b, l) else {
+            continue;
+        };
+        if fresh(&k) {
+            if let Some(v) = em.vars.get(key) {
+                vars.push(v);
+                if held_linear.contains(&k) {
+                    linear.insert(v);
+                }
+            }
+        }
+    }
+    // The callee frame of a call: the frame root of the call.
+    // The value of the `handle` of a local handler: the value of the first
+    // run went to the `resume` of the clause, not to the destination of the
+    // `handle`, so a linear value there ends before the next run binds it.
+    if let Some(BodyKind::Handled(h)) = p.body(hb).map(|b| b.kind) {
+        if let Some(v) = handle_dest_var(em, h) {
+            if em.facts.var(v).linear {
+                em.facts.moved_at.push((v, c));
+            }
+        }
+    }
+    if let Some(i) = frame {
+        for &(q, v) in &em.facts.owner {
+            if matches!(roots.role(em.facts.place(q).root), Some(Role::Frame(j)) if j == i) {
+                vars.push(v);
+            }
+        }
+        // The callee runs its code after the perform again.
+        let again: Vec<(NodeId, PlaceId)> = em
+            .facts
+            .mutates_at
+            .iter()
+            .filter(|(n, _)| *n == main)
+            .map(|&(_, q)| (c, q))
+            .collect();
+        let lends: Vec<(NodeId, PlaceId)> = em
+            .facts
+            .lends_mut
+            .iter()
+            .filter(|(n, _)| *n == main)
+            .map(|&(_, q)| (c, q))
+            .collect();
+        let frees: Vec<(NodeId, PlaceId)> = em
+            .facts
+            .releases_at
+            .iter()
+            .filter(|(n, _)| *n == main)
+            .map(|&(_, q)| (c, q))
+            .collect();
+        em.facts.lends_mut.extend(again);
+        em.facts.lends_mut.extend(lends);
+        em.facts.releases_at.extend(frees);
+    }
+    vars.sort();
+    vars.dedup();
+    // The copy of the callee frame (or of the frame of the closure that the
+    // node runs) runs again with the references that the node gave it, and
+    // with the references into their places that it made and holds across
+    // its `multi` point (class D-MULTI-MID of the second review of group D).
+    // A variable `the copy of the frame` points into each place below the
+    // references that the node uses (a wildcard place), binds at `Ret` and
+    // is used at `Copy`: a change between the two (at `Post`, between two
+    // `resume`s, or after the node in the caller, D-COPY-WAIT-CALL) makes it
+    // invalid there (W0301). A variable that the copy rule binds again (it
+    // points only into the copied frames) does not count; a moved one does.
+    // For a local handler, and (with `local` from the caller) for a known
+    // callee of a `multi` operation of a handler of a caller (class
+    // D-ROW-MID, plan stage F17.2): the code of this function after the
+    // call runs before the copy, and a change there reaches the copy. Not
+    // for an unknown function value.
+    let local = local || matches!(p.body(hb).map(|b| b.kind), Some(BodyKind::Handled(_)));
+    if frame.is_some() && local {
+        // A moved variable counts: the callee frame holds its references
+        // (an argument of a call of a function value moves at `Main`).
+        let used: HashSet<VarId> = em
+            .facts
+            .uses
+            .iter()
+            .filter(|(v, n)| *n == main && vars.binary_search(v).is_err())
+            .map(|(v, _)| *v)
+            .collect();
+        let mut places: Vec<PlaceId> = em
+            .facts
+            .points_into
+            .iter()
+            .filter(|(v, _)| used.contains(v))
+            .map(|(_, q)| *q)
+            .collect();
+        // A closure that captures a local by reference points into the cell
+        // of the local: the copy of its frame holds references into the
+        // value of the local too.
+        let cells: Vec<PlaceId> = places
+            .iter()
+            .filter_map(|&q| match em.roots.role(em.facts.place(q).root) {
+                Some(Role::Cell(k)) => em
+                    .roots
+                    .local_roots()
+                    .find(|(x, _)| *x == k)
+                    .map(|(_, r)| r),
+                _ => None,
+            })
+            .collect();
+        places.extend(cells);
+        // A place in the copied frames gets a new copy too (the `Copy` rule):
+        // the copy of the frame holds the copied place, not the old one.
+        places.retain(|&q| match em.roots.role(em.facts.place(q).root) {
+            Some(Role::Local(k) | Role::Cell(k)) => {
+                !inside(p, k.0, hb) || in_clause_or_closure(p, k.0, hb)
+            }
+            Some(Role::Frame(i)) => Some(i) != frame,
+            _ => true,
+        });
+        places.sort();
+        places.dedup();
+        if !places.is_empty() {
+            let node = em.facts.node(main).clone();
+            let name = format!("copy of the frame that `{}` runs", node.label);
+            let var = em.facts.add_var(weft_facts::VarInfo::plain(
+                name,
+                weft_facts::VarKind::Temp,
+                node.span,
+                "",
+            ));
+            for q in places {
+                let w = em.facts.wildcard(q);
+                em.facts.points_into.push((var, w));
+            }
+            // It binds after the changes of the node itself (at `Ret`, the
+            // node after `Copy`): the callee checks its own changes across
+            // its `multi` point (the re-entry edges of its own facts).
+            let rets: Vec<NodeId> = em
+                .facts
+                .cfg_edge
+                .iter()
+                .filter(|(a, _)| *a == c)
+                .map(|(_, b)| *b)
+                .collect();
+            if rets.is_empty() {
+                em.facts.rebound_at.push((var, main));
+            }
+            for r in rets {
+                em.facts.rebound_at.push((var, r));
+            }
+            // A re-entry through a handler of a caller copies each frame of
+            // the function: the copy of the frame is new on that path (the
+            // edges from the `Return` nodes of the function).
+            for &r in row_returns {
+                em.facts.rebound_at.push((var, r));
+            }
+            em.facts.uses.push((var, c));
+        }
+    }
+    for v in vars {
+        em.facts.rebound_at.push((v, c));
+        if !linear.contains(&v) {
+            em.facts.empty_at.push((v, c));
+        }
+    }
+}
+
+/// The whole locals that terminator `t` of the body of `em` moves at its
+/// `Main` node: a moved callee value and each moved argument (also an
+/// argument of a type parameter that the callee holds, follow-up F20.2).
+fn moved_at_main(em: &Em<'_>, t: &TermKind) -> HashSet<(BodyId, weft_ir::LocalId)> {
+    let p = em.p;
+    let body = em.body;
+    let mut ops: Vec<&weft_ir::Operand> = Vec::new();
+    match t {
+        TermKind::Call { callee, args, .. } => {
+            if let weft_ir::Callee::Value(f) = callee {
+                ops.push(f);
+            }
+            ops.extend(args.iter());
+        }
+        TermKind::Perform { args, .. } => ops.extend(args.iter()),
+        _ => {}
+    }
+    ops.into_iter()
+        .filter_map(|o| match o {
+            weft_ir::Operand::Move(q) if q.proj.is_empty() => {
+                super::alpha::owner_local(p, body, q.local).ok()
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The `S` variable of the destination of the `handle` of handler `h`, if
+/// it is a whole local.
+fn handle_dest_var(em: &Em<'_>, h: HandlerId) -> Option<VarId> {
+    let site = em.p.handlers.get(h.index())?.site;
+    let dest =
+        em.p.body(site)?
+            .blocks
+            .iter()
+            .find_map(|blk| match &blk.term.kind {
+                TermKind::Handle { handler, dest, .. } if *handler == h && !blk.cleanup => {
+                    Some(dest.clone())
+                }
+                _ => None,
+            })?;
+    if !dest.proj.is_empty() {
+        return None;
+    }
+    let k = super::alpha::owner_local(em.p, site, dest.local).ok()?;
+    em.vars.get(&VarKey::S(k.0, k.1))
+}
+
+/// True if body `b` (inside handled body `hb`) is in a clause body or a
+/// closure body inside `hb`: its frames are not frames of the handled body.
+fn in_clause_or_closure(p: &Program, b: BodyId, hb: BodyId) -> bool {
+    let mut at = Some(b);
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = at else {
+            return false;
+        };
+        if x == hb {
+            return false;
+        }
+        let Some(d) = p.body(x) else {
+            return false;
+        };
+        if matches!(d.kind, BodyKind::Clause(..) | BodyKind::Closure(_)) {
+            return true;
+        }
+        at = d.parent;
+    }
+    false
+}
+
 /// The entry node `n` of a clause body: its parameters bind as the
 /// parameters of a function (`super::templates::entry`), and its
 /// continuation binds.
@@ -789,6 +1341,12 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
 /// The errors of `super::templates::entry`.
 pub fn clause_entry(em: &mut Em<'_>, n: NodeId, params: &[(weft_ir::LocalId, Tree)]) -> R {
     super::templates::entry(em, n, params)?;
+    // A parameter that holds a linear closure of a perform (O3-7, plan stage
+    // F16): the clause must run it or give it on (W0601 at its end).
+    for (l, v) in params {
+        let k = em.key(*l)?;
+        super::templates::mark_fn_linear(em, k, &v.flat());
+    }
     let kont = em.p.body(em.body).and_then(|b| b.kont).map(|(k, _)| k);
     if let Some(k) = kont {
         let key = em.key(k)?;
@@ -1022,6 +1580,11 @@ struct Mapper<'a> {
     roots: &'a Roots,
     /// The clause body.
     clause: BodyId,
+    /// The nodes of the clause that run a function value of a parameter of
+    /// the clause, with the index of the parameter (O3-7, plan stage F16):
+    /// a change there is a change of the run of that argument of the
+    /// perform, with its root.
+    param_runs: &'a HashMap<NodeId, u32>,
 }
 
 impl Mapper<'_> {
@@ -1127,7 +1690,7 @@ fn clause_depth(p: &Program, b: BodyId) -> usize {
 /// The facts of the clauses at the nodes that run them (see the module
 /// text): the `pre` part at each perform, the `post` part at `Post`, then
 /// the rest of the handled body at each `Resume`.
-pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
+pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
     let p = t.p;
     let _ = t.tys;
     let ix = Index::new(p, t.table);
@@ -1146,6 +1709,23 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .entry(r.clause)
             .or_insert_with(|| clause_nodes(p, &ix, r.clause));
     }
+    let param_runs = param_run_nodes(p, t.table, regions.keys().copied());
+    // A task that a clause starts in a scope of the site (plan stage F19,
+    // O3-12): it starts at each node that runs the part of the clause with
+    // its spawn (the perform for the part before the first resume point,
+    // `Post` for the part after it).
+    let mut starts = Vec::new();
+    for &(task, n) in &facts.spawned_at {
+        for r in &hx.runs {
+            let Some((pre, post)) = regions.get(&r.clause) else {
+                continue;
+            };
+            if (!r.post && pre.contains(&n)) || (r.post && post.contains(&n)) {
+                starts.push((task, r.node));
+            }
+        }
+    }
+    facts.spawned_at.extend(starts);
     let mut owned: HashMap<BodyId, HashSet<VarId>> = HashMap::new();
     // The rows of the facts at the nodes of each clause: each run of the
     // clause reads these, and a run node in a clause adds its rows to the
@@ -1157,6 +1737,13 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         }
     }
     let mut parts: HashMap<BodyId, FnFacts> = clause_rows(facts, &clause_of);
+    // The moves of the run nodes before the clauses come: the arguments that
+    // a call or a perform moves at its `Main` node (follow-up F20.3, B-1).
+    let mut late = LateUses {
+        moves: facts.moved_at.iter().copied().collect(),
+        parts: facts.moved_part.iter().copied().collect(),
+        uses: Vec::new(),
+    };
     // The `Main` nodes of the `Resume`s (their aborts are of the handled
     // body), and the variables that `spared_at` can matter for: a linear
     // or `!Move` value (W0602, W0503).
@@ -1186,6 +1773,13 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
     // clauses first.
     let mut order: Vec<&ClauseRun> = hx.runs.iter().collect();
     order.sort_by_key(|r| std::cmp::Reverse(clause_depth(p, r.at)));
+    // The edges inside each part of each clause, for [`exposed`]. The loop
+    // adds no edge.
+    let mut all_preds: Preds = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        all_preds.entry(b).or_default().push(a);
+    }
+    let mut clause_preds: HashMap<(BodyId, bool), Preds> = HashMap::new();
     for r in order {
         let Some((pre, post)) = regions.get(&r.clause) else {
             continue;
@@ -1209,6 +1803,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             locals: &locals,
             roots: t.roots,
             clause: r.clause,
+            param_runs: &param_runs,
         };
         let empty = FnFacts::default();
         let part = parts.get(&r.clause).unwrap_or(&empty);
@@ -1224,6 +1819,42 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             .may_abort
             .iter()
             .any(|x| nodes.contains(x) && !resumes.contains(x));
+        // A call whose clause runs while a task of the call can run
+        // (follow-up F19.5): the task node of the handler reads each place
+        // that the code of the clause accesses, and the second task of the
+        // handler changes what the code of the clause changes, so the tasks
+        // of the call (`templates::wait_tasks`) conflict with the clause.
+        if !r.post {
+            for &(_, _, c, back) in hx
+                .wait_copies
+                .iter()
+                .filter(|(m, h, _, _)| *m == r.node && *h == r.handler)
+            {
+                let changes: Vec<PlaceId> = new
+                    .mutates_at
+                    .iter()
+                    .chain(&new.lends_mut)
+                    .chain(&new.releases_at)
+                    .map(|&(_, q)| q)
+                    .collect();
+                let reads = new.reads_at.iter().map(|&(_, q)| q);
+                facts
+                    .reads_at
+                    .extend(reads.chain(changes.iter().copied()).map(|q| (c, q)));
+                facts
+                    .task_writes
+                    .extend(changes.into_iter().map(|q| (back, q)));
+            }
+        }
+        // The clause runs after the run node moves its arguments
+        // ([`late_uses`], follow-up F20.3 and F20.4).
+        if !new.uses.is_empty() {
+            let preds = clause_preds
+                .entry((r.clause, r.post))
+                .or_insert_with(|| preds_in(&all_preds, nodes));
+            late.uses
+                .extend(clause_uses((part, nodes, preds), &new.uses));
+        }
         add_rows(facts, &new);
         if let Some(c) = clause_of.get(&r.node) {
             add_rows(parts.entry(*c).or_default(), &new);
@@ -1251,6 +1882,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             locals: &locals,
             roots: t.roots,
             clause: c,
+            param_runs: &param_runs,
         };
         let rows: Vec<(VarId, PlaceId)> = rows_of
             .get(&c)
@@ -1272,17 +1904,82 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         let Some(&(hid, _)) = hx.ids.get(&h) else {
             continue;
         };
-        let escapes: BTreeSet<String> = parts
+        let mut escapes: BTreeSet<String> = parts
             .get(c)
             .into_iter()
             .flat_map(|x| x.escapes_at.iter())
             .filter(|(n, _)| pre.contains(n) || post.contains(n))
             .map(|(_, e)| e.clone())
             .collect();
+        // A perform through the capability of a local handler outside the
+        // clause (not a handler that the clause itself installs) forwards
+        // the effect too (corpus 15, `nested`; plan stage F19).
+        escapes.extend(
+            parts
+                .get(c)
+                .into_iter()
+                .flat_map(|x| x.performs_at.iter())
+                .filter(|(n, _)| pre.contains(n) || post.contains(n))
+                .filter_map(|(_, cap)| {
+                    hx.ids
+                        .iter()
+                        .find(|(_, &(_, k))| k == *cap)
+                        .and_then(|(&h2, _)| p.handlers.get(h2.index()))
+                        .filter(|d| !crate::analysis::clause::inside(p, d.site, *c))
+                        .and_then(|d| t.tys.effects().get(d.effect.index()))
+                        .map(|e| e.identity.clone())
+                }),
+        );
         facts
             .clause_performs
             .extend(escapes.into_iter().map(|e| (hid, e)));
     }
+    late
+}
+
+/// The nodes of the clauses `clauses` that call a function value of a
+/// parameter of the clause, with the index of the parameter (O3-7).
+fn param_run_nodes(
+    p: &Program,
+    table: &NodeTable,
+    clauses: impl Iterator<Item = BodyId>,
+) -> HashMap<NodeId, u32> {
+    let mut out = HashMap::new();
+    for c in clauses {
+        let Some(b) = p.body(c) else {
+            continue;
+        };
+        for (bi, blk) in b.blocks.iter().enumerate() {
+            let TermKind::Call {
+                callee:
+                    weft_ir::Callee::Value(weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q)),
+                ..
+            } = &blk.term.kind
+            else {
+                continue;
+            };
+            let Some(i) = b.params.iter().position(|&l| l == q.local) else {
+                continue;
+            };
+            if !q.proj.is_empty() {
+                continue;
+            }
+            let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+            for phase in [Phase::Main, Phase::Ret] {
+                let key = NodeKey {
+                    body: c,
+                    block,
+                    at: TERM,
+                    phase,
+                    dest: NORMAL,
+                };
+                if let Some(n) = table.get(key) {
+                    out.insert(n, u32::try_from(i).unwrap_or(u32::MAX));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The rows of `facts` at the nodes of each clause (`clause_of`), of the
@@ -1441,7 +2138,13 @@ fn copy_part(
                     ps,
                 )
             }
-            Mapped::Same(q) => (Some(clause_root), vec![q]),
+            Mapped::Same(q) => {
+                let root = m
+                    .param_runs
+                    .get(&x)
+                    .map_or(clause_root, |&i| crate::body::roots::fn_arg(i as usize));
+                (Some(root), vec![q])
+            }
             Mapped::Own => continue,
         };
         for x in ps {
@@ -1504,6 +2207,188 @@ fn copy_part(
     new
 }
 
+/// The uses of the clauses at their run nodes ([`project`]), for
+/// [`late_uses`].
+#[derive(Debug, Default)]
+pub struct LateUses {
+    /// The moves of the run nodes before the clauses come: the arguments
+    /// that a call or a perform moves at its `Main` node.
+    moves: HashSet<(VarId, NodeId)>,
+    /// The parts that these moves move.
+    parts: HashSet<(PlaceId, NodeId)>,
+    /// Each use `(v, n)` of a clause at its run node `n` that can see the
+    /// value of `v` from the site, with the places that the clause reads,
+    /// changes or lends.
+    uses: Vec<(VarId, NodeId, Vec<PlaceId>)>,
+}
+
+/// The uses `uses` of a clause at its run node that can see the value of
+/// their variable from the site ([`exposed`]), each with the places that the
+/// clause (rows `part`, nodes `nodes`) reads, changes or lends.
+fn clause_uses(
+    (part, nodes, preds): (&FnFacts, &HashSet<NodeId>, &Preds),
+    uses: &[(VarId, NodeId)],
+) -> Vec<(VarId, NodeId, Vec<PlaceId>)> {
+    let places: Vec<PlaceId> = part
+        .reads_at
+        .iter()
+        .chain(&part.mutates_at)
+        .chain(&part.lends_mut)
+        .filter(|(x, _)| nodes.contains(x))
+        .map(|&(_, q)| q)
+        .collect();
+    uses.iter()
+        .filter(|&&(v, _)| exposed((part, nodes, preds), v))
+        .map(|&(v, n)| (v, n, places.clone()))
+        .collect()
+}
+
+/// The predecessors of each node of `nodes` through the edges of `facts`
+/// inside `nodes`.
+type Preds = HashMap<NodeId, Vec<NodeId>>;
+
+/// The [`Preds`] of the nodes `nodes`, from the predecessors `all` of each
+/// node of the facts.
+fn preds_in(all: &Preds, nodes: &HashSet<NodeId>) -> Preds {
+    let mut preds: Preds = HashMap::new();
+    for &b in nodes {
+        for &a in all.get(&b).into_iter().flatten() {
+            if nodes.contains(&a) {
+                preds.entry(b).or_default().push(a);
+            }
+        }
+    }
+    preds
+}
+
+/// The uses of the clauses that the run nodes see after the moves of their
+/// arguments.
+///
+/// B-1 of the second review of group F (follow-up F20.3) and B-2 of the
+/// third review (follow-up F20.4). It runs when the facts have their owners
+/// and the versions of the parts.
+///
+/// A clause runs while the call waits, after the call moved its arguments
+/// at the run node. The spec gives `moved` and `invalid` only at a node after
+/// the node of the move, and the operand use of an argument is at that node
+/// too. So a use `(v, n)` of a clause also goes to each successor of the
+/// run node `n`, if:
+///
+/// - the run node moves `v`: all of `v`, or a part of `v` that the clause
+///   reads, changes or lends (W0302); or
+/// - `v` points into a place that a move of the run node frees: the root of
+///   a variable that moves, or a part that moves (W0301).
+///
+/// A clause that gives `v` a new value on each path to the use does not use
+/// the value of the site (`exposed`, I-10 of the third review).
+pub fn late_uses(facts: &mut FnFacts, late: &LateUses) {
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    // The rows by variable and by node: each use reads only its own rows
+    // (stage C1.4; a scan of all rows for each use was quadratic).
+    let mut roots: HashMap<VarId, Vec<PlaceId>> = HashMap::new();
+    for &(r, w) in &facts.owner {
+        roots.entry(w).or_default().push(r);
+    }
+    let mut points: HashMap<VarId, Vec<PlaceId>> = HashMap::new();
+    for &(w, q) in &facts.points_into {
+        points.entry(w).or_default().push(q);
+    }
+    let mut parts_by: HashMap<NodeId, Vec<PlaceId>> = HashMap::new();
+    for &(m, x) in &late.parts {
+        parts_by.entry(x).or_default().push(m);
+    }
+    let mut moves_by: HashMap<NodeId, Vec<VarId>> = HashMap::new();
+    for &(w, x) in &late.moves {
+        moves_by.entry(x).or_default().push(w);
+    }
+    let none: Vec<PlaceId> = Vec::new();
+    let roots_of = |w: VarId| roots.get(&w).unwrap_or(&none);
+    let mut out = Vec::new();
+    for (v, n, places) in &late.uses {
+        let (v, n) = (*v, *n);
+        let parts_at: &[PlaceId] = parts_by.get(&n).map_or(&[], Vec::as_slice);
+        // The places that the moves of the run node free.
+        let mut freed: Vec<PlaceId> = parts_at.to_vec();
+        for &w in moves_by.get(&n).into_iter().flatten() {
+            for &r in roots_of(w) {
+                if !parts_at.iter().any(|&m| at_or_below(facts, m, r)) {
+                    freed.push(r);
+                }
+            }
+        }
+        let moved = late.moves.contains(&(v, n)) && {
+            let roots = roots_of(v);
+            let mine: Vec<PlaceId> = parts_at
+                .iter()
+                .copied()
+                .filter(|&m| roots.iter().any(|&r| at_or_below(facts, m, r)))
+                .collect();
+            // A move of a part: the clause must access that part.
+            mine.is_empty()
+                || places.iter().any(|&q| {
+                    mine.iter()
+                        .any(|&m| at_or_below(facts, q, m) || at_or_below(facts, m, q))
+                })
+        };
+        let into = points
+            .get(&v)
+            .into_iter()
+            .flatten()
+            .any(|&q| freed.iter().any(|&f| at_or_below(facts, q, f)));
+        if moved || into {
+            out.extend(succ.get(&n).into_iter().flatten().map(|&x| (v, x)));
+        }
+    }
+    facts.uses.extend(out);
+}
+
+/// True if a use of variable `v` in the clause with the rows `part`, the
+/// nodes `nodes` and the edges `preds` between them can see the value of `v`
+/// from the site: a path from a node of the clause with no predecessor in
+/// the clause to the use has no new value of `v` (`rebound_at`) before the
+/// use.
+fn exposed((part, nodes, preds): (&FnFacts, &HashSet<NodeId>, &Preds), v: VarId) -> bool {
+    let rebound: HashSet<NodeId> = part
+        .rebound_at
+        .iter()
+        .filter(|(x, n)| *x == v && nodes.contains(n))
+        .map(|(_, n)| *n)
+        .collect();
+    let uses: Vec<NodeId> = part
+        .uses
+        .iter()
+        .filter(|(x, n)| *x == v && nodes.contains(n))
+        .map(|(_, n)| *n)
+        .collect();
+    // A use with no use row in the clause (a run node of a nested clause):
+    // the value can come from the site.
+    if uses.is_empty() {
+        return true;
+    }
+    // The use node itself can give `v` a new value: its use comes first.
+    let mut work: Vec<NodeId> = Vec::new();
+    for u in uses {
+        match preds.get(&u) {
+            None => return true,
+            Some(ps) => work.extend(ps.iter().copied()),
+        }
+    }
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    while let Some(n) = work.pop() {
+        if rebound.contains(&n) || !seen.insert(n) {
+            continue;
+        }
+        match preds.get(&n) {
+            None => return true,
+            Some(ps) => work.extend(ps.iter().copied()),
+        }
+    }
+    false
+}
+
 /// True if place `q` is place `b` or a place below it; a wildcard place `b`
 /// stands for each place below its base.
 fn at_or_below(facts: &FnFacts, q: PlaceId, b: PlaceId) -> bool {
@@ -1555,6 +2440,7 @@ pub fn map_stored(
             locals: &HashSet::new(),
             roots: t.roots,
             clause: c,
+            param_runs: &HashMap::new(),
         };
         let mut refs = Vec::new();
         for &r in &st.refs {
@@ -1614,7 +2500,12 @@ pub fn map_stored(
 /// lends each place that they change and frees each place that they free.
 /// A change or a free of a place that a parameter of the clause points into
 /// (σ of a perform) is a change or a free of the place of the parameter.
-pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a clause whose run nodes the region
+/// does not find in the handled body.
+pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> R {
     let p = t.p;
     let joined = &joined_sigma(hx);
     // The frames of the clauses end at `Post`: a reference into a local of a
@@ -1646,7 +2537,22 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         rs.dedup();
         facts.releases_at.extend(rs.into_iter().map(|r| (post, r)));
     }
-    let multi: HashSet<NodeId> = facts.multi_at.iter().copied().collect();
+    // The `multi` points: `multi_at`, and each node that runs a clause that
+    // can resume more than once (`performs_at` of a `clause_multi`
+    // capability, plan stage F16).
+    let multi_caps: HashSet<CapId> = facts.clause_multi.iter().copied().collect();
+    let multi: HashSet<NodeId> = facts
+        .multi_at
+        .iter()
+        .copied()
+        .chain(
+            facts
+                .performs_at
+                .iter()
+                .filter(|(_, c)| multi_caps.contains(c))
+                .map(|(n, _)| *n),
+        )
+        .collect();
     // `body_multi`: a node of the handled body can resume more than once,
     // so a `resume` of a clause is a `multi` point (`multi_at` by the rule of
     // the spec, W0503).
@@ -1660,7 +2566,7 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         }
     }
     if hx.resumes.is_empty() {
-        return;
+        return Ok(());
     }
     let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
     for &(a, b) in &facts.cfg_edge {
@@ -1696,34 +2602,27 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         }
         m
     };
+    let rg = Region {
+        p,
+        ix: &ix,
+        hx,
+        succ: &succ,
+        multi: multi_handlers(facts, hx, &multi),
+    };
     for &(r, h, c) in &hx.resumes {
-        let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+        let Some(seen) = rg.of(h, c)? else {
             continue;
         };
-        // The nodes of the handled body (and of the bodies that splice into
-        // it): the region of the continuation.
-        let body_nodes = ix.spliced_nodes(p, hb, true);
-        let ends: Vec<NodeId> = hx
-            .ends
+        // The frame of the clause waits at its `resume`: the rest of the
+        // handled body does not free a local of the clause (the release at
+        // `Post` and `Landing` is for the frames of the clauses of the
+        // handlers inside the handled body).
+        let own: HashSet<weft_facts::RootId> = ix
+            .subtree(c)
             .iter()
-            .filter(|(x, _, _)| *x == h)
-            .flat_map(|(_, e, po)| [*e, *po])
+            .flat_map(|b| roots_of.get(b).into_iter().flatten())
+            .map(|&q| facts.place(q).root)
             .collect();
-        // The nodes after each perform of the clause, in the handled body.
-        let mut seen: HashSet<NodeId> = HashSet::new();
-        let mut work: Vec<NodeId> = hx
-            .runs
-            .iter()
-            .filter(|x| !x.post && x.clause == c)
-            .flat_map(|x| succ.get(&x.node).cloned().unwrap_or_default())
-            .collect();
-        while let Some(x) = work.pop() {
-            if !body_nodes.contains(&x) || !seen.insert(x) {
-                continue;
-            }
-            work.extend(succ.get(&x).cloned().unwrap_or_default());
-        }
-        seen.extend(ends);
         let mut changed: BTreeSet<PlaceId> = BTreeSet::new();
         let mut freed: BTreeSet<PlaceId> = BTreeSet::new();
         for x in &seen {
@@ -1733,6 +2632,7 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
             }
             freed.extend(frees_of.get(x).into_iter().flatten().copied());
         }
+        freed.retain(|&q| !own.contains(&facts.place(q).root));
         // The places of the parameters of the clause.
         let mut params: Vec<(PlaceId, PlaceId)> = Vec::new();
         if let Some(s) = joined.get(&c) {
@@ -1798,6 +2698,236 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) {
         frees_of.entry(r).or_default().extend(frees.iter().copied());
         facts.lends_mut.extend(lends.into_iter().map(|q| (r, q)));
         facts.releases_at.extend(frees.into_iter().map(|q| (r, q)));
+    }
+    Ok(())
+}
+
+/// The handler of each node that runs a clause that can resume more than
+/// once: the handler of the clause, or `None` for a `multi` operation of a
+/// handler of a caller (`multi_at`).
+fn multi_handlers(
+    facts: &FnFacts,
+    hx: &Handlers,
+    multi: &HashSet<NodeId>,
+) -> HashMap<NodeId, Option<HandlerId>> {
+    let by_cap: HashMap<CapId, HandlerId> = hx.ids.iter().map(|(&h, &(_, c))| (c, h)).collect();
+    let caps: HashSet<CapId> = facts.clause_multi.iter().copied().collect();
+    let mut out: HashMap<NodeId, Option<HandlerId>> = HashMap::new();
+    for &n in &facts.multi_at {
+        out.insert(n, None);
+    }
+    for &(n, c) in &facts.performs_at {
+        if multi.contains(&n) && caps.contains(&c) {
+            if let Some(&h) = by_cap.get(&c) {
+                out.insert(n, Some(h));
+            }
+        }
+    }
+    out
+}
+
+/// The region of the continuation of a `resume` (`docs/ir.md` 6.7, plan
+/// stage F17): the nodes that can run while a clause waits at its `resume`.
+struct Region<'a> {
+    p: &'a Program,
+    ix: &'a Index,
+    hx: &'a Handlers,
+    succ: &'a HashMap<NodeId, Vec<NodeId>>,
+    /// The nodes that run a clause that can resume more than once, with its
+    /// handler ([`multi_handlers`]).
+    multi: HashMap<NodeId, Option<HandlerId>>,
+}
+
+impl Region<'_> {
+    /// The handled body of handler `h`.
+    fn handled(&self, h: HandlerId) -> Option<BodyId> {
+        self.p.handlers.get(h.index()).map(|d| d.handled)
+    }
+
+    /// The `Exit` and `Post` nodes of handler `h`.
+    fn ends(&self, h: HandlerId) -> Vec<NodeId> {
+        self.hx
+            .ends
+            .iter()
+            .filter(|(x, _, _)| *x == h)
+            .flat_map(|(_, e, po)| [*e, *po])
+            .collect()
+    }
+
+    /// The nodes of handled body `hb` and of the bodies that splice into it,
+    /// on the normal path or on a cleanup path whose abort lands in a
+    /// handler inside `hb` (D-CONT-UNWIND of the review of group D).
+    fn body_nodes(&self, hb: BodyId) -> HashSet<NodeId> {
+        let bodies: Vec<BodyId> = self
+            .ix
+            .subtree(hb)
+            .into_iter()
+            .filter(|&b| splice_root(self.p, b) != b)
+            .collect();
+        let dests: HashSet<u32> = self
+            .p
+            .handlers
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| bodies.contains(&d.handled))
+            .map(|(i, _)| {
+                super::frames::FIRST_HANDLER.saturating_add(u32::try_from(i).unwrap_or(u32::MAX))
+            })
+            .collect();
+        self.ix
+            .nodes(&bodies)
+            .filter(|(k, _)| k.dest == NORMAL || dests.contains(&k.dest))
+            .map(|(_, n)| *n)
+            .collect()
+    }
+
+    /// The nodes of the component of body `root` (the body and the bodies
+    /// that splice into it) on the normal path.
+    fn component_nodes(&self, root: BodyId) -> HashSet<NodeId> {
+        let bodies: Vec<BodyId> = self
+            .ix
+            .subtree(root)
+            .into_iter()
+            .filter(|&b| splice_root(self.p, b) == root)
+            .collect();
+        self.ix
+            .nodes(&bodies)
+            .filter(|(k, _)| k.dest == NORMAL)
+            .map(|(_, n)| *n)
+            .collect()
+    }
+
+    /// The start points of the region of clause `c` in the nodes `body` of
+    /// its handled body: each node that runs the clause, and if the node
+    /// itself runs code after the perform (a call, the run of a function
+    /// value, or the run of an inner clause), the node too (D-CONT-RUN). A
+    /// perform in a clause of an inner handler maps to the nodes that run
+    /// that clause (D-CONT-NEST).
+    ///
+    /// Returns `None` if a run of the clause maps to no node of `body`.
+    fn starts(&self, c: BodyId, body: &HashSet<NodeId>) -> Option<Vec<(NodeId, bool)>> {
+        let mut out: Vec<(NodeId, bool)> = Vec::new();
+        let mut todo: Vec<(&ClauseRun, bool)> = self
+            .hx
+            .runs
+            .iter()
+            .filter(|x| !x.post && x.clause == c)
+            .map(|x| (x, false))
+            .collect();
+        let mut done: HashSet<BodyId> = HashSet::new();
+        while let Some((x, mapped)) = todo.pop() {
+            if body.contains(&x.node) {
+                out.push((x.node, mapped || x.given.is_some()));
+                continue;
+            }
+            match clause::enclosing_clause(self.p, x.at) {
+                // A perform in a closure body that a node of the handled
+                // body runs: that node is a run of the clause too (a call
+                // that runs a clause, plan stage F16). A closure that no
+                // node runs (dead code) runs no clause.
+                None if !mapped => {
+                    let mut runs = self
+                        .hx
+                        .runs
+                        .iter()
+                        .filter(|y| y.clause == c && y.given.is_some())
+                        .peekable();
+                    if runs.peek().is_some() && !runs.any(|y| body.contains(&y.node)) {
+                        return None;
+                    }
+                }
+                Some(c1) if c1 != c => {
+                    if done.insert(c1) {
+                        todo.extend(
+                            self.hx
+                                .runs
+                                .iter()
+                                .filter(|y| y.clause == c1)
+                                .map(|y| (y, true)),
+                        );
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    /// The nodes from the nodes `starts` (each with the node itself or only
+    /// the nodes after it) on, inside the nodes `body`.
+    fn walk(&self, starts: &[(NodeId, bool)], body: &HashSet<NodeId>, seen: &mut HashSet<NodeId>) {
+        let mut work: Vec<NodeId> = Vec::new();
+        for &(n, with) in starts {
+            if with && body.contains(&n) {
+                seen.insert(n);
+            }
+            work.extend(self.succ.get(&n).into_iter().flatten().copied());
+        }
+        while let Some(x) = work.pop() {
+            if !body.contains(&x) || !seen.insert(x) {
+                continue;
+            }
+            work.extend(self.succ.get(&x).into_iter().flatten().copied());
+        }
+    }
+
+    /// The region of the continuation of each `resume` of clause `c` of
+    /// handler `h`: the nodes of the handled body after each node that runs
+    /// the clause, and `Exit` and `Post` of the `handle`. If a node of the
+    /// region runs a clause of an outer `multi` handler, a copy of the frame
+    /// of the clause waits while the rest of that handled body runs, and
+    /// runs again from the node (D-COPY-WAIT): the region has those nodes
+    /// too.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlphaError::Later`] if a run of the clause maps to no node
+    /// of the handled body.
+    fn of(&self, h: HandlerId, c: BodyId) -> Result<Option<HashSet<NodeId>>, AlphaError> {
+        let Some(hb) = self.handled(h) else {
+            return Ok(None);
+        };
+        let body = self.body_nodes(hb);
+        let Some(starts) = self.starts(c, &body) else {
+            return Err(AlphaError::Later(
+                "a perform whose rest of the handled body the facts do not find (stage F17)",
+            ));
+        };
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        self.walk(&starts, &body, &mut seen);
+        let ends = self.ends(h);
+        seen.extend(ends.iter().copied());
+        // The outer `multi` handlers whose clauses a node of the region runs.
+        let mut done: HashSet<Option<HandlerId>> = HashSet::new();
+        loop {
+            let found: Vec<Option<HandlerId>> = seen
+                .iter()
+                .filter_map(|n| self.multi.get(n).copied())
+                .filter(|m| !done.contains(m))
+                .collect();
+            let Some(m) = found.first().copied() else {
+                break;
+            };
+            done.insert(m);
+            let outer = match m {
+                Some(hm) if hm == h => continue,
+                Some(hm) => match self.handled(hm) {
+                    Some(hbm) if inside(self.p, hb, hbm) => {
+                        let mut b = self.body_nodes(hbm);
+                        b.extend(self.ends(hm));
+                        b
+                    }
+                    _ => continue,
+                },
+                None => self.component_nodes(splice_root(self.p, hb)),
+            };
+            let from: Vec<(NodeId, bool)> = ends.iter().map(|&n| (n, false)).collect();
+            self.walk(&from, &outer, &mut seen);
+            if let Some(hm) = m {
+                seen.extend(self.ends(hm));
+            }
+        }
+        Ok(Some(seen))
     }
 }
 

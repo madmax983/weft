@@ -1,0 +1,15 @@
+// F19.5 (R3-3, issue #51): a perform after the run; the clause writes another place
+effect Note { fn note() }
+fn f(g: fn()) / Note { g(); note() }
+fn main() / async, clock {
+    let v = Vec.new()
+    let w = Vec.new()
+    v.push(1)
+    w.push(1)
+    let c = true
+    scope { s =>
+        handle Note { fn note() { w.push(5); resume(()) } } in {
+            f(|| { s.spawn(|| v.push(2)); () })
+        }
+    }
+}

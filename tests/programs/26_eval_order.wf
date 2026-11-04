@@ -160,7 +160,7 @@ fn temp_closure_call(world: &World) / mut(world.entities) {
 }
 
 fn temp_receiver(world: &World) / mut(world.entities, world.entities[]) {
-    world.entities[0].heal(grow(world))   //~ W0301
+    world.entities[0].heal(grow(world))   //~ old: W0301
 }
 
 // Control: the arguments run before the reference is taken.

@@ -104,12 +104,68 @@ pub struct Em<'a> {
     /// interface (an entry of `runs`): a caller applies the value that it
     /// gives there (no part `lends` of a closure summary).
     pub run_nodes: Vec<NodeId>,
+    /// One entry for each `multi_at` row that code of a caller adds at a
+    /// run node of `run_nodes` (issue #56). The caller applies the value
+    /// that it gives there, with the `multi` part of that value (part
+    /// `runs`), so these rows are no part `multi` of a closure summary. The
+    /// body itself keeps the rows: it does not know the value.
+    pub run_multi: Vec<NodeId>,
     /// The `lends_mut` of each summary that the body applies at a run node
     /// and that no entry of `runs` gives again to a caller: code of a caller
     /// of a value that the body does not know, the captures of a closure
     /// that a callee made, a callee or a closure that lends. The summary of
     /// the body gets their interface places (part `lends`, follow-up F13.2).
     pub own_lends: Vec<(NodeId, PlaceId)>,
+    /// The tasks of the body that run a function value of the interface
+    /// (code of a caller, plan stage F19): the task, the parameter (or
+    /// capture) and if it is a capture, and if the task is a `fork` branch.
+    pub task_runs: Vec<(weft_facts::TaskId, u32, bool, bool)>,
+    /// The nodes where the body runs a function value of the interface (a
+    /// parameter, or a capture with `true`) as code that is not a task.
+    pub run_at: Vec<(u32, bool, NodeId)>,
+    /// The values of the interface (index, capture) that a callee runs at a
+    /// node of the body and after whose run the callee can perform or abort
+    /// (`Run::then` of the callee, follow-up F19.4).
+    pub then_runs: Vec<(u32, bool)>,
+    /// The task whose run `emit_apps` emits now, and if it is a `fork`
+    /// branch: a run of a function value of the interface there is a run
+    /// as a task (`task_runs`).
+    pub in_task: Option<(weft_facts::TaskId, bool)>,
+    /// The tasks that are `opaque` only because they run code of a caller:
+    /// the body does not pin for them (`Summary::pins`), as the caller
+    /// checks the value that it gives.
+    pub code_opaque: Vec<weft_facts::TaskId>,
+    /// The [`super::nodes::Phase::Task`] nodes of the call that the
+    /// template emits now (plan stage F19).
+    pub task_nodes: Vec<NodeId>,
+    /// The local handlers whose clauses the call that the template emits
+    /// now runs while a task of the call can run, each with its four task
+    /// nodes (`super::frames::Frames::wait_handlers`, follow-up F19.5).
+    pub wait_nodes: Vec<(weft_ir::HandlerId, [NodeId; 4])>,
+    /// The `FrameEnd` nodes of the aborts of the call that the template
+    /// emits now to a local handler, if it has `wait_nodes` (follow-up
+    /// F19.5): a task that a late run starts and that runs while the callee
+    /// aborts starts there too, so it runs at the code after the `handle`.
+    pub abort_starts: Vec<NodeId>,
+    /// The facts of the part `waits` of the body (follow-up F19.5).
+    pub waits: crate::analysis::tasks::WaitRaw,
+    /// The spawn sites (`SpawnId`) whose tasks the body starts, also
+    /// through the closures that it runs (part `tasks` of a closure
+    /// summary, plan stage F19).
+    pub started: Vec<u32>,
+    /// The effects that a task of the body performs through a handler of a
+    /// caller (part `task_effects`, plan stage F19).
+    pub task_effects: std::collections::BTreeSet<String>,
+    /// W0314 (`docs/ir.md` 6.9, plan stage F19): the span and the text of
+    /// each task that performs through a handler of this task.
+    pub w0314: Vec<(weft_ir::Span, String)>,
+    /// The ends of the tasks (`Handlers::task_ends`): [`task_end_lends`]
+    /// gives their `lends_mut` when the facts of the component are whole.
+    pub task_end_list: Vec<(weft_facts::TaskId, NodeId)>,
+    /// The frame variables of the runs of each task (a local of the task
+    /// body that a reference of the task holds): they end where the task
+    /// ends ([`task_end_lends`]).
+    pub task_frames: Vec<(weft_facts::TaskId, VarId)>,
     /// The join of the states before each `Dead` of the body, if it has
     /// closures: the last value of a variable that a closure keeps (`Kept`)
     /// when the body gives the closure back (stage F12).
@@ -118,6 +174,46 @@ pub struct Em<'a> {
     /// what their runs found, and the templates keep the run nodes of the
     /// clauses (`super::handlers`).
     pub hx: &'a mut crate::analysis::clause::Handlers,
+    /// The place of the first `Assign` of each whole local of each body from
+    /// a borrow or a copy (`receiver_ref`), made at the first use (stage
+    /// C1.4: a search of the body for each call was quadratic).
+    pub temp_src: std::collections::HashMap<BodyId, std::collections::HashMap<LocalId, Place>>,
+}
+
+/// The tasks of a call that stand for the tasks that can run while a clause
+/// of a local handler runs at the call (follow-up F19.5, issue #50).
+///
+/// The handler has four task nodes (`super::frames::Frames::wait_handlers`).
+/// `task` starts at the first one and ends at the second one, which reads
+/// each place that the code of the clause accesses at `Main`
+/// (`super::handlers::project`); its changes are the changes of the tasks
+/// that run while the clause runs. `back` starts at the third node and
+/// ends at the fourth one, which reads each place that these tasks read;
+/// its changes are the changes of the code of the clause. So a clause
+/// that reads or changes what such a task changes, or changes what such a
+/// task reads, conflicts with it (W0405). The places of the tasks are the
+/// places of the part `waits` of the summaries that the call applies for
+/// the effect of the handler, and the places of each task of `writes_of`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WaitTask {
+    /// The task with the changes of the tasks.
+    pub task: weft_facts::TaskId,
+    /// The task with the changes of the clause.
+    pub back: weft_facts::TaskId,
+    /// The fourth task node: it reads the places that the tasks read.
+    pub reads_at: NodeId,
+    /// The `Main` node of the call.
+    pub main: NodeId,
+    /// The local handler.
+    pub handler: weft_ir::HandlerId,
+    /// The tasks of the component that a run of the call starts before the
+    /// clause can run.
+    pub stands: Vec<weft_facts::TaskId>,
+    /// The tasks of `stands` that do not run at the task nodes of the call
+    /// already (they start after `Main`), and that only the code of the
+    /// callee after the run can make wait: `task` gets their changes, and
+    /// `reads_at` their reads.
+    pub writes_of: Vec<weft_facts::TaskId>,
 }
 
 /// References that a node puts into a place that a caller keeps: behind a
@@ -378,7 +474,7 @@ impl Em<'_> {
     }
 
     /// What a template knows about an access of `place` in state `st`.
-    /// With `root`, the access reads the root of a source local.
+    /// With `root`, an access of a whole source local reads its root.
     fn access(
         &mut self,
         st: &State,
@@ -414,7 +510,11 @@ impl Em<'_> {
         ptrs.sort();
         ptrs.dedup();
         let k = self.key(place.local)?;
-        let root = if root && self.source_local(k) {
+        // A use of a whole variable reads its root (OR8). An access of a
+        // part reads the places of the part only: a task that changes
+        // another part of the variable runs at the same time with no
+        // conflict (corpus 136, `field_part`; plan stage F19).
+        let root = if root && place.proj.is_empty() && self.source_local(k) {
             Some(self.root_of(place.local)?)
         } else {
             None
@@ -424,7 +524,7 @@ impl Em<'_> {
         // local.
         let mut vars = self.vars_of(place)?;
         for &q in &a.ptrs {
-            vars.extend(self.owner_vars(q, k));
+            vars.extend(self.owner_vars(q, Some(k)));
         }
         vars.extend(self.tests_of(place)?);
         vars.sort();
@@ -443,11 +543,11 @@ impl Em<'_> {
     /// `H` and `U` variables at, above or below the path. A place that no
     /// local owns gives the variables of the heap slots that overlap it
     /// (`super::holders`, stage F10.1).
-    fn owner_vars(&self, q: PlaceId, base: Key) -> Vec<VarId> {
+    fn owner_vars(&self, q: PlaceId, base: Option<Key>) -> Vec<VarId> {
         let Some((k, path)) = self.roots.path_of(self.facts, q) else {
             return self.holders.slot_vars(self.facts, q);
         };
-        if k == base {
+        if Some(k) == base {
             return Vec::new();
         }
         let mut out: Vec<VarId> = if self.skip_s == Some(k) {
@@ -767,6 +867,61 @@ pub(super) fn operand_moves(
     }
 }
 
+/// Two operands of one node that move the same place (`(f, f)`,
+/// `pair(f, f)`, `(p.0, p.0)`, a capture of a closure body, the arguments of
+/// a perform; I-2 of the second review of group F, follow-up F20.3; I-8 of
+/// the third review, follow-up F20.4).
+///
+/// The spec gives `moved` only after the node of a move, so the second move
+/// at the node is not a use after the first. For each such second move, the
+/// variable of the place moves and then is used in a part of the graph of
+/// its own (W0302, or W0502 for a `once` closure), with the span `at`. A
+/// place with an index step is not compared: two indexes can name two
+/// elements.
+///
+/// # Errors
+///
+/// The errors of α.
+pub(super) fn dup_moves(em: &mut Em<'_>, st: &State, ops: &[&Operand], at: Span) -> R {
+    let mut seen: Vec<&Place> = Vec::new();
+    for op in ops {
+        let (Operand::Copy(q) | Operand::Move(q)) = op else {
+            continue;
+        };
+        if q.proj.iter().any(|x| matches!(x, Proj::Index(_))) {
+            continue;
+        }
+        let plain = em.place_ty(q).is_some_and(|t| !em.tys.not_copy(t));
+        let moves = match op {
+            Operand::Move(_) => !plain || once_read(em, st, q)?,
+            _ => once_read(em, st, q)?,
+        };
+        if !moves {
+            continue;
+        }
+        if !seen.contains(&q) {
+            seen.push(q);
+            continue;
+        }
+        let body = em.body;
+        // The variable of the place: `S` of its local, `E` of a `ByMove`
+        // capture, the variable of the source of a `Kept` capture.
+        let v = match em.base_var(body, q)? {
+            Some(v) => Some(v),
+            None => em.vars_with(q, false)?.first().copied(),
+        };
+        let Some(v) = v else {
+            continue;
+        };
+        let a = em.facts.add_ir_node(at, "first move", "moved twice", "");
+        let b = em.facts.add_ir_node(at, "second move", "moved twice", "");
+        em.facts.cfg_edge.push((a, b));
+        em.facts.moved_at.push((v, a));
+        em.facts.uses.push((v, b));
+    }
+    Ok(())
+}
+
 /// True if the value at `q` in state `st` can be a `once` closure (it moves
 /// a capture when it runs): a read of it moves it.
 ///
@@ -804,7 +959,7 @@ fn copied_refs(em: &mut Em<'_>, q: &Place, al: &Alpha, a: &mut Access) -> R {
     }
     let base = em.key(q.local)?;
     for &p in &al.places {
-        a.vars.extend(em.owner_vars(p, base));
+        a.vars.extend(em.owner_vars(p, Some(base)));
     }
     a.vars.sort();
     a.vars.dedup();
@@ -819,16 +974,19 @@ fn copied_refs(em: &mut Em<'_>, q: &Place, al: &Alpha, a: &mut Access) -> R {
 fn moved(em: &mut Em<'_>, n: NodeId, st: &State, q: &Place, al: &Alpha) -> R {
     let k = em.key(q.local)?;
     // A move of a capture of the environment moves its variable `E`: the
-    // other captures are apart.
+    // other captures are apart. The places of the capture have no owner,
+    // so the move frees them as a part (`moved_part`): a reference into
+    // the capture is invalid after it, also for a move of the whole capture
+    // (P-1 of the review of group F, follow-up F20.2).
     if super::alpha::env_capture(em.p, em.body, q).is_some() {
         let Some(s) = em.base_var(em.body, q)? else {
             return Ok(());
         };
         em.facts.moved_at.push((s, n));
+        em.facts
+            .moved_part
+            .extend(al.places.iter().map(|&m| (m, n)));
         if q.proj.len() > 1 {
-            em.facts
-                .moved_part
-                .extend(al.places.iter().map(|&m| (m, n)));
             // Another part of the capture can still hold a linear value.
             let t = super::alpha::env_capture(em.p, em.body, q)
                 .and_then(|(c, ck, _)| super::alpha::capture_ty(em.p, em.tys, c, ck));
@@ -1002,7 +1160,15 @@ pub fn assign(
             _ => false,
         };
         let shares = kept.get(i).copied().unwrap_or(false);
+        let reads = em.facts.reads_at.len();
         operand_moves(em, n, st, op, relocate, !shares)?;
+        // The closure shares the cell of a `Kept` variable: the literal
+        // reads no value of it, so a task that writes the variable does
+        // not conflict with the literal (OR8, plan stage F18). A program
+        // with no task keeps the read.
+        if shares && !em.p.spawns.is_empty() {
+            em.facts.reads_at.truncate(reads);
+        }
         if let Operand::Const(weft_ir::Const::Fn(f, _)) = op {
             let sim =
                 em.p.fns
@@ -1013,6 +1179,14 @@ pub fn assign(
             }
         }
     }
+    let moving: Vec<&Operand> = transfer::rvalue_operands(rv)
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !kept.get(*i).copied().unwrap_or(false))
+        .map(|(_, op)| op)
+        .collect();
+    let at = em.facts.node(n).span;
+    dup_moves(em, st, &moving, at)?;
     if let Rvalue::Aggregate(weft_ir::AggKind::Closure(c), ops) = rv {
         linear_fn_captures(em, st, *c, ops)?;
     }
@@ -1050,13 +1224,27 @@ pub fn assign(
             em.apply(n, kernel::read(&a));
         }
         // The test of a variant binds the `W` variable of each variant step
-        // that the body reads through `q` (`docs/ir.md` 6.3).
+        // that the body reads through `q` (`docs/ir.md` 6.3), but only of
+        // the variants that the `Switch` after the test selects (stage
+        // C1.4): a `match` is a chain of tests, one for each arm.
         Rvalue::Discriminant(q) => {
             let (a, _) = em.access(st, q, true)?;
             em.apply(n, kernel::read(&a));
             let vars = em.vars;
-            for &(v, var) in vars.tested_at(em.body, q) {
-                em.bind_variant(n, st, var, q, v)?;
+            match selected_variants(em, place).as_deref() {
+                // One variant (each test of the builder): its variable.
+                Some(&[v]) => {
+                    if let Some(var) = vars.get(&VarKey::W(em.body, q.clone(), v)) {
+                        em.bind_variant(n, st, var, q, v)?;
+                    }
+                }
+                selected => {
+                    for &(v, var) in vars.tested_at(em.body, q) {
+                        if selected.is_none_or(|s| s.contains(&v)) {
+                            em.bind_variant(n, st, var, q, v)?;
+                        }
+                    }
+                }
             }
         }
         Rvalue::Aggregate(weft_ir::AggKind::Struct(t), ops) => literal_fields(em, st, n, *t, ops)?,
@@ -1086,7 +1274,8 @@ pub fn assign(
     };
     em.facts.uses.extend(named.into_iter().map(|v| (v, n)));
     let body = em.body;
-    let v = transfer::rvalue(&mut em.cx(), body, st, rv)?;
+    let mut v = transfer::rvalue(&mut em.cx(), body, st, rv)?;
+    transfer::relocate_moved(&mut em.cx(), body, st, place, rv, &mut v)?;
     let dest = match transfer::move_path(em.p, body, place)? {
         Some(d) => Some(d),
         None => transfer::kept_whole(&mut em.cx(), body, st, place)?.map(|k| (k, Vec::new())),
@@ -1117,6 +1306,39 @@ pub fn assign(
     }
     place_field(em, st, n, place, &v)?;
     Ok(())
+}
+
+/// The variants that the test with destination `dest` selects: the values
+/// of the arms of the `Switch` that ends the block of the test and reads
+/// `dest`, if the test is the last statement of the block. `None` if the
+/// test has another form: then each variant counts.
+///
+/// A read through `(b as v)` comes only after an arm of value `v` of such
+/// a `Switch` (`irbuild::pattern`, `irbuild::place`). So a test that
+/// cannot select `v` does not give the `W` variable of `v` a value: the
+/// test of `v` comes later on each path to the read.
+fn selected_variants(em: &Em<'_>, dest: &Place) -> Option<Vec<u32>> {
+    let (block, at) = em.at;
+    let b =
+        em.p.bodies
+            .get(em.body.index())?
+            .blocks
+            .get(block.index())?;
+    if usize::try_from(at).ok()? + 1 != b.stmts.len() || !dest.proj.is_empty() {
+        return None;
+    }
+    let TermKind::Switch {
+        on: Operand::Move(on) | Operand::Copy(on),
+        arms,
+        ..
+    } = &b.term.kind
+    else {
+        return None;
+    };
+    if on != dest {
+        return None;
+    }
+    arms.iter().map(|(x, _)| u32::try_from(*x).ok()).collect()
 }
 
 /// The place fields of the whole local `t` that moves to `place` (at the
@@ -1223,11 +1445,23 @@ fn part(
     }
     let tests = em.tests_of(place)?;
     em.facts.uses.extend(tests.into_iter().map(|w| (w, n)));
+    // A part below `path`, also behind a pointer of the old value (the
+    // place below a `Box`, `(*(n.next as Some).0)`): the old value goes,
+    // and the new value gives the part its value (follow-up F8.1, a `None`
+    // with no place field).
     em.facts.rebound_at.extend(
         em.vars
             .parts_of(k.0, k.1)
             .iter()
-            .filter(|(_, proj, _)| steps(proj).is_some_and(|x| is_prefix(path, &x)))
+            .filter(|(_, proj, _)| {
+                let fields = proj
+                    .iter()
+                    .take_while(|p| matches!(p, Proj::Field(_) | Proj::Variant(_)))
+                    .count();
+                proj.get(..fields)
+                    .and_then(steps)
+                    .is_some_and(|x| is_prefix(path, &x))
+            })
             .map(|(_, _, v)| (*v, n)),
     );
     // The places of a part with no variable of its own go to the variable
@@ -1248,8 +1482,13 @@ fn part(
     em.facts
         .mutates_at
         .extend(al.places.iter().map(|&m| (n, m)));
+    // The local holds the linear value after the store: a linear part, or
+    // a linear closure in a part with a function type (class H-LIN; the
+    // store into a local whose value was plain data, `cb.f = || unlock(l)`
+    // after `Cb { f: || print(0) }`, stage C1).
     if let (Some(s), Some(t)) = (s, em.place_ty(place)) {
-        if ir_props(em.tys, t).linear {
+        let closure = v.flat().linear && crate::props::ir_has_fns(em.tys, t);
+        if ir_props(em.tys, t).linear || closure {
             em.facts.overwrites.push((s, n));
         }
     }
@@ -1712,20 +1951,23 @@ fn literal_fields(em: &mut Em<'_>, st: &State, n: NodeId, t: TyId, ops: &[Operan
 
 /// `Drop(p)`: the old value of a place behind a pointer goes away.
 ///
-/// It uses and reads the pointers of `p`, and binds the drop pair `pair`
-/// (with the props of the old value). The pair ends at the `Assign` after
-/// it.
+/// It uses and reads the pointers of `p`, changes `p` (the old value goes
+/// away: the IR engine clears the cell, also for a value of a type
+/// parameter that is plain data at run time, plan stage F20), and binds the
+/// drop pair `pair` (with the props of the old value). The pair ends at the
+/// `Assign` after it.
 ///
 /// # Errors
 ///
 /// The errors of α.
 pub fn drop_place(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, pair: Option<VarId>) -> R {
-    let (a, _) = em.access(st, place, false)?;
+    let (a, al) = em.access(st, place, false)?;
     em.apply(
         n,
         Frag {
             uses: a.vars,
             reads: a.ptrs,
+            mutates: al.places,
             ..Frag::default()
         },
     );
@@ -1747,7 +1989,40 @@ pub fn drop_place(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, pair: O
 /// The errors of α.
 pub fn consume(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place) -> R {
     let al = em.alpha(st, place)?;
-    moved(em, n, st, place, &al)
+    moved(em, n, st, place, &al)?;
+    consume_tasks(em, n, st, place)
+}
+
+/// A `Consume` of a value with no linear part here (a variant with no
+/// payload, `None`): a task handle that the analysis puts in the value is
+/// not there on this path. A task of a site that no other value holds and
+/// that is not lost cannot run then: `joined_at(T, n)` (O3-9, a join in a
+/// `match` of an `Option`; plan stage F18).
+///
+/// # Errors
+///
+/// The errors of α.
+fn consume_tasks(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place) -> R {
+    if em.hx.task_ids.is_empty() {
+        return Ok(());
+    }
+    let Some((k, path)) = transfer::move_path(em.p, em.body, place)? else {
+        return Ok(());
+    };
+    let ts = st.value(k, &path).flat().tasks;
+    if ts.is_empty() {
+        return Ok(());
+    }
+    let others = crate::analysis::tasks::held_tasks(st, Some((k, &path)));
+    for site in ts {
+        if others.contains(&site) || st.lost_tasks().contains(&site) {
+            continue;
+        }
+        if let Some(t) = em.hx.task_ids.get(&site).copied() {
+            em.facts.joined_at.push((t, n));
+        }
+    }
+    Ok(())
 }
 
 /// `Uninit(p)`: `unset_at(S(l))` for a whole local, `unset_at(U(p))` for a
@@ -1868,6 +2143,22 @@ pub(super) fn deep_uses(
         return Ok(());
     }
     let base = em.key(q.local)?;
+    deep_chain(em, n, st, refs, Some(base))
+}
+
+/// The walk of [`deep_uses`] from the places `refs` at node `n`: `uses` of
+/// the variables of the owners of the places on the chain that hold
+/// references (but not of `base`, the local of the operand), and
+/// `reads_at` of each place on the chain.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::Later`] for a chain of more than
+/// [`DEEP_LIMIT`] places.
+fn deep_chain(em: &mut Em<'_>, n: NodeId, st: &State, refs: &[PlaceId], base: Option<Key>) -> R {
+    if refs.is_empty() {
+        return Ok(());
+    }
     let mut seen: std::collections::BTreeSet<PlaceId> = std::collections::BTreeSet::new();
     let mut work: Vec<PlaceId> = refs.to_vec();
     let mut uses = Vec::new();
@@ -1911,12 +2202,41 @@ pub(super) fn deep_uses(
 
 /// True if a value of type `t` can hold a reference to a value that holds
 /// a reference: a reference whose pointee holds references, also in a
-/// tuple, an array, a slice or a type argument.
-fn refs_to_refs(tys: &TyTable, t: TyId) -> bool {
-    match tys.try_get(t) {
-        Some(Ty::Ref(p)) => ir_props(tys, *p).holds_refs || refs_to_refs(tys, *p),
-        Some(Ty::Tuple(xs) | Ty::Adt(_, xs)) => xs.iter().any(|&x| refs_to_refs(tys, x)),
-        Some(Ty::Array(x, _) | Ty::Slice(x)) => refs_to_refs(tys, *x),
+/// tuple, an array, a slice, a type argument, or a field or a payload of a
+/// struct or an enum (class C-RR: `enum E { A(&Vec<&i64>) }`).
+pub(crate) fn refs_to_refs(tys: &mut TyTable, t: TyId) -> bool {
+    refs_to_refs_in(tys, t, &mut Vec::new())
+}
+
+/// [`refs_to_refs`]; `seen` holds the definitions on the way, so a type that
+/// holds itself ends the walk.
+fn refs_to_refs_in(tys: &mut TyTable, t: TyId, seen: &mut Vec<weft_ir::AdtId>) -> bool {
+    match tys.try_get(t).cloned() {
+        Some(Ty::Ref(p)) => ir_props(tys, p).holds_refs || refs_to_refs_in(tys, p, seen),
+        Some(Ty::Tuple(xs)) => xs.iter().any(|&x| refs_to_refs_in(tys, x, seen)),
+        Some(Ty::Array(x, _) | Ty::Slice(x)) => refs_to_refs_in(tys, x, seen),
+        Some(Ty::Adt(a, xs)) => {
+            if xs.iter().any(|&x| refs_to_refs_in(tys, x, seen)) {
+                return true;
+            }
+            if seen.contains(&a) {
+                return false;
+            }
+            let parts: Vec<TyId> = match tys.adts().get(a.index()).map(|d| &d.kind) {
+                Some(AdtKind::Struct(fs)) => fs.iter().map(|f| f.ty).collect(),
+                Some(AdtKind::Enum(vs)) => {
+                    vs.iter().flat_map(|v| v.fields.iter().copied()).collect()
+                }
+                _ => Vec::new(),
+            };
+            seen.push(a);
+            let out = parts.into_iter().any(|f| {
+                let f = subst(tys, f, &xs);
+                refs_to_refs_in(tys, f, seen)
+            });
+            seen.pop();
+            out
+        }
         _ => false,
     }
 }
@@ -1943,6 +2263,7 @@ pub fn unwind_value(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, a: &U
             .map(|(_, _, v)| *v),
     );
     em.facts.unwound_at.extend(vs.map(|v| (v, n)));
+    scope_unwind(em, n, place);
     if let UnwindAction::OnAbort(f) = a {
         on_abort(em, n, st, place, *f)?;
     }
@@ -2248,22 +2569,12 @@ pub struct CallNodes {
     /// gives a value: the value of the `handle` binds there (plan stage
     /// F14, `super::handlers`).
     pub values: Vec<(u32, NodeId)>,
-}
-
-/// True if type `t` names type parameter `j`.
-fn mentions_index(tys: &TyTable, t: TyId, j: u32, depth: usize) -> bool {
-    if depth > 32 {
-        return true;
-    }
-    let deep = |x: &TyId| mentions_index(tys, *x, j, depth + 1);
-    match tys.try_get(t) {
-        Some(Ty::Param(i)) => *i == j,
-        Some(Ty::Tuple(ts) | Ty::Adt(_, ts)) => ts.iter().any(deep),
-        Some(Ty::Ref(x) | Ty::Slice(x) | Ty::Array(x, _) | Ty::Iter(x)) => deep(x),
-        Some(Ty::Cont(a, b)) => deep(a) || deep(b),
-        Some(Ty::Fn(f)) => f.params.iter().any(deep) || deep(&f.ret),
-        _ => false,
-    }
+    /// Code of the component other than the callee can run at the node
+    /// while the callee runs (follow-up F19.4, R2-1): a clause of a local
+    /// handler, the destination of an abort at a local handler, or the code
+    /// after the node again (a `multi` resume). A call with wait nodes
+    /// (follow-up F19.5) has it only for a `multi` resume.
+    pub local_code: bool,
 }
 
 /// The span of operand `op` of a call with span `at`: the origin of its
@@ -2286,7 +2597,7 @@ pub(super) fn operand_span(em: &Em<'_>, op: &Operand, at: Span) -> Span {
 /// The local that a receiver argument reaches through: `r` for a receiver
 /// `&(*r).q` (a temporary that the body borrows through `r`) or `copy r`,
 /// where `r` is a reference.
-fn receiver_ref(em: &Em<'_>, op: &Operand) -> Option<LocalId> {
+fn receiver_ref(em: &mut Em<'_>, op: &Operand) -> Option<LocalId> {
     let (Operand::Copy(q) | Operand::Move(q)) = op else {
         return None;
     };
@@ -2296,16 +2607,22 @@ fn receiver_ref(em: &Em<'_>, op: &Operand) -> Option<LocalId> {
     let b = em.p.bodies.get(em.body.index())?;
     let d = b.locals.get(q.local.index())?;
     let place = if matches!(d.kind, LocalKind::Temp(_)) {
-        b.blocks
-            .iter()
-            .flat_map(|blk| &blk.stmts)
-            .find_map(|s| match &s.kind {
-                StmtKind::Assign(
+        let srcs = em.temp_src.entry(em.body).or_insert_with(|| {
+            let mut m: std::collections::HashMap<LocalId, Place> = std::collections::HashMap::new();
+            for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+                if let StmtKind::Assign(
                     dest,
                     Rvalue::Ref(p) | Rvalue::Use(Operand::Copy(p) | Operand::Move(p)),
-                ) if dest.local == q.local && dest.proj.is_empty() => Some(p.clone()),
-                _ => None,
-            })?
+                ) = &s.kind
+                {
+                    if dest.proj.is_empty() {
+                        m.entry(dest.local).or_insert_with(|| p.clone());
+                    }
+                }
+            }
+            m
+        });
+        srcs.get(&q.local)?.clone()
     } else {
         q.clone()
     };
@@ -2402,10 +2719,11 @@ pub(super) fn bind_dest(em: &mut Em<'_>, n: NodeId, st: &State, dest: &Place, v:
 ///   (`crate::analysis::apply::main`); `writes_via` at a method call whose
 ///   callee changes only places below its receiver; the binding of the
 ///   callee frame root and of a value that the callee drops.
-/// - `Ret`: the result binds to `dest`; each argument that the callee holds
-///   moves here (part `holds`); the values that go behind a reference
-///   argument (part `stores`); a value that the callee drops ends here
-///   (W0601).
+/// - `Ret`: the result binds to `dest`; the values that go behind a
+///   reference argument (part `stores`); a value that the callee drops ends
+///   here (W0601). An argument that the callee holds (part `holds`) moves
+///   at `Main` as each argument: a variable of its own stands for the held
+///   value (`held_args`, follow-up F20.2).
 /// - `FrameEnd`: the callee frame root ends, on the normal path and on the
 ///   path of each abort.
 ///
@@ -2452,18 +2770,9 @@ pub fn call(
         .to_string();
     let main = nodes.main;
     let at = span(origin);
-    // An argument of a type parameter that the callee holds moves at `Ret`.
-    let held: Vec<bool> = (0..args.len())
-        .map(|i| {
-            decl.params
-                .get(i)
-                .is_some_and(|&t| sum.holds.iter().any(|&j| mentions_index(em.tys, t, j, 0)))
-        })
-        .collect();
     let mut spans = Vec::new();
     let mut bases = Vec::new();
-    for (i, op) in args.iter().enumerate() {
-        let moves = !held.get(i).copied().unwrap_or(false);
+    for op in args {
         // A value that the call builds in place (`Box.new(Frame { .. })`,
         // `docs/ir.md` 5.36) goes to the callee with its place fields: the
         // call does not read them. The result gets them (the `Uninit`
@@ -2474,7 +2783,7 @@ pub fn call(
                 .is_ok_and(|k| em.vars.built_in_place(k.0, k.1)),
             _ => false,
         };
-        operand_moves(em, main, st, op, relocate, moves)?;
+        operand_in(em, main, st, op, relocate)?;
         // The callee can read through the argument (hole H3).
         let v = transfer::operand(&mut em.cx(), body, st, op)?;
         let refs = named_refs(em, v.flat().refs);
@@ -2485,6 +2794,7 @@ pub fn call(
             Operand::Const(_) => Vec::new(),
         });
     }
+    dup_moves(em, st, &args.iter().collect::<Vec<_>>(), at)?;
     let site = crate::analysis::apply::Site {
         callee: &callee,
         spans: spans.clone(),
@@ -2500,8 +2810,56 @@ pub fn call(
         crate::analysis::apply::RunKind::Item,
     )?;
     slot_reads(em, main, read);
-    // The function values that the callee runs (part `runs`, stage F12).
-    let run_frames = emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?;
+    // The tasks of the callee that run while it waits at an operation of a
+    // handler (part `waits`, follow-up F19.5).
+    waits_at(em, main, &sum.waits, &out.sigma)?;
+    // The function values that the callee runs (part `runs`, stage F12). A
+    // value that the callee runs as a task applies at the task nodes; a
+    // value that it runs while a task runs gives its places to them (plan
+    // stage F19).
+    let tasks = out.apps.iter().any(|a| a.task_run.is_some());
+    let mut plain = std::collections::BTreeMap::new();
+    let run_frames = if tasks {
+        let mut frames = Vec::new();
+        for app in out.apps.iter().filter(|a| a.task_run.is_none()) {
+            let marks = (
+                em.facts.mutates_at.len(),
+                em.facts.lends_mut.len(),
+                em.facts.reads_at.len(),
+            );
+            let one = std::slice::from_ref(app);
+            frames.extend(emit_apps(
+                em, nodes, st, block, args, one, at, &spans, &bases,
+            )?);
+            if let Some(j) = app.callee_param {
+                let e: &mut (Vec<PlaceId>, Vec<PlaceId>) = plain.entry(j).or_default();
+                let (w, rd) = places_since(em.facts, marks, |_| true);
+                e.0.extend(w);
+                e.1.extend(rd);
+            }
+        }
+        frames
+    } else {
+        emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?
+    };
+    if tasks {
+        call_tasks(
+            em,
+            nodes,
+            st,
+            block,
+            (sum, &out.sigma, &out.apps),
+            args,
+            &plain,
+            (&spans, at, origin, &callee),
+        )?;
+    }
+    if decl.intrinsic == Some(weft_ir::Intrinsic::SimRun) {
+        sim_run(em, nodes, at);
+    }
+    if !sum.task_effects.is_empty() {
+        task_effects_at(em, &sum.task_effects, &callee, at);
+    }
     let ptys: Vec<weft_ir::TyId> = out.sigma.tys.clone();
     fn_arg_effects(em, main, st, &ptys, args, &spans)?;
     // A callee that runs function values has the abort edges of each way
@@ -2535,8 +2893,24 @@ pub fn call(
             continue;
         };
         let props = ir_props(em.tys, targ);
+        // A type argument that is not linear by its type, with a linear
+        // closure in an argument of the type parameter (V056): the callee
+        // can drop the closure.
+        let mut by_value = None;
         if !props.linear {
-            continue;
+            for (op, &pt) in args.iter().zip(&decl.params) {
+                if !crate::props::ir_linear_params(em.tys, pt).contains(&j) {
+                    continue;
+                }
+                let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+                if v.linear && !v.fns.is_empty() {
+                    by_value = Some(v);
+                    break;
+                }
+            }
+            if by_value.is_none() {
+                continue;
+            }
         }
         let mut info = weft_facts::VarInfo::plain(
             callee.clone(),
@@ -2546,9 +2920,49 @@ pub fn call(
         );
         info.linear = true;
         info.has_on_abort = props.on_abort;
+        info.generic.linear =
+            super::vars::generic_linear(em.tys, targ, crate::props::ir_strict_linear(em.tys, targ))
+                .1;
+        if let Some(v) = &by_value {
+            info.has_on_abort = closure_on_abort(em, v);
+            info.generic.linear = fns_generic(em, v);
+        }
         let v = em.facts.add_var(info);
         em.facts.rebound_at.push((v, main));
         drops.push(v);
+    }
+    held_args(
+        em,
+        st,
+        main,
+        (sum, &decl.params, targs),
+        args,
+        (at, &callee),
+    )?;
+    given_out(em, st, main, (sum, &decl.params), args, (at, &callee))?;
+    // A value of a type parameter in `forks`: a `fork` branch of the callee
+    // captures it (OL-NR-ptrfork). A nonportable type argument is W0401: a
+    // branch of its own captures a variable of the type.
+    for &j in &sum.forks {
+        let Some(&targ) = targs.get(j as usize) else {
+            continue;
+        };
+        let nonportable = ir_props(em.tys, targ).nonportable;
+        let generic = super::vars::generic_nonportable(em.tys, targ);
+        if !nonportable && generic.is_empty() {
+            continue;
+        }
+        let mut info = weft_facts::VarInfo::plain(
+            format!("{{value that `{callee}` forks with}}"),
+            weft_facts::VarKind::Temp,
+            at,
+            em.tys.show(targ),
+        );
+        info.nonportable = nonportable;
+        info.generic.nonportable = generic;
+        let v = em.facts.add_var(info);
+        let t = em.facts.add_task(weft_facts::TaskKind::Fork, at);
+        em.facts.captures.push((t, v));
     }
     // A linear closure that goes to a parameter of a type that is not
     // linear, and that the callee does not run (part `runs`): the callee can
@@ -2566,10 +2980,13 @@ pub fn call(
         {
             continue;
         }
+        // A value that the callee runs as a task can go away with no run:
+        // the scope or the `fork` can cancel the task first (plan stage
+        // F19).
         let runs = sum
             .runs
             .iter()
-            .any(|r| !r.capture && r.param as usize == i && !r.maybe);
+            .any(|r| !r.capture && r.param as usize == i && !r.maybe && !r.task);
         // A maker whose result is linear: the callee does not know that
         // the result is linear, so it can drop it also when it runs the
         // maker (hole H3b of the second review of the ABC preview).
@@ -2590,6 +3007,9 @@ pub fn call(
         );
         info.linear = true;
         info.has_on_abort = closure_on_abort(em, &v);
+        if !results {
+            info.generic.linear = fns_generic(em, &v);
+        }
         let var = em.facts.add_var(info);
         em.facts.rebound_at.push((var, main));
         drops.push(var);
@@ -2598,19 +3018,6 @@ pub fn call(
         held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
         once_copied_out(em, r, st, sum, args)?;
-        for (i, op) in args.iter().enumerate() {
-            let (true, Operand::Move(q)) = (held.get(i).copied().unwrap_or(false), op) else {
-                continue;
-            };
-            let plain = em.place_ty(q).is_some_and(|t| !em.tys.not_copy(t));
-            if plain {
-                continue;
-            }
-            let vs = em.vars_of(q)?;
-            em.facts.uses.extend(vs.into_iter().map(|v| (v, r)));
-            let al = em.alpha(st, q)?;
-            moved(em, r, st, q, &al)?;
-        }
         for (q, refs) in &out.stores {
             // A store with no known handle (a `puts` of an `rc` object
             // through a by-value handle) keeps the rule of the old lowering.
@@ -2637,6 +3044,650 @@ pub fn call(
         em.facts.unwound_at.extend(drops.iter().map(|&v| (v, a)));
     }
     Ok(())
+}
+
+/// The values of the type parameters in the part `holds` of the summary
+/// `sum` of a call with node `main` (plan stage F20, follow-up F20.2).
+///
+/// The callee holds such a value across a node that can abort or resume
+/// more than once. A variable of the value is live across a node of its own
+/// ([`super::generic::held_across`]):
+///
+/// - a value that no argument gives (the callee makes it: a `Task<T>`
+///   handle) gets the abort and the `multi` of the summary;
+/// - a value that an argument gives gets the abort and the `multi` of
+///   `main` (`super::generic::copy_held`). The argument itself moves at
+///   `main`, as each argument (F-1 of the review of group F). A variable of
+///   the type argument stands for it: a linear or `once` type argument
+///   (`super::generic::held_var`), or a linear or `once` closure in the
+///   argument (the type `fn()` is plain data). The
+///   type argument gives the variable, not the type of the argument: a
+///   part of a tuple that the callee does not hold is no error (FP-1).
+///
+/// # Errors
+///
+/// The errors of α.
+fn held_args(
+    em: &mut Em<'_>,
+    st: &State,
+    main: NodeId,
+    (sum, params, targs): (
+        &crate::analysis::Summary,
+        &[weft_ir::TyId],
+        &[weft_ir::TyId],
+    ),
+    args: &[Operand],
+    (at, callee): (Span, &str),
+) -> R {
+    let body = em.body;
+    for &j in &sum.holds {
+        let Some(&targ) = targs.get(j as usize) else {
+            continue;
+        };
+        let given: Vec<usize> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, &t)| crate::props::ir_linear_params(em.tys, t).contains(&j))
+            .map(|(i, _)| i)
+            .collect();
+        if given.is_empty() {
+            let abort = sum.can_abort() || !sum.performs.is_empty();
+            let multi = sum.multi || sum.unknown_multi;
+            if abort || multi {
+                super::generic::held_across(
+                    em.facts,
+                    em.tys,
+                    at,
+                    ("temporary".to_string(), callee),
+                    targ,
+                    (abort, multi),
+                );
+            }
+            continue;
+        }
+        let mut held = Vec::new();
+        for &i in &given {
+            let Some(op) = args.get(i) else { continue };
+            let name = match op {
+                Operand::Copy(q) | Operand::Move(q) => {
+                    em.base_var(body, q)?.map(|v| em.facts.var(v).name.clone())
+                }
+                Operand::Const(_) => None,
+            }
+            .unwrap_or_else(|| "temporary".to_string());
+            let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+            let named = (name.clone(), !v.empty);
+            if let Some(x) = super::generic::held_var(em.facts, em.tys, at, named, targ) {
+                held.push(x);
+                continue;
+            }
+            // A closure in the argument: the type argument can be plain
+            // data (`fn()`), but the value is linear or `once`.
+            let once = v.fns.iter().any(|f| transfer::once_value(em.p, f));
+            if v.fns.is_empty() || !(v.linear || once) {
+                continue;
+            }
+            let mut info =
+                weft_facts::VarInfo::plain(name, weft_facts::VarKind::Temp, at, em.tys.show(targ));
+            info.linear = v.linear;
+            info.once = once;
+            if v.linear {
+                info.has_on_abort = closure_on_abort(em, &v);
+                info.generic.linear = fns_generic(em, &v);
+            }
+            held.push(em.facts.add_var(info));
+        }
+        for v in held {
+            let a = super::generic::held_node(em.facts, at, v, callee);
+            em.holders.held_like(a, main);
+        }
+    }
+    Ok(())
+}
+
+/// The arguments of a call whose function values the callee can give back
+/// or put into a place (part `ret.fns` and `put_fns`): `None` for each
+/// argument (a made closure or a value that the summary does not know can
+/// hold any of them).
+fn given_out_args(sum: &crate::analysis::Summary) -> Option<std::collections::BTreeSet<u32>> {
+    use crate::analysis::summary::RetFn;
+    let mut out = std::collections::BTreeSet::new();
+    let rets = sum
+        .ret
+        .fns
+        .iter()
+        .chain(sum.put_fns.iter().flat_map(|(_, rs)| rs.iter()));
+    for r in rets {
+        match r {
+            RetFn::Param(i) => {
+                out.insert(*i);
+            }
+            RetFn::Item(..) => {}
+            RetFn::Made(_) | RetFn::Capture(_) | RetFn::Unknown => return None,
+        }
+    }
+    Some(out)
+}
+
+/// A `once` closure in an argument that the callee can give back or put
+/// into a place (hole C1-H3, follow-up C1.2): if the call can resume more
+/// than once, the callee gives the closure out again, and the caller can
+/// run it two times. The closure is live across a node of its own that
+/// gets the `multi` of `main` (`generic::held_node`, `copy_held`): W0503.
+///
+/// # Errors
+///
+/// The errors of α.
+fn given_out(
+    em: &mut Em<'_>,
+    st: &State,
+    main: NodeId,
+    (sum, params): (&crate::analysis::Summary, &[weft_ir::TyId]),
+    args: &[Operand],
+    (at, callee): (Span, &str),
+) -> R {
+    let some = given_out_args(sum);
+    if some
+        .as_ref()
+        .is_some_and(std::collections::BTreeSet::is_empty)
+    {
+        return Ok(());
+    }
+    let body = em.body;
+    let mut held = Vec::new();
+    for (i, op) in args.iter().enumerate() {
+        let i = u32::try_from(i).unwrap_or(u32::MAX);
+        if some.as_ref().is_some_and(|s| !s.contains(&i)) {
+            continue;
+        }
+        // A value of a type parameter that the callee holds has its node
+        // already (`held_args`, part `holds`).
+        let by_holds = params.get(i as usize).is_some_and(|&t| {
+            let ps = crate::props::ir_linear_params(em.tys, t);
+            sum.holds.iter().any(|j| ps.contains(j))
+        });
+        if by_holds {
+            continue;
+        }
+        let fns = transfer::reach_fns(&mut em.cx(), body, st, op)?;
+        if !fns.iter().any(|f| transfer::once_value(em.p, f)) {
+            continue;
+        }
+        let name = match op {
+            Operand::Copy(q) | Operand::Move(q) => {
+                em.base_var(body, q)?.map(|v| em.facts.var(v).name.clone())
+            }
+            Operand::Const(_) => None,
+        }
+        .unwrap_or_else(|| "the closure".to_string());
+        let mut info =
+            weft_facts::VarInfo::plain(name, weft_facts::VarKind::Temp, at, String::new());
+        info.once = true;
+        held.push(em.facts.add_var(info));
+    }
+    for v in held {
+        let a = super::generic::held_node(em.facts, at, v, callee);
+        em.holders.held_like(a, main);
+    }
+    Ok(())
+}
+
+/// A `once` closure in a capture of closure `c` that the closure gives back
+/// or puts into a place (part `ret.fns` or `put_fns` with `RetFn::Capture`,
+/// or each capture for a made closure or a value that the summary does not
+/// know) is given out again if the call at `main` resumes more than once
+/// (hole C1-H3 for a closure, follow-up C1.3): a variable of it is live
+/// across a node of its own with the `multi` of `main` (W0503). `callee` is
+/// the operand of the closure; the closure itself is no such value.
+///
+/// # Errors
+///
+/// The errors of α.
+fn captures_given_out(
+    em: &mut Em<'_>,
+    st: &State,
+    main: NodeId,
+    (c, sum): (weft_ir::ClosureId, &crate::analysis::Summary),
+    callee: &Operand,
+    (at, name): (Span, &str),
+) -> R {
+    use crate::analysis::summary::RetFn;
+    let Some(decl) = em.p.closures.get(c.index()).cloned() else {
+        return Ok(());
+    };
+    let mut ks: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    let rets = sum
+        .ret
+        .fns
+        .iter()
+        .chain(sum.put_fns.iter().flat_map(|(_, rs)| rs.iter()));
+    for r in rets {
+        match r {
+            RetFn::Capture(k) => {
+                ks.insert(*k);
+            }
+            RetFn::Made(_) | RetFn::Unknown => {
+                ks.extend((0..decl.captures.len()).map(|k| u32::try_from(k).unwrap_or(u32::MAX)));
+            }
+            RetFn::Param(_) | RetFn::Item(..) => {}
+        }
+    }
+    if ks.is_empty() {
+        return Ok(());
+    }
+    let body = em.body;
+    let mut once = false;
+    for k in ks {
+        let Some(cap) = decl.captures.get(k as usize) else {
+            continue;
+        };
+        let fns = match cap.mode {
+            weft_ir::CaptureMode::ByMove => {
+                transfer::operand(&mut em.cx(), body, st, callee)?
+                    .flat()
+                    .fns
+            }
+            // The variable of the maker: a maker that is not in the state of
+            // this body gives a value that the analysis does not know.
+            weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef => {
+                if let Ok(t) = transfer::place_value(&mut em.cx(), decl.maker, st, &cap.source) {
+                    t.flat().fns
+                } else {
+                    once = true;
+                    continue;
+                }
+            }
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => continue,
+        };
+        once |= fns.iter().any(|f| {
+            !matches!(f, crate::analysis::FnVal::Closure(x) | crate::analysis::FnVal::Made(x) if *x == c)
+                && transfer::once_value(em.p, f)
+        });
+    }
+    if once {
+        let mut info = weft_facts::VarInfo::plain(
+            "a closure that the closure gives out".to_string(),
+            weft_facts::VarKind::Temp,
+            at,
+            String::new(),
+        );
+        info.once = true;
+        let v = em.facts.add_var(info);
+        let a = super::generic::held_node(em.facts, at, v, name);
+        em.holders.held_like(a, main);
+    }
+    Ok(())
+}
+
+/// The places that the facts change or lend (first) and read (second)
+/// from the marks `marks` (the lengths of `mutates_at`, `lends_mut` and
+/// `reads_at`) on, that `keep` keeps.
+fn places_since(
+    facts: &FnFacts,
+    marks: (usize, usize, usize),
+    keep: impl Fn(PlaceId) -> bool,
+) -> (Vec<PlaceId>, Vec<PlaceId>) {
+    let mut writes: Vec<PlaceId> = facts.mutates_at[marks.0..]
+        .iter()
+        .chain(&facts.lends_mut[marks.1..])
+        .map(|(_, q)| *q)
+        .filter(|&q| keep(q))
+        .collect();
+    writes.sort();
+    writes.dedup();
+    let mut reads: Vec<PlaceId> = facts.reads_at[marks.2..]
+        .iter()
+        .map(|(_, q)| *q)
+        .filter(|&q| keep(q))
+        .collect();
+    reads.sort();
+    reads.dedup();
+    (writes, reads)
+}
+
+/// The part `waits` of a summary that node `main` applies with σ `sigma`
+/// (follow-up F19.5): for each effect, the places that σ gives there
+/// (`Em::waits`). A node of a task does not wait for a handler of this
+/// task (W0314).
+///
+/// # Errors
+///
+/// The errors of σ.
+fn waits_at(
+    em: &mut Em<'_>,
+    main: NodeId,
+    waits: &std::collections::BTreeMap<String, crate::analysis::summary::Wait>,
+    sigma: &crate::analysis::apply::Sigma,
+) -> R {
+    if em.in_task.is_some() {
+        return Ok(());
+    }
+    for (e, w) in waits {
+        em.waits.places.push((main, e.clone(), None, true));
+        for (ips, write) in [(&w.writes, true), (&w.reads, false)] {
+            for ip in ips {
+                for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
+                    em.waits.places.push((main, e.clone(), Some(q), write));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The tasks of a call that stand for the tasks that can run while a clause
+/// of a local handler runs at the call (follow-up F19.5, issue #50;
+/// [`WaitTask`]).
+///
+/// For each local handler of `Em::wait_nodes`: if a summary that the call
+/// applies has the part `waits` for the effect of the handler, or a run of
+/// the call starts a task that can run when the clause runs, the call gets
+/// the two tasks of a [`WaitTask`]. The first one changes the places of
+/// the part `waits`, and the fourth task node reads the places that the
+/// part reads. The tasks get the places of the tasks of `writes_of` (tasks
+/// that do not run at the task nodes of the call already: a task that
+/// starts at `Main` runs there) when the facts of the component are whole
+/// ([`wait_task_places`]), and the places of the code of the clause in
+/// `super::handlers::project`. So the code of the clause conflicts with
+/// these tasks (W0405), but the parts of the call itself at `Main` do not.
+pub fn wait_tasks(em: &mut Em<'_>, main: NodeId, origin: weft_ir::Span) {
+    let at = span(origin);
+    let hs = std::mem::take(&mut em.wait_nodes);
+    let mut stands: Vec<weft_facts::TaskId> = em
+        .waits
+        .starts
+        .iter()
+        .filter(|&&(m, _, _)| m == main)
+        .map(|&(_, t, _)| t)
+        .collect();
+    stands.sort_unstable();
+    stands.dedup();
+    // A task that starts at `Main` runs at the task nodes already; the code
+    // of a value that waits after its own spawn sees the task in the facts
+    // of the value (its part `waits`, or its body in this component).
+    let mut writes_of: Vec<weft_facts::TaskId> = em
+        .waits
+        .starts
+        .iter()
+        .filter(|&&(m, t, callee)| m == main && callee && !em.facts.spawned_at.contains(&(t, main)))
+        .map(|&(_, t, _)| t)
+        .collect();
+    writes_of.sort_unstable();
+    writes_of.dedup();
+    for (h, [s, c, s2, c2]) in hs {
+        let Some(effect) =
+            em.p.handlers
+                .get(h.index())
+                .and_then(|d| em.tys.effects().get(d.effect.index()))
+                .map(|e| e.identity.clone())
+        else {
+            continue;
+        };
+        let given: Vec<(Option<PlaceId>, bool)> = em
+            .waits
+            .places
+            .iter()
+            .filter(|(m, e, _, _)| *m == main && *e == effect)
+            .map(|&(_, _, q, w)| (q, w))
+            .collect();
+        if given.is_empty() && stands.is_empty() {
+            continue;
+        }
+        let t = em.facts.add_task(weft_facts::TaskKind::Spawn, at);
+        em.facts.spawned_at.push((t, s));
+        em.facts.joined_at.push((t, c));
+        let back = em.facts.add_task(weft_facts::TaskKind::Spawn, at);
+        em.facts.spawned_at.push((back, s2));
+        em.facts.joined_at.push((back, c2));
+        for (q, w) in given {
+            match (q, w) {
+                (Some(q), true) => em.facts.task_writes.push((t, q)),
+                (Some(q), false) => em.facts.reads_at.push((c2, q)),
+                (None, _) => {}
+            }
+        }
+        em.hx.wait_copies.push((main, h, c, back));
+        em.hx.wait_tasks.push(WaitTask {
+            task: t,
+            back,
+            reads_at: c2,
+            main,
+            handler: h,
+            stands: stands.clone(),
+            writes_of: writes_of.clone(),
+        });
+    }
+}
+
+/// Gives each [`WaitTask`] of `waits` the places of its tasks (follow-up F19.5).
+///
+/// The facts of the component are whole. The first task changes what the
+/// tasks of `writes_of` change; the fourth task node reads what they read.
+pub fn wait_task_places(facts: &mut weft_facts::FnFacts, waits: &[WaitTask]) {
+    let mut add = Vec::new();
+    let mut reads = Vec::new();
+    for w in waits {
+        for &u in &w.writes_of {
+            add.extend(
+                facts
+                    .task_writes
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|&(_, q)| (w.task, q)),
+            );
+            reads.extend(
+                facts
+                    .task_reads
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|&(_, q)| (w.reads_at, q)),
+            );
+        }
+    }
+    facts.task_writes.extend(add);
+    facts.reads_at.extend(reads);
+}
+
+/// True if a run of summary `s` can perform an operation other than
+/// `Async`, or abort: a clause of a handler of a caller can run.
+fn acts(s: &crate::analysis::Summary) -> bool {
+    use crate::analysis::summary::Abort;
+    s.performs.iter().any(|p| p.effect != ASYNC)
+        || s.aborts
+            .iter()
+            .any(|a| !matches!(a, Abort::Perform(p) if p.effect == ASYNC))
+}
+
+/// The nodes with an edge into node `n` (`cfg_edge`).
+fn preds(em: &Em<'_>, n: NodeId) -> Vec<NodeId> {
+    em.facts
+        .cfg_edge
+        .iter()
+        .filter(|&&(_, b)| b == n)
+        .map(|&(a, _)| a)
+        .collect()
+}
+
+/// The function values that a callee runs as tasks, at the task nodes
+/// of a call (`docs/ir.md` 6.7, plan stage F19; OR7, V126, V127, V132).
+///
+/// For each entry of the part `runs` of the summary `sum` that runs as a
+/// task, four [`super::nodes::Phase::Task`] nodes (`Em::task_nodes`):
+///
+/// - the start: a task of the call (`fork_task` for a `fork` branch of the
+///   callee) starts there (`spawned_at`), and the values of the argument
+///   (`apps`) apply there; their changes and reads are the footprint of
+///   the task (`task_writes`, `task_reads`), with `captures`,
+///   `mut_through` and `kept` of the closures of the argument, and
+///   `opaque` for code of a caller and a callee that pins;
+/// - the second start, if the callee can run two tasks of the value at the
+///   same time (`twice`): the task starts again, and the node changes and
+///   reads the footprint of the task;
+/// - the code that runs at the same time: the node changes (`lends_mut`)
+///   and reads the places of each value that the callee runs while the
+///   task runs (`with`: a task of the call, or a value that runs as plain
+///   code, `plain`), and the places of the callee itself (`TaskHow::writes`,
+///   `TaskHow::reads`);
+/// - the end (`joined_at`).
+///
+/// # Errors
+///
+/// The errors of α.
+#[allow(clippy::too_many_arguments)]
+fn call_tasks(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    (sum, sigma, apps): (
+        &crate::analysis::Summary,
+        &crate::analysis::apply::Sigma,
+        &[transfer::Applied],
+    ),
+    args: &[Operand],
+    plain: &std::collections::BTreeMap<u32, (Vec<PlaceId>, Vec<PlaceId>)>,
+    (spans, at, origin, callee): (&[Span], Span, weft_ir::Span, &str),
+) -> R {
+    let task_nodes = std::mem::take(&mut em.task_nodes);
+    let body = em.body;
+    let mut places = plain.clone();
+    let mut started = Vec::new();
+    for (k, (idx, run)) in super::frames::task_runs(sum).enumerate() {
+        let base = k.saturating_mul(super::frames::TASK_NODES);
+        let get = |o: usize| task_nodes.get(base.saturating_add(o)).copied();
+        let (Some(s), Some(d), Some(x), Some(e)) = (get(0), get(1), get(2), get(3)) else {
+            continue;
+        };
+        for n in [s, d, x, e] {
+            em.holders.before(n, st, em.facts);
+        }
+        let kind = if run.how.thread {
+            weft_facts::TaskKind::Fork
+        } else {
+            weft_facts::TaskKind::Spawn
+        };
+        let span_of = spans.get(run.param as usize).copied().unwrap_or(at);
+        let t = em.facts.add_task(kind, span_of);
+        em.facts.spawned_at.push((t, s));
+        // The task can run while the call waits at an operation (follow-up
+        // F19.5): a clause of a local handler, a handler of a caller.
+        if em.in_task.is_none() {
+            em.waits.starts.push((nodes.main, t, true));
+        }
+        // Code of a local handler at the node runs at `Main` while the task
+        // can run (a clause of an operation of a value that the callee runs
+        // with the task): the task starts on each edge into `Main` too
+        // (follow-up F19.4).
+        if nodes.local_code {
+            for p in preds(em, nodes.main) {
+                if !em.facts.spawned_at.contains(&(t, p)) {
+                    em.facts.spawned_at.push((t, p));
+                }
+            }
+        }
+        let mine: Vec<transfer::Applied> = apps
+            .iter()
+            .filter(|a| a.task_run == Some(idx))
+            .cloned()
+            .collect();
+        task_w0314(em, &mine, origin, Some(callee));
+        let marks = (
+            em.facts.mutates_at.len(),
+            em.facts.lends_mut.len(),
+            em.facts.reads_at.len(),
+        );
+        let at_s = CallNodes {
+            main: s,
+            ret: None,
+            frame_end: nodes.frame_end,
+            aborts: nodes.aborts.clone(),
+            may_abort: false,
+            values: Vec::new(),
+            local_code: true,
+        };
+        em.in_task = Some((t, run.how.thread));
+        let frames = emit_apps(em, &at_s, st, block, &[], &mine, at, &[], &[]);
+        em.in_task = None;
+        let frames = frames?;
+        end_frames(em, &at_s, &frames);
+        let roots = &*em.roots;
+        let shared = |q: PlaceId| {
+            em.facts.places.get(q.index()).is_none_or(|i| {
+                !matches!(
+                    roots.role(i.root),
+                    Some(super::alpha::Role::Caller | super::alpha::Role::Frame(_))
+                )
+            })
+        };
+        let (writes, reads) = places_since(em.facts, marks, shared);
+        em.facts.task_writes.extend(writes.iter().map(|&q| (t, q)));
+        em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
+        let fns = match args.get(run.param as usize) {
+            Some(op @ (Operand::Copy(_) | Operand::Move(_))) => {
+                transfer::operand(&mut em.cx(), body, st, op)?.flat().fns
+            }
+            _ => std::collections::BTreeSet::new(),
+        };
+        task_captures(em, st, t, &fns, &writes)?;
+        let code = mine.iter().any(|a| a.code);
+        let pins = mine.iter().any(|a| a.summary.pins);
+        if code || pins {
+            em.facts.opaque.push(t);
+        }
+        if code && !pins {
+            em.code_opaque.push(t);
+        }
+        places.insert(run.param, (writes.clone(), reads.clone()));
+        started.push((run.clone(), t, (d, x, e), writes, reads));
+    }
+    for (run, t, (d, x, e), writes, reads) in started {
+        if run.how.twice {
+            em.facts.spawned_at.push((t, d));
+            em.facts.lends_mut.extend(writes.iter().map(|&q| (d, q)));
+            em.facts
+                .reads_at
+                .extend(writes.iter().chain(&reads).map(|&q| (d, q)));
+        }
+        for j in &run.how.with {
+            if let Some((w, r)) = places.get(j) {
+                em.facts.lends_mut.extend(w.iter().map(|&q| (x, q)));
+                em.facts.reads_at.extend(w.iter().chain(r).map(|&q| (x, q)));
+            }
+        }
+        for ip in &run.how.writes {
+            for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
+                em.facts.lends_mut.push((x, q));
+                em.facts.reads_at.push((x, q));
+            }
+        }
+        for ip in &run.how.reads {
+            for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
+                em.facts.reads_at.push((x, q));
+            }
+        }
+        em.facts.joined_at.push((t, e));
+    }
+    Ok(())
+}
+
+/// The facts of a call of `sim.run` at its nodes `nodes` (`docs/ir.md`
+/// 5.30, plan stage F19): `sim_run_at(Main)` (W0802 in a library); a root
+/// handler of the simulation for each standard effect (`handler`,
+/// `sim_root`); the block runs with these handlers, so no standard effect
+/// of the block leaves the call (`escapes_at`).
+fn sim_run(em: &mut Em<'_>, nodes: &CallNodes, at: Span) {
+    em.facts.sim_run_at.push(nodes.main);
+    for e in crate::effects::STD_EFFECTS {
+        em.facts.handlers.push(weft_facts::HandlerInfo {
+            effect: e.to_string(),
+            sim_root: true,
+            span: at,
+        });
+    }
+    let here = |x: NodeId| x == nodes.main || Some(x) == nodes.ret;
+    em.facts
+        .escapes_at
+        .retain(|(x, e)| !(here(*x) && crate::effects::is_std(e)));
 }
 
 /// A `Call` of a function value (stage F11): its nodes `Main`, `Ret` and
@@ -2672,6 +3723,11 @@ fn call_value(
 ) -> R {
     let body = em.body;
     let out = transfer::value_out(&mut em.cx(), body, block, st, callee, args, dest)?;
+    // A function value whose code runs a value of its arguments as a task:
+    // the node has no task nodes (plan stage F19).
+    if out.apps.iter().any(|a| a.task_run.is_some()) {
+        return Err(AlphaError::Later(VALUE_TASKS));
+    }
     let main = nodes.main;
     let at = span(origin);
     operand_moves(em, main, st, callee, false, true)?;
@@ -2715,6 +3771,21 @@ fn call_value(
         .map(|n| n.label.clone())
         .filter(|l| !l.is_empty())
         .unwrap_or_else(|| "the function value".to_string());
+    // A `once` closure that the value gives out again after a resume (hole
+    // C1-H3 for a function value, follow-up C1.3): an argument, or a value
+    // of a capture of a closure.
+    for app in &out.apps {
+        if !matches!(
+            app.kind,
+            crate::analysis::apply::RunKind::Closure | crate::analysis::apply::RunKind::Item
+        ) {
+            continue;
+        }
+        given_out(em, st, main, (&app.summary, &[]), args, (at, &name))?;
+        if let Some(c) = app.closure {
+            captures_given_out(em, st, main, (c, &app.summary), callee, (at, &name))?;
+        }
+    }
     let drops = dropped_fn_args(em, (main, at, &name), st, &fn_params, args, &out.apps)?;
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
@@ -2806,6 +3877,9 @@ fn dropped_fn_args(
         );
         info.linear = true;
         info.has_on_abort = closure_on_abort(em, &v);
+        if !results {
+            info.generic.linear = fns_generic(em, &v);
+        }
         let var = em.facts.add_var(info);
         em.facts.rebound_at.push((var, main));
         out.push(var);
@@ -2887,8 +3961,16 @@ fn emit_apps(
     let main = nodes.main;
     let mut abort = false;
     let mut frames = Vec::new();
-    let cyclic = em.cycles.has(em.body, block);
+    // A cycle of the re-entry edges after code of a caller does not run
+    // the values of the interface again (issue #56).
+    let cyclic = em.cycles.has_strict(em.body, block);
     let rebinds = apps.iter().any(|a| !a.rebinds.is_empty());
+    // One run at the node and no task node: no other code of the call runs
+    // while a task of the run runs (E-2, follow-up F19.3), but the code of a
+    // local handler that the callee or the value runs after the run (R2-1,
+    // follow-up F19.4). An abort past the function unwinds the scope of the
+    // task first.
+    let alone = apps.len() == 1 && em.task_nodes.is_empty();
     for app in apps {
         let n_runs = if app.again {
             vec![Some(main), nodes.ret]
@@ -2899,7 +3981,8 @@ fn emit_apps(
         } else {
             vec![Some(main)]
         };
-        for n in n_runs.into_iter().flatten() {
+        for (k, n) in n_runs.into_iter().flatten().enumerate() {
+            let first = k == 0;
             let site = crate::analysis::apply::Site {
                 callee: &app.name,
                 spans: spans.to_vec(),
@@ -2911,8 +3994,90 @@ fn emit_apps(
                 }
                 k => k,
             };
+            // The tasks of the run that perform through a handler of a
+            // caller (part `task_effects`): a handler of this task there is
+            // W0314; else they are tasks of the body too (plan stage F19).
+            if em.in_task.is_none() && first && !app.summary.task_effects.is_empty() {
+                task_effects_at(em, &app.summary.task_effects, &app.name, at);
+            }
+            // The tasks that the closure starts in a scope of the body
+            // (part `tasks`, plan stage F19): they start at `n` too.
+            // A late run (a block that a callee runs) starts them at `Main`
+            // too: the value that moves into the call goes into the task
+            // there (W0602 of a cancel, corpus 163), and another run or task
+            // node of the call can run while the task runs. Else the task
+            // does not start at `Main`: it would conflict with its own run
+            // node `n`, whose summary has the writes of the task (E-2,
+            // follow-up F19.3). The closure body checks its own code after
+            // the spawn.
+            // Code of a local handler at the node can run after the run and
+            // while its task runs: the callee performs or aborts after the
+            // run (`Run::then`), or the value itself does (R2-1, follow-up
+            // F19.4). With the wait nodes of the call (follow-up F19.5),
+            // `local_code` holds only for a `multi` resume: a clause runs
+            // with the tasks of `wait_tasks`, and an abort starts the task
+            // at `Em::abort_starts` (R3-3, R3-4).
+            let then = app.then || acts(&app.summary);
+            let after = nodes.local_code && then;
+            let early_start = n != main
+                && (!alone
+                    || after
+                    || em.facts.moved_at.iter().any(|&(v, m)| {
+                        m == main && {
+                            let i = em.facts.var(v);
+                            i.linear && !i.has_on_abort
+                        }
+                    }));
+            // Code of a local handler at the node (a clause, the destination
+            // of an abort, the code after the node again) runs at `Main`, and
+            // a late run can start the task before it: the task starts on
+            // each edge into `Main` too, so it runs at `Main` and on the
+            // abort edges (R2-1, follow-up F19.4).
+            let before: Vec<NodeId> = if n != main && after {
+                preds(em, main)
+            } else {
+                Vec::new()
+            };
+            for &site in &app.summary.tasks {
+                em.started.push(site);
+                if let Some(&t) = em.hx.task_ids.get(&weft_ir::SpawnId(site)) {
+                    em.facts.spawned_at.push((t, n));
+                    if early_start && !em.facts.spawned_at.contains(&(t, main)) {
+                        em.facts.spawned_at.push((t, main));
+                    }
+                    for &p in &before {
+                        if !em.facts.spawned_at.contains(&(t, p)) {
+                            em.facts.spawned_at.push((t, p));
+                        }
+                    }
+                    // The task can run while the node waits at an operation
+                    // of the callee after the run (follow-up F19.5): a clause
+                    // of a local handler there (`wait_tasks`), a handler of a
+                    // caller (part `waits`), and the code after the `handle`
+                    // of an abort to a local handler (`Em::abort_starts`).
+                    // The value that the node itself runs orders its own
+                    // operations and spawns (its part `waits`).
+                    let by_callee = app.late || app.again || app.callee_param.is_some();
+                    if then && first && by_callee && em.in_task.is_none() {
+                        em.waits.starts.push((main, t, app.then));
+                        if n != main {
+                            for &a in &em.abort_starts {
+                                if !em.facts.spawned_at.contains(&(t, a)) {
+                                    em.facts.spawned_at.push((t, a));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // The tasks of the value that run while it waits at an operation
+            // of a handler (part `waits`, follow-up F19.5).
+            if first {
+                waits_at(em, main, &app.summary.waits, &app.sigma)?;
+            }
             let lent = em.facts.lends_mut.len();
             let read = em.facts.reads_at.len();
+            let multi = em.facts.multi_at.len();
             let changed = crate::analysis::apply::main(
                 &mut em.cx(),
                 n,
@@ -2921,6 +4086,19 @@ fn emit_apps(
                 &site,
                 kind,
             )?;
+            // A task runs on a stack of its own: a `multi` resume there does
+            // not run the code of this task again (W0314 rejects a task that
+            // performs through a handler of this task; O3-10, plan stage
+            // F19).
+            if em.in_task.is_some() {
+                em.facts.multi_at.truncate(multi);
+            }
+            // Code of a caller for a value of the interface: the caller
+            // gives the `multi` part of the value (issue #56).
+            if app.code && app.run.is_some() {
+                let added = em.facts.multi_at.get(multi..).unwrap_or_default();
+                em.run_multi.extend(added.iter().copied());
+            }
             slot_reads(em, n, read);
             // Code of a caller reads the places behind the parameters of the
             // body and the `rc` groups that they reach (no slot use: the
@@ -2942,6 +4120,10 @@ fn emit_apps(
                 vs.extend(read_fields(em, &app.summary, *k, *mb, src)?);
                 em.facts.uses.extend(vs.into_iter().map(|v| (v, n)));
             }
+            // A capture that holds a reference to a value that holds
+            // references: the run can read through the chain, as a callee
+            // can read through an argument (class C-RR).
+            deep_chain(em, n, st, &app.deep, None)?;
             for (mb, src) in &app.once {
                 if let Some(v) = em.base_var(*mb, src)? {
                     em.facts.moved_at.push((v, n));
@@ -3017,8 +4199,27 @@ fn emit_apps(
             }
         }
         if let Some(r) = &app.run {
-            em.runs
-                .push((r.clone(), (app.again && !app.order) || cyclic));
+            let mut r = r.clone();
+            // A run of a value of the interface in a task: the body runs it
+            // as a task (part `runs`, plan stage F19).
+            if let Some((t, thread)) = em.in_task {
+                r.task = true;
+                em.task_runs.push((t, r.param, r.capture, thread));
+            } else {
+                let at = if app.again {
+                    vec![Some(main), nodes.ret]
+                } else if app.late {
+                    vec![nodes.ret.or(Some(main))]
+                } else {
+                    vec![Some(main)]
+                };
+                em.run_at
+                    .extend(at.into_iter().flatten().map(|n| (r.param, r.capture, n)));
+                if app.then {
+                    em.then_runs.push((r.param, r.capture));
+                }
+            }
+            em.runs.push((r, (app.again && !app.order) || cyclic));
             if app.code {
                 em.run_nodes.push(main);
                 em.run_nodes.extend(nodes.ret);
@@ -3236,7 +4437,7 @@ fn once_vars(
         if holds && !once_behind(em, st, r) {
             continue;
         }
-        out.extend(em.owner_vars(r, base));
+        out.extend(em.owner_vars(r, Some(base)));
     }
     out.sort();
     out.dedup();
@@ -3562,7 +4763,7 @@ pub fn closure_entry(em: &mut Em<'_>, n: NodeId, params: &[(LocalId, Tree)], env
 /// the errors of α.
 pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
     let TermKind::Perform {
-        cap: weft_ir::CapOperand::Row(e),
+        cap,
         op,
         args,
         dest,
@@ -3574,6 +4775,27 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
         ));
     };
     let body = em.body;
+    // A capability that the closure captures (plan stage F16): an operation
+    // of a handler outside the closure. The effect does not leave the
+    // function: the node that runs the closure runs the clause.
+    let (e, captured): (weft_ir::EffectId, Option<u32>) = match cap {
+        weft_ir::CapOperand::Row(e) => (*e, None),
+        weft_ir::CapOperand::Local(c) => {
+            let Some((k, e)) = crate::analysis::clause::captured_cap(em.p, em.tys, body, c) else {
+                return Err(AlphaError::Later(
+                    "a perform through a capability of a handler (stage F14)",
+                ));
+            };
+            let id = em
+                .tys
+                .effects()
+                .get(e.index())
+                .map(|d| d.identity.clone())
+                .unwrap_or_default();
+            em.hx.cap_performs.push((nodes.main, k, id));
+            (e, Some(k))
+        }
+    };
     // A handler can run a function value of an argument, drop it or run it
     // more than once: the facts of a clause are stage F14.
     for a in args {
@@ -3583,7 +4805,7 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
             ));
         }
     }
-    let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, *e, *op, args)?;
+    let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, e, *op, args)?;
     let n = nodes.main;
     for op in args {
         operand_moves(em, n, st, op, false, true)?;
@@ -3609,18 +4831,101 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     gets_linear(em, n, st, &lent);
     em.facts.reads_at.push((n, out.caller));
     em.facts.lends_mut.push((n, out.caller));
-    em.facts.escapes_at.push((n, out.effect.clone()));
+    if captured.is_none() {
+        em.facts.escapes_at.push((n, out.effect.clone()));
+    }
     if nodes.may_abort {
         em.facts.may_abort.push(n);
     }
     if out.multi {
         em.facts.multi_at.push(n);
     }
+    // A perform through a captured capability runs the clause of the
+    // handler while the closure waits: the node gets the code of the clause
+    // before its resume points too (plan stage F16), with the parameters of
+    // the clause on the places of the arguments.
+    if let Some(k) = captured {
+        clause_run_in_closure(em, n, st, k, (*op, args))?;
+    }
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
     }
     Ok(())
+}
+
+/// The type parameters that make the closures of the value `v` linear in a
+/// generic body (`crate::props::GenericBody`, `docs/ir.md` 6.7): empty if
+/// no generic body is live, or if a closure of `v` is linear with no type
+/// parameter (a `ByMove` capture of a linear type, or a capture of a local
+/// whose closures are linear by the builder).
+pub(crate) fn fns_generic(em: &mut Em<'_>, v: &crate::analysis::AbsVal) -> Vec<u32> {
+    if !crate::props::params_linear() {
+        return Vec::new();
+    }
+    let mut out = std::collections::BTreeSet::new();
+    for fv in &v.fns {
+        let (crate::analysis::FnVal::Closure(c) | crate::analysis::FnVal::Made(c)) = fv else {
+            continue;
+        };
+        let Some(decl) = em.p.closures.get(c.index()) else {
+            return Vec::new();
+        };
+        for (k, cap) in decl.captures.iter().enumerate() {
+            if cap.mode != weft_ir::CaptureMode::ByMove {
+                continue;
+            }
+            let k = u32::try_from(k).unwrap_or(u32::MAX);
+            let Some(t) = super::alpha::capture_ty(em.p, em.tys, *c, k) else {
+                return Vec::new();
+            };
+            if crate::props::ir_strict_linear(em.tys, t) {
+                return Vec::new();
+            }
+            if crate::props::ir_has_fns(em.tys, t) {
+                // A function value of the maker: the builder joins the modes
+                // of its closures into the props of the local.
+                let src =
+                    em.p.bodies
+                        .get(decl.maker.index())
+                        .and_then(|b| b.locals.get(cap.source.local.index()));
+                if src.is_some_and(|d| d.props.linear) {
+                    return Vec::new();
+                }
+                if src.is_some_and(|d| d.props.generic) {
+                    out.extend(all_params(em.tys, t));
+                }
+            }
+            out.extend(crate::props::ir_linear_params(em.tys, t));
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Each type parameter that type `t` names.
+fn all_params(tys: &TyTable, t: TyId) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut work = vec![t];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(x) = work.pop() {
+        if !seen.insert(x) {
+            continue;
+        }
+        match tys.try_get(x) {
+            Some(Ty::Param(j)) => out.push(*j),
+            Some(Ty::Tuple(ts) | Ty::Adt(_, ts)) => work.extend(ts.iter().copied()),
+            Some(Ty::Array(y, _) | Ty::Slice(y) | Ty::Ref(y) | Ty::Iter(y)) => work.push(*y),
+            Some(Ty::Cont(a, b)) => work.extend([*a, *b]),
+            Some(Ty::Fn(f)) => {
+                work.extend(f.params.iter().copied());
+                work.push(f.ret);
+            }
+            _ => {}
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// True if each linear closure that the value `v` can be finishes its linear
@@ -3683,15 +4988,20 @@ fn linear_fn_captures(em: &mut Em<'_>, st: &State, c: weft_ir::ClosureId, ops: &
             continue;
         }
         let on_abort = closure_on_abort(em, &v);
+        let generic = fns_generic(em, &v);
         let Some(e) = em.vars.get(&VarKey::E(decl.body, k)) else {
             continue;
         };
         if let Some(info) = em.facts.vars.get_mut(e.index()) {
             if info.linear {
                 info.has_on_abort &= on_abort;
+                if generic.is_empty() {
+                    info.generic.linear.clear();
+                }
             } else {
                 info.linear = true;
                 info.has_on_abort = on_abort;
+                info.generic.linear = generic;
             }
         }
     }
@@ -3702,7 +5012,7 @@ fn linear_fn_captures(em: &mut Em<'_>, st: &State, c: weft_ir::ClosureId, ops: &
 /// local whose type has a function part holds a linear value by its value,
 /// not by its type, so its variable `S` gets the flags `linear` and
 /// `has_on_abort` (W0601 at its end, W0602 across an abort).
-fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
+pub(crate) fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
     mark_fn_linear_in(em, k, v, false);
 }
 
@@ -3731,12 +5041,22 @@ fn mark_fn_linear_in(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal, insid
     let Some(var) = em.s_var(k) else {
         return;
     };
+    let generic = fns_generic(em, v);
     if let Some(info) = em.facts.vars.get_mut(var.index()) {
         if info.linear {
             info.has_on_abort &= on_abort;
+            // A value that is linear with no type parameter stays so.
+            if generic.is_empty() {
+                info.generic.linear.clear();
+            } else if !info.generic.linear.is_empty() {
+                info.generic.linear.extend(generic);
+                info.generic.linear.sort_unstable();
+                info.generic.linear.dedup();
+            }
         } else {
             info.linear = true;
             info.has_on_abort = on_abort;
+            info.generic.linear = generic;
         }
     }
 }
@@ -3765,7 +5085,8 @@ fn put_linear(
         let Some((k, _)) = em.roots.path_of(em.facts, *q) else {
             continue;
         };
-        let v = crate::analysis::AbsVal::of_type(true);
+        let mut v = crate::analysis::AbsVal::of_type(true);
+        v.fns.clone_from(fns);
         mark_fn_linear(em, k, &v);
     }
 }
@@ -3960,4 +5281,1073 @@ fn overlap(facts: &FnFacts, a: PlaceId, b: PlaceId) -> bool {
         false
     };
     below(a, b) || below(b, a)
+}
+
+/// The run of the clause of operation `op` of the handler of captured
+/// capability `k` at the perform node `n` of a closure body (plan stage
+/// F16): the clause runs while the closure waits, with its parameters on the
+/// places of the arguments `args` (`crate::analysis::clause::ClauseRun`).
+///
+/// # Errors
+///
+/// The errors of σ.
+fn clause_run_in_closure(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    k: u32,
+    (op, args): (weft_ir::OpIdx, &[Operand]),
+) -> R {
+    let body = em.body;
+    let Some((c, _)) = em.p.closure_of(body) else {
+        return Ok(());
+    };
+    let Some(h) = crate::analysis::clause::capture_handler(em.p, c, k) else {
+        return Ok(());
+    };
+    let Some(cb) = crate::analysis::clause::clause_of(em.p, h, op) else {
+        return Ok(());
+    };
+    let params: Vec<(weft_ir::TyId, weft_ir::TyId)> =
+        em.p.body(cb)
+            .map(|b| {
+                b.params
+                    .iter()
+                    .filter_map(|&l| b.local(l).map(|d| (d.ty, d.ty)))
+                    .collect()
+            })
+            .unwrap_or_default();
+    let inst = transfer::run_inst(body, em.at.0);
+    let s = crate::analysis::apply::sigma_with(&mut em.cx(), body, st, &params, args, inst)?;
+    em.hx.runs.push(crate::analysis::clause::ClauseRun {
+        node: n,
+        handler: h,
+        clause: cb,
+        post: false,
+        args: s.args,
+        helds: s.helds,
+        deps: s.deps,
+        at: body,
+        spares: None,
+        ins: Vec::new(),
+        given: None,
+    });
+    Ok(())
+}
+
+/// The identity of the standard effect that a scope, a spawn and a `join`
+/// perform.
+const ASYNC: &str = "Async";
+
+/// The identity of the standard effect `Fail`.
+const FAIL: &str = "Fail";
+
+/// Why a task that runs a function value more than once is not in scope:
+/// a spawn has no node for the second run (plan stage F19).
+const TASK_AGAIN: &str = "a task that runs a callback more than once";
+
+/// Why a task that runs the function value of a shared variable that gets
+/// a new value is not in scope (plan stage F19).
+const TASK_LATE: &str = "a task that runs a function variable that gets a new value";
+
+/// True if the closure value `f` runs a capture that is a shared cell (a
+/// `ByRef` or a `Kept` capture) of a variable that more than one statement
+/// gives a whole value: a task that runs `f` runs the value of the cell at
+/// that time.
+fn runs_rebound_cell(p: &weft_ir::Program, f: &FnVal, sums: &crate::analysis::Summaries) -> bool {
+    let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
+        return false;
+    };
+    let (Some(decl), Ok(sum)) = (p.closures.get(c.index()), sums.closure(*c)) else {
+        return false;
+    };
+    sum.runs.iter().filter(|r| r.capture).any(|r| {
+        let Some(cap) = decl.captures.get(r.param as usize) else {
+            return true;
+        };
+        if !matches!(
+            cap.mode,
+            weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
+        ) || !cap.source.proj.is_empty()
+        {
+            return !cap.source.proj.is_empty();
+        }
+        let Ok(owner) = super::alpha::owner_local(p, decl.maker, cap.source.local) else {
+            return true;
+        };
+        let mut sets = 0usize;
+        for (bi, b) in p.bodies.iter().enumerate() {
+            let bid = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
+            for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+                if let weft_ir::StmtKind::Assign(q, _) = &s.kind {
+                    if q.proj.is_empty()
+                        && super::alpha::owner_local(p, bid, q.local).ok() == Some(owner)
+                    {
+                        sets += 1;
+                    }
+                }
+            }
+        }
+        sets > 1
+    })
+}
+
+/// Why a call of a function value that runs a value of its arguments as a
+/// task is not in scope (plan stage F19).
+const VALUE_TASKS: &str = "a function value that runs a value of its arguments as a task";
+
+/// Why a task that runs code of a caller is not in scope (plan stage F19:
+/// the caller checks the value as a task).
+const TASK_CODE: &str = "a task that runs code of a caller (stage F19)";
+
+/// True if fact place `inner` is at or below fact place `outer`.
+fn at_or_below(facts: &FnFacts, inner: PlaceId, outer: PlaceId) -> bool {
+    let (Some(i), Some(o)) = (
+        facts.places.get(inner.index()),
+        facts.places.get(outer.index()),
+    ) else {
+        return false;
+    };
+    i.root == o.root && weft_verified::places::within(&i.steps, &o.steps)
+}
+
+/// `Spawn` `Main` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// The operands; `spawned_at(T, n)`; the run of the task body at `n` as a
+/// run of a closure with no arguments (`emit_apps`), whose changes and
+/// lends become `task_writes(T, _)` and whose reads become
+/// `task_reads(T, _)` (they stay at `n` too: the task can run before the
+/// next node); `captures(T, v)` of the variable of each capture of the
+/// closure, `mut_through(T, v)` if the task changes a place that the
+/// capture reaches, `kept(T, root(x))` of each `Kept` capture; `opaque(T)`
+/// for a value that the analysis does not follow; `escapes_at(n, Async)`.
+/// The handle binds (`rebound_at`, `points_into`), or a spawn statement
+/// gives its `TaskResult` local `rebound_at` and `empty_at`.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a task that performs through a
+/// capability of a local handler, and the errors of α.
+pub fn spawn(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    block: weft_ir::BlockId,
+    (site, scope, task, dest): (weft_ir::SpawnId, &Operand, &Operand, Option<&Place>),
+    origin: weft_ir::Span,
+) -> R {
+    use crate::analysis::tasks;
+    let body = em.body;
+    operand(em, n, st, scope)?;
+    let (ret_ty, out_ret) = task_start(em, n, st, block, site, task, origin)?;
+    em.facts.escapes_at.push((n, ASYNC.to_string()));
+    em.started.push(site.0);
+    // The value after the spawn: the handle, or the `TaskResult` local.
+    let mut after = st.clone();
+    tasks::spawn(&mut em.cx(), (body, block), &mut after, site, task, dest)?;
+    if let Some(d) = dest {
+        let v = if let Some((k, path)) = transfer::move_path(em.p, body, d)? {
+            after.value(k, &path)
+        } else {
+            let result = tasks::task_result(&em.cx(), ret_ty, &out_ret);
+            let t = em
+                .place_ty(d)
+                .ok_or_else(|| AlphaError::BadPlace("a handle with no type".to_string()))?;
+            tasks::handle_value(&em.cx(), t, site, &result)
+        };
+        return bind_dest(em, n, st, d, &v);
+    }
+    let orphan = em.p.body(body).and_then(|b| {
+        b.locals
+            .iter()
+            .position(|d| d.kind == LocalKind::TaskResult(site))
+            .and_then(|i| u32::try_from(i).ok())
+    });
+    if let Some(l) = orphan {
+        let k = em.key(LocalId(l))?;
+        whole(em, n, st, k, &Tree::leaf(crate::analysis::AbsVal::plain()));
+    }
+    Ok(())
+}
+
+/// `Fork` (`docs/ir.md` 6.4, plan stage F19): the nodes `Main`, a
+/// [`super::nodes::Phase::Task`] node for each branch, the node where the
+/// branches end, and `Ret`.
+///
+/// `Main`: `escapes_at(Main, Par)`; `may_abort(Main)` (a cancel, a child
+/// failure). Branch `i` starts at its node (`branch_nodes[i]`): the start
+/// of its task (`task_start`), so a branch that starts later runs at the
+/// same time as the branches before it (W0405 between two branches). Each
+/// task is a `fork_task` (W0401, W0403). The node `end` ends each task
+/// (`joined_at`). `Ret`: the destination gets the tuple of the results of
+/// the branches, also of units (IP6).
+///
+/// # Errors
+///
+/// The errors of `task_start` and of α.
+pub fn fork(
+    em: &mut Em<'_>,
+    (nodes, branch_nodes, end): (&CallNodes, &[NodeId], Option<NodeId>),
+    st: &State,
+    block: weft_ir::BlockId,
+    (sites, branches, dest): (&[weft_ir::SpawnId], &[Operand], &Place),
+    origin: weft_ir::Span,
+) -> R {
+    let body = em.body;
+    let main = nodes.main;
+    let mut tasks = Vec::new();
+    for (i, (site, br)) in sites.iter().zip(branches).enumerate() {
+        let n = branch_nodes.get(i).copied().unwrap_or(main);
+        if n != main {
+            em.holders.before(n, st, em.facts);
+        }
+        let at =
+            em.p.spawns
+                .get(site.index())
+                .map_or(origin, |d| d.origin.span);
+        task_start(em, n, st, block, *site, br, at)?;
+        tasks.extend(em.hx.task_ids.get(site).copied());
+    }
+    em.facts.escapes_at.push((main, "Par".to_string()));
+    if nodes.may_abort {
+        em.facts.may_abort.push(main);
+    }
+    if let Some(e) = end {
+        em.holders.before(e, st, em.facts);
+    }
+    let end = end.or(nodes.ret).unwrap_or(main);
+    em.facts.joined_at.extend(tasks.iter().map(|&t| (t, end)));
+    if let Some(r) = nodes.ret {
+        let mut after = st.clone();
+        crate::analysis::tasks::fork(&mut em.cx(), (body, block), &mut after, branches, dest)?;
+        let v = match transfer::move_path(em.p, body, dest)? {
+            Some((k, path)) => after.value(k, &path),
+            None => Tree::none(),
+        };
+        bind_dest(em, r, st, dest, &v)?;
+    }
+    Ok(())
+}
+
+/// The part `task_effects` (`effects`) of the summary of the callee `name`
+/// at a run node of span
+/// `at` (plan stage F19): an effect that a local handler of the body
+/// handles is W0314 (the handler is on the stack of this task, and the
+/// task of the callee runs on another one); another effect goes to the part
+/// `task_effects` of the body.
+fn task_effects_at(
+    em: &mut Em<'_>,
+    effects: &std::collections::BTreeSet<String>,
+    name: &str,
+    at: Span,
+) {
+    let Some(b) = em.p.body(em.body) else {
+        return;
+    };
+    let env = b.cap_env;
+    let unit = b.origin.span.unit;
+    let mut bad = false;
+    for e in effects {
+        let local = matches!(
+            super::frames::resolve(em.p, em.tys, env, e, true),
+            super::frames::Dest::Handler { .. }
+        );
+        if local {
+            bad = true;
+        } else {
+            em.task_effects.insert(e.clone());
+        }
+    }
+    if bad {
+        let name = name.rsplit('.').next().unwrap_or(name);
+        em.w0314.push((
+            weft_ir::Span {
+                unit,
+                lo: at.lo,
+                hi: at.hi,
+            },
+            format!(
+                "a task of `{name}` performs through a handler of this task: the handler runs on another task"
+            ),
+        ));
+    }
+}
+
+/// W0314 for a task that runs the summaries `apps` (`docs/ir.md` 6.9, plan
+/// stage F19): an operation of the task goes to a handler on the stack of
+/// another task. The task starts at `origin`; `callee` names a callee that
+/// starts it.
+///
+/// An operation through a captured capability, an effect of the row that
+/// a local handler of the body handles, an effect of a closure that only a
+/// handler of a caller can handle (an effect that is not standard), and,
+/// with no runtime, each effect: W0314. `Fail` goes to the task that joins
+/// the task. Another effect of the row goes to
+/// a handler of a caller: part `task_effects` of the body (the caller
+/// checks it at its call).
+fn task_w0314(
+    em: &mut Em<'_>,
+    apps: &[transfer::Applied],
+    origin: weft_ir::Span,
+    callee: Option<&str>,
+) {
+    use crate::analysis::summary::CapIface;
+    let env = em.p.body(em.body).map(|b| b.cap_env);
+    let local = |em: &Em<'_>, e: &str| {
+        env.is_some_and(|env| {
+            matches!(
+                super::frames::resolve(em.p, em.tys, env, e, true),
+                super::frames::Dest::Handler { .. }
+            )
+        })
+    };
+    let mut bad = false;
+    for app in apps {
+        let item = app.kind == crate::analysis::apply::RunKind::Item;
+        let row = app
+            .summary
+            .performs
+            .iter()
+            .map(|pf| (pf.effect.as_str(), pf.cap == CapIface::Row, item))
+            .chain(
+                app.summary
+                    .task_effects
+                    .iter()
+                    .map(|e| (e.as_str(), true, true)),
+            );
+        for (e, through_row, item) in row {
+            if e == FAIL {
+                continue;
+            }
+            let std = crate::effects::is_std(e);
+            if !through_row || local(em, e) || (em.hx.no_runtime && std) || (!std && !item) {
+                bad = true;
+            } else {
+                em.task_effects.insert(e.to_string());
+            }
+        }
+    }
+    if bad {
+        let msg = match callee {
+            Some(name) => format!(
+                "a task of `{name}` performs through a handler of this task: the handler runs on another task"
+            ),
+            None => "a task cannot perform through a handler of this task: the handler runs on another task".to_string(),
+        };
+        em.w0314.push((origin, msg));
+    }
+}
+
+/// The start of the task of site `site` at node `n`: the run of the task
+/// operand `task` (a spawn, or a branch of a `fork`) in state `st`
+/// (`docs/ir.md` 6.4, plan stages F18 and F19).
+///
+/// The operand moves; the run of the task body at `n` as a run of a
+/// closure with no arguments (`emit_apps`), whose changes and lends become
+/// `task_writes(T, _)` and whose reads become `task_reads(T, _)` (they stay
+/// at `n` too: the task can run before the next node); `spawned_at(T, n)`;
+/// `captures(T, v)` of the variable of each capture of the closure,
+/// `mut_through(T, v)` if the task changes a place that the capture
+/// reaches, `kept(T, root(x))` of each `Kept` capture; `opaque(T)` for a
+/// value that the analysis does not follow. Returns the result type of the
+/// task and the value of its result.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a task that the fact generator does
+/// not support yet, and the errors of α.
+fn task_start(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    block: weft_ir::BlockId,
+    site: weft_ir::SpawnId,
+    task: &Operand,
+    origin: weft_ir::Span,
+) -> Result<(weft_ir::TyId, Tree), AlphaError> {
+    use crate::analysis::tasks;
+    let body = em.body;
+    let at = span(origin);
+    let ret_ty = tasks::task_ret(&mut em.cx(), body, task)?;
+    let fns = transfer::operand(&mut em.cx(), body, st, task)?.flat().fns;
+    let out = transfer::value_out_ty(&mut em.cx(), (body, block), st, task, &[], ret_ty)?;
+    // A failure of the task is a child failure: `join` and `ScopeWait` run
+    // the `fail` clause of a local handler (`clause::runs_clauses`). An
+    // operation of another handler of this task is W0314.
+    task_w0314(em, &out.apps, origin, None);
+    // A late run (a value that the task body runs through a capture)
+    // applies at `n`: the whole run of the task is at `n` (plan stage F19).
+    // A run again (a value that runs another value more than once, OR3)
+    // needs a second node after the first run: a spawn has none.
+    if out.apps.iter().any(|a| a.again && !a.order) {
+        return Err(AlphaError::Later(TASK_AGAIN));
+    }
+    // A task runs the value that a shared cell (a `ByRef` or `Kept`
+    // capture) holds when it runs: a variable that gets a new function value
+    // after the spawn gives the task code that the run at `n` does not
+    // apply (`zz_late`, `late_task`).
+    if fns.iter().any(|f| runs_rebound_cell(em.p, f, em.sums)) {
+        return Err(AlphaError::Later(TASK_LATE));
+    }
+    // Code of a caller that runs as a task (a parameter, a closure that
+    // runs one): the caller checks the value that it gives as a task (part
+    // `runs`, OR7, V132, plan stage F19). A value that the analysis does
+    // not follow and that no caller gives stays with the old pipeline.
+    let known = fns.iter().all(|f| {
+        matches!(
+            f,
+            FnVal::Closure(_)
+                | FnVal::Made(_)
+                | FnVal::Item(..)
+                | FnVal::Param(_)
+                | FnVal::ParamResult(_)
+                | FnVal::Capture(_)
+        )
+    });
+    if !known || out.apps.iter().any(|a| a.code && a.run.is_none()) {
+        return Err(AlphaError::Later(TASK_CODE));
+    }
+    let caller_code = out.apps.iter().any(|a| a.code);
+    operand_moves(em, n, st, task, false, true)?;
+    let marks = (
+        em.facts.mutates_at.len(),
+        em.facts.lends_mut.len(),
+        em.facts.reads_at.len(),
+    );
+    let nodes = CallNodes {
+        main: n,
+        ret: None,
+        frame_end: None,
+        aborts: Vec::new(),
+        may_abort: false,
+        values: Vec::new(),
+        local_code: true,
+    };
+    let thread = em.p.spawns.get(site.index()).is_some_and(|d| d.fork);
+    em.in_task = em.hx.task_ids.get(&site).map(|&t| (t, thread));
+    let frames = emit_apps(em, &nodes, st, block, &[], &out.apps, at, &[], &[]);
+    em.in_task = None;
+    let frames = frames?;
+    apps_at_ret(em, n, st, &out.apps, at)?;
+    end_frames(em, &nodes, &frames);
+    // The frame of the task ends where the task ends (a reference that the
+    // task puts into a capture points into it: `zz_keep`, plan stage F19).
+    if let Some(&t) = em.hx.task_ids.get(&site) {
+        em.task_frames.extend(frames.iter().map(|&v| (t, v)));
+    }
+    if let Some(t) = em.hx.task_ids.get(&site).copied() {
+        em.facts.spawned_at.push((t, n));
+        // A place of a caller (code of a caller, an operation of a caller)
+        // and a local of a callee of the task are no places that the task
+        // shares with the body (as the old lowering).
+        // The closure value moves into the task: its environment is the
+        // task's own.
+        let own = match task {
+            Operand::Copy(q) | Operand::Move(q) => {
+                let k = em.key(q.local)?;
+                em.roots
+                    .local(em.p, em.tys, em.facts, k.0, k.1)
+                    .ok()
+                    .and_then(|r| em.facts.places.get(r.index()).map(|i| i.root))
+            }
+            Operand::Const(_) => None,
+        };
+        let roots = &*em.roots;
+        let facts = &*em.facts;
+        let shared = |q: PlaceId| {
+            facts.places.get(q.index()).is_none_or(|i| {
+                Some(i.root) != own
+                    && !matches!(
+                        roots.role(i.root),
+                        Some(super::alpha::Role::Caller | super::alpha::Role::Frame(_))
+                    )
+            })
+        };
+        let mut writes: Vec<PlaceId> = em.facts.mutates_at[marks.0..]
+            .iter()
+            .chain(&em.facts.lends_mut[marks.1..])
+            .filter(|(m, q)| *m == n && shared(*q))
+            .map(|(_, q)| *q)
+            .collect();
+        writes.sort();
+        writes.dedup();
+        let mut reads: Vec<PlaceId> = em.facts.reads_at[marks.2..]
+            .iter()
+            .filter(|(m, q)| *m == n && shared(*q))
+            .map(|(_, q)| *q)
+            .collect();
+        reads.sort();
+        reads.dedup();
+        em.facts.task_writes.extend(writes.iter().map(|&q| (t, q)));
+        em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
+        task_captures(em, st, t, &fns, &writes)?;
+        // A callee that can start a pinned task: work stealing cannot check
+        // the task (`pinned`). Code of a caller: the body does not know it
+        // (the caller checks the value that it gives, part `runs`).
+        let pins = out.apps.iter().any(|a| a.summary.pins);
+        if pins || caller_code {
+            em.facts.opaque.push(t);
+        }
+        if caller_code && !pins {
+            em.code_opaque.push(t);
+        }
+    }
+    Ok((ret_ty, out.ret))
+}
+
+/// The facts of the captures of the closures `fns` that task `t` runs, in
+/// state `st` at the spawn: `captures`, `mut_through` (the task writes the
+/// places `writes`), `kept`, and the `ByRef` and `Kept` captures that can
+/// hold a reference (`Handlers::task_cells`).
+///
+/// # Errors
+///
+/// The errors of α.
+fn task_captures(
+    em: &mut Em<'_>,
+    st: &State,
+    t: weft_facts::TaskId,
+    fns: &std::collections::BTreeSet<FnVal>,
+    writes: &[PlaceId],
+) -> R {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut work: Vec<weft_ir::ClosureId> = fns
+        .iter()
+        .filter_map(|f| match f {
+            FnVal::Closure(c) | FnVal::Made(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
+    while let Some(c) = work.pop() {
+        if !seen.insert(c) {
+            continue;
+        }
+        let Some(decl) = em.p.closures.get(c.index()) else {
+            continue;
+        };
+        let maker = decl.maker;
+        // A capture of a closure body is a capture of the closure that
+        // made it: the variables are in its maker. The task is pinned
+        // (`opaque`, plan stage F19: a spawn in a closure body on a scope of
+        // the maker). If the maker is the body that the template emits now,
+        // the state `st` has the values of the sources: the captures are
+        // checked as the captures of a closure of a function body (W0401,
+        // W0403; P-2 of the review of group F, follow-up F20.2). A `Kept` or
+        // a `ByRef` capture of the maker is the variable of its source
+        // ([`super::alpha::capture_source`]).
+        if em.p.closure_of(maker).is_some() && !em.facts.opaque.contains(&t) {
+            em.facts.opaque.push(t);
+        }
+        if em.p.closure_of(maker).is_some() && maker != em.body {
+            // A `ByMove` capture of the maker is its `E` variable: a linear
+            // value that moves into the task (W0602 of a cancel).
+            for cap in &decl.captures {
+                if let Some((_, k, weft_ir::CaptureMode::ByMove)) =
+                    super::alpha::env_capture(em.p, maker, &cap.source)
+                {
+                    if let Some(v) = em.vars.get(&VarKey::E(maker, k)) {
+                        em.facts.captures.push((t, v));
+                    }
+                }
+            }
+            continue;
+        }
+        for cap in &decl.captures {
+            if matches!(
+                cap.mode,
+                weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
+            ) {
+                continue;
+            }
+            let (sb, src) = super::alpha::capture_source(em.p, maker, &cap.source);
+            let src = &src;
+            let Some(v) = em.base_var(sb, src)? else {
+                continue;
+            };
+            em.facts.captures.push((t, v));
+            let k = transfer::key(em.p, sb, src.local)?;
+            let val = st.value(k, &[]).flat();
+            // A captured closure: its captures are captures of the task. A
+            // closure that another function made (`mk_cb(&n)`) has its
+            // captures there: a nonportable one makes the variable that
+            // holds it nonportable for the task (W0401, `npret`, plan stage
+            // F19).
+            for f in &val.fns {
+                if let FnVal::Closure(c2) | FnVal::Made(c2) = f {
+                    work.push(*c2);
+                    if made_nonportable(em, *c2) {
+                        if let Some(info) = em.facts.vars.get_mut(v.index()) {
+                            info.nonportable = true;
+                        }
+                    }
+                }
+            }
+            let ty = super::alpha::place_ty(em.p, em.tys, sb, src);
+            let is_ref =
+                ty.is_some_and(|t| matches!(em.tys.try_get(t), Some(weft_ir::Ty::Ref(..))));
+            let root = em.roots.local(em.p, em.tys, em.facts, k.0, k.1).ok();
+            // The references that the value holds: of a reference, or inside
+            // a tuple, a struct, an `Option` or a `Vec` (o1_fork, plan stage
+            // F19), and the root of a value that is not a reference.
+            let mut refs: Vec<PlaceId> = val.refs.iter().copied().collect();
+            if !is_ref {
+                refs.extend(root);
+            }
+            let through = writes
+                .iter()
+                .any(|&m| refs.iter().any(|&r| at_or_below(em.facts, m, r)));
+            if through {
+                em.facts.mut_through.push((t, v));
+            }
+            // A capture of a capture of the maker gives only the checks of
+            // a `fork` branch (W0401, W0403, and the `captures` of a linear
+            // value). The cell of a variable of another body is not `kept`:
+            // a closure can take the task out of the scope of that body
+            // (RR4), so the end of the cell stays a conflict with the task.
+            let nested = sb != maker || em.p.closure_of(maker).is_some();
+            if nested {
+                continue;
+            }
+            if cap.mode == weft_ir::CaptureMode::Kept {
+                if let Some(r) = root {
+                    em.facts.kept.push((t, r));
+                }
+            }
+            let holds_refs = ty.is_some_and(|t| ir_props(em.tys, t).holds_refs);
+            // The task reads the cell of the variable when it runs: each
+            // later value of the variable (`finish_task_values` of the old
+            // lowering).
+            let shared = matches!(
+                cap.mode,
+                weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
+            );
+            if shared && holds_refs {
+                em.hx.task_cells.push((t, v, val.refs.clone()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// True if closure `c` was made outside the bodies of the component and a
+/// capture of it holds a nonportable value.
+fn made_nonportable(em: &mut Em<'_>, c: weft_ir::ClosureId) -> bool {
+    let Some(decl) = em.p.closures.get(c.index()) else {
+        return false;
+    };
+    // The maker is in the component if its result has a variable.
+    let outside = em
+        .vars
+        .get(&VarKey::S(decl.maker, weft_ir::LocalId(0)))
+        .is_none();
+    let n = u32::try_from(decl.captures.len()).unwrap_or(0);
+    outside
+        && (0..n).any(|k| {
+            super::alpha::capture_ty(em.p, em.tys, c, k)
+                .is_some_and(|t| ir_props(em.tys, t).nonportable)
+        })
+}
+
+/// `Join` `Main` and `Ret` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// `Main`: the handle is used and moves; `joined_at(T, main)` for each task
+/// that the handle must hold (`crate::analysis::tasks::must_join`);
+/// `may_abort` (a child failure, a cancel); `escapes_at(main, Async)`.
+/// `Ret`: the result binds. The writes of each task that ends there become
+/// `lends_mut` at the end of the component ([`task_ends`]).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn join(em: &mut Em<'_>, nodes: &CallNodes, st: &State, task: &Operand, dest: &Place) -> R {
+    use crate::analysis::tasks;
+    let body = em.body;
+    let main = nodes.main;
+    let joined = tasks::must_join(&mut em.cx(), body, st, task)?;
+    operand_moves(em, main, st, task, false, true)?;
+    handle_write(em, main, st, task)?;
+    let end = nodes.ret.unwrap_or(main);
+    for site in joined {
+        if let Some(t) = em.hx.task_ids.get(&site).copied() {
+            em.facts.joined_at.push((t, main));
+            em.hx.task_ends.push((t, end));
+        } else if crate::analysis::tasks::iface_index(site).is_some() {
+            em.hx.iface_joins.push((site, main));
+        }
+    }
+    em.facts.escapes_at.push((main, ASYNC.to_string()));
+    if nodes.may_abort {
+        em.facts.may_abort.push(main);
+    }
+    if let Some(r) = nodes.ret {
+        let mut after = st.clone();
+        tasks::join(&mut em.cx(), body, &mut after, task, dest)?;
+        let v = match transfer::move_path(em.p, body, dest)? {
+            Some((k, path)) => after.value(k, &path),
+            None => Tree::leaf(transfer::operand(&mut em.cx(), body, st, task)?.flat()),
+        };
+        bind_dest(em, r, st, dest, &v)?;
+    }
+    Ok(())
+}
+
+/// The writes of each task that ends at a node of `ends` become `lends_mut`.
+///
+/// They go there (plan stage F18) when the facts of the component are whole: the
+/// tasks that the task starts in a closure body (part `tasks`) have their
+/// facts then. A task that a task starts begins at the same node and runs
+/// on after the end of the outer task: its writes are not writes that end
+/// there (plan stage F19).
+pub fn task_end_lends(
+    facts: &mut FnFacts,
+    ends: &[(weft_facts::TaskId, NodeId)],
+    frames: &[(weft_facts::TaskId, VarId)],
+) {
+    let ended: Vec<(VarId, NodeId)> = frames
+        .iter()
+        .flat_map(|&(t, v)| {
+            facts
+                .joined_at
+                .iter()
+                .filter(move |(u, _)| *u == t)
+                .map(move |(_, n)| (v, *n))
+        })
+        .collect();
+    facts.scope_end.extend(ended);
+    let mut writes: BTreeMap<weft_facts::TaskId, Vec<PlaceId>> = BTreeMap::new();
+    for &(t, m) in &facts.task_writes {
+        writes.entry(t).or_default().push(m);
+    }
+    // A task that a task starts (a spawn in the code of the task, part
+    // `tasks`) starts at the same node and runs on after the end of the
+    // outer task: its writes are not writes that end there (plan stage F19).
+    let mut starts: BTreeMap<weft_facts::TaskId, Vec<NodeId>> = BTreeMap::new();
+    for &(t, n) in &facts.spawned_at {
+        starts.entry(t).or_default().push(n);
+    }
+    for (t, e) in ends.iter().copied() {
+        let mine = starts.get(&t).cloned().unwrap_or_default();
+        let inner: Vec<PlaceId> = starts
+            .iter()
+            .filter(|(u, ns)| **u != t && ns.iter().any(|n| mine.contains(n)))
+            .flat_map(|(u, _)| writes.get(u).into_iter().flatten().copied())
+            .collect();
+        for &m in writes.get(&t).into_iter().flatten() {
+            if !inner.contains(&m) {
+                facts.lends_mut.push((e, m));
+            }
+        }
+    }
+}
+
+/// The tasks that call `t` ends (O3-9, plan stage F18).
+///
+/// The part `joins` of the summary of the callee gives the operands. For
+/// each task that the operand of a joined handle must hold: if the callee
+/// also joins the handle on each path of an abort (part `abort_joins`),
+/// `joined_at(T, main)`, and the writes of the task become `lends_mut` at
+/// `Ret`. Else the task ends only on the normal path (follow-up F19.3,
+/// E-1): an abort of the callee before its `join` leaves the task running,
+/// and the abort edge leaves `Main`. Then `joined_at(T, ret)`, and the
+/// `lends_mut` go to the normal `FrameEnd`. A handle of a task of a caller
+/// goes to the part `joins` of the body, with the same node.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn call_joins(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
+    use crate::analysis::tasks;
+    if em.hx.task_ids.is_empty() && em.p.spawns.is_empty() {
+        return Ok(());
+    }
+    let body = em.body;
+    let ops: Vec<(Operand, bool)> = tasks::joined_ops(&mut em.cx(), body, st, t)
+        .into_iter()
+        .map(|(o, early)| (o.clone(), early))
+        .collect();
+    for (op, early) in &ops {
+        let (at, end) = if *early {
+            (nodes.main, nodes.ret.unwrap_or(nodes.main))
+        } else {
+            let Some(r) = nodes.ret else {
+                continue;
+            };
+            (r, nodes.frame_end.unwrap_or(r))
+        };
+        for site in tasks::must_join(&mut em.cx(), body, st, op)? {
+            if let Some(t) = em.hx.task_ids.get(&site).copied() {
+                em.facts.joined_at.push((t, at));
+                em.hx.task_ends.push((t, end));
+            } else if tasks::iface_index(site).is_some() {
+                em.hx.iface_joins.push((site, at));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A `join` or a `detach` of a handle in a variable, a parameter or a
+/// capture.
+///
+/// The machine can write the place of the handle (it takes the task out),
+/// so node `n` changes it (`mutates_at`, C5 of the fact oracle).
+///
+/// # Errors
+///
+/// The errors of α.
+fn handle_write(em: &mut Em<'_>, n: NodeId, st: &State, task: &Operand) -> R {
+    let (Operand::Copy(q) | Operand::Move(q)) = task else {
+        return Ok(());
+    };
+    let body = em.body;
+    // The facts of a closure body in the terms of its interface give its
+    // summary: a change of its environment there would be a change of the
+    // closure value at each run node. Its instantiated facts get it.
+    let param =
+        em.p.body(body)
+            .and_then(|b| b.local(q.local))
+            .is_some_and(|d| matches!(d.kind, LocalKind::Param(_) | LocalKind::User));
+    let env = super::alpha::env_capture(em.p, body, q).is_some()
+        && !transfer::in_interface(&em.cx(), body);
+    if param || env {
+        let al = em.alpha(st, q)?;
+        em.facts
+            .mutates_at
+            .extend(al.places.iter().map(|&p| (n, p)));
+    }
+    Ok(())
+}
+
+/// The tasks of the component that scope body `sb` joins at its
+/// `ScopeWait` and on its cleanup chain: each task of a spawn site of its
+/// scope.
+fn scope_tasks(em: &Em<'_>, sb: BodyId) -> Vec<weft_facts::TaskId> {
+    let Some(weft_ir::BodyKind::Scope(k)) = em.p.body(sb).map(|b| b.kind) else {
+        return Vec::new();
+    };
+    em.hx
+        .task_ids
+        .iter()
+        .filter(|(site, _)| {
+            em.p.spawns
+                .get(site.index())
+                .is_some_and(|d| d.scope == Some(k))
+        })
+        .map(|(_, t)| *t)
+        .collect()
+}
+
+/// `ScopeWait` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// The scope capability is used; `joined_at(T, n)` for each task of the
+/// scope; `may_abort` (a child failure, a cancel); each `TaskResult` local of `orphans` gets the result
+/// of its task (`rebound_at`, `points_into`). The writes of the tasks
+/// become `lends_mut` of the node after `n` (`nodes.ret`) at the end of the
+/// component ([`task_ends`]).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_wait(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    scope: &Place,
+    orphans: &[LocalId],
+) -> R {
+    let body = em.body;
+    let n = nodes.main;
+    let (a, _) = em.access(st, scope, false)?;
+    em.apply(n, kernel::read(&a));
+    // The tasks end at `n`; the node after it changes what they write
+    // (`nodes.ret`: the first node of the next block).
+    for t in scope_tasks(em, body) {
+        em.facts.joined_at.push((t, n));
+        if let Some(e) = nodes.ret {
+            em.hx.task_ends.push((t, e));
+        }
+    }
+    if nodes.may_abort {
+        em.facts.may_abort.push(n);
+    }
+    let mut after = st.clone();
+    crate::analysis::tasks::scope_wait(&mut em.cx(), body, &mut after, orphans)?;
+    for &l in orphans {
+        let k = em.key(l)?;
+        let v = after.value(k, &[]);
+        whole(em, n, st, k, &v);
+    }
+    Ok(())
+}
+
+/// The cleanup chain of a scope body cancels and joins the tasks of its
+/// scope at the `UnwindValue` of its `ScopeCap` local (V084, plan stage
+/// F18): `joined_at(T, n)` for each task of the scope.
+pub fn scope_unwind(em: &mut Em<'_>, n: NodeId, place: &Place) {
+    let body = em.body;
+    let cap = place.proj.is_empty()
+        && em
+            .p
+            .body(body)
+            .and_then(|b| b.local(place.local))
+            .is_some_and(|d| d.kind == LocalKind::ScopeCap);
+    if cap {
+        for t in scope_tasks(em, body) {
+            em.facts.joined_at.push((t, n));
+        }
+    }
+}
+
+/// `Detach` (`docs/ir.md` 6.4, plan stage F18).
+///
+/// The handle is used and moves; the result of the task goes away, so a linear result is the drop
+/// pair of the terminator (`rebound_at` at `n`, `scope_end` at the node
+/// `next` after it: W0601, ADR 0007).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn detach(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    block: weft_ir::BlockId,
+    task: &Operand,
+    next: Option<NodeId>,
+) -> R {
+    operand_moves(em, n, st, task, false, true)?;
+    handle_write(em, n, st, task)?;
+    if let Some(d) = em.vars.get(&VarKey::D(em.body, block, super::nodes::TERM)) {
+        if em.facts.var(d).linear {
+            em.facts.rebound_at.push((d, n));
+            // The pair ends at `next`: W0601 there, and no later node sees
+            // the dropped value (no W0602 at a later node that can abort,
+            // N1 of `r3/issues.md`).
+            if let Some(x) = next {
+                em.facts.scope_end.push((d, x));
+                em.facts.moved_at.push((d, x));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The scope capability of scope body `sb` binds at `Main` of its
+/// `scope` (`n`); the scope performs `Async`, and it can abort (a cancel,
+/// `docs/ir.md` 6.4, plan stage F18).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_main(em: &mut Em<'_>, n: NodeId, sb: BodyId, may_abort: bool) -> R {
+    if let Some(cap) = em.p.body(sb).and_then(|b| {
+        b.locals
+            .iter()
+            .position(|d| d.kind == LocalKind::ScopeCap)
+            .and_then(|i| u32::try_from(i).ok())
+    }) {
+        let k = transfer::key(em.p, sb, LocalId(cap))?;
+        let saved = em.body;
+        em.body = sb;
+        whole(
+            em,
+            n,
+            &State::new(),
+            k,
+            &Tree::leaf(crate::analysis::AbsVal::plain()),
+        );
+        em.body = saved;
+    }
+    em.facts.escapes_at.push((n, ASYNC.to_string()));
+    if may_abort {
+        em.facts.may_abort.push(n);
+    }
+    Ok(())
+}
+
+/// `Scope` `Exit` (`docs/ir.md` 6.4, plan stage F18): `_0` of the scope body
+/// `sb` is used (and moves, if it can be linear), and the destination gets
+/// the value `value`.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_exit(
+    em: &mut Em<'_>,
+    x: NodeId,
+    st: &State,
+    sb: BodyId,
+    dest: &Place,
+    value: &Tree,
+) -> R {
+    if let Some(ret) = em.p.body(sb).map(|b| b.ret) {
+        let k = transfer::key(em.p, sb, ret)?;
+        if let Some(s) = em.s_var(k) {
+            em.facts.uses.push((s, x));
+            if em.facts.var(s).linear {
+                em.facts.moved_at.push((s, x));
+            }
+        }
+        let vars = em.vars;
+        em.facts.uses.extend(
+            vars.parts_of(k.0, k.1)
+                .iter()
+                .filter(|(kind, _, _)| *kind == PartKind::H)
+                .map(|(_, _, v)| (*v, x)),
+        );
+    }
+    bind_dest(em, x, st, dest, value)
+}
+
+/// The end of the component (plan stage F18).
+///
+/// Each node where a task ends changes what the task writes (`lends_mut`): a reference that the body
+/// made while the task ran is invalid after it (W0301). A task that a
+/// later `ByRef` value of a captured variable reaches reads (and, with
+/// `mut_through`, writes) what each value of the variable points into.
+pub fn task_ends(em: &mut Em<'_>) {
+    let cells = std::mem::take(&mut em.hx.task_cells);
+    for (t, v, at_spawn) in cells {
+        let places: Vec<PlaceId> = em
+            .facts
+            .points_into
+            .iter()
+            .filter(|(x, q)| *x == v && !at_spawn.contains(q))
+            .map(|(_, q)| *q)
+            .collect();
+        let through = em.facts.mut_through.contains(&(t, v));
+        for q in places {
+            em.facts.task_reads.push((t, q));
+            if through {
+                em.facts.task_writes.push((t, q));
+            }
+        }
+    }
+    let ends = std::mem::take(&mut em.hx.task_ends);
+    em.task_end_list.extend(ends);
+    // A task does not keep a variable that a reference of the task points
+    // into (a captured reference): the reference is invalid after the end
+    // of the variable (as the old lowering, `borrowed_roots`).
+    let roots_of = |f: &FnFacts, q: PlaceId| f.places.get(q.index()).map(|i| i.root);
+    let mut borrowed: std::collections::BTreeSet<_> = std::collections::BTreeSet::new();
+    for &(t, v) in &em.facts.captures {
+        for &(x, q) in &em.facts.points_into {
+            if x == v {
+                if let Some(r) = roots_of(em.facts, q) {
+                    borrowed.insert((t, r));
+                }
+            }
+        }
+    }
+    let kept = std::mem::take(&mut em.facts.kept);
+    let facts = &*em.facts;
+    let kept: Vec<_> = kept
+        .into_iter()
+        .filter(|&(t, r)| roots_of(facts, r).is_none_or(|x| !borrowed.contains(&(t, x))))
+        .collect();
+    em.facts.kept = kept;
+    em.facts.task_reads.sort();
+    em.facts.task_reads.dedup();
+    em.facts.task_writes.sort();
+    em.facts.task_writes.dedup();
 }

@@ -1,0 +1,12 @@
+// F20.3 B-1 (r1m): a clause reads an argument that a generic callee holds; the call moved it (W0302).
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn hold<T>(x: T, n: u64) -> T / fail { if n > 5 { fail("big") }
+ x }
+fn main() {
+    let v = mkv()
+    handle Fail { fn fail(m) { print(v.len()) } } in { let w = hold(v, 9)
+ consume(w) }
+}

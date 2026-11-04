@@ -273,6 +273,57 @@ fn agrees(f: &FnFacts) -> Result<(), TestCaseError> {
     Ok(())
 }
 
+/// The checker and the spec give the violations of `f` on `f` with the rows
+/// that no rule reads removed. The prune can give the places new ids: a
+/// place of the pruned facts maps back to the place of `f` with its root and
+/// its steps.
+fn pruned_agrees(f: &FnFacts) -> Result<(), TestCaseError> {
+    let whole = check(f).violations;
+    let mut g = f.clone();
+    weft_sema::factgen::prune::prune(&mut g);
+    let back = |q: PlaceId| -> PlaceId {
+        let info = g.place(q);
+        let i = f
+            .places
+            .iter()
+            .position(|x| x.root == info.root && x.steps == info.steps)
+            .expect("each place of the pruned facts is a place of the facts");
+        PlaceId(u32::try_from(i).unwrap())
+    };
+    let old_ids = |mut v: weft_facts::Violations| {
+        v.unauthorized_mut = v
+            .unauthorized_mut
+            .into_iter()
+            .map(|(n, q)| (n, back(q)))
+            .collect();
+        v.shared_mutation = v
+            .shared_mutation
+            .into_iter()
+            .map(|(n, q)| (n, back(q)))
+            .collect();
+        v.alias_conflict = v
+            .alias_conflict
+            .into_iter()
+            .map(|(n, a, b)| (n, back(a), back(b)))
+            .collect();
+        v.arg_outside = v
+            .arg_outside
+            .into_iter()
+            .map(|(n, i, q)| (n, i, back(q)))
+            .collect();
+        v.ref_outside = v
+            .ref_outside
+            .into_iter()
+            .map(|(n, q)| (n, back(q)))
+            .collect();
+        v
+    };
+    prop_assert_eq!(&old_ids(check(&g).violations), &whole);
+    let spec = bridge::check_spec(&g).expect("spec evaluates");
+    prop_assert_eq!(old_ids(spec), whole);
+    Ok(())
+}
+
 /// The evidence of W0301 and W0405 is a derivation of the spec, and each
 /// violation has one piece of it (`weft_check::evidence`).
 fn evidence_agrees(f: &FnFacts) -> Result<(), TestCaseError> {
@@ -388,6 +439,14 @@ proptest! {
     #[test]
     fn each_invalid_use_has_the_first_evidence(s in shape()) {
         first_evidence(&build(&s))?;
+    }
+
+    /// The rows that the `ir` pipeline removes (`weft_sema::factgen::prune`,
+    /// stage C1.4) change no violation: the checker and the spec give the
+    /// violations of the whole facts on the pruned facts.
+    #[test]
+    fn pruned_facts_give_the_same_violations(s in shape()) {
+        pruned_agrees(&build(&s))?;
     }
 
     /// The same, for references that share their witnesses.

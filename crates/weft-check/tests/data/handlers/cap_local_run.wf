@@ -1,0 +1,12 @@
+// A closure of the handled body performs through the captured capability: the node that runs it runs the clause, which clears `v`.
+effect Log { fn log(m: u64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let r = &v[0]
+        let f = || log(1)
+        f()
+        print(r + 1) //~ W0301
+    }
+}

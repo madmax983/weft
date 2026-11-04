@@ -306,3 +306,213 @@ fn a_value_that_a_body_runs_and_that_no_caller_gives_passes_the_summary_oracle()
     let r = o.fact_oracle.expect("a fact oracle report");
     assert!(r.summary > 0, "{r:?}");
 }
+
+/// Checks `src` with both pipelines and the groups A to D on.
+fn check_abcd(src: &str) -> Checked {
+    let opts = Options {
+        facts: FactGen::Both,
+        ir_groups: weft_sema::Groups::parse("ABCD").unwrap(),
+        ..Options::default()
+    };
+    check_source("test.wf", src, opts)
+}
+
+/// Removes the `lends_mut` and `releases_at` facts of each `resume` node.
+fn no_resume_summary(f: &mut FnFacts) {
+    let resumes: Vec<weft_facts::NodeId> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind == "resume" && n.label == "resume")
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .collect();
+    f.lends_mut.retain(|(n, _)| !resumes.contains(n));
+    f.releases_at.retain(|(n, _)| !resumes.contains(n));
+}
+
+/// A4 (plan stage F17, review of group D): the oracle runs `src` with the
+/// groups A to D. The facts of the generator pass, and A4 checked a hit.
+/// With no summary at the `resume` nodes, the run fails with A4.
+fn broken_resume(src: &str) -> String {
+    let c = check_abcd(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let report = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(o) => o.fact_oracle.expect("a fact oracle report"),
+        Err(e) => panic!("{}", e.message),
+    };
+    assert!(report.resume > 0, "A4 checked nothing: {report:?}");
+    match run_main_with_facts(&c, &opts(), no_resume_summary) {
+        Ok(_) => panic!("the broken summary of the `resume` passes"),
+        Err(e) => e.message,
+    }
+}
+
+/// The clause holds a reference into an element across its `resume`, and
+/// the rest of the handled body writes the element. The `resume` node
+/// lends the place.
+const RESUME_WRITE: &str = "effect Peek { fn peek() }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    handle Peek { fn peek() { let y = &v[0]; resume(()); print(y + 1) } } in {\n\
+    peek()\n\
+    v[0] = 5\n\
+    }\n\
+    }\n";
+
+/// A `multi` re-run copies the frame of the inner clause that waits at its
+/// `resume` (D-COPY-WAIT): the write after the inner `handle` runs while the
+/// copy waits.
+const RESUME_COPY: &str = "effect Pick { multi fn pick() -> bool }\n\
+    effect Op { fn op() }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    handle Pick { fn pick() { resume(true); resume(false) } } in {\n\
+    handle Op { fn op() { let y = &v[0]; resume(()); print(y + 1) } } in {\n\
+    op()\n\
+    let b = pick()\n\
+    print(b)\n\
+    }\n\
+    v[0] = 3\n\
+    }\n\
+    }\n";
+
+#[test]
+fn a_missing_summary_of_a_resume_fails_the_resume_cover() {
+    let m = broken_resume(RESUME_WRITE);
+    assert!(m.starts_with("summary oracle (A4)"), "{m}");
+}
+
+#[test]
+fn a_missing_summary_of_a_resume_fails_the_resume_cover_of_a_copied_frame() {
+    let m = broken_resume(RESUME_COPY);
+    assert!(m.starts_with("summary oracle (A4)"), "{m}");
+}
+
+/// A `multi` clause clears `v` between its two `resume`s while a copied
+/// callee frame holds a reference into it (D-MULTI-MID of the second review
+/// of group D). Each `resume` runs a copy of the frame of `g` again.
+const MULTI_MID: &str = "effect Pick { multi fn pick() -> bool }\n\
+    fn g(v: &Vec<i64>) / Pick {\n\
+    let r = &v[0]\n\
+    let b = pick()\n\
+    print(r + 1)\n\
+    }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    handle Pick { fn pick() { resume(true); v.clear(); resume(false) } } in {\n\
+    g(&v)\n\
+    }\n\
+    }\n";
+
+/// Removes the uses at each `Copy` node of a call.
+fn no_copy_uses(f: &mut FnFacts) {
+    let copies: Vec<weft_facts::NodeId> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind == "call copy")
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .collect();
+    f.uses.retain(|(_, n)| !copies.contains(n));
+}
+
+/// A4 of copies (plan stage F17.1): the run of a copy of a callee frame
+/// whose reference the code before cleared needs a use at the `Copy` node
+/// of the run node. The `ir` pipeline rejects the program there (W0301);
+/// the run of its facts reaches the dangling read with no oracle failure.
+/// With no use at the `Copy` node the oracle fails before the read.
+#[test]
+fn a_copy_of_a_callee_frame_needs_a_use_at_the_copy_node() {
+    let c = check_abcd(MULTI_MID);
+    assert!(
+        c.ir.as_ref().is_some_and(|ir| ir
+            .diags
+            .iter()
+            .any(|d| d.code == weft_syntax::diag::Code::W0301)),
+        "{:?}",
+        c.ir.as_ref().map(|ir| &ir.diags)
+    );
+    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the run of the copy passes"),
+        Err(e) => e.message,
+    };
+    assert!(!m.contains("oracle (A4)"), "{m}");
+    let m = match run_main_with_facts(&c, &opts(), no_copy_uses) {
+        Ok(_) => panic!("the run of the copy passes"),
+        Err(e) => e.message,
+    };
+    assert!(m.starts_with("summary oracle (A4)"), "{m}");
+}
+
+/// A function value runs in the handled body of a local handler of its
+/// effect (D-FNVAL-ROW of the third review of group D). The value is a
+/// function item: it runs with the handlers of the call, so the local
+/// clause handles its `log` and clears `items` while `report` holds
+/// `first`.
+const FNVAL_ROW: &str = "effect Log { fn log(m: i64) }\n\
+    fn report(items: &Vec<i64>) / Log {\n\
+    let first = &items[0]\n\
+    log(first + 0)\n\
+    print(first + 1)\n\
+    }\n\
+    fn with_buffer(run: fn(&Vec<i64>) / Log, items: &Vec<i64>) / Log, mut(items) {\n\
+    handle Log { fn log(m) { items.clear(); resume(()) } } in {\n\
+    run(items)\n\
+    }\n\
+    }\n\
+    fn main() {\n\
+    let items = Vec.new()\n\
+    items.push(5)\n\
+    handle Log { fn log(m) { resume(()) } } in {\n\
+    with_buffer(report, &items)\n\
+    }\n\
+    }\n";
+
+/// Sends the effect `main.Log` past each `call` node that runs a clause
+/// (`escapes_at` in place of `performs_at`): the facts of the hole
+/// D-FNVAL-ROW before the fix.
+fn no_clause_runs(f: &mut FnFacts) {
+    let calls: Vec<weft_facts::NodeId> = f
+        .performs_at
+        .iter()
+        .map(|&(n, _)| n)
+        .filter(|n| f.nodes.get(n.index()).is_some_and(|x| x.kind == "call"))
+        .collect();
+    f.performs_at.retain(|(n, _)| !calls.contains(n));
+    for n in calls {
+        f.escapes_at.push((n, "main.Log".to_string()));
+    }
+}
+
+/// A5 (plan stage F17.2): the run of a clause of a local handler from a
+/// node whose facts send the effect past the function is a failure. The
+/// facts of the generator run the clause at the run node of the function
+/// value (W0312): the run reaches the dangling read with no failure of A5.
+/// With the effect sent past the run node (the facts before the fix of
+/// D-FNVAL-ROW), the oracle fails at the run node.
+#[test]
+fn a_clause_run_from_a_node_that_sends_the_effect_past_fails_the_clause_cover() {
+    let c = check_abcd(FNVAL_ROW);
+    assert!(
+        c.ir.as_ref().is_some_and(|ir| ir
+            .diags
+            .iter()
+            .any(|d| d.code == weft_syntax::diag::Code::W0312)),
+        "{:?}",
+        c.ir.as_ref().map(|ir| &ir.diags)
+    );
+    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the run of the clause passes"),
+        Err(e) => e.message,
+    };
+    assert!(!m.contains("oracle (A5)"), "{m}");
+    let m = match run_main_with_facts(&c, &opts(), no_clause_runs) {
+        Ok(_) => panic!("the run of the clause passes"),
+        Err(e) => e.message,
+    };
+    assert!(m.starts_with("clause oracle (A5)"), "{m}");
+    assert!(m.contains("`with_buffer`"), "{m}");
+}

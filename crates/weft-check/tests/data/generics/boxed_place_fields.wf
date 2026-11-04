@@ -1,0 +1,63 @@
+// Follow-up F8.1 (plan stage F20): a reference in a place field of a
+// `!Move` value behind a `Box` points into the target of the `Box`. A move
+// of the `Box` does not move the target, so the reference goes with the
+// value to its new owner, also into a place that had a value. A copy of the
+// reference ends where the new owner gets a new value. A new value of a
+// part with no place field (`None`) gives the place fields below it a value.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T, n: u64 }
+struct Node: !Move { fr: Frame, next: Option<Box<Node>> }
+
+fn move_then_read() {
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    b.cur = &b.buf[1]
+    let c = b
+    print(c.cur + 0)
+}
+fn move_into_set_place() {
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    b.cur = &b.buf[1]
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    w.x.cur = &w.x.buf[0]
+    w.x = b
+    print(w.x.cur + 0)
+}
+fn copy_then_new_value() {
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    b.cur = &b.buf[1]
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    w.x.cur = &w.x.buf[0]
+    w.x = b
+    let r = w.x.cur
+    w.x = Box.new(Frame { buf: [9, 9, 9, 9] })
+    print(r + 0)   //~ W0301
+}
+fn old_copy_then_new_value() {
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    b.cur = &b.buf[1]
+    let r = b.cur
+    let c = b
+    c = Box.new(Frame { buf: [1, 1, 1, 1] })
+    print(r + 0)   //~ W0301
+}
+fn mk_chain() -> Node {
+    Node { fr: Frame { buf: [1, 2, 3, 4] }, next: Some(Box.new(Node { fr: Frame { buf: [5, 6, 7, 8] }, next: None })) }
+}
+fn peek_next(n: &Node) -> u8 {
+    match n.next {
+        Some(b) => b.fr.cur + 0,
+        None => 0,
+    }
+}
+fn cleared() {
+    let n = mk_chain()
+    n.fr.cur = &n.fr.buf[0]
+    n.next = None
+    print(peek_next(&n))
+}
+fn not_cleared() {
+    let n = mk_chain()
+    n.fr.cur = &n.fr.buf[0]
+    print(peek_next(&n))   //~ W0304
+}
+fn main() {}

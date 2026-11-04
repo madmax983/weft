@@ -1,0 +1,13 @@
+// D-CONT-RUN: the continuation of a `resume` holds the rest of the callee or closure that performs (the run node is in the region)
+effect Peek { fn peek() }
+fn g(v: &Vec<i64>) {
+    peek()
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek() { let y = &v[0]; resume(()); print(y + 1) } } in {
+        g(&v)
+    }
+}

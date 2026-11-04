@@ -36,8 +36,8 @@ fn scope_part() {
 }
 fn scope_linear() {
     let t = Tx { id: 1 }
-    scope { s =>
-        t   //~ W0601
+    scope { s =>   //~ ir: W0601
+        t   //~ old: W0601
     }
     commit(t)   //~ W0302
 }

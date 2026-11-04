@@ -1,0 +1,13 @@
+// F20.4 B-2 (b04g): a clause reads a reference into an argument that a generic call moved (W0301).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn send<T>(x: T, ok: bool) -> T / fail { if !ok { fail("closed") }
+ x }
+fn main() {
+    let v = mkv()
+    let r = &v
+    handle Fail { fn fail(e) { print(r.len()) } } in { let w = send(v, false)
+ print(w.len()) }
+}

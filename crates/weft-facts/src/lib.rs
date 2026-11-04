@@ -218,6 +218,44 @@ pub struct VarInfo {
     /// The value is a function value: a closure, a function parameter or a
     /// function item. A second call of a `once` function value is W0502.
     pub callable: bool,
+    /// The type parameters that the flags of the value depend on in a
+    /// generic body (`docs/ir.md` 6.7, plan stage F20). Empty for each value
+    /// of a body that is not generic. No rule of the spec reads it.
+    pub generic: Generic,
+}
+
+/// The type parameters that the flags of a value of a generic body depend on.
+///
+/// A caller can give them a type with the property (`docs/ir.md` 6.7, parts
+/// `drops`, `holds` and `forks`). The fact generator of the core IR finds the
+/// values of a type parameter that the body drops, holds or gives to a `fork`
+/// branch with them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Generic {
+    /// The value is linear only through these type parameters. The fact
+    /// generator clears `linear` after it finds the parts `drops` and
+    /// `holds`.
+    pub linear: Vec<u32>,
+    /// The value is linear, and it has `on abort` only if the type arguments
+    /// of these type parameters have it (a `Task<T>` handle).
+    pub on_abort: Vec<u32>,
+    /// The value is nonportable if the type argument of one of these type
+    /// parameters is.
+    pub nonportable: Vec<u32>,
+}
+
+impl Generic {
+    /// No flag depends on a type parameter.
+    pub const NONE: Self = Self {
+        linear: Vec::new(),
+        on_abort: Vec::new(),
+        nonportable: Vec::new(),
+    };
+
+    /// True if no flag depends on a type parameter.
+    pub fn is_empty(&self) -> bool {
+        self.linear.is_empty() && self.on_abort.is_empty() && self.nonportable.is_empty()
+    }
 }
 
 /// The mode that a value needs to cross threads.
@@ -282,6 +320,7 @@ impl VarInfo {
             immovable: false,
             uniq: false,
             nonportable: false,
+            generic: Generic::NONE,
         }
     }
 }

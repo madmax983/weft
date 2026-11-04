@@ -1,0 +1,67 @@
+// A spawn in a closure body or in a clause on a scope of the maker (part
+// `tasks`, plan stage F19): a node that runs the closure, or that runs the
+// part of the clause with the spawn, starts the task; the scope ends it.
+struct Stats { count: u64 }
+effect Note { fn note(x: u64) }
+
+fn run_twice(f: fn() -> u64) -> u64 { f() + f() }
+
+fn closure_spawns(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1); () }
+        sp()
+        print(st.count)   //~ W0405
+    }
+}
+
+fn callee_runs_twice(st: &Stats) / mut(st), async {
+    scope { s =>
+        run_twice(|| { s.spawn(|| st.count += 1); 0 })   //~ W0405
+    }
+}
+
+fn closure_not_run(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1); () }
+        print(st.count)
+    }
+}
+
+// O3-12: the task of the clause writes `n`; the rest of the handled body
+// does not touch it.
+fn clause_spawn_self() / async {
+    let n = 0
+    scope { s =>
+        handle Note { fn note(x) { s.spawn(|| { n += 1 }); resume(()) } } in {
+            note(1)
+            print(7)
+        }
+    }
+    print(n)
+}
+
+// V055: the clause spawns after its `resume`: the rest of the handled body
+// runs before the task starts.
+fn spawn_after_resume(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) {
+                resume(())
+                s.spawn(|| st.count += 1)
+                print(0)
+            }
+        } in {
+            note(1)
+            print(st.count)
+        }
+    }
+}
+
+fn main() / async {
+    let st = Stats { count: 0 }
+    closure_spawns(&st)
+    callee_runs_twice(&st)
+    closure_not_run(&st)
+    clause_spawn_self()
+    spawn_after_resume(&st)
+}

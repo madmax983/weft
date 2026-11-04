@@ -66,6 +66,14 @@
 //!   local of the callee) is not checked, and the report counts it. At most
 //!   [`SUMMARY_DEPTH`] frames below the callee are checked.
 //!
+//! - **A5 (clause cover, stage F17.2).** A clause of a local handler runs
+//!   from a node of its handled body: the frames above the `handle` that
+//!   are of the component of the handled body wait at their nodes. A node
+//!   there with `escapes_at` of the effect of the handler and no
+//!   `performs_at` with the capability of the handler is a failure: the
+//!   facts send the effect past the function, and the clause does not run
+//!   at the node.
+//!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
 //! buffer handle of an array and an access of a cell that the op frees need
@@ -83,11 +91,11 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use weft_facts::{FnFacts, NodeId, PlaceId, VarId};
+use weft_facts::{FnFacts, NodeId, PlaceId, TaskId, VarId};
 use weft_ir::{BodyId, DerefKind, FieldIdx, LocalId, Proj, VariantIdx};
 use weft_sema::factgen::alpha::{self, Roots};
 use weft_sema::factgen::holders::PartVersions;
-use weft_sema::factgen::nodes::TERM;
+use weft_sema::factgen::nodes::{Phase, NORMAL, TERM};
 use weft_sema::factgen::vars::VarKey;
 use weft_sema::factgen::Component;
 use weft_sema::irbuild::Built;
@@ -141,6 +149,17 @@ pub struct FactReport {
     /// a `handle` or at a `resume` unwinds, and no frame of its component
     /// unwound above it (plan stage F14).
     pub abort_skipped: u64,
+    /// The checks of A4 (plan stage F17): a clause frame continues after its
+    /// `resume`, and the rest of the handled body changed or freed the
+    /// target of a reference that a local of the frame holds.
+    pub resume: u64,
+    /// Such references whose local has no `points_into` place: A4 does not
+    /// check them.
+    pub resume_unnamed: u64,
+    /// The checks of A5 (plan stage F17.2): a clause of a local handler
+    /// runs, and a node of its handled body has `performs_at` with the
+    /// capability of the handler.
+    pub clause: u64,
 }
 
 /// What the IR of a run gives the fact oracle: the IR and the components.
@@ -164,6 +183,9 @@ pub enum HeapEvent {
     Take(Place),
     /// The run follows the reference at a place.
     Deref(Place),
+    /// A cell ends: a buffer, a box or an `Rc` object is freed, or the cell
+    /// of a local ends.
+    Free(CellId),
 }
 
 /// What a variable is at run time.
@@ -228,6 +250,18 @@ struct Comp {
     /// The blocks that end with `Return`, and the local `_0`.
     returns: HashSet<u32>,
     ret: LocalId,
+    /// A scope body (follow-up F19.3): the oracle follows its frames only
+    /// for trace conformance and the task check ([`FactOracle::light_step`]).
+    light: bool,
+    /// The tasks that each node starts (`spawned_at`), but the tasks of
+    /// `waits`: no task of the run is one of them.
+    spawns: Vec<Vec<TaskId>>,
+    /// The tasks that end after each node (`joined_at`).
+    joins: Vec<Vec<TaskId>>,
+    /// The tasks of the calls that stand for the tasks that can run while a
+    /// clause of a local handler runs at the call (follow-up F19.5,
+    /// `weft_sema::factgen::templates::WaitTask`).
+    waits: Vec<weft_sema::factgen::templates::WaitTask>,
 }
 
 /// A target of a reference: a place, or the elements of a buffer (a slice).
@@ -235,6 +269,52 @@ struct Comp {
 enum Target {
     Place(Place),
     Elems(CellId),
+}
+
+impl Target {
+    /// The cell of the target.
+    const fn cell(&self) -> CellId {
+        match self {
+            Self::Place(p) => p.cell,
+            Self::Elems(c) => *c,
+        }
+    }
+
+    /// True if an access of the place at `path` of the cell of the target
+    /// (`None`: the whole cell ends) reaches the target: the place is at,
+    /// above or below the target.
+    fn reached_by(&self, path: Option<&[u32]>) -> bool {
+        match (self, path) {
+            (_, None) | (Self::Elems(_), _) => true,
+            (Self::Place(t), Some(p)) => t.path.starts_with(p) || p.starts_with(&t.path),
+        }
+    }
+}
+
+/// A clause frame that waits at a `resume` (A4, plan stage F17): the rest
+/// of the handled body runs above it. The `Resume` node lends and frees what
+/// that code changes and frees (`lends_mut`, `releases_at`).
+#[derive(Clone, Debug)]
+struct Wait {
+    /// The component of the clause frame.
+    comp: usize,
+    /// The nodes of the `resume`.
+    nodes: Vec<NodeId>,
+    /// The task of the frame.
+    task: usize,
+    /// The frame (0 for a copy of a frame).
+    uid: u64,
+    /// Each reference that a local of the frame holds, with the local.
+    refs: Vec<(Target, LocalId)>,
+    /// The references whose target an access of the code above reached,
+    /// with the kind of the access.
+    hits: Vec<(usize, &'static str)>,
+    /// For a frame in a `multi` continuation that a caller frame of the
+    /// continuation runs (A4 of copies, plan stage F17.1): the fact places
+    /// of each reference in the terms of that caller frame, and `nodes` are
+    /// the `Copy` nodes of its run node. `None` for a clause frame that
+    /// waits at its `resume`.
+    names: Option<Vec<Vec<PlaceId>>>,
 }
 
 /// The target of a reference parameter at the entry of a frame, or a
@@ -278,6 +358,30 @@ enum Base {
     Anchor(usize),
 }
 
+/// The scope bodies of component `c`, each with the `Main` node of its
+/// `scope` terminator (follow-up F19.3).
+fn scope_entries(built: &Built, c: &Component) -> Vec<(BodyId, NodeId)> {
+    let p = &built.program;
+    let mut out = Vec::new();
+    for (k, &n) in c.emitted.table.iter() {
+        if k.at != TERM || k.phase != Phase::Main || k.dest != NORMAL {
+            continue;
+        }
+        let term = p
+            .bodies
+            .get(k.body.index())
+            .and_then(|b| b.blocks.get(k.block.index()))
+            .map(|blk| &blk.term.kind);
+        let Some(weft_ir::TermKind::Scope { scope, .. }) = term else {
+            continue;
+        };
+        if let Some(d) = p.scopes.get(scope.index()) {
+            out.push((d.body, n));
+        }
+    }
+    out
+}
+
 /// The most projections of the walk of [`owner_of`].
 const OWNER_DEPTH: usize = 128;
 
@@ -307,8 +411,48 @@ pub struct FactOracle {
     /// The fact places and the type of each IR place that the map named:
     /// the component, the place and the parameter of its anchor.
     names: NameCache,
+    /// The clause frames that wait at a `resume` (A4), by frame, or by the
+    /// key of a copy of a frame in a `multi` continuation.
+    waits: HashMap<u64, Wait>,
+    /// The waits and the references that point into each cell.
+    wait_cells: HashMap<CellId, Vec<(u64, usize)>>,
+    /// The last key of a copy of a waiting frame.
+    copy_keys: u64,
+    /// The frames of scope bodies ([`LIGHT`]): the oracle follows them only
+    /// for the task check (follow-up F19.3).
+    light: HashMap<u64, FrameFacts>,
+    /// The frame of the last op, if it is a frame of a scope body.
+    light_last: Option<u64>,
+    /// The run of a function or closure body that each frame is part of
+    /// (the frame of that body): a handled body and a scope body run in the
+    /// run of their site.
+    activation: HashMap<u64, u64>,
+    /// For each task of the run: the tasks that it knows are done (a
+    /// join, the end of a scope, or what its parent knew at the spawn).
+    knows: HashMap<usize, HashSet<usize>>,
+    /// The tasks of the run that each run of a body started at a node with
+    /// `spawned_at(T, _)`: by component, run and `T`. A frame below the
+    /// frame of the spawn whose nodes start `T` (a call that runs a closure
+    /// that spawns) gets the task too (follow-up F19.4).
+    instances: HashMap<(usize, u64, TaskId), Vec<usize>>,
+    /// The nodes where task `T` of component `ci` is active (the rules
+    /// `active` of the spec), by `(ci, T)`.
+    active: HashMap<(usize, TaskId), Vec<bool>>,
     /// What the run saw.
     pub report: FactReport,
+}
+
+/// The bit of the number of a frame of a scope body.
+///
+/// The oracle follows such a frame only for the task check of `joined_at`
+/// (follow-up F19.3). The machine treats it as a frame that the oracle does
+/// not follow.
+pub const LIGHT: u64 = 1 << 61;
+
+/// True if the fact oracle follows frame `uid` with each check: not 0 and
+/// not a frame of a scope body ([`LIGHT`]).
+pub const fn tracked(uid: u64) -> bool {
+    uid != 0 && uid & LIGHT == 0
 }
 
 /// The cache of [`FactOracle::name`].
@@ -317,6 +461,10 @@ type NameCache =
 
 /// The most frames below a callee that the summary oracle checks.
 pub const SUMMARY_DEPTH: usize = 16;
+
+/// The first key of a copy of a waiting frame: above the numbers of the
+/// frames.
+const COPY_KEYS: u64 = 1 << 62;
 
 /// A dummy index local for an element step: α does not read it.
 const ELEM: LocalId = LocalId(u32::MAX);
@@ -506,6 +654,17 @@ impl Comp {
                 .collect()
         });
         let ret = body.map_or(LocalId(0), |b| b.ret);
+        let per_task = |rel: &[(TaskId, NodeId)]| {
+            let mut out: Vec<Vec<TaskId>> = vec![Vec::new(); n];
+            for &(t, m) in rel {
+                if let Some(x) = out.get_mut(m.index()) {
+                    if !x.contains(&t) {
+                        x.push(t);
+                    }
+                }
+            }
+            out
+        };
         let local_roots = c
             .emitted
             .roots
@@ -553,7 +712,43 @@ impl Comp {
             local_roots,
             returns,
             ret,
+            light: body.is_some_and(|b| matches!(b.kind, weft_ir::BodyKind::Scope(_))),
+            spawns: per_task(
+                &f.spawned_at
+                    .iter()
+                    .copied()
+                    .filter(|(t, _)| {
+                        !c.emitted
+                            .wait_tasks
+                            .iter()
+                            .any(|w| w.task == *t || w.back == *t)
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            joins: per_task(&f.joined_at),
+            waits: c.emitted.wait_tasks.clone(),
         }
+    }
+
+    /// True if the facts start task `t` at some node (`spawned_at`).
+    fn starts_task(&self, t: TaskId) -> bool {
+        self.facts.spawned_at.iter().any(|&(u, _)| u == t)
+    }
+
+    /// The kind of node `n` (`""` for a node of no kind).
+    fn kind_of(&self, n: NodeId) -> &str {
+        self.facts
+            .nodes
+            .get(n.index())
+            .map_or("", |x| x.kind.as_str())
+    }
+
+    /// The label of node `n`.
+    fn label_of(&self, n: NodeId) -> &str {
+        self.facts
+            .nodes
+            .get(n.index())
+            .map_or("", |x| x.label.as_str())
     }
 
     /// The text of node `n` for a message.
@@ -627,6 +822,52 @@ impl Comp {
         out
     }
 
+    /// The nodes that a path from the nodes `from` (at location `at`) to the
+    /// nodes `next` of location `to` leaves (the paths of [`Self::reach`]):
+    /// the nodes `from` and the nodes between them and `next`, with no node
+    /// of `next` and no node of another body.
+    fn left(
+        &self,
+        from: &[NodeId],
+        at: Option<(u32, u32)>,
+        to: (u32, u32),
+        next: &[NodeId],
+    ) -> Vec<NodeId> {
+        let mut seen: Vec<NodeId> = from.to_vec();
+        let mut work: Vec<NodeId> = from.to_vec();
+        let mut edges: Vec<(NodeId, NodeId)> = Vec::new();
+        while let Some(x) = work.pop() {
+            for &y in self.succ.get(x.index()).map_or(&[][..], Vec::as_slice) {
+                let yl = self.loc.get(y.index()).copied().flatten();
+                let inner = yl != Some(to)
+                    && ((at.is_some() && yl == at)
+                        || self.silent.get(y.index()).copied().unwrap_or(false));
+                if yl == Some(to) || inner {
+                    edges.push((x, y));
+                }
+                if inner && !seen.contains(&y) {
+                    seen.push(y);
+                    work.push(y);
+                }
+            }
+        }
+        // Back from `next` over the edges of the paths.
+        let mut on: Vec<NodeId> = next.to_vec();
+        let mut i = 0;
+        while let Some(&y) = on.get(i) {
+            i += 1;
+            for &(a, b) in &edges {
+                if b == y && !on.contains(&a) {
+                    on.push(a);
+                }
+            }
+        }
+        // A node of another body (a handled body, a scope body, a clause
+        // that the frame of another body runs) is that frame's to check.
+        on.retain(|x| !next.contains(x) && self.loc.get(x.index()).copied().flatten().is_some());
+        on
+    }
+
     /// True if fact place `q` is inside the place `d` that a reference
     /// points into: `d` is a wildcard place or a place below one, and `q`
     /// is at or below the base of its outermost wildcard step; or `q` is at
@@ -697,6 +938,17 @@ impl FactOracle {
                         let code = codes.get(cb.index()).map(Rc::as_ref);
                         comps.push(Comp::new(&input.built, (unit, c), code, cb, n));
                     }
+                    // Each scope body, from the `Main` node of its `scope`:
+                    // the oracle follows it only for the task check
+                    // (follow-up F19.3).
+                    for (sb, n) in scope_entries(&input.built, c) {
+                        if by_body.contains_key(&sb.0) {
+                            continue;
+                        }
+                        by_body.insert(sb.0, comps.len());
+                        let code = codes.get(sb.index()).map(Rc::as_ref);
+                        comps.push(Comp::new(&input.built, (unit, c), code, sb, n));
+                    }
                 }
             }
             Err(why) => report.skipped = Some(why.clone()),
@@ -710,8 +962,340 @@ impl FactOracle {
             unwound: None,
             last: None,
             names: HashMap::new(),
+            waits: HashMap::new(),
+            wait_cells: HashMap::new(),
+            copy_keys: COPY_KEYS,
+            light: HashMap::new(),
+            light_last: None,
+            activation: HashMap::new(),
+            knows: HashMap::new(),
+            instances: HashMap::new(),
+            active: HashMap::new(),
             report,
         }
+    }
+
+    /// True if the frames of code `code` are frames of a scope body: the
+    /// oracle follows them only for the task check ([`LIGHT`]).
+    pub fn light_code(&self, code: &Code) -> bool {
+        code.locs
+            .first()
+            .and_then(|l| self.by_body.get(&l.body))
+            .and_then(|&ci| self.comps.get(ci))
+            .is_some_and(|c| c.light)
+    }
+
+    /// Task `parent` starts task `child`; `frames` are the frames of the
+    /// parent, from the top (the frame of the spawn) down. The child knows
+    /// what its parent knows. For each frame whose nodes start one task `T`
+    /// of the facts (`spawned_at`), the child is a task of `T` of the run of
+    /// the frame: the frame of the spawn, and a frame below it that waits
+    /// at a node that starts `T` (a call that runs a closure that spawns,
+    /// follow-up F19.4).
+    pub fn task_spawned(&mut self, parent: usize, child: usize, frames: &[u64]) {
+        let known = self.knows.get(&parent).cloned().unwrap_or_default();
+        self.knows.insert(child, known);
+        for &uid in frames {
+            let Some(fr) = self.frames.get(&uid).or_else(|| self.light.get(&uid)) else {
+                continue;
+            };
+            let Some(comp) = self.comps.get(fr.comp) else {
+                continue;
+            };
+            let mut ts: Vec<TaskId> = comp
+                .group(&fr.cur)
+                .iter()
+                .flat_map(|n| comp.spawns.get(n.index()).into_iter().flatten().copied())
+                .collect();
+            ts.sort_unstable();
+            ts.dedup();
+            let [t] = ts.as_slice() else {
+                continue;
+            };
+            let run = self.activation.get(&uid).copied().unwrap_or(uid);
+            let e = self.instances.entry((comp.unit, run, *t)).or_default();
+            if !e.contains(&child) {
+                e.push(child);
+            }
+        }
+    }
+
+    /// The nodes of component `ci` where task `t` is active: the rules
+    /// `active(T, Q) :- spawned_at(T, P), cfg_edge(P, Q)` and
+    /// `active(T, Q) :- active(T, P), cfg_edge(P, Q), !joined_at(T, P)`.
+    fn active_nodes(&mut self, ci: usize, t: TaskId) -> Option<&Vec<bool>> {
+        if !self.active.contains_key(&(ci, t)) {
+            let comp = self.comps.get(ci)?;
+            let n = comp.succ.len();
+            let mut on = vec![false; n];
+            let mut work: Vec<NodeId> = Vec::new();
+            for &(u, p) in &comp.facts.spawned_at {
+                if u != t {
+                    continue;
+                }
+                for &q in comp.succ.get(p.index()).into_iter().flatten() {
+                    if let Some(x) = on.get_mut(q.index()) {
+                        if !*x {
+                            *x = true;
+                            work.push(q);
+                        }
+                    }
+                }
+            }
+            while let Some(p) = work.pop() {
+                if comp.joins.get(p.index()).is_some_and(|ts| ts.contains(&t)) {
+                    continue;
+                }
+                for &q in comp.succ.get(p.index()).into_iter().flatten() {
+                    if let Some(x) = on.get_mut(q.index()) {
+                        if !*x {
+                            *x = true;
+                            work.push(q);
+                        }
+                    }
+                }
+            }
+            self.active.insert((ci, t), on);
+        }
+        self.active.get(&(ci, t))
+    }
+
+    /// The task start check (follow-up F19.4): a clause of a local handler
+    /// runs on task `task` while each frame of `starts` (frame, component,
+    /// nodes; from the handled body up) waits at its nodes: the nodes that
+    /// run the clause, or the current nodes of a frame that does not. Each task of `T`
+    /// that the run of such a frame started and that can still run (no join
+    /// ordered its end before) runs at the same time as the clause. The
+    /// innermost such frame names the code of the clause in its facts, so
+    /// `T` must be active at a node of its `at`.
+    fn check_started(
+        &mut self,
+        starts: &[(u64, usize, Vec<NodeId>)],
+        task: usize,
+        handler: weft_ir::HandlerId,
+    ) -> Result<(), String> {
+        let known = self.knows.get(&task).cloned().unwrap_or_default();
+        // The innermost frame of each live task, with the task of the facts.
+        let mut at_of: std::collections::BTreeMap<usize, (usize, TaskId)> =
+            std::collections::BTreeMap::new();
+        for (i, (uid, ci, _)) in starts.iter().enumerate() {
+            let Some(unit) = self.comps.get(*ci).map(|c| c.unit) else {
+                continue;
+            };
+            let run = self.activation.get(uid).copied().unwrap_or(*uid);
+            for ((u, r, t), rs) in &self.instances {
+                if *u != unit || *r != run {
+                    continue;
+                }
+                for &x in rs {
+                    if x != task && !known.contains(&x) {
+                        at_of.insert(x, (i, *t));
+                    }
+                }
+            }
+        }
+        for (r, (i, t)) in at_of {
+            let Some((_, ci, at)) = starts.get(i) else {
+                continue;
+            };
+            let ci = *ci;
+            // A task of the call that stands for `T` while the clause runs
+            // (follow-up F19.5) names the code of the clause too.
+            let stands = self.comps.get(ci).is_some_and(|c| {
+                c.waits.iter().any(|w| {
+                    w.handler == handler
+                        && at.contains(&w.main)
+                        && w.stands.contains(&t)
+                        && c.starts_task(w.task)
+                })
+            });
+            let ok = stands
+                || self.active_nodes(ci, t).is_some_and(|on| {
+                    at.iter()
+                        .any(|n| on.get(n.index()).copied().unwrap_or(false))
+                });
+            if !ok {
+                let (text, name) = self
+                    .comps
+                    .get(ci)
+                    .map(|c| {
+                        let t: Vec<String> = at.iter().map(|&n| c.node_text(n)).collect();
+                        (t.join(", "), c.facts.name.clone())
+                    })
+                    .unwrap_or_default();
+                return Err(format!(
+                    "fact oracle (task start): in `{name}`, a clause of a local handler runs at {text}, and task {r} of `{t}` can run at the same time, but `{t}` is not active there"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The task start check for the tasks of a callee (follow-up F19.5,
+    /// issue #50): a clause of a local handler runs on task `task`, and the
+    /// last frame of `starts` (frame, component, nodes) is the frame of the
+    /// component of the handler that waits at a call. The frames of
+    /// `outer` (frame, component) are the frames of other components above
+    /// it: the callees. If a task that the run of such a frame started can
+    /// still run (no join ordered its end before), the call must have a task
+    /// for the handler that stands for it (a `WaitTask` at a node of the
+    /// nodes of the frame, whose task the facts start): else the facts of
+    /// the component of the handler do not see that the task runs while the
+    /// clause runs.
+    fn check_waits(
+        &self,
+        starts: &[(u64, usize, Vec<NodeId>)],
+        outer: &[(u64, usize)],
+        task: usize,
+        handler: weft_ir::HandlerId,
+    ) -> Result<(), String> {
+        let Some((_, ci, at)) = starts.last() else {
+            return Ok(());
+        };
+        let known = self.knows.get(&task);
+        let mut live: Option<(usize, usize, TaskId)> = None;
+        for (uid, oci) in outer {
+            let Some(unit) = self.comps.get(*oci).map(|c| c.unit) else {
+                continue;
+            };
+            let run = self.activation.get(uid).copied().unwrap_or(*uid);
+            for ((u, r, t), rs) in &self.instances {
+                if *u != unit || *r != run {
+                    continue;
+                }
+                if let Some(&x) = rs
+                    .iter()
+                    .find(|&&x| x != task && !known.is_some_and(|k| k.contains(&x)))
+                {
+                    live = Some((x, *oci, *t));
+                    break;
+                }
+            }
+            if live.is_some() {
+                break;
+            }
+        }
+        let Some((r, oci, t)) = live else {
+            return Ok(());
+        };
+        let Some(comp) = self.comps.get(*ci) else {
+            return Ok(());
+        };
+        if comp
+            .waits
+            .iter()
+            .any(|w| w.handler == handler && at.contains(&w.main) && comp.starts_task(w.task))
+        {
+            return Ok(());
+        }
+        let text: Vec<String> = at.iter().map(|&n| comp.node_text(n)).collect();
+        let callee = self
+            .comps
+            .get(oci)
+            .map(|c| c.facts.name.clone())
+            .unwrap_or_default();
+        Err(format!(
+            "fact oracle (task start): in `{}`, a clause of a local handler runs at {}, and task {r} of `{t}` of `{callee}` can run at the same time, but the call has no task that stands for it",
+            comp.facts.name,
+            text.join(", "),
+        ))
+    }
+
+    /// Task `cur` knows that task `u` is done (a join, the end of a scope or
+    /// of a `fork`, an unwinding that waits for it), and what `u` knew.
+    pub fn task_joined(&mut self, cur: usize, u: usize) {
+        if cur == u {
+            return;
+        }
+        let theirs = self.knows.get(&u).cloned().unwrap_or_default();
+        let mine = self.knows.entry(cur).or_default();
+        mine.insert(u);
+        mine.extend(theirs);
+    }
+
+    /// The task check (follow-up F19.3): the run of frame `uid`, on task
+    /// `task`, leaves the nodes `left` of component `ci`. For each
+    /// `joined_at(T, n)` of a node `n` of them, each task of `T` that the
+    /// run of the frame started must be done, and task `task` must know it
+    /// (a join orders the end of the task before the code after `n`).
+    fn check_joined(
+        &self,
+        uid: u64,
+        ci: usize,
+        left: &[NodeId],
+        task: usize,
+    ) -> Result<(), String> {
+        let Some(comp) = self.comps.get(ci) else {
+            return Ok(());
+        };
+        let run = self.activation.get(&uid).copied().unwrap_or(uid);
+        let known = self.knows.get(&task);
+        for &n in left {
+            for &t in comp.joins.get(n.index()).into_iter().flatten() {
+                let Some(rs) = self.instances.get(&(comp.unit, run, t)) else {
+                    continue;
+                };
+                if let Some(&r) = rs.iter().find(|&&r| !known.is_some_and(|k| k.contains(&r))) {
+                    return Err(format!(
+                        "fact oracle (task end): in `{}`, the run leaves {} with `joined_at({t}, {n})`, and task {r} of `{t}` is not joined: it can still run",
+                        comp.facts.name,
+                        comp.node_text(n),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One op of the frame `uid` of a scope body ([`LIGHT`]) on task `task`
+    /// runs at the location `block`, `stmt`: the task check of the nodes
+    /// that the run leaves. A location that no path of the facts reaches
+    /// ends the following of the frame (trace conformance is for the
+    /// frames of [`Self::step`]).
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure of the task check.
+    pub fn light_step(
+        &mut self,
+        uid: u64,
+        block: u32,
+        stmt: u32,
+        task: usize,
+    ) -> Result<(), String> {
+        self.light_last = Some(uid);
+        let Some(fr) = self.light.get(&uid) else {
+            return Ok(());
+        };
+        let ci = fr.comp;
+        let Some(comp) = self.comps.get(ci) else {
+            return Ok(());
+        };
+        let n_stmts = self
+            .input
+            .built
+            .program
+            .bodies
+            .get(comp.body.index())
+            .and_then(|b| b.blocks.get(block as usize))
+            .map_or(0, |b| u32_of(b.stmts.len()));
+        let at = if stmt >= n_stmts { TERM } else { stmt };
+        let to = (block, at);
+        if fr.at == Some(to) {
+            return Ok(());
+        }
+        let next = comp.reach(&fr.cur, fr.at, to);
+        if next.is_empty() {
+            self.light.remove(&uid);
+            return Ok(());
+        }
+        let left = comp.left(&fr.cur, fr.at, to, &next);
+        self.check_joined(uid, ci, &left, task)?;
+        if let Some(fr) = self.light.get_mut(&uid) {
+            fr.cur = next;
+            fr.at = Some(to);
+        }
+        Ok(())
     }
 
     /// True if the oracle checks the frames of code `code` (IR body `code`).
@@ -743,6 +1327,43 @@ impl FactOracle {
         let Some(comp) = self.comps.get(ci) else {
             return;
         };
+        // A handled body and a scope body run in the run of their site: the
+        // frame of the last op (follow-up F19.3).
+        let site_run = matches!(
+            self.input
+                .built
+                .program
+                .bodies
+                .get(comp.body.index())
+                .map(|b| b.kind),
+            Some(weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Scope(_))
+        );
+        let prev = self.last.or(self.light_last).filter(|p| {
+            self.frames
+                .get(p)
+                .or_else(|| self.light.get(p))
+                .and_then(|f| self.comps.get(f.comp))
+                .is_some_and(|c| c.unit == comp.unit)
+        });
+        let run = match prev {
+            Some(p) if site_run => self.activation.get(&p).copied().unwrap_or(p),
+            _ => uid,
+        };
+        self.activation.insert(uid, run);
+        if comp.light {
+            self.light.insert(
+                uid,
+                FrameFacts {
+                    comp: ci,
+                    cur: vec![comp.entry],
+                    at: None,
+                    anchors: Vec::new(),
+                    retired: HashMap::new(),
+                    site: None,
+                },
+            );
+            return;
+        }
         let body = self.input.built.program.bodies.get(comp.body.index());
         let mut anchors = Vec::new();
         if let Some(b) = body {
@@ -872,6 +1493,14 @@ impl FactOracle {
         }
     }
 
+    /// An op of a frame that the oracle does not follow (a copied frame of
+    /// a continuation, plan stage F16) runs. A clause that the op runs has
+    /// no known site.
+    pub const fn untracked_op(&mut self) {
+        self.last = None;
+        self.light_last = None;
+    }
+
     /// The summary oracle (A3) checks the frames below the frame `uid` of
     /// an op: the frame of the op is the first frame above them.
     pub fn begin_summary(&mut self, uid: u64) {
@@ -887,6 +1516,546 @@ impl FactOracle {
     /// The frame `uid` ended.
     pub fn leave(&mut self, uid: u64) {
         self.frames.remove(&uid);
+        self.light.remove(&uid);
+        self.activation.remove(&uid);
+        self.drop_wait(uid);
+    }
+
+    /// A4: the clause frame `uid` of task `task`, with the code `code` and
+    /// the cells `slots`, starts to wait at its `resume`. The oracle records
+    /// the references that its locals hold.
+    pub fn wait_begin(
+        &mut self,
+        uid: u64,
+        code: &Code,
+        slots: &[Option<CellId>],
+        heap: &Heap,
+        task: usize,
+    ) {
+        self.drop_wait(uid);
+        let Some(fr) = self.frames.get(&uid) else {
+            return;
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return;
+        };
+        // The `Main` node of the `resume`: its `lends_mut` and `releases_at`
+        // are the summary of the rest of the handled body.
+        let nodes: Vec<NodeId> = comp
+            .group(&fr.cur)
+            .into_iter()
+            .filter(|&n| comp.kind_of(n) == "resume" && comp.label_of(n) == "resume")
+            .collect();
+        if !comp.clause || nodes.is_empty() {
+            return;
+        }
+        let mut refs = Vec::new();
+        for (s, cell) in slots.iter().enumerate() {
+            let (Some(cell), Some(&l)) = (cell, code.slot_locals.get(s)) else {
+                continue;
+            };
+            let l = LocalId(l);
+            if !comp.of_local.contains_key(&l) {
+                continue;
+            }
+            let Ok(x) = heap.slot(*cell) else {
+                continue;
+            };
+            let mut out = Vec::new();
+            refs_of(heap, &x.val, &mut Vec::new(), &[], false, 0, &mut out);
+            refs.extend(out.into_iter().map(|t| (t, l)));
+        }
+        if refs.is_empty() {
+            return;
+        }
+        let w = Wait {
+            comp: fr.comp,
+            nodes,
+            task,
+            uid,
+            refs,
+            hits: Vec::new(),
+            names: None,
+        };
+        self.add_wait(uid, w);
+    }
+
+    /// A5 (plan stage F17.2): a clause of the local handler of the handled
+    /// body of frame `frames[0]` runs; `frames` are the code frames above
+    /// the `handle`, the bottom first. The frames of the component of the
+    /// handled body wait at their nodes; one such node must have
+    /// `performs_at` with the capability of the handler. If none does and
+    /// one has `escapes_at` of the effect of the handler, the facts send
+    /// the effect past the function: a failure.
+    ///
+    /// # Errors
+    ///
+    /// The message of the failure.
+    pub fn clause_run(&mut self, frames: &[u64], task: usize) -> Result<(), String> {
+        let Some(fr) = frames
+            .iter()
+            .find(|u| tracked(**u))
+            .and_then(|uid| self.frames.get(uid))
+        else {
+            return Ok(());
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return Ok(());
+        };
+        let unit = comp.unit;
+        let Some(weft_ir::BodyKind::Handled(h)) = self
+            .input
+            .built
+            .program
+            .bodies
+            .get(comp.body.index())
+            .map(|b| b.kind)
+        else {
+            return Ok(());
+        };
+        let effect = self
+            .input
+            .built
+            .program
+            .handlers
+            .get(h.index())
+            .and_then(|d| comp.tys.effects().get(d.effect.index()))
+            .map(|e| e.identity.clone())
+            .unwrap_or_default();
+        let cap = self.input.comps.as_ref().ok().and_then(|cs| {
+            cs.get(unit).and_then(|c| {
+                c.emitted
+                    .handler_caps
+                    .iter()
+                    .find(|(x, _)| *x == h)
+                    .map(|&(_, k)| k)
+            })
+        });
+        // The frames of the component from the handled body up: a frame of
+        // another component (a callee) ends them. A frame whose node sends
+        // the effect past the function and does not run the clause is a
+        // failure (the frame of a closure that runs a function with the
+        // effect in its row, too).
+        let mut escapes: Option<(NodeId, usize)> = None;
+        let mut starts: Vec<(u64, usize, Vec<NodeId>)> = Vec::new();
+        // The frames of the callees above the component (follow-up F19.5).
+        let mut outer: Vec<(u64, usize)> = Vec::new();
+        let mut beyond = false;
+        for uid in frames {
+            if beyond {
+                if let Some(f) = self.frames.get(uid).or_else(|| self.light.get(uid)) {
+                    outer.push((*uid, f.comp));
+                }
+                continue;
+            }
+            if !tracked(*uid) {
+                // A frame of a scope body: the task start check only.
+                if let Some(f) = self.light.get(uid) {
+                    match self.comps.get(f.comp) {
+                        Some(c) if c.unit == unit => {
+                            let group = c.group(&f.cur);
+                            let runs: Vec<NodeId> = group
+                                .iter()
+                                .copied()
+                                .filter(|&n| {
+                                    cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k)))
+                                })
+                                .collect();
+                            starts.push((*uid, f.comp, if runs.is_empty() { group } else { runs }));
+                        }
+                        Some(_) => outer.push((*uid, f.comp)),
+                        None => {}
+                    }
+                }
+                continue;
+            }
+            let Some(f) = self.frames.get(uid) else {
+                break;
+            };
+            let Some(c) = self.comps.get(f.comp) else {
+                break;
+            };
+            if c.unit != unit {
+                beyond = true;
+                outer.push((*uid, f.comp));
+                continue;
+            }
+            let group = c.group(&f.cur);
+            let runs: Vec<NodeId> = group
+                .iter()
+                .copied()
+                .filter(|&n| cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k))))
+                .collect();
+            if !runs.is_empty() {
+                starts.push((*uid, f.comp, runs));
+                continue;
+            }
+            // A frame that does not run the clause (a closure that performs
+            // through a capability that it captures) names the code of the
+            // clause at its own nodes.
+            starts.push((*uid, f.comp, group.clone()));
+            if let Some(&n) = group.iter().find(|&&n| {
+                c.facts
+                    .escapes_at
+                    .iter()
+                    .any(|(m, e)| *m == n && *e == effect)
+            }) {
+                escapes = Some((n, f.comp));
+                break;
+            }
+        }
+        self.report.clause += 1;
+        self.check_started(&starts, task, h)?;
+        self.check_waits(&starts, &outer, task, h)?;
+        let Some((n, ci)) = escapes else {
+            return Ok(());
+        };
+        let (text, fname) = self
+            .comps
+            .get(ci)
+            .map(|c| (c.node_text(n), c.facts.name.clone()))
+            .unwrap_or_default();
+        Err(format!(
+            "clause oracle (A5): in `{fname}` at {text}, a clause of the local handler of `{effect}` runs from the node, and the node has `escapes_at` of `{effect}` and no `performs_at` with the capability of the handler"
+        ))
+    }
+
+    /// A4 of copies (plan stage F17.1): a `multi` operation of task `task`
+    /// takes the frames `frames` (the bottom first) into its continuation;
+    /// a later `resume` runs copies of them again. For each frame `g` that
+    /// the frame `f` below it runs (a callee or a closure; `f` waits at its
+    /// run node), the oracle records the references that the locals of `g`
+    /// hold, named in the terms of `f`. When a copy of `g` goes on, each
+    /// such reference whose target the code in between reached must be used
+    /// at the `Copy` node of the run node of `f` (a use of a variable with
+    /// a `points_into` place that overlaps it).
+    pub fn multi_frames(
+        &mut self,
+        frames: &[(u64, &Code, &[Option<CellId>])],
+        site: Option<(u64, &Code, &[Option<CellId>])>,
+        heap: &Heap,
+        task: usize,
+    ) {
+        for pair in frames.windows(2) {
+            let (Some(&(fu, fcode, fslots)), Some(&(gu, gcode, gslots))) =
+                (pair.first(), pair.get(1))
+            else {
+                continue;
+            };
+            if fu == 0 || gu == 0 || self.waits.contains_key(&gu) {
+                continue;
+            }
+            let (Some(f), Some(g)) = (self.frames.get(&fu), self.frames.get(&gu)) else {
+                continue;
+            };
+            let (fc, gc) = (f.comp, g.comp);
+            let Some(comp) = self.comps.get(fc) else {
+                continue;
+            };
+            let group = comp.group(&f.cur);
+            let nodes: Vec<NodeId> = (0..comp.succ.len())
+                .filter(|&m| {
+                    comp.facts
+                        .nodes
+                        .get(m)
+                        .is_some_and(|x| x.kind.ends_with(" copy"))
+                        && comp
+                            .succ
+                            .get(m)
+                            .is_some_and(|ss| ss.iter().any(|y| group.contains(y)))
+                })
+                .map(|m| NodeId(u32_of(m)))
+                .collect();
+            if nodes.is_empty() {
+                continue;
+            }
+            let Some(gcomp) = self.comps.get(gc) else {
+                continue;
+            };
+            let mut refs = Vec::new();
+            for (s, cell) in gslots.iter().enumerate() {
+                let (Some(cell), Some(&l)) = (cell, gcode.slot_locals.get(s)) else {
+                    continue;
+                };
+                let l = LocalId(l);
+                if !gcomp.of_local.contains_key(&l) {
+                    continue;
+                }
+                let Ok(x) = heap.slot(*cell) else {
+                    continue;
+                };
+                let mut out = Vec::new();
+                refs_of(heap, &x.val, &mut Vec::new(), &[], false, 0, &mut out);
+                refs.extend(out.into_iter().map(|t| (t, l)));
+            }
+            if refs.is_empty() {
+                continue;
+            }
+            // A handled body names the locals of its site as upvars: the
+            // frame of the site (below the continuation, in the same facts)
+            // names them.
+            let unit = comp.unit;
+            let site = site.filter(|(su, _, _)| {
+                self.frames
+                    .get(su)
+                    .and_then(|x| self.comps.get(x.comp))
+                    .is_some_and(|c| c.unit == unit)
+            });
+            let mut names: Vec<Vec<PlaceId>> = Vec::new();
+            for (t, _) in &refs {
+                if let Some((ns, _)) = self.name(fu, fcode, fslots, heap, t) {
+                    names.push(ns);
+                    continue;
+                }
+                // The facts of the site frame are another copy of the facts
+                // of the unit: a place maps by its text.
+                let Some((su, sc, ss)) = site else {
+                    names.push(Vec::new());
+                    continue;
+                };
+                let found = self
+                    .name(su, sc, ss, heap, t)
+                    .map(|(ns, _)| ns)
+                    .unwrap_or_default();
+                let (Some(sf), Some(ff)) = (
+                    self.frames.get(&su).and_then(|x| self.comps.get(x.comp)),
+                    self.comps.get(fc),
+                ) else {
+                    names.push(Vec::new());
+                    continue;
+                };
+                // A place that the facts of the frame do not have maps to
+                // its nearest parent that they have (a change of the parent
+                // covers it).
+                let mut out: Vec<PlaceId> = Vec::new();
+                for &q in &found {
+                    let mut at = Some(q);
+                    while let Some(x) = at {
+                        let text = &sf.facts.place(x).display;
+                        let hit: Vec<PlaceId> = (0..ff.facts.places.len())
+                            .map(|i| PlaceId(u32_of(i)))
+                            .filter(|&y| &ff.facts.place(y).display == text)
+                            .collect();
+                        if !hit.is_empty() {
+                            out.extend(hit);
+                            break;
+                        }
+                        at = sf.facts.place(x).parent;
+                    }
+                }
+                names.push(out);
+            }
+            let w = Wait {
+                comp: fc,
+                nodes,
+                task,
+                uid: gu,
+                refs,
+                hits: Vec::new(),
+                names: Some(names),
+            };
+            self.add_wait(gu, w);
+        }
+    }
+
+    /// Records wait `w` with key `key`.
+    fn add_wait(&mut self, key: u64, w: Wait) {
+        for (i, (t, _)) in w.refs.iter().enumerate() {
+            self.wait_cells.entry(t.cell()).or_default().push((key, i));
+        }
+        self.waits.insert(key, w);
+    }
+
+    /// Removes the wait with key `key`, if there is one.
+    fn drop_wait(&mut self, key: u64) -> Option<Wait> {
+        let w = self.waits.remove(&key)?;
+        for (t, _) in &w.refs {
+            if let Some(v) = self.wait_cells.get_mut(&t.cell()) {
+                v.retain(|(k, _)| *k != key);
+                if v.is_empty() {
+                    self.wait_cells.remove(&t.cell());
+                }
+            }
+        }
+        Some(w)
+    }
+
+    /// A4: the op of frame `uid` (0 for a copied frame) of task `task` made
+    /// the accesses `events`. An access that reaches the target of a
+    /// reference of a waiting clause frame of the task (not the frame of the
+    /// op) is a hit of that wait.
+    pub fn wait_events(&mut self, task: usize, uid: u64, events: &[HeapEvent]) {
+        if self.waits.is_empty() {
+            return;
+        }
+        for e in events {
+            let (cell, path, what) = match e {
+                HeapEvent::Write(p, false) => (p.cell, Some(p.path.as_slice()), "a write"),
+                HeapEvent::Take(p) => (p.cell, Some(p.path.as_slice()), "a move"),
+                HeapEvent::Free(c) => (*c, None, "a free"),
+                _ => continue,
+            };
+            let Some(ws) = self.wait_cells.get(&cell) else {
+                continue;
+            };
+            for &(key, i) in ws {
+                let Some(w) = self.waits.get_mut(&key) else {
+                    continue;
+                };
+                if w.task != task || (uid != 0 && w.uid == uid) {
+                    continue;
+                }
+                // A copy of a frame (A4 of copies): a write at or below the
+                // target keeps the reference valid; a write strictly above
+                // it, a move at or above it, and a free end it.
+                let reached = w.refs.get(i).is_some_and(|(t, _)| {
+                    if w.names.is_none() {
+                        return t.reached_by(path);
+                    }
+                    match (t, path, what) {
+                        (_, None, _) => true,
+                        (Target::Elems(_), Some(p), _) => p.is_empty(),
+                        (Target::Place(tp), Some(p), "a move") => tp.path.starts_with(p),
+                        (Target::Place(tp), Some(p), _) => {
+                            tp.path.len() > p.len() && tp.path.starts_with(p)
+                        }
+                    }
+                });
+                if reached && !w.hits.iter().any(|(j, _)| *j == i) {
+                    w.hits.push((i, what));
+                }
+            }
+        }
+    }
+
+    /// A4: the frame with wait key `key` (a frame, or a copy of a frame)
+    /// continues after its `resume`. Each reference of the frame whose
+    /// target the code above reached is inside a place that the `Resume`
+    /// node lends or frees: a `lends_mut`, a `mutates_at` or a free of a
+    /// place that overlaps a `points_into` place of a variable of its
+    /// local.
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure.
+    pub fn wait_end(&mut self, key: u64) -> Result<(), String> {
+        let Some(w) = self.drop_wait(key) else {
+            return Ok(());
+        };
+        let Some(comp) = self.comps.get(w.comp) else {
+            return Ok(());
+        };
+        if let Some(names) = &w.names {
+            let used: Vec<PlaceId> = w
+                .nodes
+                .iter()
+                .flat_map(|n| comp.uses.get(n.index()).cloned().unwrap_or_default())
+                .flat_map(|v| comp.points.get(&v).cloned().unwrap_or_default())
+                .collect();
+            for &(i, what) in &w.hits {
+                let ns = names.get(i).cloned().unwrap_or_default();
+                if ns.is_empty() {
+                    self.report.resume_unnamed += 1;
+                    continue;
+                }
+                self.report.resume += 1;
+                let ok = ns
+                    .iter()
+                    .any(|&q| used.iter().any(|&m| comp.below(q, m) || comp.below(m, q)));
+                if !ok {
+                    let shown: Vec<String> = ns
+                        .iter()
+                        .map(|&q| comp.facts.place(q).display.clone())
+                        .collect();
+                    let nodes: Vec<String> = w.nodes.iter().map(|&n| comp.node_text(n)).collect();
+                    return Err(format!(
+                        "summary oracle (A4): in `{}` at {}, a copy of a frame that the run node runs goes on after a `multi` `resume`, and the code before made {what} of `{}`, which a reference of the copy points into; the `Copy` node uses no variable that points there",
+                        comp.facts.name,
+                        nodes.join(", "),
+                        shown.join("` or `"),
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        let cover: Vec<PlaceId> = w
+            .nodes
+            .iter()
+            .flat_map(|n| {
+                let i = n.index();
+                let c = comp.changes.get(i).map_or(&[][..], Vec::as_slice);
+                let f = comp.frees.get(i).map_or(&[][..], Vec::as_slice);
+                c.iter().chain(f).copied()
+            })
+            .collect();
+        for &(i, what) in &w.hits {
+            let Some((_, l)) = w.refs.get(i) else {
+                continue;
+            };
+            let vars = comp.of_local.get(l).cloned().unwrap_or_default();
+            let mut points: Vec<PlaceId> = vars
+                .iter()
+                .flat_map(|v| comp.points.get(v).cloned().unwrap_or_default())
+                .collect();
+            points.sort();
+            points.dedup();
+            if points.is_empty() {
+                self.report.resume_unnamed += 1;
+                continue;
+            }
+            self.report.resume += 1;
+            let ok = points
+                .iter()
+                .any(|&q| cover.iter().any(|&m| comp.below(q, m) || comp.below(m, q)));
+            if !ok {
+                let name = comp
+                    .s_of
+                    .get(l)
+                    .map_or_else(|| format!("{l:?}"), |v| var_name(&comp.facts, *v));
+                let shown: Vec<String> = points
+                    .iter()
+                    .map(|&q| comp.facts.place(q).display.clone())
+                    .collect();
+                let nodes: Vec<String> = w.nodes.iter().map(|&n| comp.node_text(n)).collect();
+                return Err(format!(
+                    "summary oracle (A4): in `{}` at {}, the clause waits at its `resume`, and the rest of the handled body makes {what} of the target of `{name}` (in `{}`); the `resume` node has no `lends_mut` or `releases_at` that covers it",
+                    comp.facts.name,
+                    nodes.join(", "),
+                    shown.join("`, `"),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A4: the frame with wait key `key` goes into a copy of a `multi`
+    /// continuation, and `map` gives the new cell of each copied cell. The
+    /// copy waits too, with the hits of the frame so far. Returns the key of
+    /// the copy, or 0 if the frame does not wait.
+    pub fn copy_wait(&mut self, key: u64, map: &std::collections::BTreeMap<CellId, CellId>) -> u64 {
+        let Some(w) = self.waits.get(&key) else {
+            return 0;
+        };
+        let mut c = w.clone();
+        c.uid = 0;
+        for (t, _) in &mut c.refs {
+            match t {
+                Target::Place(p) => {
+                    if let Some(&n) = map.get(&p.cell) {
+                        p.cell = n;
+                    }
+                }
+                Target::Elems(b) => {
+                    if let Some(&n) = map.get(b) {
+                        *b = n;
+                    }
+                }
+            }
+        }
+        self.copy_keys += 1;
+        let k = self.copy_keys;
+        self.add_wait(k, c);
+        k
     }
 
     /// The next op of frame `uid` is at location (`block`, `stmt`) of a body
@@ -897,11 +2066,12 @@ impl FactOracle {
     /// # Errors
     ///
     /// The message of a failure.
-    pub fn step(&mut self, uid: u64, block: u32, stmt: u32) -> Result<bool, String> {
+    pub fn step(&mut self, uid: u64, block: u32, stmt: u32, task: usize) -> Result<bool, String> {
         let Some(fr) = self.frames.get_mut(&uid) else {
             return Ok(false);
         };
         self.last = Some(uid);
+        self.light_last = None;
         // A clause frame that leaves a `resume`: the handled body ended, and
         // the code after the `resume` runs at `Post` of the `handle` (plan
         // stage F14).
@@ -943,8 +2113,11 @@ impl FactOracle {
                 if want.is_empty() { "no node".to_string() } else { want.join(", ") },
             ));
         }
+        let left = comp.left(&fr.cur, fr.at, to, &next);
+        let ci = fr.comp;
         fr.cur = next;
         fr.at = Some(to);
+        self.check_joined(uid, ci, &left, task)?;
         Ok(true)
     }
 
@@ -1206,7 +2379,7 @@ impl FactOracle {
         for e in events {
             let (place, kind) = match e {
                 HeapEvent::Read(p) => (p, "read"),
-                HeapEvent::Write(_, true) => continue,
+                HeapEvent::Write(_, true) | HeapEvent::Free(_) => continue,
                 HeapEvent::Write(p, false) => (p, "write"),
                 HeapEvent::Take(p) => (p, if moves { "move" } else { "write" }),
                 HeapEvent::Deref(p) => {
@@ -1391,7 +2564,7 @@ impl FactOracle {
         for e in events {
             let (place, kind) = match e {
                 HeapEvent::Read(p) => (p, "read"),
-                HeapEvent::Write(_, true) | HeapEvent::Deref(_) => continue,
+                HeapEvent::Write(_, true) | HeapEvent::Deref(_) | HeapEvent::Free(_) => continue,
                 HeapEvent::Write(p, false) | HeapEvent::Take(p) => (p, "write"),
             };
             // A cell that the op freed: the write of its owner is the

@@ -1,0 +1,13 @@
+// D-CONT-RUN: the parameter of the clause points into the argument that the callee clears after the perform.
+effect Peek { fn peek(x: &i64) }
+fn g(v: &Vec<i64>) / Peek, mut(v) {
+    peek(&v[0])
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(x) { resume(()); print(x + 1) } } in { //~ W0301
+        g(&v)
+    }
+}

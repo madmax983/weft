@@ -1,0 +1,21 @@
+// The twin of `multi_clause_holds_result.wf`: the clause reads the result
+// of the first `resume` before the second one.
+effect Pick { multi fn pick() -> bool }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let n = handle Pick {
+        fn pick() {
+            let a = resume(true)
+            print(a + 1)
+            let c = resume(false)
+            c
+        }
+    } in {
+        let b = pick()
+        if !b { v.push(9); v.push(9); v.push(9); v.push(9) }
+        &v[0]
+    }
+    print(n + 1)
+}

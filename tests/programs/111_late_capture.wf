@@ -67,17 +67,17 @@ fn late_once() {
 // A captured reference variable gets a `@ shared` place: the closure writes it.
 fn late_shared(st: &Stats @ shared, d: &Stats) / mut(d, st) {
     let r = d
-    let f = || r.count += 1
+    let f = || r.count += 1   //~ ir: W0402
     r = st
     f()   //~ W0402
 }
 // A captured `@ uniq` variable gets an aliased value.
 fn late_alias(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
     let (l, r) = v.split_mut(1)
-    let f = || needs_uniq(l)
+    let f = || needs_uniq(l)   //~ ir: W0406
     let (a, b) = w.split_at(1)
     l = a
-    f()   //~ W0406
+    f()   //~ old: W0406
 }
 
 // Clean: the new value is valid where the closure runs.

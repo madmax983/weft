@@ -802,7 +802,8 @@ pub enum FactClass {
     Trace,
     /// A failure of the fact oracle (C1, C4, C5, D1, D4).
     Fact,
-    /// A failure of the summary oracle (A3, stage F13).
+    /// A failure of the summary oracle (A3, stage F13; A4) or of the clause
+    /// cover (A5, stage F17.2).
     Summary,
     /// Another fault: the memory oracle, a panic, a fault marker.
     Fault,
@@ -861,7 +862,9 @@ pub fn fact_class(o: &Outcome) -> FactClass {
     match o.verdict {
         Verdict::Fault if d.contains("trace conformance:") => FactClass::Trace,
         Verdict::Fault if d.contains("fact oracle (") => FactClass::Fact,
-        Verdict::Fault if d.contains("summary oracle (") => FactClass::Summary,
+        Verdict::Fault if d.contains("summary oracle (") || d.contains("clause oracle (") => {
+            FactClass::Summary
+        }
         Verdict::Fault => FactClass::Fault,
         Verdict::Timeout => FactClass::Timeout,
         Verdict::NotRunnable if d.contains(&format!("{FACT_SKIP}out of scope")) => {
@@ -922,9 +925,10 @@ pub const FACT_SKIP: &str = "fact oracle: no run: ";
 /// of [`CONFIGS`] from index `from`, on this thread. A program that is not
 /// in scope of the `ir` pipeline (the default groups), or that the `ir`
 /// pipeline rejects, gives [`Step::NotRunnable`] with a detail that starts
-/// with [`FACT_SKIP`]. A failure of the fact oracle, of the summary oracle
-/// or of trace conformance is a [`Verdict::Fault`] whose detail holds
-/// `fact oracle (`, `summary oracle (` or `trace conformance:`.
+/// with [`FACT_SKIP`]. A failure of the fact oracle, of the summary oracle,
+/// of the clause cover or of trace conformance is a [`Verdict::Fault`]
+/// whose detail holds `fact oracle (`, `summary oracle (`, `clause oracle (`
+/// or `trace conformance:`.
 ///
 /// A panic of the interpreter continues in the caller.
 pub fn run_fact_configs(

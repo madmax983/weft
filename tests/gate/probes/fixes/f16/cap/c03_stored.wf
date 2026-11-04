@@ -1,0 +1,14 @@
+// F16-CAP: a closure performs through a captured capability; the node that runs it runs the clause
+effect Log { fn log(m: u64) }
+struct H { f: fn() }
+fn run(h: &H) { let g = h.f; g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let r = &v[0]
+        let h = H { f: || log(1) }
+        run(&h)
+        print(r + 1)
+    }
+}

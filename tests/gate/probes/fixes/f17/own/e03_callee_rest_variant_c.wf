@@ -1,0 +1,21 @@
+// FP-OWN: the frame of a clause is alive while it waits at its own `resume`; a reference into a local of the clause stays valid
+enum Slot { Full(Vec<i64>), Empty }
+struct W { s: Slot, n: i64 }
+effect Peek { fn peek() }
+fn g(w: &W) / Peek, mut(w.n) {
+    peek()
+    w.n = 3
+}
+fn main() {
+    let w = W { s: Slot.Full([1, 2]), n: 0 }
+    handle Peek {
+        fn peek() {
+            match w.s {
+                Slot.Full(xs) => { let y = &xs[0]; resume(()); print(y + 1) }
+                Slot.Empty => resume(()),
+            }
+        }
+    } in {
+        g(&w)
+    }
+}

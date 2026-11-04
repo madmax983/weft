@@ -232,13 +232,56 @@ impl super::Machine<'_, '_> {
         let Some(op) = code.ops.get(pc) else {
             return Err(self.fault("internal: the code has no instruction here"));
         };
-        if uid == 0 {
+        if !crate::oracle::facts::tracked(uid) {
             // The fact oracle does not follow a copied frame: the summary
-            // oracle does not check its op either.
+            // oracle does not check its op either. A copy of a clause frame
+            // that waited at its `resume` continues now (A4). A frame of a
+            // scope body has the task check only (follow-up F19.3).
+            let wait = match self.tasks[cur].frames.last() {
+                Some(Frame::Code(cf)) => cf.wait,
+                _ => 0,
+            };
             if let Some(fo) = self.facts.as_mut() {
                 fo.report.summary_skipped += 1;
+                fo.untracked_op();
+                if uid != 0 {
+                    if let Some(loc) = code.locs.get(pc).copied() {
+                        if let Err(m) = fo.light_step(uid, loc.block, loc.stmt, cur) {
+                            return Err(self.fault(m));
+                        }
+                        if self.opts.ir_trace {
+                            let at = (loc.body, loc.block, loc.stmt);
+                            if self.trace_at.get(&uid) != Some(&at) {
+                                self.trace_at.insert(uid, at);
+                                self.ir_trace.push(IrStep {
+                                    frame: uid,
+                                    body: loc.body,
+                                    block: loc.block,
+                                    stmt: loc.stmt,
+                                });
+                            }
+                        }
+                    }
+                }
+                let events = self.heap.take_facts_log();
+                fo.wait_events(cur, 0, &events);
+                if wait != 0 {
+                    if let Err(m) = fo.wait_end(wait) {
+                        return Err(self.fault(m));
+                    }
+                }
             }
-            return self.exec(op);
+            if wait != 0 {
+                if let Some(Frame::Code(cf)) = self.tasks[cur].frames.last_mut() {
+                    cf.wait = 0;
+                }
+            }
+            let flow = self.exec(op)?;
+            if let Some(fo) = self.facts.as_mut() {
+                let events = self.heap.take_facts_log();
+                fo.wait_events(cur, 0, &events);
+            }
+            return Ok(flow);
         }
         if let Err(m) = self.before_op(uid, &code, pc, op) {
             return Err(self.fault(m));
@@ -272,7 +315,12 @@ impl super::Machine<'_, '_> {
         let Some(fo) = self.facts.as_mut() else {
             return Ok(());
         };
-        let changed = fo.step(uid, loc.block, loc.stmt)?;
+        // A4: the accesses since the last op (an unwind, the end of a
+        // `handle`), then the end of a wait of this frame at its `resume`.
+        let events = self.heap.take_facts_log();
+        fo.wait_events(self.cur, 0, &events);
+        fo.wait_end(uid)?;
+        let changed = fo.step(uid, loc.block, loc.stmt, self.cur)?;
         let Some(Frame::Code(cf)) = self.tasks.get(self.cur).and_then(|t| t.frames.last()) else {
             return Ok(());
         };
@@ -308,6 +356,7 @@ impl super::Machine<'_, '_> {
             return Ok(());
         };
         let events = self.heap.take_facts_log();
+        fo.wait_events(self.cur, uid, &events);
         if matches!(op, Op::Return) {
             fo.leave(uid);
             return Ok(());
@@ -349,8 +398,16 @@ impl super::Machine<'_, '_> {
             .skip(1)
             .take(crate::oracle::facts::SUMMARY_DEPTH);
         fo.begin_summary(uid);
+        // A frame directly below the copied frames of a continuation is the
+        // clause that resumes it again (a `multi` operation). The facts give
+        // the accesses of that run to the re-entry nodes after the perform,
+        // not to the node of the clause (plan stage F16). The oracle does not
+        // check that frame.
+        let mut copied = false;
         for c in below {
-            if c.uid == 0 || c.chain.is_some() {
+            let untracked = !crate::oracle::facts::tracked(c.uid);
+            if untracked || c.chain.is_some() || copied {
+                copied = untracked;
                 fo.report.summary_skipped += 1;
                 fo.break_summary();
                 continue;
@@ -1609,9 +1666,21 @@ impl super::Machine<'_, '_> {
         }
         let frame = self.task_frame(f)?;
         let parent = self.cur;
+        let uids: Vec<u64> = self.tasks[parent]
+            .frames
+            .iter()
+            .rev()
+            .filter_map(|f| match f {
+                Frame::Code(cf) if cf.uid != 0 => Some(cf.uid),
+                _ => None,
+            })
+            .collect();
         // The task runs in the simulation of its spawn site.
         let sim = self.sim_of(parent);
         let t = self.add_task(frame, Some(parent), stealable, Some(sid), sim);
+        if let Some(fo) = self.facts.as_mut() {
+            fo.task_spawned(parent, t, &uids);
+        }
         if let Some(s) = self.scopes.get_mut(sid) {
             s.children.push(t);
         }

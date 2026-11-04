@@ -1,0 +1,11 @@
+// F19.5 (R3-1, issue #50), clean twin: the callee performs before it runs the spawner closure
+effect Note { fn note() }
+struct Stats { count: u64 }
+fn run_note(g: fn()) / Note { note(); g() }
+fn work(r: &Stats) / Note, async, mut(r) {
+    scope { s => run_note(|| { s.spawn(|| r.count += 1); () }) }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Note { fn note() { print(st.count); resume(()) } } in { work(&st) }
+}

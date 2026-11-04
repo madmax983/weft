@@ -1,0 +1,9 @@
+// F20.4 I-8 control (i13): a function parameter two times.
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+fn run2(a: fn(), b: fn()) { a()
+ b() }
+fn twice(k: fn()) { run2(k, k) }
+fn main() { twice(|| print(1)) }

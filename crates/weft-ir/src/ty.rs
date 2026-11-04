@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 /// Makes a `u32` index type.
 macro_rules! id {
@@ -369,10 +370,11 @@ pub struct TyTable {
     tys: Vec<Ty>,
     /// The id of each type.
     ids: HashMap<Ty, TyId>,
-    /// The type definitions, by [`AdtId`].
-    adts: Vec<AdtDecl>,
-    /// The effects, by [`EffectId`].
-    effects: Vec<EffectDecl>,
+    /// The type definitions, by [`AdtId`]. A clone of the table shares them
+    /// (the fact generator clones the table for each body).
+    adts: Arc<Vec<AdtDecl>>,
+    /// The effects, by [`EffectId`], shared as [`TyTable::adts`].
+    effects: Arc<Vec<EffectDecl>>,
 }
 
 impl Default for TyTable {
@@ -390,8 +392,8 @@ impl TyTable {
         let mut t = Self {
             tys: Vec::new(),
             ids: HashMap::new(),
-            adts: Vec::new(),
-            effects: Vec::new(),
+            adts: Arc::default(),
+            effects: Arc::default(),
         };
         let unit = t.intern(Ty::Unit);
         debug_assert_eq!(unit, UNIT);
@@ -451,7 +453,7 @@ impl TyTable {
     /// Adds a type definition and returns its id.
     pub fn push_adt(&mut self, d: AdtDecl) -> AdtId {
         let id = AdtId(u32::try_from(self.adts.len()).unwrap_or(u32::MAX));
-        self.adts.push(d);
+        Arc::make_mut(&mut self.adts).push(d);
         id
     }
 
@@ -472,7 +474,7 @@ impl TyTable {
     /// Adds an effect and returns its id.
     pub fn push_effect(&mut self, e: EffectDecl) -> EffectId {
         let id = EffectId(u32::try_from(self.effects.len()).unwrap_or(u32::MAX));
-        self.effects.push(e);
+        Arc::make_mut(&mut self.effects).push(e);
         id
     }
 

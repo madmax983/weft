@@ -1,0 +1,21 @@
+// The clause keeps the result of the first `resume` (a reference into `v`)
+// across the second `resume`, whose run pushes to `v`: W0301.
+effect Pick { multi fn pick() -> bool }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let n = handle Pick {
+        fn pick() {
+            let a = resume(true)
+            let c = resume(false)
+            print(a + 1) //~ W0301
+            c
+        }
+    } in {
+        let b = pick()
+        if !b { v.push(9); v.push(9); v.push(9); v.push(9) }
+        &v[0]
+    }
+    print(n + 1)
+}

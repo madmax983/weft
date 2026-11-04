@@ -1,0 +1,8 @@
+// IP6: a `fork` of units gives a tuple of units. A `fork` of values gives a
+// tuple of the values of the branches. Accepted.
+fn main() / par {
+    let (a, b) = fork(|| print(1), || print(2))
+    let t = fork(|| 1, || 2)
+    let (x, y) = t
+    print(x + y)
+}

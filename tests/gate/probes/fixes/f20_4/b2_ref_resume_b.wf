@@ -1,0 +1,15 @@
+// F20.4 B-2 (b04r): the clause resumes (W0301).
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn consume(v: Vec<u64>) { print(v.len()) }
+effect Ask { fn ask() -> u64 }
+fn eat_ask(v: Vec<u64>) / Ask { let n = ask()
+ print(v.len())
+ print(n) }
+fn main() {
+    let v = mkv()
+    let r = &v
+    handle Ask { fn ask() { print(r.len())
+ resume(1) } } in { eat_ask(v) }
+}

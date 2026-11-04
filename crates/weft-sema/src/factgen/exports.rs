@@ -93,6 +93,7 @@ fn var_named(f: &mut FnFacts, name: &str) -> VarId {
         uniq: false,
         nonportable: false,
         callable: false,
+        generic: weft_facts::Generic::NONE,
     })
 }
 

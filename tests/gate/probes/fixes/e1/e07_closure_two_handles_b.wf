@@ -1,0 +1,16 @@
+// E-1: a closure joins one handle, fails, and joins the other handle after it
+fn main() / async, clock {
+    let v = Vec.new()
+    v.push(1)
+    let c = true
+    scope { s =>
+        let a = s.spawn(|| v.push(2))
+        let b = s.spawn(|| print(0))
+        sleep(1.ms)
+        handle Fail { fn fail(m) { print(m) } } in {
+            let g = || { b.join(); if c { fail("stop") }; a.join() }
+            g()
+        }
+        v.push(3)
+    }
+}

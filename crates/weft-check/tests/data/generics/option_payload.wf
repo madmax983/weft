@@ -1,0 +1,28 @@
+// Issue 47: a linear closure that comes back from a generic callee in an
+// `Option`. The arm `None` consumes the local; the arm `Some` moves the
+// closure out. A closure that no path calls is W0601.
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn wrap<T>(x: T) -> Option<T> { Some(x) }
+fn first<T>(o: Option<T>) -> Option<T> { match o { Some(x) => Some(x), None => None } }
+
+fn wrapped() {
+    let t = begin(1)
+    let o = wrap(|| commit(t))
+    match o { Some(g) => g(), None => {} }
+}
+fn through_a_generic_match() {
+    let t = begin(2)
+    match first(Some(|| commit(t))) { None => {}, Some(g) => g() }
+}
+fn wrapped_not_called() {
+    let t = begin(3)
+    let o = wrap(|| commit(t))
+    match o { Some(_) => print("some"), None => {} }
+}   //~ W0601
+fn main() {
+    wrapped()
+    through_a_generic_match()
+    wrapped_not_called()
+}

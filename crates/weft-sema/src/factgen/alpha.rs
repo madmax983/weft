@@ -713,6 +713,51 @@ pub fn env_capture(
     Some((c, f.0, cap.mode))
 }
 
+/// The source of a place `place` of body `body` through the captures of
+/// closure bodies.
+///
+/// It is the body and the place of the variable whose cell a `Kept`
+/// capture keeps, or that a `ByRef` capture points to (`(*env.j)`). A
+/// capture of a capture goes on to the maker of the maker. A place that is
+/// no such capture is its own source. An index step below
+/// the capture stops the walk (an index local is a local of `body`).
+pub fn capture_source(p: &Program, body: BodyId, place: &Place) -> (BodyId, Place) {
+    let (mut b, mut q) = (body, place.clone());
+    // A maker has a lower id than its closures, so the walk ends.
+    for _ in 0..p.bodies.len() {
+        let skip = match env_capture(p, b, &q) {
+            Some((_, _, CaptureMode::Kept)) => 1,
+            Some((_, _, CaptureMode::ByRef))
+                if q.proj.get(1) == Some(&Proj::Deref(DerefKind::Ref)) =>
+            {
+                2
+            }
+            _ => break,
+        };
+        let Some((c, k, _)) = env_capture(p, b, &q) else {
+            break;
+        };
+        let Some((maker, mut src)) = p.closures.get(c.index()).and_then(|d| {
+            d.captures
+                .get(k as usize)
+                .map(|x| (d.maker, x.source.clone()))
+        }) else {
+            break;
+        };
+        if q.proj
+            .iter()
+            .skip(skip)
+            .any(|x| matches!(x, Proj::Index(_)))
+        {
+            break;
+        }
+        src.proj.extend(q.proj.iter().skip(skip).cloned());
+        b = maker;
+        q = src;
+    }
+    (b, q)
+}
+
 /// The type of field `k` of the environment of closure `c`.
 ///
 /// It is the type of the source of the capture in the maker, or a reference

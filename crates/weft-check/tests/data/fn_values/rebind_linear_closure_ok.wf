@@ -1,0 +1,10 @@
+// Stage C1 (self-attack): the clean twin of `rebind_linear_closure.wf`. The new closure runs one time.
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn main() {
+    let tx = Tx { id: 1 }
+    let g = || print(0)
+    let set = || { g = || commit(tx) }
+    set()
+    g()
+}

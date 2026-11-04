@@ -1,0 +1,4 @@
+// F20.2 F-1 (h01): a closure reads a held Vec argument during the call (W0302).
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn hold_call<T>(x: T, f: fn()) -> T { f(); x }
+fn main() { let v = mkv(); let f = || print(v.len()); let w = hold_call(v, f); print(w.len()) }

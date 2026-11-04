@@ -85,15 +85,6 @@ fn check(name: &str) {
     assert_eq!(abcd_codes(name, &src), markers(&src), "{name}");
 }
 
-/// The reason why the `ir` pipeline does not check program `name` with the
-/// groups A to D, if it does not.
-fn fallback(name: &str) -> Option<String> {
-    let src = program(name);
-    let a = analyze_source(&src, abcd(&src))
-        .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
-    a.ir_scope.as_ref().and_then(|s| s.fallback.clone())
-}
-
 /// M1: the clause changes a place after `resume`, and the value of the
 /// handled body points into it (`Post` applies the `post` part). The clause
 /// reads the resume result after the change too.
@@ -152,15 +143,52 @@ fn a_reference_of_a_clause_across_resume_sees_the_changes_of_the_body() {
     check("v8_across_resume.wf");
 }
 
-/// A handler of an effect with a `multi` operation is stage F16: the
-/// program is not in scope.
+/// A handler of an effect with a `multi` operation (plan stage F16): the
+/// clause resumes twice, and each run of the handled body binds its own
+/// locals.
 #[test]
-fn a_multi_handler_is_not_in_scope_until_stage_f16() {
-    let why = fallback("m9_resume_twice_tail.wf");
-    assert!(
-        why.as_deref().is_some_and(|w| w.contains("multi")),
-        "{why:?}"
-    );
+fn a_multi_handler_whose_clause_resumes_twice_is_accepted() {
+    check("m9_resume_twice_tail.wf");
+}
+
+/// O3-14: a `multi` resume runs the rest of the handled body again (the
+/// re-entry edge from `Post` to the perform). A tail move of a local of the
+/// site moves it once for each run; a local of the handled body is copied.
+#[test]
+fn a_multi_resume_moves_a_local_of_the_site_again() {
+    check("multi_tail_site_move.wf");
+    check("multi_tail_body_local.wf");
+}
+
+/// J4: the `Copy` node rebinds only the variables whose places are in the
+/// copied frames. A reference into a place of the site keeps its state.
+#[test]
+fn a_multi_resume_keeps_a_reference_into_the_site_invalid() {
+    check("multi_j4.wf");
+    check("multi_j4_body_local.wf");
+}
+
+/// The clause code between two `resume`s runs at `Post`, before the
+/// re-entry: a change there invalidates what the first run kept.
+#[test]
+fn the_clause_code_between_two_resumes_runs_before_the_second_run() {
+    check("multi_site_ref_cleared.wf");
+    check("multi_site_ref_kept.wf");
+}
+
+/// W0503: a linear value of the handled body live across a `multi` perform.
+#[test]
+fn a_linear_value_across_a_multi_perform_is_w0503() {
+    check("multi_linear_across.wf");
+    check("multi_linear_after.wf");
+}
+
+/// The second `resume` runs the rest of the handled body, which changes the
+/// place that the result of the first `resume` points into.
+#[test]
+fn a_second_resume_invalidates_the_result_of_the_first() {
+    check("multi_clause_holds_result.wf");
+    check("multi_clause_reads_result.wf");
 }
 
 /// A clause that performs the operation of an outer local handler: the
@@ -341,4 +369,336 @@ fn the_abort_paths_of_local_handlers_bind_before_they_free() {
         lints.extend(gen_kill(name, &program(name)));
     }
     assert!(lints.is_empty(), "{lints:#?}");
+}
+
+/// A closure that performs through a captured capability (plan stage
+/// F16): the node that runs it (a call of the value, or a call of a callee
+/// that runs it) runs the clause of the handler, as a call that performs.
+#[test]
+fn a_run_of_a_closure_with_a_captured_capability_runs_the_clause() {
+    check("cap_local_run.wf");
+    check("cap_local_run_ok.wf");
+    check("cap_apply.wf");
+    check("cap_apply_ok.wf");
+    check("cap_stored.wf");
+    check("cap_stored_ok.wf");
+}
+
+/// The clause gets a reference into a local of the closure (the frame root
+/// of the run node), and a `multi` clause makes the run node a `multi`
+/// point.
+#[test]
+fn a_closure_with_a_captured_capability_gives_its_frame_and_resumes_twice() {
+    check("cap_keeps_closure_local.wf");
+    check("cap_keeps_closure_local_ok.wf");
+    check("cap_multi_linear.wf");
+    check("cap_multi_linear_ok.wf");
+}
+
+/// The clause gets the places that the closure reads (a capture by
+/// reference gives a place of the variable), also when a callee runs the
+/// closure. The lend of an argument of the perform is no change at the run
+/// node: the facts of the clause there give its changes.
+#[test]
+fn a_clause_gets_the_places_that_a_closure_with_a_captured_capability_reads() {
+    check("cap_byref_given.wf");
+    check("cap_byref_given_ok.wf");
+    check("cap_callee_runs.wf");
+    check("cap_callee_runs_ok.wf");
+}
+
+/// A closure that a clause makes starts from the states of the clause
+/// (plan stage F16): its run in the clause changes the places of the site,
+/// before or after `resume`, and a linear capture must be consumed.
+#[test]
+fn a_closure_that_a_clause_makes_runs_with_the_states_of_the_clause() {
+    check("clause_closure_clears_site.wf");
+    check("clause_closure_pushes_site.wf");
+    check("clause_closure_after_resume.wf");
+    check("clause_closure_after_resume_ok.wf");
+    check("clause_closure_linear.wf");
+    check("clause_closure_linear_ok.wf");
+}
+
+/// O3-7: a function value that a perform gives to a local handler. The
+/// parameter of the clause holds it, so a run of it in the clause (before or
+/// after `resume`, once or twice) changes the places of its environment;
+/// a change from the run has the root of the argument (no W0312 against
+/// the argument itself), and a linear closure that the clause drops is
+/// W0601.
+#[test]
+fn a_function_value_that_a_perform_gives_runs_in_the_clause() {
+    check("o37_op_closure.wf");
+    check("op_closure_pre.wf");
+    check("op_closure_pre_ok.wf");
+    check("op_closure_post.wf");
+    check("op_closure_post_ok.wf");
+    check("op_closure_twice.wf");
+    check("op_closure_once.wf");
+    check("op_closure_dropped.wf");
+    check("op_closure_run.wf");
+}
+
+/// Class C-RR (self-attack of stage F16) with group D: a closure that reads
+/// through a captured reference to a container of references runs in a
+/// clause (a function value of a perform, a closure that the clause makes)
+/// or in the handled body after a clause changes the referent. The node
+/// that runs it uses the variables of the references on the chain (W0301).
+#[test]
+fn a_closure_run_in_a_clause_reads_through_a_captured_reference_to_references() {
+    check("crr_op_closure.wf");
+}
+
+/// D-CONT-RUN (review of group D, plan stage F17): the node that runs a
+/// clause is a call, or the run of a closure with a captured capability.
+/// The callee or the closure goes on after the perform while the clause
+/// waits at its `resume`, so the region of the continuation holds the run
+/// node too. A change of the place there is W0301 at the read of the clause
+/// after `resume`.
+#[test]
+fn the_rest_of_a_callee_after_a_perform_is_in_the_continuation() {
+    check("cont_run_callee.wf");
+    check("cont_run_closure.wf");
+    check("cont_run_multi.wf");
+    check("cont_run_param.wf");
+}
+
+/// D-CONT-NEST (review of group D, plan stage F17): a clause of an inner
+/// handler performs the operation of the outer handler. The continuation of
+/// the outer clause is the rest of the inner clause, of the inner handled
+/// body and of the outer handled body: the node of the perform maps to the
+/// nodes that run the inner clause.
+#[test]
+fn a_perform_in_an_inner_clause_has_the_rest_of_the_outer_body() {
+    check("cont_nest.wf");
+    check("cont_nest_param.wf");
+    check("cont_nest_post.wf");
+}
+
+/// D-CONT-UNWIND (review of group D, plan stage F17): an abort to a handler
+/// inside the handled body ends a local whose element the parameter of the
+/// clause points into. The cleanup path is in the continuation.
+#[test]
+fn the_continuation_has_the_cleanup_path_of_an_abort_inside_the_body() {
+    check("cont_unwind.wf");
+}
+
+/// D-COPY-WAIT (review of group D, plan stage F17): a `multi` re-run copies
+/// the frame of an inner clause that waits at its `resume`. The code after
+/// the inner `handle` runs before the copy goes on, so it is in the
+/// continuation of the inner clause. The clean twin writes an element only.
+#[test]
+fn a_copy_of_a_waiting_clause_sees_the_rest_of_the_multi_body() {
+    check("cont_copy_wait.wf");
+    check("cont_copy_wait_ok.wf");
+}
+
+/// FP-OWN (review of group D, plan stage F17): the frame of a clause is
+/// alive while the clause waits at its own `resume`. A reference into a
+/// local of the clause across the `resume` stays valid.
+#[test]
+fn a_reference_into_a_local_of_the_clause_across_its_resume_is_valid() {
+    check("cont_own.wf");
+    check("cont_own_variant.wf");
+}
+
+/// W0313 over the values of the analysis (plan stage F17, `docs/ir.md`
+/// 6.9): a closure that captures the capability of a handler leaves the
+/// `handle` in its value, in a local of the site, in a heap slot or through
+/// a callee that stores it. The diagnostic is at the `handle` expression,
+/// as in the old pipeline (the functions of `tests/programs/62_cap_escape.wf`
+/// that the `ir` pipeline checks).
+#[test]
+fn a_capability_that_leaves_its_handler_is_w0313() {
+    check("w0313_cap.wf");
+    check("w0313_rebind.wf");
+    check("w0313_run_known.wf");
+}
+
+/// V046 (plan stage F17): a closure goes to an operation of its own
+/// handler. The clause runs it outside the handler, so the handled body gave
+/// it to code that can keep it.
+#[test]
+fn a_capability_that_a_clause_of_its_handler_runs_is_w0313() {
+    check("w0313_own_clause.wf");
+}
+
+/// D-CLAUSE-RUNS (plan stage F17, found when group D went on): a clause
+/// runs a function parameter of its function. The summary of the function
+/// has the run (more than once: the clause runs at each perform), so the
+/// caller applies the changes and the moves of the value that it gives.
+#[test]
+fn a_function_value_that_a_clause_runs_is_in_the_summary_of_the_function() {
+    check("clause_runs.wf");
+    check("clause_runs_once.wf");
+}
+
+/// D-MULTI-MID and D-COPY-WAIT-CALL (second review of group D, plan stage
+/// F17.1): a `multi` `resume` runs a copy of the callee frame (or of the
+/// frame of a closure) again. The copy holds the references that it made
+/// into the places of its arguments, so a change of these places between
+/// the run node and its `Copy` node (in the clause between two `resume`s,
+/// or after the node in the caller) is W0301 at the node.
+#[test]
+fn a_copy_of_a_callee_frame_sees_the_changes_before_its_second_run() {
+    check("multi_mid_callee.wf");
+    check("multi_mid_closure.wf");
+    check("copy_wait_call.wf");
+    check("multi_mid_ok.wf");
+}
+
+/// D-FNVAL-ROW (plan stage F17.2): a function item or a function parameter
+/// runs with the handlers of the call, so the clause of a local handler of
+/// its row runs at the run node (W0312, W0301). A call in a closure body
+/// gets the captured capability for the effects of its row: the clause runs
+/// at the call. The clean cases have no error, also in `main` (no W0805:
+/// FP-W0805-FNVAL).
+#[test]
+fn a_function_value_runs_the_clauses_of_a_local_handler_of_its_row() {
+    check("fnval_row_item.wf");
+    check("fnval_row_param.wf");
+    check("fnval_row_multi.wf");
+    check("fnval_row_closure.wf");
+    check("fnval_row_ok.wf");
+    check("fnval_row_inert_ok.wf");
+}
+
+/// D-ROW-MID (plan stage F17.2): a known callee (or a closure) that waits
+/// at a `multi` operation of a handler of a caller gets a copy of its frame
+/// at the `Copy` node. A change of the function after the call reaches the
+/// copy: W0301 at the call. The clean twin only reads the place.
+#[test]
+fn a_copy_of_a_callee_frame_sees_the_changes_after_a_row_reentry() {
+    check("row_mid_callee.wf");
+    check("row_mid_closure.wf");
+    check("row_mid_ok.wf");
+}
+
+/// Issue #56 (stage C1): a closure that runs a captured function value is a
+/// `multi` point only where the value that the caller gives can resume more
+/// than once. A known value that performs nothing does not make the run of
+/// the closure a `multi` point, also when the program declares a `multi`
+/// operation. A known value or a value of a caller that can resume more
+/// than once still does (W0503).
+#[test]
+fn a_closure_that_runs_a_captured_value_has_the_multi_part_of_the_value() {
+    check("nested_run_multi.wf");
+    check("nested_run_multi_param.wf");
+    check("nested_run_multi_ok.wf");
+    check("nested_run_multi_once_ok.wf");
+}
+
+/// Issue #56 (stage C1): code of a caller that a callee runs can resume
+/// more than once in a program with a `multi` operation, so the callee
+/// gets a re-entry edge after the run. The run of the value itself is not
+/// a second run: the caller gives the value and applies its `multi` part.
+/// A `once` closure that the callee runs one time is no W0502. A known
+/// value that resumes two times before a run of the `once` closure still
+/// gives W0502.
+#[test]
+fn a_reentry_after_code_of_a_caller_does_not_run_the_values_again() {
+    check("run_once_multi.wf");
+    check("run_once_multi_ok.wf");
+}
+
+/// Issue #57 (stage C1): a call in a handled body that runs function values
+/// runs the clauses of a handler whose capability a closure captures only
+/// if a value that it runs can perform through that handler. A closure
+/// that runs a known closure that performs nothing does not run the clause,
+/// so nothing can abort there. A captured function item that performs the
+/// effect still runs the clause (W0602).
+#[test]
+fn a_captured_capability_runs_its_clause_only_for_a_value_that_performs() {
+    check("cap_nested_run.wf");
+    check("cap_nested_run_ok.wf");
+}
+
+/// Issue #58 (stage C1): a call that runs function values runs the clause
+/// of the local `Fail` handler only if a value that it runs can fail. A
+/// closure that cannot fail does not run the clause: no W0302 for a local
+/// that the clause reads, and no W0312 for a place that the clause changes.
+/// A closure whose callee can fail still runs it (W0302).
+#[test]
+fn the_fail_clause_runs_only_for_a_value_that_can_fail() {
+    check("run_fail_clause.wf");
+    check("run_fail_clause_ok.wf");
+}
+
+/// Issue #56 (stage C1): a reference into an `rc` object of a type with no
+/// function part reaches no function value. A closure that captures it runs
+/// no code of a caller, so its run is no `multi` point. A closure that runs
+/// a known function that resumes two times still is (W0503).
+#[test]
+fn a_reference_into_an_rc_object_with_no_function_part_reaches_no_function_value() {
+    check("rc_ref_closure.wf");
+    check("rc_ref_closure_ok.wf");
+}
+
+/// Stage C1 (self-attack): a store of a linear closure into a function field
+/// of a local that held plain data gives the local the linear value
+/// (`overwrites`), so an abort before its run is W0602.
+#[test]
+fn a_store_of_a_linear_closure_into_a_field_makes_the_local_linear() {
+    check("part_store_linear.wf");
+    check("part_store_linear_ok.wf");
+}
+
+/// Hole C1-H1 (stage C1.1): a callee that runs a value of the caller and
+/// then a `once` closure runs the closure again if the value can resume
+/// more than once (`Run::after`: the caller gives the values and knows if
+/// one of them can). A known value, a function parameter of a helper, a
+/// local and the other order of the parameters are W0502 (a generic callee:
+/// `ir_generics`). A `once` closure that runs first, or a first value that resumes
+/// nothing, is no error.
+#[test]
+fn a_run_after_a_value_that_resumes_two_times_runs_again() {
+    check("run_after_multi.wf");
+    check("run_after_multi_helper.wf");
+    check("run_after_multi_let.wf");
+    check("run_after_multi_order.wf");
+    check("run_after_multi_ok.wf");
+    check("run_after_multi_plain_ok.wf");
+}
+
+/// Holes C1-H2 and C1-H3 (follow-up C1.2): a callee that runs a value that
+/// can resume more than once gives a `once` closure argument out again on
+/// each resume (back, in a field, a struct, an `Option`, through a callee,
+/// in a closure that it makes), so the caller can run it two times: the
+/// closure is live across the call (W0503). A closure that a callee makes
+/// and that runs such a value before the `once` closure runs it again
+/// (W0502). A first value that resumes nothing, or a closure that is not
+/// `once`, is no error.
+#[test]
+fn a_callee_gives_a_once_closure_out_again_after_a_multi_value() {
+    check("give_out_ret.wf");
+    check("give_out_field.wf");
+    check("give_out_struct.wf");
+    check("give_out_option.wf");
+    check("give_out_box.wf");
+    check("give_out_nested.wf");
+    check("give_out_made_after.wf");
+    check("made_run_after_multi.wf");
+    check("give_out_ok.wf");
+    check("give_out_plain_ok.wf");
+}
+
+/// Hole C1-H4 (follow-up C1.3): a closure that performs a `multi` operation
+/// through a captured capability runs the code after the perform again on a
+/// second resume. A `once` closure that it runs after the perform (a
+/// capture, a parameter) runs again (W0502), where a callee runs the
+/// closure and where the closure is called directly; a `once` closure that
+/// it gives back after the perform is given out again (W0503). Plain data
+/// after the perform, a `once` closure before it, and a moved capture of
+/// plain data (a resume runs on a copy of the frames) are no error.
+#[test]
+fn a_closure_that_resumes_two_times_runs_its_once_values_again() {
+    check("h4_apply.wf");
+    check("h4_direct.wf");
+    check("h4_param.wf");
+    check("h4_cap.wf");
+    check("h4_param_ret.wf");
+    check("h4_capture_ret.wf");
+    check("h4_plain_ok.wf");
+    check("h4_before_ok.wf");
+    check("h4_move_ok.wf");
 }

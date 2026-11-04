@@ -1,0 +1,57 @@
+// OR7 (plan stage F19): a callee runs a function parameter as a task or a
+// fork branch (part `runs`). The caller applies the value that it gives as a
+// task at the task nodes of the call: two runs at the same time (W0405), a
+// fork branch that mutates through a shared capture (W0403), and a run of
+// another parameter while the task runs (W0405).
+struct E { hp: u64 }
+
+fn par(f: fn(), g: fn()) / par { fork(f, g) }
+
+fn bg(f: fn()) {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+}
+
+fn bg_and_call(f: fn(), g: fn()) {
+    scope { s =>
+        s.spawn(f)
+        g()
+    }
+}
+
+fn bg_one(f: fn()) {
+    scope { s =>
+        s.spawn(f)
+    }
+}
+
+fn via_fork() / par {
+    let n = 0
+    par(|| n += 1, || n += 2)   //~ W0405 W0405 W0403 W0403
+    print(n)
+}
+
+fn via_spawn_twice() / async {
+    let n = 0
+    bg(|| n += 1)   //~ W0405
+    print(n)
+}
+
+fn via_spawn_and_call() / async {
+    let n = 0
+    bg_and_call(|| n += 1, || print(n))   //~ W0405
+}
+
+fn stealable_rc() / async {
+    let a = Rc.new(E { hp: 1 })
+    bg_one(|| print(a.hp))             // the task is stealable, but it holds an `Rc`
+}
+
+fn main() / par, async {
+    via_fork()
+    via_spawn_twice()
+    via_spawn_and_call()
+    stealable_rc()
+}

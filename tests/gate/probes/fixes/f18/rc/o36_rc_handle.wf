@@ -1,0 +1,65 @@
+// O3-6: a task reads a field through an `Rc` handle; the parent moves the
+// handle, gives it a new value, or ends it while the task runs: W0405.
+struct Node { v: u64 }
+struct Hold { r: Rc<Node>, n: u64 }
+fn take_rc(x: Rc<Node>) { }
+fn take_hold(x: Hold) { }
+
+fn move_let() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        let m = shared
+        print(b.join())
+    }
+}
+
+fn move_typed() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        take_rc(shared)
+        print(b.join())
+    }
+}
+
+fn new_value() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        shared = Rc.new(Node { v: 6 })
+        print(b.join())
+    }
+}
+
+fn scope_end() {
+    scope { s =>
+        {
+            let shared = Rc.new(Node { v: 5 })
+            s.spawn(|| { sleep(1.s); print(shared.v) })
+        }
+        print(0)
+    }
+}
+
+fn field_handle() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        take_hold(h)
+        print(b.join())
+    }
+}
+
+fn boxed() {
+    let bx = Box.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| bx.v + 1)
+        let c = bx
+        print(b.join())
+    }
+}
+
+fn main() {
+    move_let()
+}

@@ -1,0 +1,19 @@
+// D-COPY-WAIT-CALL: a copied callee frame (or a clause that waits in it) holds a reference across a `multi` operation; the caller changes the place after the call, before the second run
+effect Pick { multi fn pick() -> bool }
+effect Op { fn op() }
+fn h() -> bool / Pick { pick() }
+fn g(v: &Vec<i64>) / Pick {
+    handle Op { fn op() { let y = &v[0]; resume(()); print(y + 1) } } in {
+        op()
+        print(h())
+    }
+}
+fn k(v: &Vec<i64>) / Pick { g(v) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        k(&v)
+        print(v.len())
+    }
+}

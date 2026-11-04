@@ -1,0 +1,13 @@
+// C-RR: a closure reads through a captured reference to a container of references
+enum E { A(&Vec<&i64>), B }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep: Vec<&i64> = Vec.new()
+    keep.push(&v[0])
+    let kr = &keep
+    let e = A(kr)
+    let g = || match e { A(k) => print(k[0] + 1), B => {} }
+    g()
+    v.clear()
+}

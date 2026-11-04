@@ -1,0 +1,17 @@
+// V046 with the `ir` pipeline (plan stage F17): a closure goes to an operation of its own handler.
+effect Reg {
+    fn reg(f: fn())
+    fn ping()
+}
+
+fn same_handler() {
+    handle Reg {   //~ W0313
+        fn reg(g) { g(); resume(()) }
+        fn ping() { print("ping"); resume(()) }
+    } in reg(|| ping())
+}
+
+fn main() {
+    same_handler()
+    print("done")
+}
