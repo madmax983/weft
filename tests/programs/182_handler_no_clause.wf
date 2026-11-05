@@ -1,0 +1,52 @@
+// A handler with no clause for an operation passes the operation on to the
+// handler outside it (plan stage R0b): a handler around the `handle` in the
+// same function, or the handler of a caller. The interpreter does the same.
+// So the row of the function has the effect, as for a perform outside the
+// `handle`. The old pipeline does not see the operation that the handler
+// passes on.
+
+effect Note {
+    fn note(n: u64)
+    fn flush()
+}
+
+// The bad cases: the row of `stated` does not allow `Note`, and nothing
+// handles the `note` that `passes_on` passes on in `main`.
+// R0b: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: no handler for `Note.note`), stage R0b
+fn stated() / io {
+    handle Note { fn flush() { resume(()) } } in note(1)   //~ W0702 old:
+}
+
+fn passes_on() {
+    handle Note {} in note(2)
+}
+
+// The clean cases: the operation goes to the handler of the caller, or to
+// the handler around the `handle`.
+fn to_the_caller() / Note {
+    handle Note { fn flush() { resume(()) } } in {
+        flush()
+        note(3)
+    }
+}
+
+fn to_the_handler_outside() {
+    handle Note {
+        fn note(n) { print(n); resume(()) }
+        fn flush() { resume(()) }
+    } in {
+        handle Note {} in note(4)
+    }
+}
+
+fn main() {
+    handle Note {
+        fn note(n) { print(n); resume(()) }
+        fn flush() { resume(()) }
+    } in {
+        to_the_caller()
+    }
+    to_the_handler_outside()
+    // R0b: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: no handler for `Note.note`), stage R0b
+    passes_on()   //~ W0805 old:
+}

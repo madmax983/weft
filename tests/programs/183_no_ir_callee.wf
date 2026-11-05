@@ -1,0 +1,45 @@
+// A function with a type error has no IR (docs/ir.md 5.36). Its callers get
+// the worst case of its declaration (plan stage R0b), not the signature of
+// the old inference: it can run each function value that it gets many
+// times, also as a task on another thread, and keep it. So the program
+// stays with the `ir` pipeline.
+
+fn keep(f: fn()) -> fn() {
+    let n: u64 = true   //~ W0102
+    f
+}
+
+fn run(f: fn()) {
+    let n: u64 = "one"   //~ W0102
+    f()
+}
+
+// The worst case runs the closure on another thread while the caller
+// reads `v`: a race (W0403, W0405). The old pipeline reads the inferred
+// signature of `keep`, which only keeps the closure.
+// R0b: the default marker is the ir result; old: is the old pipeline: ledger `changed` (the bodies with no IR, W01xx in both), stage R0b
+fn keeps_a_change() {
+    let v = Vec.new()
+    let g = keep(|| v.push(1))   //~ W0405 W0403 old:
+    g()
+}
+
+// R0b: the default marker is the ir result; old: is the old pipeline: ledger `changed` (the bodies with no IR, W01xx in both), stage R0b
+fn runs_a_change() {
+    let v = Vec.new()
+    run(|| v.push(1))   //~ W0405 W0403 old:
+    print(v.len())
+}
+
+// The clean cases: a closure that changes nothing, and a callee with IR.
+fn runs_a_print() {
+    run(|| print(1))
+}
+
+fn apply(f: fn()) { f() }
+
+fn applies_a_change() {
+    let v = Vec.new()
+    apply(|| v.push(1))
+    print(v.len())
+}

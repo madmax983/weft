@@ -110,7 +110,9 @@ pub enum NoIr {
     /// W0303 of the old lowering (`docs/ir.md` 5.36).
     MoveThroughRef,
     /// The body names the payload of a variant with no field or with more
-    /// than one field as a place: `o.A` (`docs/ir.md` 5.8, 5.36).
+    /// than one field as a place: `o.A` (`docs/ir.md` 5.8, 5.36). From plan
+    /// stage R0b `typeck` reports W0121 there, so such a body has
+    /// [`NoIr::TypeError`] first; this reason stays as a guard.
     VariantPayload,
 }
 
@@ -388,7 +390,8 @@ fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bo
 ///   keeps (a declaration error);
 /// - W0303: W0303 in the body.
 ///
-/// A conflict in the THIR tables and a variant payload come with no error.
+/// A conflict in the THIR tables and a variant payload come with no error
+/// (W0121 makes the body a type error first, plan stage R0b).
 /// For them, and for a type error with no diagnostic (for example the type of
 /// a local that a later statement of a loop settles), it returns false: the
 /// old pipeline must check the program.
@@ -770,6 +773,10 @@ struct Builder<'a> {
     /// closure environment, and the upvar locals of the capabilities of the
     /// site that the body uses (`caps.rs`).
     caps: Vec<(EffectId, Place)>,
+    /// The effect of the handler of a handled body and the operations that
+    /// have a clause; `None` for another body. A perform of another
+    /// operation of the effect goes to the handler outside (`caps.rs`).
+    handled_ops: Option<(EffectId, Vec<u32>)>,
     /// The locals and the capabilities of the site that a clause or a
     /// handled body can name (`upvar.rs`); `None` for another body.
     site: Option<Box<upvar::Site>>,
@@ -825,6 +832,7 @@ impl<'a> Builder<'a> {
             kont_multi: false,
             cap_params: Vec::new(),
             caps: Vec::new(),
+            handled_ops: None,
             site: None,
             parent: None,
             unwinds: HashMap::new(),

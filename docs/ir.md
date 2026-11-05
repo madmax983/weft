@@ -916,7 +916,11 @@ How the builder applies this (`irbuild/caps.rs`, plan stage B10):
 - Each body keeps the capabilities that it binds, with their places in the body: the
   `Cap` local of a handled body, the `Cap` fields of a closure, and the upvar locals of
   the capabilities of the site (made at the first perform). A perform takes the first of
-  these for its effect, else `Row(E)`.
+  these for its effect, else `Row(E)`. As built (plan stage R0b): in a handled body
+  whose handler has no clause for the operation, a perform takes the capability of the
+  site for its effect, else `Row(E)` (`Builder::op_cap`): the handler passes the
+  operation on to the handler outside it. V11 accepts this `Row(E)` although the
+  environment of the handled body binds `E`.
 - A handled body gets a new environment: its parent is the environment of the site, and
   it adds `(E, _1)`. A clause has the environment of its site. The place of an `adds`
   entry is a place of the body that opens the environment; a nested body names it
@@ -1092,7 +1096,7 @@ type asks for (RT9, V014, V098).
 | `a[i]` with `a: [T; n]` | `a[ti]` (stable element step) |
 | `t.0` | `t.0` |
 | `o.Some` | `td := Discriminant(o); Switch(move td) [Some: next, otherwise: Unreachable]`, then `(o as Some).0` (the interpreter faults on another variant) |
-| `o.A` with `A` of no field or of more than one field | no place: the type is `()` or a tuple that the payload does not hold; the body gets no IR (`NoIr::VariantPayload`, 5.36) |
+| `o.A` with `A` of no field or of more than one field | no place: `typeck` rejects it (W0121, plan stage R0b), so the body gets no IR (5.36) |
 | `&v[]` | `&v[]` (`Elems`) |
 
 No expression writes a split step. A split place (`v[..k]`, `v[k..]`) comes only from a
@@ -2083,8 +2087,25 @@ function no IR.
 Other bodies with no IR (plan stage B12), each with its reason:
 
 - `NoIr::VariantPayload`: a field expression `o.A` of a variant `A` with no field or
-  with more than one field (5.8). `typeck` gives it the type `()` or a tuple, but the
-  payload has no place of that type. No program of tiers 1 and 2 has one.
+  with more than one field (5.8). The payload has no place of the type `()` or of a
+  tuple. Until plan stage R0b `typeck` accepted it, so the body had no IR and no error,
+  and the old pipeline checked the program (5 hand probes of tier 1,
+  `tests/gate/probes/fixes/f10/hb/th15` to `th20`). From R0b `typeck` reports W0121
+  there: the body has no IR for a type error, and the builder keeps this reason only as
+  a guard. The smaller choice: an rvalue tuple of the fields would need a form for a
+  borrow, a move and an assignment of `o.A` too, and it would change what the IR engine
+  runs with no change of the interpreter sources (the key of the oracle cache).
+- A perform of an operation in the handled body of a handler with no clause for it
+  (`handle E {} in op()`, `handle Log { fn info(m) ... } in log.warn(..)`): the
+  handler passes the operation on to the handler outside it, as the interpreter does
+  (`semantics.rs` `partial_handler_forwards_other_operations`). Until plan stage R0b
+  the builder gave the perform the capability of that handler, and the fact generator
+  found no clause ("a place that does not fit its type"). From R0b the builder gives it
+  the capability of the handler outside (`Builder::op_cap`, 5.1.8): an upvar local of
+  the capability of the site, or `Row(E)` if no handler of the function is around the
+  `handle`. V11 accepts that `Row` operand in such a handled body. A closure in the
+  handled body and a handler with no clause inside another one with no clause keep the
+  old capability (the old pipeline checks such a program).
 - An assignment whose left side is not a place is W0112 of `typeck` (a type error). A
   constructor as a value is W0101 or W0104 (5.23). The builder never sees these bodies.
 
@@ -3700,7 +3721,8 @@ As built (plan stage F5, `crates/weft-sema/src/analysis/`):
   extern function too). The parts that only the old inference has for a function with a
   body (`drops`, `holds`, `raises`) come from `Analysis::sigs` until stage F6. A signature
   with a function value, a store into an `rc` object, a foreign change of an `rc` object,
-  or a task gives a reason, and the program stays with the old pipeline.
+  or a task gives a reason, and the program stays with the old pipeline. From plan stage
+  R0b a function with no summary of its body uses `from_declaration` (6.8).
 - `apply.rs`: `Sigma` maps `Param(i)` to the places of argument `i` (a reference
   argument, or a by-value argument whose parameter can hold references), `Held(i)` to
   the places that the references behind a reference argument point into (only if its
@@ -4161,10 +4183,21 @@ first round with no growth is the fixpoint; a component of one function that doe
 call itself needs one round. The emit pass takes the facts of the last round of each
 body. W0706: a row that grows more often than `infer::growth_limit` (the height of its
 lattice) stops the iteration of its component, and each function of it gets W0706; the
-`ir` pipeline drops the W0706 of the old inference. A body that the fact generator does
-not support gives its callers a reason with the group of its construct; a function with
-a stated row then keeps the summary of stage F5. A body with no IR (a type error) has
-the summary of its signature from the old inference.
+`ir` pipeline drops the W0706 of the old inference. As built (plan stage R0b): a body
+with no IR (a type error, W0303) and a body that the fact generator does not support
+give their callers the worst case of their declaration (`sig::from_declaration`); the
+summary reads only the types, the stated places and the stated row, never the parts of
+the old inference. With no stated row the body can change each place that a parameter
+reaches and each `rc` object, and perform each effect of the program. It can abort,
+resume more than once, give a place of its frame, and drop or hold each type parameter.
+It runs each function value of a parameter many times, also as a task on another thread
+(not `foreign`: the run node gives the accesses of the task, so a race is W0403 or
+W0405 at the call). A program in scope with such a body always has an error for it
+(`irbuild::Entry::reported`). For a body that the fact generator does not support the
+program goes to the old pipeline, and the note names the reason of that body, not a
+call of it. Before R0b these callees used the signature of the old inference, and a
+part that a summary cannot carry (a function value that the callee keeps, a task) sent
+the program to the old pipeline.
 
 `sig::to_effect_sig` gives the changed places (a `Held` root is its parameter with a
 first `Held` step; the text is the name of the parameter and the text of each step; a

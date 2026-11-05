@@ -1,0 +1,35 @@
+// A variant payload `o.A` is a place of the type of the one field of `A`
+// (W0121, plan stage R0b). A variant with no field or with more than one
+// field has no such place: a `match` gets its fields.
+
+enum Shape { Rect(u64, u64), Dot, Circle(u64) }
+
+fn two_fields(s: &Shape) {
+    print(s.Rect)   //~ W0121
+}
+
+fn no_field(s: Shape) {
+    let u = s.Dot   //~ W0121
+}
+
+fn as_a_tuple(s: Shape) -> u64 {
+    let t = s.Rect   //~ W0121
+    t.0
+}
+
+// The clean cases: the payload of a variant with one field, and a `match`.
+fn one_field(s: Shape) -> u64 {
+    s.Circle
+}
+
+fn area(s: &Shape) -> u64 {
+    match s {
+        Rect(w, h) => w * h,
+        Circle(r) => r * r * 3,
+        Dot => 0,
+    }
+}
+
+fn main() {
+    print(area(&Shape.Rect(2, 3)))
+}

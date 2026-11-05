@@ -3525,12 +3525,25 @@ verdict = "construction"
 group = "A"
 stage = "F10.1"
 repro = [
-    "tests/gate/probes/fixes/f10/hb/th15_variantPayload.wf",
-    "tests/gate/probes/fixes/f10/hb/th17_variantPayloadTuple.wf",
     "tests/gate/probes/fixes/f10/hb/th20_variantPayloadInCallee.wf",
 ]
 code = "W0301"
-note = "a body with no IR and no error for it (review of stage F10, hole H-B: a variant payload of two fields): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults"
+note = "a body with no IR and no error for it (review of stage F10, hole H-B: a variant payload of two fields): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults. From stage R0b `typeck` reports W0121 at the payload in `show`: the program is in scope, and `bad`, which has IR, has the W0301"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th15_variantPayload.wf",
+    "tests/gate/probes/fixes/f10/hb/th17_variantPayloadTuple.wf",
+    "tests/gate/probes/fixes/f10/hb/th18_variantPayloadLinear.wf",
+    "tests/gate/probes/fixes/f10/hb/th19_variantPayloadMove.wf",
+]
+code = "W0121"
+note = "hole H-B (a variant payload of no field or of more than one field) in the body with the fault: from stage R0b `typeck` reports W0121 at the payload, so the body has no IR for an error of the program (docs/ir.md 5.36). Stage F10.1 sent the program to the old pipeline, which gave W0301 (th15, th17), W0601 (th18) and W0302 (th19)"
 
 [[claim]]
 finding = "F10-HB"
@@ -3547,30 +3560,6 @@ repro = [
 ]
 code = "W0301"
 note = "hole H-B in a loop: a local gets its type later in the loop body (a type error with no W01xx diagnostic, or a conflict in the THIR tables, before stage F10.1). The THIR tables keep the decisions of the last pass of the lowering (stage F10.1), so the body has IR and the ir pipeline rejects it; with group B off the old pipeline checks it"
-
-[[claim]]
-finding = "F10-HB"
-kind = "unsound"
-verdict = "construction"
-group = "A"
-stage = "F10.1"
-repro = [
-    "tests/gate/probes/fixes/f10/hb/th18_variantPayloadLinear.wf",
-]
-code = "W0601"
-note = "hole H-B with a linear value that nothing consumes (stage F10.1)"
-
-[[claim]]
-finding = "F10-HB"
-kind = "unsound"
-verdict = "construction"
-group = "A"
-stage = "F10.1"
-repro = [
-    "tests/gate/probes/fixes/f10/hb/th19_variantPayloadMove.wf",
-]
-code = "W0302"
-note = "hole H-B with a use after a move (stage F10.1)"
 
 [[claim]]
 finding = "F10-HA"

@@ -768,6 +768,23 @@ impl Lower<'_> {
                 }
                 Some(StepKind::Variant { id }) => {
                     self.rec.field(e.id, crate::thir::FieldIdx::Variant(id));
+                    // The payload is a place of the type of the one field of
+                    // the variant (`docs/ir.md` 5.8, plan stage R0b).
+                    let has = match payload_fields(self.prog, &t, &name.name) {
+                        Some(0) => Some("no field".to_string()),
+                        Some(n) if n > 1 => Some(format!("{n} fields")),
+                        _ => None,
+                    };
+                    if let Some(has) = has {
+                        self.err(
+                            Code::W0121,
+                            format!(
+                                "variant `{}` has {has}, so its payload is not one value: use `match`",
+                                name.name
+                            ),
+                            span,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -3380,5 +3397,20 @@ impl Resumes {
             }
             ExprKind::Scope { body, .. } => self.block(body, again),
         }
+    }
+}
+
+/// The number of fields of variant `name` of the enum type `t`, also behind a
+/// `Box` (as [`field_step`] follows it); `None` if `t` is no such enum.
+fn payload_fields(prog: &crate::Program, t: &Ty, name: &str) -> Option<usize> {
+    match t {
+        Ty::Adt(a, args) => match &prog.adts[*a].kind {
+            AdtKind::Enum(vs) => vs.iter().find(|v| v.name == name).map(|v| v.fields.len()),
+            AdtKind::Extern { deref: Some(d), .. } if *d != Deref::Group => {
+                payload_fields(prog, args.first()?, name)
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }

@@ -374,7 +374,7 @@ impl Builder<'_> {
         let origin = self.origin(e.span, Some(e.id));
         let unwind = Some(self.cleanup(origin));
         let next = self.new_block();
-        let cap = self.cap_of(effect);
+        let cap = self.op_cap(effect, op);
         self.terminate(
             TermKind::Perform {
                 cap,

@@ -889,9 +889,12 @@ fn the_review_programs_of_stage_c15_keep_their_errors() {
 /// C1.5, `docs/ir.md` 5.20): a row in a clause body, and a handler in a
 /// closure body, stop the `ir` pipeline, and the old pipeline rejects each
 /// program. If a fallback goes away, this test fails: the rows of the body
-/// must be found first. Four more review programs stop at other fallbacks
+/// must be found first. Three more review programs stop at other fallbacks
 /// (a task in a nested body, a capability that leaves its handler, a value
-/// that code of a caller can run on another thread).
+/// that code of a caller can run on another thread). In the fourth one,
+/// `g_row_struct.wf`, the callee `run_both` has a type error (W0105): from
+/// plan stage R0b its callers get the worst case of its declaration, so the
+/// program is in scope, and the type error rejects it.
 #[test]
 fn the_rows_of_clauses_and_closure_handlers_stay_with_the_old_pipeline() {
     let clause = "a `multi` operation of a handler of a caller in a clause";
@@ -904,10 +907,11 @@ fn the_rows_of_clauses_and_closure_handlers_stay_with_the_old_pipeline() {
     c15_fallback("h4_scope.wf", "a task in a nested body");
     c15_fallback("dedup_key.wf", "a capability that leaves its handler");
     c15_fallback("gen_k.wf", "code of a caller can run on another thread");
-    c15_fallback(
-        "g_row_struct.wf",
-        "code of a caller can run on another thread",
-    );
+    let (got, fallback, src) = c15_codes("g_row_struct.wf");
+    assert!(fallback.is_none(), "g_row_struct.wf: {fallback:?}");
+    for m in markers(&src) {
+        assert!(got.contains(&m), "g_row_struct.wf: {m:?} in {got:?}");
+    }
 }
 
 /// Checks program `name` of `tests/data/handlers/c16/` with the default

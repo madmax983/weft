@@ -361,9 +361,10 @@ about 4 core-hours once for each interpreter version.
 | C1 | Full gate at full coverage | F20 | yes |
 | C2 | Fresh sweep | C1 | yes |
 | C3 | Switch the defaults | C2 | yes |
+| R0a to R0z | The fallbacks to the old pipeline (Phase R, R0) | C3 | yes |
 | R1 | Standalone `typeck`, part 1 | C3 and one review round | yes (D0) |
 | R2 | Standalone `typeck`, part 2; switch the THIR source | R1 | yes |
-| R3 | Remove the old fact generator | R2 | yes |
+| R3 | Remove the old fact generator | R2, R0z | yes |
 | R4 | Remove the AST compiler of the interpreter | R3 | yes |
 | R5 | Documents and checklists | R4 | |
 
@@ -1901,6 +1902,120 @@ with the group forced on, report only).
 
 ### Phase R: removal
 
+#### R0 The fallbacks to the old pipeline
+
+At C3 the old pipeline still checks each program that the `ir` pipeline does not
+cover: 331 programs of tier 1 and 7770 of tier 2 (the scope report of Phase R,
+scratchpad `rscope/report.md`; the note of `weft check` names the reason of the first
+body that fails, so the counts are lower bounds). Stage R3 removes the old pipeline, so
+these fallbacks must go first. R3 cannot hold "no difference against C3": each program
+that comes into scope changes its `ir` record. So stage R0z writes a new baseline.
+
+| Stage | Goal | Reasons of the scope report | Size |
+| --- | --- | --- | --- |
+| R0a | The diagnostic texts of the `ir` pipeline name the source value (issue #74) | (texts) | done (77efbd0) |
+| R0b | A callee with no IR, or an extern callee, gets a worst-case summary from its declaration; N1 becomes a `typeck` error (W0121); a handler with no clause for an operation passes it on (I1) | C3, E6, P1, C1 with a type error, N1, I1 | done (this stage) |
+| R0c | The leftovers of groups A and B | A1, A2, B1 | S to M |
+| R0d | Handlers in closure bodies | D2, C5, C8, D5 | L |
+| R0e | Tasks in closure bodies | E1, E3 | L |
+| R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, E2, E4, E5, C7 | M |
+| R0g | Continuations and capabilities in closures | D1, D4, C4, C6 | L |
+| R0h | Function values across operations | C2, D3 | M |
+| R0i | The other old inputs: `ValueProps`, W0502, W0303, `Analysis::sigs`, the seed facts (can run beside R1 and R2) | | M |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
+
+Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
+new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
+entry; a program that comes into scope is no new hole (lost-fault 0). The L stages are
+in the families where the reviews of groups D and E found blockers: each one needs its
+own review.
+
+R0b as built:
+
+- A callee with no summary of its body gets the worst case of its declaration
+  (`analysis::sig::from_declaration`): a body with no IR (a type error, W0303) and a
+  body that the fact generator does not support. The summary reads only the types, the
+  stated places and the stated row of the source signature (`FnDef::sig`), never the
+  parts of the old inference. An extern function keeps `from_signature` on its source
+  signature (the same signature as before: the old inference does not change it). The
+  worst case of a body (`sig::body_worst_case`): with no stated row it changes each
+  place that a parameter reaches and each `rc` object that a parameter type reaches,
+  and it performs each effect of the program; it can abort (`raises`, `assert`),
+  resume more than once, give a place of its frame, drop, hold and fork each type
+  parameter; it runs each function value of each parameter many times, as a task on
+  another thread at the same time as the other values, while it changes and reads
+  each place that it gets, and it can keep and give back each of them
+  (`foreign_fn_parts` with `foreign` off, so the run node gives the accesses of the
+  task: a closure that changes a captured place is W0403 and W0405 at the call, not a
+  reason to use the old pipeline). `callgraph::failed` is gone: the callers of a body
+  that the fact generator does not support use the worst case too, so the note of the
+  fallback names the reason of that body.
+- A callee with no IR in a program with no error is not possible: a body with no IR
+  keeps the program in scope only if the program reports an error for it
+  (`irbuild::Entry::reported`). So each program that comes into scope has an error,
+  and the worst case keeps the facts of its callers sound but not precise: the callers
+  of such a callee get W0702 for the effects of the program, W0403 and W0405 for a
+  closure that changes a place, and the effects in the rows that the `ir` pipeline
+  infers (ledger `sig` entry of stage R0b).
+- N1 (`o.A` of a variant with no field or with more than one field): `typeck` reports
+  the new code W0121 (`body/expr.rs`, `Lower::field_of`). The body has no IR for a type
+  error, so the program is in scope. The other choice, an rvalue tuple, is larger: the
+  builder would need a form for a borrow, a move and an assignment of `o.A`, and the IR
+  engine would run other code with no change of the interpreter sources (the key of
+  the oracle cache, F8.2). `docs/ir.md` 5.8 and 5.36 say so; claims F10-HB name W0121.
+- I1 (a perform in the handled body of a handler with no clause for its operation,
+  `handle E {} in op()`): the builder passes the operation on to the handler outside
+  (`irbuild/caps.rs`, `Builder::op_cap`): the capability of the site, else `Row(E)`;
+  V11 accepts that `Row(E)` in the handled body of such a handler when no environment
+  around the handler binds `E` (`weft-ir` `verify.rs`, `passes_on`). The interpreter
+  does the same at run time, and the test `semantics.rs`
+  `partial_handler_forwards_other_operations` states it as the semantics: a handler
+  that has a clause for only some operations is common (`handle Log { fn info(m) ...
+  }`, about 200 files of the tiers), so a `typeck` error would reject valid programs.
+  A closure in such a handled body and a handler with no clause nested in another one
+  with no clause keep the old capability (the old pipeline checks such a program).
+- Tests: `crates/weft-sema/tests/scope.rs` (`a_callee_with_no_ir_gets_the_worst_case_of_its_declaration`,
+  `the_note_of_a_fallback_names_the_body_that_the_fact_generator_does_not_support`,
+  `a_variant_payload_of_no_field_or_of_more_fields_is_w0121`,
+  `a_handler_with_no_clause_for_an_operation_passes_it_on`); corpus
+  `tests/programs/181_variant_payload.wf` (W0121), `182_handler_no_clause.wf` (W0702
+  for an operation that the handler passes on, and the clean cases),
+  `183_no_ir_callee.wf` (the worst case, with `old:` markers); `weft-check`
+  `ir_handlers.rs`: `g_row_struct.wf` (a callee with a type error) is in scope now.
+- The fallbacks, before (77efbd0) and after, tier 1 / tier 2, by the note of
+  `weft check` (scratchpad `r0b/before-t*.tsv`, `after-t*.tsv`): C3 11/46 to 0/0, E6
+  1/312 to 0/0, P1 1/1 to 0/0, N1 5/0 to 0/0, I1 1/1 to 0/0, C1 40/191 to 39/106. The
+  programs whose first failing body was one of these and that still fall back now show
+  their own reason: E1 52/3647 to 53/3669, D2 33/2520 to 33/2538, D3 29/54 to 34/59,
+  C2 16/100 to 17/103, D4 19/114 to 19/117, E2 10/20 to 10/22, E5 3/11 to 3/14, A2 2/8
+  to 2/9. Total 331/7770 to 318/7382. 14 programs of tier 1 and 389 of tier 2 come
+  into scope. Each one but `redteam/crash/c02.wf` (I1, with no `main`; both pipelines
+  accept it) has an error of `typeck` or W0303, so the `ir` pipeline accepts none of
+  them (tier 1: 10 `changed`, 4 `same`; tier 2: 282 `changed`, 104 `same`, 3
+  `moved`). One program of each tier goes out of scope (`r3/interp/probe/k6_http_once.wf`: the closure of `http.serve`
+  calls `take`, a callee with a type error, and the worst case of `take` makes the
+  closure a C1 case of stage R0f).
+- Gates: tier 1 0 blockers (3602 same, 10 open, 246 fixed, 1 new-fp, 101 lost-clean,
+  125 moved, 449 changed; the 19 more `changed` have W01xx in both pipelines, ledger
+  entry of F8; the new `fixed` is `182_handler_no_clause.wf`); the old records of the 5
+  `hb` probes (W0121) and of the 3 new corpus files are new in
+  `tests/gate/baseline-tier1.jsonl`. Tier 2 (2 workers) 0 blockers after a `moved`
+  entry for 2 mutants of `113_returned_closures.wf`; the old records of tier 2 do not
+  change: 43735 same, 10 open, 88 fixed, 12 new-fp (0.096 %, the rows of C1), 0
+  lost-fault, 2476 lost-clean, 1605 moved, 9467 changed. Fact oracle tier 1 0 failures
+  (the 7 faults of C3). Sigdiff tier 1 0 rows with no entry (a `sig` entry for the callers of a callee with no IR in 52
+  programs, and one for the rows of a handler that passes an operation on). The review
+  script of group E (`ereview/ev.sh`) on the 403 programs that come into scope: 0
+  HOLE (278 rejected by both pipelines with no fault, 123 rejected with a fault of the
+  oracle, 2 accepted with no fault: the two copies of `redteam/crash/c02.wf`).
+- Open: the baselines `tests/gate/baseline-c3.jsonl` and `baseline-c3-tier2` keep the
+  `ir` records of C3; R0z writes the new ones. A callee with no IR makes each caller
+  perform each effect of the program, so its W0702 lines are noise next to the type
+  error. A handler with no clause for an operation still falls back in two shapes: a
+  closure in its handled body that performs the operation (a perform through a
+  captured capability), and a handler with no clause nested in another one of the
+  same effect with no clause.
+
 #### R1 Standalone `typeck`, part 1
 
 - Depends on: C3 and one review round.
@@ -1936,7 +2051,7 @@ with the group forced on, report only).
 
 #### R3 Remove the old fact generator
 
-- Depends on: R2.
+- Depends on: R2 and R0z.
 - Read: ADR 0012 (D20).
 - Goal: one fact generator.
 - Files: delete `crates/weft-sema/src/body/`, `crates/weft-sema/src/thir/record.rs`,
@@ -1946,13 +2061,14 @@ with the group forced on, report only).
   the closure summary of `Ty::Fn` and `fn_joins` in `crates/weft-sema/src/types.rs`,
   W0707 and W0704 in `crates/weft-check/src/codes.rs` (their texts say "no longer
   reported" or the codes go, with the test `every_code_has_a_test` updated),
-  `crates/weft-gate` (the `old` side becomes the committed baseline of C3).
-- Tests first: the gate compares the new pipeline with the committed C3 snapshot
-  (`tests/gate/baseline-c3.jsonl`): no difference.
+  `crates/weft-gate` (the `old` side becomes the committed baseline of R0z).
+- Tests first: the gate compares the new pipeline with the committed R0z snapshot
+  (the baselines of tiers 1 and 2 that stage R0z writes, with 0 fallbacks): no
+  difference.
 - Do: delete; fix the imports; update `CLAUDE.md` ("Fact generation:
   `crates/weft-sema/src/irbuild/`, `analysis/`, `factgen/`").
-- Gate: the common gates; tier 2 against the C3 snapshot.
-- Exit: `body/` is gone; no gate difference.
+- Gate: the common gates; tier 2 against the R0z snapshot.
+- Exit: `body/` is gone; no gate difference against the R0z baseline.
 
 #### R4 Remove the AST compiler of the interpreter
 
@@ -2026,6 +2142,7 @@ gate and the exit of its parent, limited to its group of differences.
 | C1.6 | C1.5 | issue #71: holes C1-HA, C1-HB and C1-HC of the review of C1.5 (lost-fault W0503 / none; older than C1; the old pipeline catches HB and HC, and misses most HA forms). In each hole a `once` closure runs a second time after a `multi` operation resumes two times. HA and HB (cause): the flag `once` of the variable of a local of a function type came only from the old analysis (`binding_props_of`), which does not follow a closure through a destructure of a call result, a projection of a call, a binding of a `match` arm, a temporary, or a store into a part (`s.o = Some(g)`, `put(g, &s)`). Fix (`docs/ir.md` 5.20, "As built (stage C1.6)"): each template that gives a local a value calls `templates::mark_fn_once` (the analysis of the IR gives the flag, as `mark_fn_linear_in` gives `linear`), also for the parts `put_fns` and the changed places of a callee; this covers tuples, structs, enum payloads, nested structs, `Box` and `Vec`. HC (cause): the node of a value that `given_out` gives out got the `multi` of `Main` only, but a late run of a value of an argument is at `Ret` (the guess of the review about struct fields was wrong). Fix: `held_like_call` (`Main` and `Ret`). Six programs of the test data get one more W0503 at a line that has an error already (`opt_run`, `tup_run`, `struct_run`, `res_made`, `run_once_multi`, `give_out_field`: the callee holds the `once` argument across the late run). The review sets `r67b/att`, `r67b/v`, `r67b/z`: 0 HOLE (`e04_tuple_res.wf` stays with the old pipeline, which misses it too); the earlier sets: no change. The 8 tier-2 rows of #67 that wait: each variant v06, v07, v08, v11 and v12 is W0502 or W0503 now (not signed). Gates: tier 1 0 blockers; tier 2 new-fp 12 of 12548 (0.096 %, the rows of C1.5; each tier-2 row has the class of C1.5); reg_204 as C1.5; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. Probes `tests/gate/probes/fixes/c1/c16_*` (claims C1-HA, C1-HB, C1-HC), tests `ir_handlers` (data `handlers/c16/`) | done (C1.6) |
 | C2 | C1 | the fresh sweep (`weft-gate sweep`, 50 000 programs from each of the seed bases 1 000 000 and 2 000 000): lost-fault W0301 / none of a part of a tuple result into an `rc` object (gen4 seed 1002955; fix `apply::stated_places`, claim C2-TUPLE-RC, probes `sweep/c2_tuple_rc_*`); F3-6 (both pipelines accept; issue #73, ledger `edge`, probe `sweep/c2_spawn_linear_no_abort.wf`). The last sweep: 3 accepted faults, each the shape of issue #73. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 of 12548 (0.096 %), each class count as C1.6; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (C2) |
 | C3 | C2 | the switch of the defaults (`--facts=ir` with all groups, `--engine=ir`): no difference of the gate; the corpus markers give the `ir` result (`old:` for the old pipeline); the core IR targets O3-5, O3-6, R3RT2 and R3RT3 move to the corpus; the baselines `tests/gate/baseline-c3.jsonl` and `target/gate/baseline-c3-tier2.jsonl` (`tests/gate/baseline-c3-tier2.sha256`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %); fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `weft agree` on 220 programs; `sweep --n 2000 --seed-base 3000000` 0 accepted faults | done (C3) |
+| R0b | C3 | the fallbacks of a callee with no IR (C3, E6, P1, C1 with a type error), N1 and I1 (Phase R, R0b): a worst-case summary from the declaration, W0121, a handler with no clause passes the operation on. Fallbacks 331/7770 to 318/7382 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (R0b) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -2094,6 +2211,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | C2 (tier 2, groups A to F, default) | 46958 of 57393 | 44710 | 88 | 12 of 12548 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1) |
 | C3 (tier 1, groups A to F, the new defaults) | 4147 of 4531 | 3619 | 245 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 430 | 10 (as C2); each program has the class of C2; the 30 corpus files with `old:` markers and the 4 targets that moved to the corpus have the old records of C2 with other lines and paths only |
 | C3 (tier 2, groups A to F, the new defaults) | 46957 of 57393 (one more check timeout at the limit of 60 s on a loaded machine) | 44710 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1); each row has the class and the entry of C2 |
+| R0b (tier 1, the defaults) | 4163 of 4534 | 3602 | 246 (+1: `182_handler_no_clause.wf`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 449 (+19: programs that come into scope, W01xx in both) | 10 (as C3) |
+| R0b (tier 2, the defaults) | 47345 of 57393 | 43735 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1605 | 9467 | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

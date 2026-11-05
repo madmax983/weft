@@ -508,16 +508,14 @@ fn fallback_a(src: &str) -> Option<String> {
 }
 
 #[test]
-fn a_body_with_no_ir_and_no_error_for_it_keeps_the_program_out_of_scope() {
-    // Stage F10.1, hole H-B (review of stage F10). Each body has no IR, and
-    // the program reports no error for it. (A local that gets its type later
-    // in a loop gave a type error with no W01xx diagnostic or a conflict in
-    // the THIR tables before stage F10.1: such a body has IR now, test
-    // `ir_loops`.)
+fn a_variant_payload_of_no_field_or_of_more_fields_is_w0121() {
+    // Stage F10.1, hole H-B (review of stage F10): such a body had no IR and
+    // no error for it, so the old pipeline checked the program. From plan
+    // stage R0b `typeck` rejects the payload (W0121): the body has no IR for
+    // an error of the program, and the program stays in scope.
     let cases = [
         // A variant payload with two fields.
-        (
-            "enum E { A(u64, u64), B }
+        "enum E { A(u64, u64), B }
             fn main() {
                 let e = E.A(1, 2)
                 let v = Vec.new()
@@ -527,11 +525,8 @@ fn a_body_with_no_ir_and_no_error_for_it_keeps_the_program_out_of_scope() {
                 print(r)
                 print(e.A)
             }",
-            "variant payload",
-        ),
         // The same in a callee, next to an error of another body.
-        (
-            "enum E { A(u64, u64), B }
+        "enum E { A(u64, u64), B }
             fn show(e: &E) { print(e.A) }
             fn bad(v: &Vec<u64>) / mut(v) {
                 let r = &v[0]
@@ -539,13 +534,104 @@ fn a_body_with_no_ir_and_no_error_for_it_keeps_the_program_out_of_scope() {
                 print(r)
             }
             fn main() { let v = Vec.new(); v.push(1); bad(&v); show(&E.A(1, 2)) }",
-            "variant payload",
-        ),
+        // A variant with no field.
+        "enum E { A(u64, u64), B }
+            fn main() { let e = E.B; print(e.B) }",
     ];
-    for (src, why) in cases {
-        let note = fallback_a(src).unwrap_or_else(|| panic!("in scope: {src}"));
-        assert!(note.contains("has no IR") && note.contains(why), "{note}");
+    for src in cases {
+        assert_eq!(fallback_a(src), None, "{src}");
+        let a = analyze(src, opts(FactGen::Ir, Groups::of(Group::A)));
+        assert!(
+            a.diags.iter().any(|d| d.code == Code::W0121),
+            "{src}: {:?}",
+            diags(&a)
+        );
     }
+}
+
+/// The fallback note of `src` with the default options (each group on).
+fn fallback(src: &str) -> Option<String> {
+    let a = analyze(src, Options::default());
+    a.ir_scope.and_then(|s| s.fallback)
+}
+
+#[test]
+fn a_callee_with_no_ir_gets_the_worst_case_of_its_declaration() {
+    // Plan stage R0b. Each callee has a type error, so it has no IR. Its
+    // summary comes from its declaration (the worst case), not from the old
+    // inference, whose parts a summary cannot carry: the program stays in
+    // scope, and the type error rejects it.
+    let cases = [
+        // The callee keeps a function value (the old part `ret`).
+        "fn keep(f: fn()) -> fn() { let x: u64 = true; f }
+        fn main() { let v = Vec.new(); let g = keep(|| v.push(1)); g() }",
+        // The callee starts a task (the old parts `tasks` and `task_runs`).
+        "fn start(f: fn()) {
+            let x: u64 = true
+            scope { s =>
+                let t = s.spawn(f)
+                t.join()
+            }
+        }
+        fn main() { start(|| print(1)) }",
+        // The callee runs a closure that changes a place: the worst case
+        // runs it as a task that the facts follow.
+        "fn run(f: fn()) { let x: u64 = true; f() }
+        fn main() { let v = Vec.new(); run(|| v.push(1)); print(v.len()) }",
+        // A callee with a stated row.
+        "effect Log { fn log(n: u64) }
+        fn logs(f: fn()) / Log { let x: u64 = true; f(); log(1) }
+        fn main() { handle Log { fn log(n) { resume(()) } } in logs(|| print(2)) }",
+    ];
+    for src in cases {
+        assert_eq!(fallback(src), None, "{src}");
+        let a = analyze(src, Options::default());
+        assert!(
+            a.diags.iter().any(|d| d.code == Code::W0102),
+            "{src}: {:?}",
+            diags(&a)
+        );
+    }
+}
+
+#[test]
+fn a_handler_with_no_clause_for_an_operation_passes_it_on() {
+    // Plan stage R0b: the builder gives such an operation to the capability
+    // of the handler outside (an upvar of the site) or of the row, as the
+    // interpreter does. The program stays in scope.
+    let cases = [
+        "effect Log2 { fn l(m: String) }
+        fn f() { handle Log2 {} in l(\"x\") }",
+        "fn main() / io {
+            handle Log { fn info(m) { print(\"caught {m}\"); resume(()) } } in {
+                log.info(\"a\")
+                log.warn(\"b\")
+            }
+        }",
+        "effect Note { fn note(n: u64), fn flush() }
+        fn f() {
+            handle Note { fn note(n) { resume(()) } fn flush() { resume(()) } } in {
+                handle Note {} in note(3)
+            }
+        }",
+    ];
+    for src in cases {
+        assert_eq!(fallback(src), None, "{src}");
+        let a = analyze(src, Options::default());
+        assert!(a.diags.is_empty(), "{src}: {:?}", diags(&a));
+    }
+}
+
+#[test]
+fn the_note_of_a_fallback_names_the_body_that_the_fact_generator_does_not_support() {
+    // Plan stage R0b: the callers of a body that the fact generator does not
+    // support get the worst case of its declaration, so the note gives the
+    // reason of that body, not "a call of a function with ...".
+    let src = "effect Ask { fn ask() -> u64 }
+        fn first() -> u64 { kont() }
+        fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }";
+    let why = fallback(src).expect("out of scope");
+    assert!(why.contains("captured continuation"), "{why}");
 }
 
 #[test]
