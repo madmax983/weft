@@ -25,6 +25,7 @@ fn immovable() -> u8 / Choice {
 
 fn scope_binder() / Choice, async {
     scope { s =>
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F20 (class F20-HIDDEN, I3-8)
         let b = choose()   //~ old: W0503
         s.spawn(|| print(b))
     }

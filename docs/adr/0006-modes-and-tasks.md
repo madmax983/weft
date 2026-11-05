@@ -318,7 +318,9 @@ Status: accepted. Date: 2026-10-18.
   the spawn or the `fork`, and its signature does not tell the caller (ADR 0007).
 - What stays open until the core IR replaces the fact generation (review round 3).
   The checker does not enforce these rules yet. Each rule has an acceptance target in
-  `tests/ir_targets` (`docs/traceability.md`):
+  `tests/ir_targets` (`docs/traceability.md`). From plan stage C3, the `ir` pipeline (the
+  default) enforces each rule whose target moved to `tests/programs`; the old pipeline
+  (`--facts=old`) does not:
   - The footprint of stored values (O3-5). The rule: a task or a fork branch that
     runs a function value that can be a closure stored in a place (a field, an
     element or a part, also behind a reference, in a `Box`, or in a value that a
@@ -328,7 +330,7 @@ Status: accepted. Date: 2026-10-18.
     other branch conflicts with it (W0405). Today the checker finds this only for a
     container whose element type is the type of the closure, when the task itself
     reads the closure. ADR 0005 gives the details
-    (`tests/ir_targets/o3_5_field_closure_tasks.wf`).
+    (`tests/programs/177_o3_5_field_closure_tasks.wf`).
   - A spawn whose handle is not kept (a spawn in statement position, or `let _ =`)
     gives its handle to the scope. The scope joins the task and drops the result.
     The rule: such a spawn drops `T`, which is W0601 when `T` is linear, as for

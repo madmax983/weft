@@ -32,7 +32,8 @@ fn fork_moves() / par {
     let v: Vec<u64> = Vec.new()
     v.push(1)
     let r = &v[0]
-    fork(|| print(r), || take(v))   //~ old: W0405 ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F19 (class F19-W0405)
+    fork(|| print(r), || take(v))   //~ W0301 old: W0405
 }
 
 // An inner block ends while a task reads its local.

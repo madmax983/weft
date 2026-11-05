@@ -1,0 +1,11 @@
+// Gap G3 of stage C1.5: a run of a result comes after the run of the parameter that gives it. Clean twin: the value resumes one time (or no loop), so there is no error.
+effect Pick { multi fn pick() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn mk(m: fn(), g: fn()) -> fn() -> fn() { || { m(); g } }
+fn run2(w: fn() -> fn()) { let k = w(); k() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        run2(mk(|| { print(1) }, || print(take_v(v))))
+    }
+}

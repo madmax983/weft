@@ -13,8 +13,10 @@ fn closure_sets() {
 fn clause_sets() {
     let x: u64
     handle Note { fn note(n) { x = n
+ // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F19 (class F19-HIDDEN, moved lines)
  resume(()) } } in note(7)   //~ old: W0304
-    print(x)   //~ ir: W0304
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F19 (class F19-HIDDEN, moved lines)
+    print(x)   //~ W0304 old:
 }
 fn task_sets() / async {
     let x: u64

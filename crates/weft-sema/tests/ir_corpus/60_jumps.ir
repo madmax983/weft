@@ -1265,12 +1265,12 @@ body b42: closure c11; parent b41; cap_env e0; unwind_exit bb3
     Unreachable
   bb3 (cleanup):
     UnwindExit
-// W0315 at 101:9: `return` cannot leave a handled body
-// W0315 at 105:30: `return` cannot leave a handler clause
-// W0315 at 110:9: `return` cannot leave a scope body
-// W0315 at 117:65: `break` cannot leave a handled body
-// W0315 at 118:34: `continue` cannot leave a handler clause
-// W0315 at 119:33: `break` cannot leave a scope body
+// W0315 at 103:9: `return` cannot leave a handled body
+// W0315 at 107:30: `return` cannot leave a handler clause
+// W0315 at 112:9: `return` cannot leave a scope body
+// W0315 at 119:65: `break` cannot leave a handled body
+// W0315 at 120:34: `continue` cannot leave a handler clause
+// W0315 at 121:33: `break` cannot leave a scope body
 // closure_return_type: no IR: a type error
 // closure_break: no IR: a type error
 // loop_break_tail: no IR: a type error

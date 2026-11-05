@@ -159,6 +159,11 @@ pub enum Abort {
     Assert,
 }
 
+/// The key of a run of a value of the interface: the parameter (or the
+/// capture), true for a capture, and true for a run of a result of a run of
+/// the parameter (`Run::after`, stage C1.5).
+pub type RunKey = (u32, bool, bool);
+
 /// A function value of the interface that the body runs.
 ///
 /// It is a capture of a closure (stage F11), or a value that a parameter holds (stage F12: the
@@ -197,12 +202,13 @@ pub struct Run {
     /// clause of a handler of a caller can run while a task that the value
     /// starts runs.
     pub then: bool,
-    /// The values of the interface (by parameter, or by capture) whose run
-    /// comes before this run on a path, where code of a caller can resume
-    /// more than once (a re-entry edge after that run reaches this run;
+    /// The values of the interface (by parameter, or by capture, and a
+    /// result of a run of one: `(param, capture, result)`, gap G3 of stage
+    /// C1.5) whose run comes before this run on a path, where code of a
+    /// caller can resume more than once (a re-entry edge after that run reaches this run;
     /// hole C1-H1 of stage C1.1). If the caller gives such a value that can
     /// resume more than once, this run happens again (`many`).
-    pub after: std::collections::BTreeSet<(u32, bool)>,
+    pub after: std::collections::BTreeSet<RunKey>,
 }
 
 /// How a body runs a function value of its interface as a task.

@@ -1701,7 +1701,7 @@ with the group forced on, report only).
   - The cost criterion does not hold (§5, gate record C1; issue #62): tier 1 `check`
     time 2.2 times the old time, and 10617 of 37667 functions have more than 3 times the
     facts. Follow-up C1.4 fixes the time and the facts (§5; two functions of the abort
-    shape of `scale_ops.wf` stay over the bound of the facts, follow-up C1.5).
+    shape of `scale_ops.wf` stay over the bound of the facts; follow-up C1.4b brings them under it).
   - The independent reviews of C1 signed 13 of the 25 new tier-2 `lost-clean` rows. Their
     variants found holes C1-H1 (follow-up C1.1), C1-H2, C1-H3 (follow-up C1.2) and C1-H4
     (follow-up C1.3). 12 rows (p3038, p21058, p22405, p42423, p43731, p44831, p13470,
@@ -1725,6 +1725,49 @@ with the group forced on, report only).
 - Gate: the common gates; the common exit; tier 2.
 - Exit: the last sweep of 50 000 programs finds no accepted fault (realistic shapes) and
   no unledgered edge fault.
+- As built (stage C2, on top of C1.4b 0699a28):
+  - The generators take their seed as an argument (`tools/gate/gen/genmain.py`):
+    `GEN.py SEED` writes one program, and `GEN.py --seed-base B --n N --out DIR` writes
+    the programs of the seeds `B` to `B+N-1`. Run them with `python3 -I`. `gen3.py` and
+    `gen4.py` read their prelude from `tests/gate/probes/r3/oracle/lib/`; `mutate3.py`
+    mutates the corpus and the interpreter programs of the repository; `sweep4.py` gives
+    a random program of a larger set for each seed (`--all DIR` writes the round-3 set).
+  - `weft-gate sweep --n N --seed-base B` (`crates/weft-gate/src/sweep.rs`) divides `N`
+    among the five generators, checks each program with both pipelines in one analysis
+    (the `ir` record is `--facts=ir`), and runs the oracle with the `ir` engine in the
+    first three configurations (`--runs`, the seeds 1, 2 and 3) on each program that
+    the `ir` pipeline accepts (`--oracle-all`: on each program). It keeps each accepted
+    program that faults and each crash in `OUT/kept/`, writes the seed list
+    `OUT/programs.tsv` and the report, and removes the other programs. `oracle-run`
+    takes `--runs K`. Test: `crates/weft-gate/tests/sweep.rs`.
+  - Seed bases: the earlier rounds used seeds up to 102 999 (`r2/oracle/runs`,
+    `r3/oracle/runs`, `verify/quality/gen`, `verify/s5/S5c/mut`). Stage C2 used
+    1 000 000 (first sweep) and 2 000 000 (last sweep), each generator the seeds from
+    the base to the base + 9 999.
+  - First sweep (base 1 000 000, `--oracle-all`, 3 workers, 955 s, 52 programs/s; 170
+    programs/s without `--oracle-all`): 50 000 programs, 46 349 distinct, 12 092 that
+    `--facts=ir` accepts, 22 790 that fault, 4 accepted faults. gen4 seed 1002955: a
+    part of a tuple result with a stated place (`pair_of(&a.items)`, `-> (&u64 in v[],
+    u64)`) did not get the handle place of the `Rc` handle `a`, so a new value of `a`
+    did not make the part invalid (a read of a freed cell; the old pipeline rejects
+    it). Fix: `analysis::apply::stated_places` gives each stated part the handles of
+    its root, as for a whole result (`docs/ir.md` 6.7, "As built (plan stage C2)");
+    probes `tests/gate/probes/sweep/c2_tuple_rc_*` (claim C2-TUPLE-RC), test
+    `ir_preview` `a_part_of_a_tuple_result_depends_on_the_handles_of_the_argument`. The
+    sweep of gen4 with the same seeds then found no accepted fault. mutate3 seeds
+    1000291, 1001825 and 1006663: a spawn in statement position gives a linear `Tx`
+    with no `on abort` to a scope that aborts (F3-6, verdict "stays"; both pipelines
+    accept it); ledger class `edge`, issue #73, probe
+    `tests/gate/probes/sweep/c2_spawn_linear_no_abort.wf`.
+  - Last sweep (base 2 000 000, after the fix, `--oracle-all`, 3 workers, 940 s, 53
+    programs/s): 50 000 programs, 46 360 distinct, 12 151 that `--facts=ir` accepts,
+    22 674 that fault, 3 accepted faults (mutate3 seeds 2000223, 2000459 and 2001167),
+    each the shape of issue #73 (ledgered `edge`). Counts of each generator (generated,
+    `ir` accepts, faulted, accepted faults): gen3 10 000, 2 271, 6 256, 0; gen4 10 000,
+    3 556, 2 985, 0; mutate3 10 000, 1 674, 2 524, 3; gen 10 000, 1 953, 6 240, 0;
+    sweep4 10 000, 2 697, 4 669, 0. No crash. For information: 24 programs that the old
+    pipeline accepts and the `ir` pipeline rejects (4 fault, 20 do not fault), and
+    1 291 that only the `ir` pipeline accepts (none faults).
 
 #### C3 Switch the defaults
 
@@ -1759,6 +1802,102 @@ with the group forced on, report only).
 - Exit: the defaults are `ir`; the old pipeline stays behind its flags for one review
   round. Then the review round of the ship rule runs (outside this plan). Phase R starts
   when that round has no realistic blocker that the old pipeline does not also have.
+- As built (stage C3, on top of C2 6ac7a67):
+  - The defaults: `weft_sema::Options::default()` has `FactGen::Ir` and each group
+    (`DEFAULT_GROUPS`, A to F); `weft_interp::RunOptions::default()` has `Engine::Ir`;
+    the help text of `weft` says so. `--facts=old` and `--engine=ast` still work (tests
+    `cli.rs` `the_ir_pipeline_is_the_default_and_facts_old_still_works`,
+    `the_ir_engine_is_the_default_and_engine_ast_still_works`; `scope.rs`
+    `the_ir_pipeline_is_the_default`; `compile_ir.rs` `the_ir_engine_is_the_default`).
+    `weft_cli::check_path` uses the defaults. A program that the `ir` pipeline does not
+    cover goes to the old pipeline with the note of `--facts=ir`.
+  - The gate names its pipelines: the oracle (`oracle.rs`), D0 (`thir.rs`) and
+    `ir-build` analyze with `FactGen::Old`, as before, so the verdicts of the cache do
+    not depend on the default; `run`, `snapshot`, `sigdiff` and `sweep` named their
+    pipelines already (`Both`, `--facts`).
+  - The markers (`crates/weft-check/tests/common/mod.rs`): the codes after `//~` are
+    the result of the `ir` pipeline; the codes after the word `old:` are the result of
+    the old pipeline on that line (`//~ W0302 old: W0301`, `//~ W0301 old:`). The word
+    `ir:` is gone (test `no_corpus_marker_has_the_word_ir`). `programs.rs` checks the
+    corpus with the defaults (`corpus`) and with `--facts=old` (`corpus_old`). Each
+    line with `old:` has a comment line above it with the reason: the ledger class and
+    the stage (or the issue). 30 corpus files have such lines; each one matches the
+    ledger entry that the gate uses for the program. `120_on_abort_effects.wf` had only
+    the general entry of the bodies with no IR; it gets an entry of its own (class
+    `changed`, stage C3: W0601 and W0602 of a `Vec<fn()>` of a linear struct, W0118 in
+    both pipelines).
+  - Four core IR targets are done with the `ir` pipeline (the test `ir_targets` of
+    `weft-check` asks to move them): O3-5, O3-6, R3RT2 and R3RT3 moved to
+    `tests/programs/177_o3_5_field_closure_tasks.wf` to `180_r3rt3_held_refs_at_call.wf`,
+    with `old:` markers. O3-5 got W0403 markers at the four `fork` branches that run a
+    closure of a field that changes a captured local (ADR 0006, as for
+    `fork(|| v.push(2), ...)`); the two `ok_fork` functions run clean. F3-2 and F3-6
+    stay targets.
+  - Tests that test the old pipeline on purpose name it (`FactGen::Old`,
+    `--facts=old`, `Engine::Ast`): the unit tests of the old lowering
+    (`weft-sema/src/tests.rs`); the comparisons with the old pipeline (`scope.rs`,
+    `factgen_units.rs`, `driver.rs`, `limits.rs`, `scale.rs`
+    `the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts` and
+    `the_programs_of_this_file_check_with_the_ir_facts`); the bodies of the old lowering
+    in the preview (`ir_preview.rs`) and in `ir_ty.rs`; the B6 lints for each old
+    function (`hypotheses.rs`; the components of the `ir` pipeline have their own test);
+    the texts of the old lowering (`body_texts.rs`: 4 tests, `diagnostics.rs`: 6,
+    `weft-check` `w0301_says_why_the_owner_is_gone`, `units.rs`: the hints of W0702 of
+    a function with an unknown effect in its signature); the work counts of the
+    checker on the shapes of the old facts (`scale.rs`: the causes of W0301, QA4, QA7,
+    QA8); the counts of `weft facts` in the gate test `snapshot.rs`; the guard texts and
+    the oracle of the AST compiler (`guards.rs`, `compile_ir.rs`
+    `a_payload_place_of_a_variant_reads_the_payload_or_faults`). `semantics.rs`
+    `unsigned_underflow_is_an_error` checks both engines; `weft-interp` `programs.rs`
+    `static_corpus_runs` lets `main` of a program that the checker rejects stop with an
+    oracle fault (164).
+  - The oracle caches: the interpreter sources changed (`Engine::Ir` is the default of
+    `RunOptions`), so stage C3 computed the caches of tiers 1 and 2 for both engines
+    again. Each verdict is the verdict of C2 (tier 1: 4497 programs with the same text,
+    and the 34 changed files by path; tier 2: 57393 programs), except
+    `r3/quality/fuzz/o11/cur.wf` (tier 2), `benign` at C2 and `timeout` at C3 on both
+    engines, also alone on one worker (the run is near the limit of 10 s).
+  - The old records: the baseline of tier 1 (`baseline-tier1.jsonl`) is written again
+    for the 34 changed files only: with the lines mapped through the comment lines and
+    the new paths, each old record (diagnostics, violations, counts, kind) is the
+    record of C2. Each other record is the same. Tier 2: 0 differences against
+    `target/gate/baseline-tier2.jsonl` (5 unknown, as C2).
+  - The `ir` baselines for stages R2 and R3: `tests/gate/baseline-c3.jsonl` (the `ir`
+    snapshot of tier 1, `snapshot --tier 1 --facts ir`, in the committed form: no time;
+    4530 ok, 1 error: `badutf.wf`) and `target/gate/baseline-c3-tier2.jsonl` (tier 2;
+    57377 ok, 5 timeout, 11 error; SHA-256 in `tests/gate/baseline-c3-tier2.sha256`).
+  - Gates: tier 1 0 blockers (each class count as C2; the warnings of C2); tier 2 (2
+    workers) 0 blockers, new-fp 12 (0.096 %), each row with the class and the entry of
+    C2; fact oracle tier 1 0 failures (16 timeouts, C2: 15); sigdiff tier 1 31642 same,
+    6067 with an entry, 0 with no entry (as C2); `weft agree` (the defaults) agrees on
+    the 155 corpus files, the 61 interpreter programs, the examples and the packages;
+    `weft-gate sweep --n 2000 --seed-base 3000000`: 576 accepted, 0 accepted faults, 0
+    crashes; IR goldens: `60_jumps.ir` has other lines in its W0315 notes, and the four
+    moved targets have goldens.
+  - `weft run` and `weft test` with the defaults and with `--engine=ast` on the corpus,
+    the interpreter programs and the examples that the checker accepts: each program
+    has the same exit code on both engines; the 7 programs that fail on both are the
+    failures that the programs show (`fail`, `assert`, an integer underflow of
+    `int_width.wf`, `06_http.wf` with no client, `display.wf` reads a file by a path
+    relative to its crate).
+  - The engine note of the stage text: the ledger `engine` entry of p1, p2 and p9
+    (class `choice-a`) now says that the IR engine is the default and the reference
+    semantics, and what the AST engine does (checked: p1 prints 6, p2 and p9 read a
+    freed cell with the oracle, `r.hp * { v.clear(); 1 }` stops with "a place does
+    not exist (the value changed shape)"; the IR engine prints 2, 2, `1 1` and 1).
+  - Issues: #15 (O3-10), #17 (O3-12), #50 (R3-1, R3-2) and #68 (G4) are fixed in the
+    default pipeline (their repros give the result of the issue; the old pipeline keeps
+    the old result). #47: the W0601 is fixed (F20.1); the W0602 of
+    `verify/s5/R3x/p2/h6_option_closure.wf` stays (`new-fp`, `precision`, ledger issue
+    47).
+  - Open: the `ir` pipeline gives other texts in 13 tests of diagnostic texts (the
+    tests name the old pipeline); on the shapes of `scale.rs`, the work of the checker
+    on the `ir` facts is not linear (`nested_wildcard_places_check_quickly` with 1000
+    calls: 1 001 000 overlaps, `walk in a line`: 40 401 for 200 calls, 160 801 for
+    400; the causes of W0301: `move part` 4200 searches for 1000 uses); the IR engine
+    gives other guard texts for an unchecked program (a moved `Vec`: "a `Vec` is
+    needed here"), and in the IR `let (a, b) = q` through a reference binds references,
+    so the race detector sees no read where the AST engine copies the parts.
 
 ### Phase R: removal
 
@@ -1882,7 +2021,11 @@ gate and the exit of its parent, limited to its group of differences.
 | C1.3 | C1 | hole C1-H4 of the third review of C1 (lost-fault W0502, W0503 / none; the form through a callee is a C1 regression, the direct call is older): a closure performs a `multi` operation through a captured capability, then runs or gives out a `once` closure (a capture, a parameter). Fix: the blocks after such a perform are in a cycle of the closure body (`frames::captured_multi_nodes`, `Cycles::add_captured`; no re-entry edge), a `ByMove` capture is a value in the value of the closure (a run again moves the closure), and a value call gives out a `once` closure of an argument or a capture again (`templates::captures_given_out`, `given_out`). Probes `tests/gate/probes/fixes/c1/h4_*` (claim C1-H4), tests `ir_handlers` (`h4_*.wf`); `c1sign/v3` and the self-attack `c1/att6`: 0 HOLE (2 old misses of fallback programs stay) | done (C1.3) |
 
 | C1.4 | C1 | the cost criterion (§2.7.4, issue #62). Causes: each test of the chain of a `match` gave each variant test variable of the scrutinee a new value (`rebound_at`, `points_into`: quadratic); rows that no rule reads (the `rebound_at`, `empty_at`, `uses`, `scope_end` of temporaries of plain data, the `reads_at` and `owner` rows of place trees that no reference or task reaches, edges through nodes with no fact, the places of such trees); quadratic passes (`handlers::exposed` built the predecessors of the whole graph for each use of a clause, `late_uses` read all rows for each use, `frames::cyclic` walked from each block, `Weights::count` read all runs for each handler, `handlers::spliced` for each clause, `receiver_ref` searched the body for each call, `Vars::variant_tests` searched its list for each key, `sig::Inferred::join` compared each changed place with each other one, `clause::finish_handle` walked the parent chain for each local, the type table copied its effects for each body, `State::remove_bodies` read each local, and a join of states copied the chunks that it did not share). Fixes: a test binds only the `W` variables of the variants that its `Switch` selects (`templates::selected_variants`); `factgen::prune` (`docs/ir.md` 6.2; ADR 0013); indexes for the passes, Tarjan's components, shared chunks and shared type declarations. The verdicts do not change (tier 1: each program has the same diagnostics and violations; `agreement_random` `pruned_facts_give_the_same_violations`). Test `scale.rs` `the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts` | done (C1.4) |
-| C1.5 | C1.4 | the facts of the abort shape of `verify/s5/S5a/x/p/scale_ops.wf` and `s5r/p/scale400.wf`: `handlers::unbound_at_aborts` gives each captured local of a handled body that no path to an abort has assigned a new value at the `AbortValue` node of each such abort (a quadratic number of `rebound_at` rows: 22.6 and 6.4 times the old rows). A form with fewer rows must keep the precision of `s5r/p/scale400.wf` (a new value only where an invalidation of the places of the local can reach the abort) | open |
+| C1.4b | C1.4 | the rows of `unbound_at_aborts` (#62): the facts of the abort shape of `verify/s5/S5a/x/p/scale_ops.wf` and `s5r/p/scale400.wf`: `handlers::unbound_at_aborts` gives each captured local of a handled body that no path to an abort has assigned a new value at the `AbortValue` node of each such abort (a quadratic number of `rebound_at` rows: 22.6 and 6.4 times the old rows). Fix (`docs/ir.md` 6.2, "As built (plan stage C1.4b)"): the generator keeps the rows (the precision of `scale400.wf` stays), and a last step of the prune, `share_new_values`, puts the rows of the nodes that lead to one node and give nested sets of variables new values on one chain of new nodes, with one row for each variable; the module text of `factgen/prune.rs` gives the argument for each rule that reads `rebound_at`. No rule of the spec changes. Rows: `scale_ops.wf` `many` 1 154 311 to 30 061 (0.59 times the old rows), `scale400.wf` `many` 87 861 to 8 061 (0.59 times); `check` CPU time of `scale_ops.wf` 7.6 s to 4.4 s (old 0.8 s), of `scale400.wf` 0.50 s to 0.34 s (old 0.07 s). Quadratic passes of the profile (callgrind) that this stage fixes: the order of the work list of `handlers::assigned`, `clause::captured_locals` for each abort (now once for each body), a copy of a large value for each join that does not change it (`Tree::includes`), and a copy one by one of the locals of a chunk that the other state has none of (`Chunked::adopt_missing`, the kept values along a cleanup chain). Open: a call of a closure local with `n` closure values computes `reach_refs` of the callee for each value (`transfer::value_out_ty`, `apply_value`); the shared search of `rules::invalidation` visits a quadratic number of nodes on this shape (as at C1.6); the effect inference of the old lowering (`body::Lower::join_fn`). Gates: tier 1 `snapshot --facts ir` the same diagnostics and violations as C1.6 for each of 4526 programs (tier 2: each of 57393); tier 1 0 blockers, each class and each row as C1.6; tier 2 (2 workers) 0 blockers, new-fp 12, the list of the programs that are not `same` as C1.6; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `weft agree --facts=ir` agrees on the corpus, the interpreter programs and the examples. Functions over the bound of ADR 0013: 0 (C1.6: 2). Tests: `agreement_random` `shared_new_values_give_the_same_violations`, `scale.rs` (the abort shape in the row bound), `prune::tests` | done (C1.4b) |
+| C1.5 | C1.3 | the reviews of C1.3: holes C1-H5 and C1-H6, gaps G1 to G5 (lost-fault W0502, W0503 / none; G1 and G4 are older than C1, the old pipeline misses G4). The rule of #56 is an allow-list now (`docs/ir.md` 5.20, "As built (stage C1.5)"): a run of a value of the interface is `many` where a cycle or a re-entry edge reaches it, except where the exceptions E1 to E4 hold, with a proof sketch. Step 1 restored the rule of ec00112 (each re-entry edge makes the runs after it `many`); step 2 fixed the gaps: G1 a nested body runs again where its site is in a cycle (`Cycles` reads the chain of sites), G2/H6 the walk after a row goes through the spliced graph (into a nested body, up to its site), H5 a closure that a callee made holds the values of its captures (`made_held` in `captures_given_out`, `capture_fns`), G3 the key of a run has the part `result` and a result of a closure gives back the values that the closure holds, G4 (issue #68) a stated row is no bound for `multi` of code of a caller, G5 a key with no values is `multi` and the test reads the values that each value runs (`Apps::inner`); step 3 brought the precision back (E1 to E4; a run after a value of the interface of the caller gets its key in `after`, not `again`). The two parts of the analysis that do not find the rows of a body (a clause body, a handler in a closure body) stay with the old pipeline; tests pin both fallbacks. Tier-2 new-fp: 85 after step 1, 85 after step 2, 12 after step 3 (the 12 rows of C1). The 4 rows of the review of issue #67 with a condition are signed (each H5, H6 and H6c variant is W0502 or W0503). Cost of G4: W0503 at 5 control lines of `39_multi_params.wf` and `81_generic_holds.wf` (marker `ir:`), and 3 tier-2 rows that do not run. Probes `tests/gate/probes/fixes/c1/c15_*` (claims C1-G1, C1-H5, C1-H6, C1-G3, C1-G4), tests `ir_handlers` (data `handlers/c15/`) | done (C1.5) |
+| C1.6 | C1.5 | issue #71: holes C1-HA, C1-HB and C1-HC of the review of C1.5 (lost-fault W0503 / none; older than C1; the old pipeline catches HB and HC, and misses most HA forms). In each hole a `once` closure runs a second time after a `multi` operation resumes two times. HA and HB (cause): the flag `once` of the variable of a local of a function type came only from the old analysis (`binding_props_of`), which does not follow a closure through a destructure of a call result, a projection of a call, a binding of a `match` arm, a temporary, or a store into a part (`s.o = Some(g)`, `put(g, &s)`). Fix (`docs/ir.md` 5.20, "As built (stage C1.6)"): each template that gives a local a value calls `templates::mark_fn_once` (the analysis of the IR gives the flag, as `mark_fn_linear_in` gives `linear`), also for the parts `put_fns` and the changed places of a callee; this covers tuples, structs, enum payloads, nested structs, `Box` and `Vec`. HC (cause): the node of a value that `given_out` gives out got the `multi` of `Main` only, but a late run of a value of an argument is at `Ret` (the guess of the review about struct fields was wrong). Fix: `held_like_call` (`Main` and `Ret`). Six programs of the test data get one more W0503 at a line that has an error already (`opt_run`, `tup_run`, `struct_run`, `res_made`, `run_once_multi`, `give_out_field`: the callee holds the `once` argument across the late run). The review sets `r67b/att`, `r67b/v`, `r67b/z`: 0 HOLE (`e04_tuple_res.wf` stays with the old pipeline, which misses it too); the earlier sets: no change. The 8 tier-2 rows of #67 that wait: each variant v06, v07, v08, v11 and v12 is W0502 or W0503 now (not signed). Gates: tier 1 0 blockers; tier 2 new-fp 12 of 12548 (0.096 %, the rows of C1.5; each tier-2 row has the class of C1.5); reg_204 as C1.5; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. Probes `tests/gate/probes/fixes/c1/c16_*` (claims C1-HA, C1-HB, C1-HC), tests `ir_handlers` (data `handlers/c16/`) | done (C1.6) |
+| C2 | C1 | the fresh sweep (`weft-gate sweep`, 50 000 programs from each of the seed bases 1 000 000 and 2 000 000): lost-fault W0301 / none of a part of a tuple result into an `rc` object (gen4 seed 1002955; fix `apply::stated_places`, claim C2-TUPLE-RC, probes `sweep/c2_tuple_rc_*`); F3-6 (both pipelines accept; issue #73, ledger `edge`, probe `sweep/c2_spawn_linear_no_abort.wf`). The last sweep: 3 accepted faults, each the shape of issue #73. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 of 12548 (0.096 %), each class count as C1.6; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (C2) |
+| C3 | C2 | the switch of the defaults (`--facts=ir` with all groups, `--engine=ir`): no difference of the gate; the corpus markers give the `ir` result (`old:` for the old pipeline); the core IR targets O3-5, O3-6, R3RT2 and R3RT3 move to the corpus; the baselines `tests/gate/baseline-c3.jsonl` and `target/gate/baseline-c3-tier2.jsonl` (`tests/gate/baseline-c3-tier2.sha256`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %); fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `weft agree` on 220 programs; `sweep --n 2000 --seed-base 3000000` 0 accepted faults | done (C3) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -1941,6 +2084,16 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | C1.3 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %, as C1) | 2476 (2464 signed; 12 wait: the 7 refused rows and the 5 whose signature the third review withdrew) | 1608 | 8471 | 10 (as C1.1) |
 | C1.4 (tier 1, groups A to F, default) | 4106 of 4490 | 3604 | 240 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 124 | 411 | 9 (as C1.1); each program has the class and the diagnostics of C1.3 |
 | C1.4 (tier 2, groups A to F, default) | 46958 of 57393 | 44728 | 88 | 12 of 12548 (0.096 %, as C1) | 2476 (12 wait, as C1.3) | 1608 | 8471 | 10 (as C1.1); the classes and the blockers of C1.3 |
+| C1.5 (tier 1, groups A to F, default) | 4127 of 4511 | 3610 (+8 probes; `81_generic_holds.wf` and the copy of `h_multi.wf` leave) | 242 (+2: `c15_g_row_fwd_b`, `c15_h6_oldmiss_min_b`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 (+1: `r2/redteam/p/h_multi.wf`, G4, ledgered) | 423 (+12: 11 `c15` probes and `81_generic_holds.wf` of G4, ledgered) | 9 (as C1.1) |
+| C1.5 (tier 2, groups A to F, default) | 46958 of 57393 | 44710 (-18: G4, mostly mutants of `39_multi_params.wf` and `81_generic_holds.wf`; ledgered) | 88 | 12 of 12548 (0.096 %, the rows of C1) | 2476 (2468 signed; the 8 rows that the review of issue #67 refused wait) | 1610 (+2: G4, ledgered) | 8487 (+16) | 10 (as C1.1) |
+| C1.6 (tier 1, groups A to F, default) | 4142 of 4526 | 3615 (+5: the 4 `c16` clean probes and `c16_hb_store_b`) | 245 (+3: `c16_ha_tuple_b`, `c16_ha_proj_b`, `c16_ha_nested_b`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 430 (+7: the other `c16` probes, ledgered) | 9 (as C1.1) |
+| C1.6 (tier 2, groups A to F, default) | 46958 of 57393 | 44710 | 88 | 12 of 12548 (0.096 %, the rows of C1; each row and class as C1.5) | 2476 (2468 signed; the 8 rows of issue #67 wait) | 1610 | 8487 | 10 (as C1.1) |
+| C1.4b (tier 1, groups A to F, default) | 4142 of 4526 | 3615 | 245 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 430 | 9 (as C1.1); each program has the class, the diagnostics and the violations of C1.6 |
+| C1.4b (tier 2, groups A to F, default) | 46958 of 57393 | 44710 | 88 | 12 of 12548 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1); each program has the class, the diagnostics and the violations of C1.6 |
+| C2 (tier 1, groups A to F, default) | 4147 of 4531 | 3619 (+4: the `sweep/c2_tuple_rc_*` probes; the `_b` probes are W0301 in both pipelines) | 245 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 430 | 10 (as C1.1, and `sweep/c2_spawn_linear_no_abort.wf`: `edge`, issue #73) |
+| C2 (tier 2, groups A to F, default) | 46958 of 57393 | 44710 | 88 | 12 of 12548 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1) |
+| C3 (tier 1, groups A to F, the new defaults) | 4147 of 4531 | 3619 | 245 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 430 | 10 (as C2); each program has the class of C2; the 30 corpus files with `old:` markers and the 4 targets that moved to the corpus have the old records of C2 with other lines and paths only |
+| C3 (tier 2, groups A to F, the new defaults) | 46957 of 57393 (one more check timeout at the limit of 60 s on a loaded machine) | 44710 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1); each row has the class and the entry of C2 |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts
@@ -1960,7 +2113,7 @@ the process; scripts `c14/cost3.py` and `c14/crit.py` of the scratchpad):
 | tier 1 `check`, wall time, old / `ir` | 41.2 s / 83.0 s (2.02 times) | 41.6 s / 65.9 s (1.59 times) |
 | rows of all functions, old / `ir` | 1 887 499 / 6 632 522 (3.51 times) | 1 887 499 / 2 465 536 (1.31 times) |
 | functions over 3 times the old rows (of 37 787) | 10 674 (1 468 with 20 or more old rows) | 493 (460 with 1 to 4 old rows; 26 with 20 or more) |
-| functions over 3 times the old rows plus 64 (the bound of ADR 0013) | 102 | 2 (`scale_ops.wf` `many`, 22.6 times; `s5r/p/scale400.wf` `many`, 6.4 times: follow-up C1.5) |
+| functions over 3 times the old rows plus 64 (the bound of ADR 0013) | 102 | 2 (`scale_ops.wf` `many`, 22.6 times; `s5r/p/scale400.wf` `many`, 6.4 times: follow-up C1.4b) |
 | `scale_ops.wf` `many`: rows; `check` time | 2 331 262 (45.7 times); 14.9 s (old 0.8 s) | 1 154 311 (22.6 times); 8.6 s |
 | `edge/chain*.wf`, `n100.wf` `f`, `154_unset_nested.wf` `mk_chain` | 36 to 42 times; 995 rows (old 1); 128 rows (old 2) | 0 or 1 row; 0 rows; 60 rows (in the fixed part) |
 
@@ -1976,7 +2129,21 @@ record of stage C1):
 | `handlers` (4000) | 1.9 s | 1.8 s | 0.4 s |
 
 The time criterion holds (1.65 times the old time). The facts criterion holds for each
-function but the two of follow-up C1.5. `scale.rs` and `limits.rs` pass with `--facts=ir`.
+function but the two of follow-up C1.4b. `scale.rs` and `limits.rs` pass with `--facts=ir`.
+
+Cost at C1.4b (the same method; the 4172 single-file programs of tier 1 in scope at
+C1.6; the two columns are measured one after the other on the same machine):
+
+| Measure | C1.6 (304883e) | C1.4b |
+| --- | --- | --- |
+| tier 1 `check`, CPU time, old / `ir` | 39.3 s / 63.4 s (1.61 times) | 35.3 s / 54.9 s (1.55 times) |
+| rows of all functions, old / `ir` | 1 891 878 / 2 469 068 (1.31 times) | 1 891 878 / 1 264 807 (0.67 times) |
+| functions over 3 times the old rows (of 37 942) | 493 (26 with 20 or more old rows) | 491 (24 with 20 or more old rows) |
+| functions over 3 times the old rows plus 64 (the bound of ADR 0013) | 2 | 0 (the largest: `116_rc_stores.wf` `main`, 453 rows, old 135) |
+| `scale_ops.wf` `many`: rows; `check` CPU time | 1 154 311 (22.6 times); 7.6 s (old 0.8 s) | 30 061 (0.59 times); 4.4 s |
+| `s5r/p/scale400.wf` `many`: rows; `check` CPU time | 87 861 (6.4 times); 0.50 s (old 0.07 s) | 8 061 (0.59 times); 0.34 s |
+
+The facts criterion holds for each function (issue #62).
 
 ---
 

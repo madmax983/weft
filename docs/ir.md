@@ -1541,24 +1541,15 @@ worst case in the body that runs it, but the caller gives the value and applies 
 summary there (part `runs`). Six changes keep that worst case out of the summaries and of
 the nodes of the caller.
 
-- #56. The part `multi` of a closure summary does not count a `multi_at` row that code of
-  a caller adds at a run node of a value of the interface (`Em::run_multi`,
-  `FnParts::run_multi`). `Run::multi` still gives the row of a value that the caller does
-  not know.
-- #56. A run node is a `dyn_rows` node of its own reason (`Handlers::real_rows`) only if
-  a summary other than such code is `multi`. The re-entry edges after a node of code of a
-  caller only still go into the facts and the cycles of the analysis, but they do not set
-  the flag `many` of the runs after them (`Cycles::add_code_rows_at`, `Cycles::has_strict`).
-  Instead each such run gets the part `after` (follow-up C1.1, hole C1-H1 of the review of
-  C1): the values of the interface whose run node of code of a caller reaches it
-  (`Cycles::code_from`, `factgen::runs_after`). Where a caller applies the summary
-  (`transfer::apply_runs`), a run happens again (`again`, no order) if a value that the
-  caller gives for a key of `after` can resume more than once: its summary is `multi`, or
-  it performs a `multi` operation through a captured capability. So
-  `run_both(|| { pick() }, || commit(t))` is W0502 again, and `run_both(|| print(0), ..)`
-  is not. A run of a capture of a closure that a callee made moves the value of the
-  closure for a `once` capture value there too (follow-up C1.2, hole C1-H2: `mk(m, g)`
-  gives `|| { m(); g() }`).
+- #56 (stage C1.5 replaces the rule of C1 to C1.3 with an allow-list; see "As built
+  (stage C1.5)" below). A run of a value of the interface is `many` where a re-entry
+  edge reaches it, except where the exceptions E1 to E4 hold. Each such run gets the part
+  `after` (follow-up C1.1, hole C1-H1 of the review of C1), and the caller decides if
+  the run happens again (`transfer::apply_runs`). So
+  `run_both(|| { pick() }, || commit(t))` is W0502, and `run_both(|| print(0), ..)` is
+  not. A run of a capture of a closure that a callee made moves the value of the closure
+  for a `once` capture value there too (follow-up C1.2, hole C1-H2: `mk(m, g)` gives
+  `|| { m(); g() }`).
 - Follow-up C1.2, hole C1-H3 (older than C1). A callee that gives a function value of an
   argument back or puts it into a place (part `ret.fns` with `RetFn::Param(i)`, or each
   argument for a made closure or a value that the summary does not know; part
@@ -1566,7 +1557,8 @@ the nodes of the caller.
   the caller can run it two times. The closure gets a variable that is live across a
   node of its own with the `multi` of the call node (`templates::given_out`, as
   `held_args` for the part `holds`): W0503. A value of a type parameter in `holds` has
-  its node from `held_args` already.
+  its node from `held_args` already. Stage C1.6 gives that node the `multi` of `Ret`
+  too (hole C1-HC).
 - Follow-up C1.3, hole C1-H4. A closure body that performs through a captured capability
   whose handler can resume more than once (`frames::captured_multi_nodes`) runs the code
   after the perform again on a second resume. The blocks after such a perform are in a
@@ -1603,6 +1595,165 @@ rejects each program, the `ir` pipeline accepted it, and the run leaks a linear 
 - A store of a linear closure into a function part of a local whose value was plain
   data (`cb.f = || unlock(l)` after `Cb { f: || print(0) }`): the store gives
   `overwrites` of the variable of the local, as a store of a linear part does.
+
+As built (stage C1.5, the reviews of C1 to C1.3: holes C1-H5 and C1-H6, gaps G1 to G5;
+issue #68). The rule of #56 is an allow-list now. A run of a value of the interface (a
+parameter, a capture, or a result of a run of one) is `many` if a cycle of the CFG or a
+re-entry edge reaches its block. It is not `many` only if each of the exceptions E1 to
+E4 holds. Each exception is a fact that the fact generator makes, not an assumption.
+
+The cycles (`analysis::widen::Cycles`):
+
+- G1. A handled body, a scope body and a clause body run in a frame of their own, at a
+  site block (the `handle` or the `scope`). `Cycles::has`, `Cycles::has_strict` and
+  `Cycles::code_from` read the chain of sites: a body runs again when its site block is
+  in a cycle (`while .. { handle .. in { g() } }`, also with `scope` and with a clause
+  that runs `g`). A nested body with no site in the component is in a cycle.
+- G2 (hole C1-H6). The walk after a row goes through the spliced graph of the component:
+  from a `handle` or a `scope` into the entry of the nested body (and of the clauses of
+  the handler), from a `Return` of a nested body to the normal successors of its site,
+  from an `UnwindExit` to the `unwind` block of the site (with none, to each `UnwindExit`
+  of the site body), and from a `resume` to the entry of the handled body of the clause.
+  The walk does not enter a closure body: the node that runs the closure applies its
+  summary.
+
+The keys and the caller (`transfer::apply_runs`):
+
+- G3. The key of a run is `(param, capture, result)` (`Run::after`). A run of a result
+  of a parameter comes after the run of the parameter that gives it, so its part
+  `after` has the key of the parameter (`fn run2(w) { let k = w(); k() }`). A closure
+  that a callee made and that gives back a capture gives the values that the operand
+  holds (`with_results`, `capture_fns`).
+- G4 (issue #68). `Run::multi` and `unknown::code_of_caller` do not read a stated row: a
+  value with no row can go into a place of a type with a row, and its effects pass
+  through (ADR 0005). Code of a caller can resume more than once if an effect of the
+  program has a `multi` operation.
+- G5. A key whose values the node does not know (no values, or no source) counts as a
+  key that can resume more than once. A value can resume more than once if its own app
+  can, or the app of a value that its first application reached (`Apps::inner`, at each
+  depth), or if it has no app.
+- Hole C1-H5. A closure that a callee made holds the values of its captures in its own
+  value: `templates::captures_given_out` reads them there (`made_held`), not from the
+  variable of the maker. A closure of another component gives a value that the analysis
+  does not know: it counts as a `once` value.
+
+The exceptions. A run r of a value of the interface at block b is not `many` only if:
+
+- E1. Each run node X of code of a caller whose re-entry reaches b in the spliced graph
+  is a run of a value of the interface, and the key of X is in `r.after`
+  (`Cycles::add_code_rows_at`, `Cycles::code_from`, `factgen::runs_after`).
+- E2. No strict row reaches b (`Cycles::has_strict`): no perform of a `multi` operation
+  through the row, no call whose summary can resume more than once, no local handler
+  whose clause resumes more than once (`add_handlers`), no captured capability of a
+  `multi` handler in a closure body (`add_captured`), no loop, no cyclic site block of an
+  enclosing body (G1), and no strict row in a nested body that reaches b (G2).
+- E3. Where a caller applies the summary, r happens again (`again`, no order; for a
+  `once` value of a made closure or of a `ByMove` capture also the move of the value of
+  the closure) if a key of `r.after` is a key that can resume more than once (G5). A
+  value of the interface of the caller itself (a parameter, a capture, or a result of
+  one) is code of a caller there too: the runs after it do not happen again, but their
+  values of the interface get its key in their part `after`. So the key goes up the
+  chain of callers to the caller that knows the value.
+- E4. A closure summary leaves out of its part `multi` only the `multi_at` rows of code
+  of a caller at a run of a capture or a parameter of the closure (`Em::run_multi`,
+  `FnParts::run_multi`). The row stays in the facts of the body. Each other row (a
+  perform, a callee, a clause, a nested body) stays in the part `multi`.
+
+Proof sketch: a second resume of a multi point M runs the code after M again. That code
+reaches b in one of these ways:
+
+1. M is a node of the body of r, or of a body that splices into it, or of a clause body
+   of a local handler. Then M is a row. A strict row makes b strict-cyclic (E2), and r
+   is `many`. A row of code of a caller puts its key into `r.after` (E1). The walk
+   follows each edge of the spliced CFG, so each path from M to b in the IR is a path of
+   the walk. A loop of an enclosing body runs the nested body again (G1, E2).
+2. M is inside a value v that a run node X of the body runs. The resume runs the rest of
+   v, then the code after X. The key of X is in `r.after` (E1), and the caller checks v
+   and each value that v runs (E3). A run of a result has its own key (G3). If the
+   caller does not know v (a value of its own interface), the runs after X get the key
+   of v in their part `after` at the caller, and the same argument holds one level up.
+3. M is inside a callee that is no value of the interface. Its summary is `multi` or
+   `unknown_multi`, so its call node is a strict row (E2). A value of the interface that
+   the callee runs is a run of the summary of the callee: the node applies its `after`
+   and its `many`, and the node itself gets `again`.
+4. M is in a caller, and the body waits at an operation of a handler of the caller. The
+   perform, or the call that performs, is a strict row (E2).
+5. M is in a task. A task runs on a stack of its own: a `multi` resume there does not
+   run the code of the parent again (O3-10, W0314).
+6. M is in a value with a stated row with no `multi` effect. The row does not count
+   (G4), so case 2 applies.
+
+For E4: the node that runs a closure applies the summary of the closure and the summary
+of each value that the closure runs (part `runs`). The row that the closure leaves out is
+the row of such a run. So the node of the caller gets `multi_at` from the summary of the
+value, a `dyn_rows` row if the value can resume more than once, and `Run::multi` for a
+value that the node does not know. The readers of the part `multi` of a closure summary
+are `apply::main`, `transfer::note_multi_apps` and the keys of `apply_runs` (G5 reads the
+values that the closure runs too).
+
+Two parts of the analysis do not find the rows of a body. They are safe only because the
+`ir` pipeline stops there (`AlphaError::Later`) and the old pipeline checks the program:
+
+- A clause body has no loop of new rows: `emit_clause` runs the analysis one time with
+  the cycles of the function. A row in a clause, or in a body that does not splice into
+  the body under analysis, stops the analysis ("a `multi` operation of a handler of a
+  caller in a clause (stage F16)", group D).
+- `frames::captured_multi_nodes` reads only the closure body itself. A handler in a
+  closure body stops the analysis ("a handler in a closure body (stage F16)", group D),
+  and a `scope` is in scope only in a body that splices into a function, a test or a
+  clause.
+
+A test pins each of these fallbacks (`ir_handlers.rs`), so a change of a fallback breaks
+the test. If a fallback goes away, the rows of the body must be found first.
+
+As built (stage C1.6, issue #71: holes C1-HA, C1-HB and C1-HC of the review of C1.5).
+The three holes are older than C1. In each hole, a `once` closure runs a second time
+after a `multi` operation resumes two times, and the `ir` pipeline accepted the program.
+
+- C1-HA and C1-HB (cause): the flag `once` of the variable `S` of a local came only from
+  the properties of the local (`Props::once`). For a local of a function type, the
+  builder joins the modes of the values that the old analysis gives the binding
+  (`binding_props_of`). The old analysis does not follow a `once` closure through a
+  destructure of a call result (`let (n, h) = mk(g)`, `let Pair(n, h) = mkp(g)`), a
+  projection of a call (`let h = mk(g).1`), a binding of a `match` arm, a temporary, or
+  a store into a part of a struct (`s.o = Some(g)`, `put(g, &s)`). So the local had no
+  `once_var`, and W0503 did not apply.
+- C1-HA and C1-HB (fix): the analysis of the IR gives the flag. Each template that gives
+  a local a value (`whole`, `part`, `element`, `through`, the part `put_fns` of a
+  callee, and a changed place of a callee that can take a function value of an
+  argument) calls `templates::mark_fn_once`, next to `mark_fn_linear_in`. If the value
+  can be a `once` closure (`transfer::once_value` of a value of its set `fns`, also in a
+  part: `Tree::flat`) and the type of the local has a function part, `S` gets
+  `once_var`. This holds for each form that puts the value into the local: a tuple, a
+  struct, an enum payload, a nested struct, a `Box`, a `Vec` and a temporary. The flag
+  is for the whole body, as in the old lowering: a local that gets the closure after a
+  `multi` node and is live across it is W0503 too (the old pipeline also rejects such a
+  program).
+- C1-HC (cause): `templates::given_out` (follow-up C1.2) gives a `once` argument that the
+  callee gives back or puts into a place a variable that is live across a node of its
+  own. That node got the `multi` of `Main` only (`generic::copy_held`). But a callee
+  that runs a value of an argument and then returns runs the value late: the run node
+  is `Ret` (`emit_apps`), and `Ret` has the `multi_at` row. So `fn f(m: fn(), g: fn())
+  -> Pair { m(); Pair { n: 1, h: g } }` gave no W0503. The guess of the review (no
+  function value in a struct field) was wrong: `ret.fns` has `Param(1)`.
+- C1-HC (fix): `templates::held_like_call` gives the node of the value the abort and the
+  `multi` of `Main` and of `Ret` (`given_out`, `captures_given_out`).
+
+The proof sketch above needs these base facts. Stage C1.6 makes them hold:
+
+- B1. If a local can hold a `once` closure at a node (in the state of the analysis, in
+  each part of its value), its variable `S` has `once_var`. A value that the analysis
+  does not know (`FnVal::Unknown`, a parameter, a capture) is not a `once` closure of
+  this body: the caller that knows it checks it (cases 2 and 3 of the proof).
+- B2. If a callee can give a `once` value of an argument or of a capture out (part
+  `ret.fns` or `put_fns`), the value has a variable that is live across a node with the
+  `multi_at` row of each node of the call that can resume more than once (`Main` and
+  `Ret`).
+
+Tests: `ir_handlers.rs` (data `handlers/c16/`). Probes `tests/gate/probes/fixes/c1/c16_*`,
+claims C1-HA, C1-HB and C1-HC. One review program stays with the old pipeline, and the
+old pipeline misses it too (`e04_tuple_res.wf`: the closure gives a capability out, group
+C).
 
 ### 5.21 Calls of function values [2.20]
 
@@ -2075,6 +2226,25 @@ a shorter path or another witness, and the ids of the places can change. The tes
 `agreement_random` (`pruned_facts_give_the_same_violations`) and `scale.rs`
 (`the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts`) check it.
 
+As built (plan stage C1.4b, issue #62): an abort to a local handler gives each captured
+local that no path assigned a new value at the `AbortValue` node of the abort (6.3,
+`handlers::unbound_at_aborts`). After `n` operations in a line the abort of operation
+`i` gives `n - i` locals a new value: `n (n + 1) / 2` rows of `rebound_at`
+(`verify/s5/S5a/x/p/scale_ops.wf`: 1.15 million rows for 1500 operations, 22.6 times
+the old rows). These nodes lead to one node, and their sets of variables are in a
+chain. A last step of the prune (`share_new_values`) puts the rows of such nodes on a
+chain of new nodes (kind `new values`): the node of each set goes to a new node with
+the variables of its set that the next smaller set does not have, then to the node of
+that set, and the last one to the successor. Each path from a node to its successor
+gives the same variables new values, and each variable has one row. A node takes part
+only if it has one successor and no row other than `rebound_at`, `uses`, `empty_at` and
+`reads_at`, and only the rows of a variable that is not `linear` move. The module text
+of `factgen/prune.rs` gives the argument for each rule that reads `rebound_at`
+(`invalid`, `moved`, `unset` forward; `live_in` backward; `live_out` only at a `multi`
+node). Then the nodes with no row leave the graph again. The test
+`agreement_random` (`shared_new_values_give_the_same_violations`) checks it on random
+facts with such fans of nodes, and `scale.rs` checks the rows of the abort shape.
+
 As built (plan stage F12, labels): diagnostics name a node by its label. Each node of a
 `Call` or a `Perform` (each phase, also on an abort path) has the label of its callee, as
 the old lowering: the name of the function item (`push`, not `Vec.push`), the local of a
@@ -2137,7 +2307,7 @@ the path of `q`: for each `Deref`, the place before it. An access of `q` reads t
 
 | Variable | For | Facts |
 | --- | --- | --- |
-| `S(l)` of each local `l` | moves, linear values, ends, owners, unset locals, the references of the whole value | `rebound_at` at each whole assignment and at the entry of a parameter; `uses` at each operand at or below `l`; `moved_at`; `scope_end` at `Dead(l)`; `unwound_at` on cleanup paths; `overwrites`; `empty_at`; `unset_at`; `owner(root(l), S(l))`; `points_into` of the values of the parts of `l` that have no `H` variable |
+| `S(l)` of each local `l` | moves, linear values, ends, owners, unset locals, the references of the whole value | `rebound_at` at each whole assignment and at the entry of a parameter, and, for a captured local that no path assigned, at the `AbortValue` node of an abort to a local handler (after the prune on a chain of nodes that the aborts share, 6.2, stage C1.4b); `uses` at each operand at or below `l`; `moved_at`; `scope_end` at `Dead(l)`; `unwound_at` on cleanup paths; `overwrites`; `empty_at`; `unset_at`; `owner(root(l), S(l))`; `points_into` of the values of the parts of `l` that have no `H` variable |
 | `H(l.q)` of each move path `l.q` that the body assigns on its own and whose type can hold a reference, a function value, a capability or a task | the references of a part (the part holders of today) | `rebound_at` at a new value of `l.q` or of `l`; `points_into` of the value; `uses` at each use of an overlapping place |
 | `U(l.q)` of each place field path that can have no value | W0304 for place fields | `unset_at` where the value is built in place; `rebound_at` at a store into it; `uses` at each read at or below it |
 | `C(x)` | the cell of a `ByRef` capture | see the roots |
@@ -2980,7 +3150,8 @@ As built (plan stage F15, `factgen/frames.rs`, `analysis/clause.rs`,
 - An abort to a local handler: each local of the body of the terminator that a closure
   captures (`Kept`, `ByRef`), that can hold a reference, and that no path from the entry
   to the terminator assigns binds at the `AbortValue` node (`rebound_at`, `empty_at`;
-  `handlers::unbound_at_aborts`). The analysis joins the values of a closure local of
+  `handlers::unbound_at_aborts`; as built C1.4b, the prune puts these rows on one chain
+  of nodes for the aborts that lead to one node, 6.2). The analysis joins the values of a closure local of
   the site over the paths, so after the `Landing` a run of a closure that the handled
   body made later used a local that the path never bound (D-NEWFP of the F14 preview:
   `s5r/p/scale400.wf`, `S5a/x/p/scale_ops.wf`). The same class with no handler (a
@@ -3609,6 +3780,14 @@ As built (plan stage F6, `crates/weft-sema/src/analysis/`):
   arguments (`Lower::group_arg_deps`): the handle places on the way to each argument,
   and the handle `h.*` of a reference argument to an `Rc` (or each handle below a
   reference argument whose pointee is `nonportable`).
+- As built (plan stage C2, `analysis::apply::stated_places`): each part of a tuple
+  result with stated places gets the same handles as a whole result. A stated place
+  with a `Param(i)` root gets the handle places on the way to argument `i`; a stated
+  place with a `Group` root gets the handles of the group. Before stage C2 a part got
+  only the places of its stated place, so in `let (r, _) = pair_of(&a.items)` with
+  `a: Rc<R>` and `pair_of(v: &Vec<u64>) -> (&u64 in v[], u64)`, a new value of `a` did
+  not make `r` invalid. The fresh sweep found this hole (gen4, seed 1002955; probes
+  `tests/gate/probes/sweep/c2_tuple_rc_*`). The old pipeline rejects these programs.
 
 As built (plan stage F10.2, `analysis::apply::stores`; hole H-C of the second review of
 stage F10): a callee can store a reference through a reference that its argument holds.

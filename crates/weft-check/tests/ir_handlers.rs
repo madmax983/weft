@@ -702,3 +702,295 @@ fn a_closure_that_resumes_two_times_runs_its_once_values_again() {
     check("h4_before_ok.wf");
     check("h4_move_ok.wf");
 }
+
+/// The codes and lines of the diagnostics of program `name` of
+/// `tests/data/handlers/c15/` with the `ir` pipeline and the default
+/// groups, and the reason of a fallback to the old pipeline (stage C1.5).
+fn c15_codes(name: &str) -> (Vec<(String, usize)>, Option<String>, String) {
+    stage_codes("c15", name)
+}
+
+/// The codes and lines of the diagnostics of program `name` of
+/// `tests/data/handlers/DIR/` with the `ir` pipeline and the default groups,
+/// and the reason of a fallback to the old pipeline.
+fn stage_codes(dir: &str, name: &str) -> (Vec<(String, usize)>, Option<String>, String) {
+    let file = format!("{dir}/{name}");
+    let src = program(&file);
+    let opts = Options {
+        facts: weft_sema::FactGen::Ir,
+        ..Options::from_markers(&src)
+    };
+    let a = analyze_source(&src, opts)
+        .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
+    let fallback = a.ir_scope.as_ref().and_then(|s| s.fallback.clone());
+    let mut got: Vec<(String, usize)> = check_analysis(a, &[])
+        .diags
+        .iter()
+        .map(|d| (format!("{:?}", d.code), line_of(&src, d.span.lo)))
+        .collect();
+    got.sort();
+    (got, fallback, src)
+}
+
+/// Checks program `name` of `tests/data/handlers/c15/` with the default
+/// groups: it is in scope, and its diagnostics are its markers.
+fn c15_check(name: &str) {
+    let (got, fallback, src) = c15_codes(name);
+    assert!(fallback.is_none(), "{name}: {fallback:?}");
+    assert_eq!(got, markers(&src), "{name}");
+}
+
+/// Checks program `name` of `tests/data/handlers/c15/`: the `ir` pipeline
+/// stops with a fallback whose reason holds `why`, and the old pipeline
+/// gives the markers.
+fn c15_fallback(name: &str, why: &str) {
+    let (got, fallback, src) = c15_codes(name);
+    assert!(
+        fallback.as_deref().is_some_and(|f| f.contains(why)),
+        "{name}: {fallback:?}"
+    );
+    assert_eq!(got, markers(&src), "{name}");
+}
+
+/// Gap G1 of stage C1.5: a loop around a `handle` or a `scope` runs the
+/// nested body again, and a loop around a `handle` runs its clause again. A
+/// `once` closure that the nested body or the clause runs is called twice
+/// (W0502). With no loop, there is no error.
+#[test]
+fn a_loop_around_a_nested_body_runs_the_body_again() {
+    for name in [
+        "loop_handle.wf",
+        "loop_scope.wf",
+        "loop_clause.wf",
+        "loop_handle_ok.wf",
+        "loop_scope_ok.wf",
+    ] {
+        c15_check(name);
+    }
+}
+
+/// Hole C1-H6 and gap G2 of stage C1.5: a resume of a value that the body
+/// runs inside a handled body or a scope body runs the code after the
+/// nested body again; a perform of a `multi` operation in a handled body
+/// runs a nested body after it again. A `once` closure that runs there is
+/// called twice. With a value that resumes one time, there is no error.
+#[test]
+fn a_resume_inside_a_nested_body_runs_the_code_after_it_again() {
+    for name in [
+        "h6_inner.wf",
+        "h6_inner_perform.wf",
+        "h6_two.wf",
+        "h6_code.wf",
+        "h6_code_scope.wf",
+        "h6_abort.wf",
+        "h6_oldmiss_min.wf",
+        "h6_inner_ok.wf",
+        "h6_inner_perform_ok.wf",
+        "h6_two_ok.wf",
+        "h6_code_ok.wf",
+        "h6_code_scope_ok.wf",
+        "h6_abort_ok.wf",
+        "h6_oldmiss_min_ok.wf",
+    ] {
+        c15_check(name);
+    }
+}
+
+/// Gap G3 of stage C1.5: a run of a result of a parameter comes after the
+/// run of the parameter that gives it. A result that holds a `once`
+/// closure (a capture of a closure of the caller, or of a closure that a
+/// callee made) runs again when the first run resumes two times. With a
+/// first run that resumes one time, there is no error.
+#[test]
+fn a_run_of_a_result_comes_after_the_run_that_gives_it() {
+    for name in [
+        "res_run.wf",
+        "res_made.wf",
+        "res_run2.wf",
+        "ret_after.wf",
+        "ret_after2.wf",
+        "res_run_ok.wf",
+        "res_made_ok.wf",
+        "ret_after_ok.wf",
+    ] {
+        c15_check(name);
+    }
+}
+
+/// Gap G4 of stage C1.5 (issue #68): a stated row is no bound for code of a
+/// caller. A value with no row goes on into a parameter whose row has no
+/// `multi` effect, and it resumes two times. With a value that resumes one
+/// time, there is no error.
+#[test]
+fn a_stated_row_does_not_hide_a_multi_operation() {
+    for name in [
+        "g_row_fwd.wf",
+        "g_row_ask.wf",
+        "g_row_local.wf",
+        "g_row_fwd_ok.wf",
+        "g_row_local_ok.wf",
+    ] {
+        c15_check(name);
+    }
+}
+
+/// The other counterexamples of the reviews of stage C1.5 (keys, recursion,
+/// rows, generics, values in data, tasks), their clean twins that the `ir`
+/// pipeline accepts, and three clean programs. (The twins that the `ir`
+/// pipeline rejects for a reason older than stage C1.5 are not here.)
+#[test]
+fn the_review_programs_of_stage_c15_keep_their_errors() {
+    for name in [
+        "dedup_key2.wf",
+        "dedup_key3.wf",
+        "dedup_key4.wf",
+        "dedup_key5.wf",
+        "dedup_key6.wf",
+        "rec1.wf",
+        "rec2.wf",
+        "rowcap_local.wf",
+        "rowcap_pass.wf",
+        "sim_mid.wf",
+        "tmo_mid.wf",
+        "put_after.wf",
+        "gen_id.wf",
+        "gen_box.wf",
+        "ref_out.wf",
+        "ref_vec.wf",
+        "vec_run.wf",
+        "opt_run.wf",
+        "tup_run.wf",
+        "struct_run.wf",
+        "task_after.wf",
+        "task_after2.wf",
+        "task_after3.wf",
+        "task_fork.wf",
+        "task_join.wf",
+        "dedup_key4_ok.wf",
+        "gen_id_ok.wf",
+        "gen_box_ok.wf",
+        "ref_vec_ok.wf",
+        "vec_run_ok.wf",
+        "opt_run_ok.wf",
+        "rowcap_local_ok.wf",
+        "rowcap_pass_ok.wf",
+        "sim_mid_ok.wf",
+        "tmo_mid_ok.wf",
+        "task_join_ok.wf",
+        "gen_k2.wf",
+        "nongen_k.wf",
+        "task_after3_clean.wf",
+    ] {
+        c15_check(name);
+    }
+}
+
+/// The fallbacks that make two gaps of the analysis of rows safe (stage
+/// C1.5, `docs/ir.md` 5.20): a row in a clause body, and a handler in a
+/// closure body, stop the `ir` pipeline, and the old pipeline rejects each
+/// program. If a fallback goes away, this test fails: the rows of the body
+/// must be found first. Four more review programs stop at other fallbacks
+/// (a task in a nested body, a capability that leaves its handler, a value
+/// that code of a caller can run on another thread).
+#[test]
+fn the_rows_of_clauses_and_closure_handlers_stay_with_the_old_pipeline() {
+    let clause = "a `multi` operation of a handler of a caller in a clause";
+    let handler = "a handler in a closure body";
+    c15_fallback("clause_m.wf", clause);
+    c15_fallback("clause_after.wf", clause);
+    c15_fallback("clause_after_m.wf", clause);
+    c15_fallback("cap_nested.wf", handler);
+    c15_fallback("h4_nested.wf", handler);
+    c15_fallback("h4_scope.wf", "a task in a nested body");
+    c15_fallback("dedup_key.wf", "a capability that leaves its handler");
+    c15_fallback("gen_k.wf", "code of a caller can run on another thread");
+    c15_fallback(
+        "g_row_struct.wf",
+        "code of a caller can run on another thread",
+    );
+}
+
+/// Checks program `name` of `tests/data/handlers/c16/` with the default
+/// groups: it is in scope, and its diagnostics are its markers (stage C1.6).
+fn c16_check(name: &str) {
+    let (got, fallback, src) = stage_codes("c16", name);
+    assert!(fallback.is_none(), "{name}: {fallback:?}");
+    assert_eq!(got, markers(&src), "{name}");
+}
+
+/// Hole C1-HA of stage C1.6: a `once` closure goes from a call result into a
+/// local through a destructure of a tuple or a struct, a projection of the
+/// call, or a binding of a `match` arm (also in a nested tuple, an enum
+/// payload, a `Box` and a `Vec`). The local is live across a value that
+/// resumes two times: W0503. With a value that does not resume two times,
+/// there is no error.
+#[test]
+fn a_once_closure_from_a_call_result_is_not_many() {
+    for name in [
+        "ha_tuple.wf",
+        "ha_struct.wf",
+        "ha_proj.wf",
+        "ha_arm.wf",
+        "ha_nested.wf",
+        "ha_enum.wf",
+        "ha_box.wf",
+        "ha_vec.wf",
+        "ha_tuple_ok.wf",
+        "ha_struct_ok.wf",
+        "ha_proj_ok.wf",
+        "ha_arm_ok.wf",
+        "ha_nested_ok.wf",
+        "ha_enum_ok.wf",
+        "ha_box_ok.wf",
+        "ha_vec_ok.wf",
+    ] {
+        c16_check(name);
+    }
+}
+
+/// Hole C1-HB of stage C1.6: a local gets a `once` closure by a store into a
+/// field (`s.o = Some(g)`), or by a callee that puts it into a field, a
+/// nested field, an enum payload or a `Vec` behind a reference argument. The
+/// local is live across a value that resumes two times: W0503. With a value
+/// that does not resume two times, there is no error.
+#[test]
+fn a_local_that_gets_a_once_closure_by_a_store_is_not_many() {
+    for name in [
+        "hb_store.wf",
+        "hb_put.wf",
+        "hb_hold.wf",
+        "hb_put_nested.wf",
+        "hb_put_enum.wf",
+        "hb_put_vec.wf",
+        "hb_store_ok.wf",
+        "hb_put_ok.wf",
+        "hb_hold_ok.wf",
+        "hb_put_nested_ok.wf",
+        "hb_put_enum_ok.wf",
+        "hb_put_vec_ok.wf",
+    ] {
+        c16_check(name);
+    }
+}
+
+/// Hole C1-HC of stage C1.6: a callee (a function item or a closure) runs a
+/// value that resumes two times, and then gives a `once` argument back in a
+/// struct, as its result, or in a field of a reference argument. The run is
+/// at the node `Ret` of the call, so the node of the given value gets the
+/// `multi` of `Ret` too: W0503. With a value that does not resume two times,
+/// there is no error.
+#[test]
+fn a_callee_gives_a_once_argument_out_again_after_a_late_run() {
+    for name in [
+        "hc_struct_out.wf",
+        "hc_put_field.wf",
+        "hc_ret_tmp.wf",
+        "hc_value.wf",
+        "hc_struct_out_ok.wf",
+        "hc_put_field_ok.wf",
+        "hc_ret_tmp_ok.wf",
+        "hc_value_ok.wf",
+    ] {
+        c16_check(name);
+    }
+}

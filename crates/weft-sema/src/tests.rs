@@ -11,6 +11,19 @@ use crate::{
     analyze, analyze_source, prelude_unit, Analysis, Options, Unit, PRELUDE_UNIT, ROOT_UNIT,
 };
 
+/// The options of the old pipeline (`--facts=old`). These unit tests test
+/// the old lowering (`body/`) and its effect inference (`infer.rs`): they
+/// read `Analysis::bodies` and the diagnostics of the old lowering (W0704,
+/// W0707). The default is the `ir` pipeline from plan stage C3, and the
+/// tests of the `ir` pipeline are in `tests/` (`factgen_units.rs`,
+/// `analysis_units.rs`, `scope.rs`).
+fn old_options() -> Options {
+    Options {
+        facts: crate::FactGen::Old,
+        ..Options::default()
+    }
+}
+
 /// The parsed prelude.
 fn prelude() -> Unit {
     prelude_unit().expect("the prelude parses")
@@ -28,7 +41,7 @@ fn unit(name: &str, src: &str) -> Unit {
 fn analyze_units(root: &str, deps: &[(&str, &str)]) -> Analysis {
     let mut units = vec![prelude(), unit("", root)];
     units.extend(deps.iter().map(|(n, s)| unit(n, s)));
-    analyze(&units, Options::default())
+    analyze(&units, old_options())
 }
 
 fn codes(a: &Analysis) -> Vec<(usize, String)> {
@@ -234,7 +247,7 @@ fn sig_of<'a>(a: &'a Analysis, name: &str) -> &'a crate::FnSig {
 #[test]
 fn effect_inference_reaches_a_fixpoint() {
     let units = vec![prelude(), unit("", &call_chain(3))];
-    let a = crate::analyze(&units, Options::default());
+    let a = crate::analyze(&units, old_options());
     assert_eq!(codes(&a), Vec::new());
     // Callees come first, so each function is lowered once. `f3` states its
     // effects, but it still infers the other parts of its signature.
@@ -248,7 +261,7 @@ fn effect_inference_reaches_a_fixpoint() {
 fn effect_inference_time_is_linear_in_a_call_chain() {
     let n = 300;
     let units = vec![prelude(), unit("", &call_chain(n))];
-    let a = crate::analyze(&units, Options::default());
+    let a = crate::analyze(&units, old_options());
     assert_eq!(codes(&a), Vec::new());
     assert_eq!(a.lowerings, n + 1);
     assert!(sig_of(&a, "f0").effects.named.contains("Log"));
@@ -259,7 +272,7 @@ fn effect_inference_converges_when_places_go_around_a_cycle() {
     // The old bound of 10 rounds for each function stopped these too early.
     for (k, p) in [(1, 8), (4, 4), (8, 3)] {
         let units = vec![prelude(), unit("", &rotation(k, p))];
-        let a = crate::analyze(&units, Options::default());
+        let a = crate::analyze(&units, old_options());
         assert_eq!(codes(&a), Vec::new(), "k={k} p={p}");
         // Each parameter gets the deepest place: 3 levels and `v`, or 4 levels.
         let muts = &sig_of(&a, "g1").effects.muts;
@@ -277,14 +290,14 @@ fn effect_inference_converges_when_places_go_around_a_cycle() {
 fn effect_inference_that_does_not_converge_is_an_error() {
     let units = vec![prelude(), unit("", &rotation(1, 3))];
     // The row of `g1` grows more than twice.
-    let a = crate::analyze_with_limit(&units, Options::default(), 2);
+    let a = crate::analyze_with_limit(&units, old_options(), 2);
     assert_eq!(codes(&a), vec![(1, "W0706".to_string())]);
     assert!(
         a.diags[0].message.contains("`g1`"),
         "{}",
         a.diags[0].message
     );
-    let a = crate::analyze_with_limit(&units, Options::default(), 100);
+    let a = crate::analyze_with_limit(&units, old_options(), 100);
     assert_eq!(codes(&a), Vec::new());
 }
 
@@ -319,7 +332,7 @@ fn a_function_that_states_its_effects_infers_its_other_parts() {
     // `apply` states its row, but its body still gives `w` to `f`.
     let src = "struct W { n: u64 }\nfn apply(f: fn(&W), w: &W) / mut(w) { f(w) }";
     let units = vec![prelude(), unit("", src)];
-    let a = analyze(&units, Options::default());
+    let a = analyze(&units, old_options());
     assert_eq!(codes(&a), Vec::new());
     let s = sig_of(&a, "apply");
     assert!(s.declared);
@@ -367,12 +380,12 @@ fn a_program_can_reach_the_parts_limit() {
     // times. With 7 parameters, its `lent` part needs exactly 36 changes.
     assert_eq!(crate::infer::parts_limit(2), 36);
     let units = vec![prelude(), unit("", &lend_rotation(7, 0))];
-    let a = analyze(&units, Options::default());
+    let a = analyze(&units, old_options());
     assert_eq!(codes(&a), Vec::new());
     assert_eq!(sig_of(&a, "walk").effects.lent.len(), 36);
     // With 8 parameters, it needs 41 changes. So `walk` gets W0704.
     let units = vec![prelude(), unit("", &lend_rotation(8, 0))];
-    let a = analyze(&units, Options::default());
+    let a = analyze(&units, old_options());
     assert_eq!(codes(&a), vec![(1, "W0704".to_string())]);
     let m = &a.diags[0].message;
     assert!(
@@ -391,7 +404,7 @@ fn the_parts_limit_grows_with_the_program() {
     // The same `walk` with 8 parameters, in a program with 102 functions. Its
     // `lent` part changes 41 times, so the bound of 236 changes does not stop it.
     let units = vec![prelude(), unit("", &lend_rotation(8, 100))];
-    let a = analyze(&units, Options::default());
+    let a = analyze(&units, old_options());
     assert_eq!(codes(&a), Vec::new());
     assert_eq!(sig_of(&a, "walk").effects.lent.len(), 41);
     // `walk` is lowered once for each change and once more. Each other
@@ -402,7 +415,7 @@ fn the_parts_limit_grows_with_the_program() {
 #[test]
 fn the_growth_limit_is_the_height_of_the_row_lattice() {
     let units = vec![prelude(), unit("", &rotation(1, 8))];
-    let a = crate::analyze(&units, Options::default());
+    let a = crate::analyze(&units, old_options());
     let sig = sig_of(&a, "g1");
     let small = crate::infer::growth_limit(&a.program, sig, 2);
     // Each parameter and each `rc` group is a root of places of up to 8 steps.
@@ -454,7 +467,7 @@ fn a_row_only_grows() {
 
 fn root_diags(src: &str) -> Vec<(String, String)> {
     let units = vec![prelude(), unit("", src)];
-    let a = analyze(&units, Options::default());
+    let a = analyze(&units, old_options());
     a.diags
         .iter()
         .map(|d| (d.code.to_string(), d.message.clone()))
@@ -478,7 +491,7 @@ fn raw_pointer_is_a_copy_value_of_its_own_type() {
         )]
     );
     let units = vec![prelude(), unit("", FFI)];
-    let a = analyze(&units, Options::default());
+    let a = analyze(&units, old_options());
     let ptr = a.program.ptr.unwrap_or(crate::AdtId(usize::MAX));
     let def = &a.program.adts[ptr];
     assert!(def.copy && def.nonportable && !def.linear);
@@ -514,7 +527,7 @@ fn raw_pointer_only_in_foreign_signatures_and_locals() {
 
 /// Returns the facts of the body of function `name`.
 fn facts(src: &str, name: &str) -> FnFacts {
-    let a = analyze_source(src, Options::default()).expect("the source parses");
+    let a = analyze_source(src, old_options()).expect("the source parses");
     a.bodies
         .into_iter()
         .find(|b| b.facts.name == name)
@@ -785,7 +798,7 @@ fn node(f: &FnFacts, label: &str) -> weft_facts::NodeId {
 
 /// Returns the signature of function `name`.
 fn sig(src: &str, name: &str) -> crate::FnSig {
-    let a = analyze_source(src, Options::default()).expect("the source parses");
+    let a = analyze_source(src, old_options()).expect("the source parses");
     let i = a
         .program
         .fns
@@ -978,7 +991,7 @@ fn effect_inference_runs_until_the_signatures_are_stable() {
         let _ = writeln!(src, "fn ap{i}(f: fn(&W), w: &W) {{ ap{}(f, w) }}", i - 1);
     }
     src.push_str("fn ap0(f: fn(&W), w: &W) { f(w) }\n");
-    let a = analyze_source(&src, Options::default()).expect("the source parses");
+    let a = analyze_source(&src, old_options()).expect("the source parses");
     // The old loop needed more than 32 rounds for this chain. The worklist puts
     // callees first, so it lowers each of the 42 functions once.
     assert_eq!(a.lowerings, 42);
@@ -1005,7 +1018,7 @@ fn fip_use_counts_do_not_overflow_in_nested_loops() {
     src.push_str("g(x) ");
     src.push_str(&"} ".repeat(64));
     src.push_str("\n x }");
-    let a = analyze_source(&src, Options::default()).expect("the source parses");
+    let a = analyze_source(&src, old_options()).expect("the source parses");
     let d = a
         .diags
         .iter()
@@ -1259,7 +1272,7 @@ fn a_match_too_large_to_check_is_an_error() {
         cols.join(", "),
         args.join(", ")
     );
-    let a = analyze_source(&src, Options::default()).unwrap();
+    let a = analyze_source(&src, old_options()).unwrap();
     let w: Vec<&str> = a
         .diags
         .iter()
@@ -1273,7 +1286,7 @@ fn a_match_too_large_to_check_is_an_error() {
 #[test]
 fn a_small_match_is_checked_in_full() {
     let src = "fn g(a: bool, b: bool) -> u32 {\n    match (a, b) {\n        (true, _) => 0,\n        (_, true) => 1,\n        (false, false) => 2,\n    }\n}\n";
-    let a = analyze_source(src, Options::default()).unwrap();
+    let a = analyze_source(src, old_options()).unwrap();
     assert!(a.diags.is_empty(), "{:?}", a.diags);
 }
 
@@ -1290,7 +1303,7 @@ fn many_locals_and_part_values_are_fast() {
         body.push_str("    w.x = &v[0]\n    print(w.x)\n");
     }
     let src = format!("struct Wrap<T> {{ x: T }}\nfn f(v: &Vec<u64>) {{\n{body}}}\n");
-    let a = analyze_source(&src, Options::default()).unwrap();
+    let a = analyze_source(&src, old_options()).unwrap();
     assert!(a.diags.is_empty(), "{:?}", a.diags);
     let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
     let holders = f
@@ -1468,14 +1481,14 @@ fn g(v: &Vec<Entity>) {
 #[test]
 fn a_loop_that_is_not_stable_at_the_bound_is_an_error() {
     let units = vec![prelude(), unit("", &ref_chain(10))];
-    let a = crate::analyze_with_loop_bound(&units, Options::default(), 4);
+    let a = crate::analyze_with_loop_bound(&units, old_options(), 4);
     assert_eq!(codes(&a), vec![(ROOT_UNIT, "W0707".to_string())]);
     assert!(
         a.diags[0].message.contains("4 passes"),
         "{}",
         a.diags[0].message
     );
-    let a = crate::analyze_with_loop_bound(&units, Options::default(), 11);
+    let a = crate::analyze_with_loop_bound(&units, old_options(), 11);
     assert_eq!(codes(&a), Vec::new());
 }
 
@@ -1601,11 +1614,11 @@ fn an_in_place_can_name_a_later_parameter() {
 #[test]
 fn an_on_abort_function_with_no_runtime_has_no_root_handler() {
     let src = "linear struct T { id: u64 }\n    on abort = undo\nfn undo(t: T) / clock {\n    let T(i) = t\n    sleep(1.ms)\n}\nfn plain(t: T) { let T(i) = t }\n";
-    let ok = analyze_source(src, Options::default()).expect("parses");
+    let ok = analyze_source(src, old_options()).expect("parses");
     assert!(ok.diags.iter().all(|d| d.code != "W0118"), "{:?}", ok.diags);
     let opts = Options {
         no_runtime: true,
-        ..Options::default()
+        ..old_options()
     };
     let a = analyze_source(src, opts).expect("parses");
     let w: Vec<_> = a.diags.iter().filter(|d| d.code == "W0118").collect();

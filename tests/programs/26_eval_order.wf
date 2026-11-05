@@ -160,6 +160,7 @@ fn temp_closure_call(world: &World) / mut(world.entities) {
 }
 
 fn temp_receiver(world: &World) / mut(world.entities, world.entities[]) {
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F19 (class F19-HIDDEN)
     world.entities[0].heal(grow(world))   //~ old: W0301
 }
 

@@ -1,0 +1,11 @@
+// Stage C1.5 review: a once closure runs after a value that can resume two times. Clean twin: the value resumes one time (or no loop), so there is no error.
+effect Pick { multi fn pick() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn f(x: fn(), m: fn(), g: fn()) { m(); g(); x() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        let u = || { print(1) }
+        f(u, u, || print(take_v(v)))
+    }
+}

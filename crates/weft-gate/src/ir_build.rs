@@ -56,7 +56,12 @@ pub fn check(base: &Path, entry: &Entry) -> Outcome {
             }
         }
     };
-    let opts = pkg.options(weft_cli::package::Profile::default());
+    // The old pipeline, as before plan stage C3: the time of the analysis
+    // does not include the fact generator of the IR.
+    let opts = weft_sema::Options {
+        facts: weft_sema::FactGen::Old,
+        ..pkg.options(weft_cli::package::Profile::default())
+    };
     let start = Instant::now();
     let analysis = weft_sema::analyze(&pkg.units, opts);
     let analyze_ms = ms_since(start);

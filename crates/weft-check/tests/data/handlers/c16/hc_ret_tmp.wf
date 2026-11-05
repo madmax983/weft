@@ -1,0 +1,13 @@
+// Hole C1-HC of stage C1.6: a callee gives a `once` argument back in a struct after a value that resumes two times.
+effect Pick { multi fn pick() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn picky() / Pick { if pick() { print(1) } }
+fn quiet() { print(1) }
+fn hold(m: fn(), x: fn()) -> fn() { m(); x }
+fn run(f: fn()) { f() }
+fn body() / Pick {
+    let v = [1]
+    let g: fn() = || print(take_v(v))
+    run(hold(picky, g))   //~ W0503 W0503
+}
+fn main() { handle Pick { fn pick() { resume(true); resume(false) } } in body() }

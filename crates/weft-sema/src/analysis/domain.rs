@@ -183,6 +183,29 @@ impl AbsVal {
             )
     }
 
+    /// True if a join of `o` into `self` does not change `self` (and so
+    /// returns false). It reads `self` and `o` and copies nothing: a large
+    /// set that already holds the small set of a join stays as it is.
+    /// False when a widening can change `self` (see [`FNS_MAX`]).
+    pub fn includes(&self, o: &Self) -> bool {
+        // The widening takes out each item and adds `Unknown`. `Item` is
+        // the first variant, so an item comes first in the set.
+        let widens = self.fns.len() > FNS_MAX
+            && (self
+                .fns
+                .first()
+                .is_some_and(|f| matches!(f, FnVal::Item(..)))
+                || !self.fns.contains(&FnVal::Unknown));
+        !widens
+            && (!o.linear || self.linear)
+            && (!self.empty || o.empty)
+            && (!self.uniq || o.uniq)
+            && o.refs.iter().all(|q| self.refs.contains(q))
+            && o.fns.iter().all(|f| self.fns.contains(f))
+            && o.caps.iter().all(|q| self.caps.contains(q))
+            && o.tasks.iter().all(|t| self.tasks.contains(t))
+    }
+
     /// The join of `self` and `o`.
     #[must_use]
     pub fn joined(mut self, o: &Self) -> Self {
@@ -304,6 +327,15 @@ impl Tree {
             changed |= k.map_refs(f);
         }
         changed
+    }
+
+    /// True if a join of `o` into `self` does not change `self` (and so
+    /// returns false), part by part ([`AbsVal::includes`]).
+    pub fn includes(&self, o: &Self) -> bool {
+        self.top.includes(&o.top)
+            && o.kids
+                .iter()
+                .all(|(s, k)| self.kids.get(s).is_some_and(|m| m.includes(k)))
     }
 
     /// Joins `o` into `self`, part by part. Returns true if `self` changed.
@@ -506,6 +538,31 @@ impl<V: Clone> Chunked<V> {
         }
     }
 
+    /// Takes each chunk of `o` whose locals `self` has none of, as it is
+    /// (for the joins: a join gives such a local the value of `o`). Returns
+    /// true if `self` changed. So a join of a state with few locals and a
+    /// state with many does not copy the values one by one (the values that
+    /// the closures keep along a cleanup chain, stage C1.4b).
+    fn adopt_missing(&mut self, o: &Self) -> bool {
+        if Rc::ptr_eq(&self.chunks, &o.chunks) {
+            return false;
+        }
+        let missing: Vec<(ChunkKey, Rc<Chunk<V>>)> = o
+            .chunks
+            .iter()
+            .filter(|(c, chunk)| !chunk.is_empty() && !self.chunks.contains_key(c))
+            .map(|(c, chunk)| (*c, Rc::clone(chunk)))
+            .collect();
+        if missing.is_empty() {
+            return false;
+        }
+        let chunks = Rc::make_mut(&mut self.chunks);
+        for (c, chunk) in missing {
+            chunks.insert(c, chunk);
+        }
+        true
+    }
+
     /// The locals and their values, by chunk: a chunk that `o` shares with
     /// `self` is left out (for the joins).
     fn not_shared<'a>(&'a self, o: &'a Self) -> impl Iterator<Item = (&'a Key, &'a V)> {
@@ -559,6 +616,7 @@ impl PathSet {
 
     /// Adds each path of `o`. Returns true if `self` changed.
     fn union(&mut self, o: &Self) -> bool {
+        let adopted = self.0.adopt_missing(&o.0);
         let mut new: Vec<(Key, Paths)> = Vec::new();
         for (k, theirs) in o.0.not_shared(&self.0) {
             match self.0.get(*k) {
@@ -573,7 +631,7 @@ impl PathSet {
                 None => new.push((*k, Rc::clone(theirs))),
             }
         }
-        let changed = !new.is_empty();
+        let changed = adopted || !new.is_empty();
         for (k, v) in new {
             self.0.insert(k, v);
         }
@@ -790,7 +848,7 @@ impl State {
                 continue;
             }
             if let Some(mine) = self.vals.get(*k) {
-                if Rc::ptr_eq(mine, t) || **mine == **t {
+                if Rc::ptr_eq(mine, t) || mine.includes(t) || **mine == **t {
                     continue;
                 }
                 let mut j = (**mine).clone();
@@ -808,10 +866,14 @@ impl State {
     /// and an intersection of the must parts. Returns true if `self`
     /// changed.
     pub fn join(&mut self, o: &Self) -> bool {
+        let adopted = self.vals.adopt_missing(&o.vals);
         let mut new: Vec<(Key, Rc<Tree>)> = Vec::new();
         for (k, t) in o.vals.not_shared(&self.vals) {
             match self.vals.get(*k) {
-                Some(mine) if Rc::ptr_eq(mine, t) || **mine == **t => {}
+                // A value that holds `t` already stays: no copy of a large
+                // value for each join of a small one (a closure local that
+                // holds many closures, `s5r/p/scale400.wf`, stage C1.4b).
+                Some(mine) if Rc::ptr_eq(mine, t) || mine.includes(t) || **mine == **t => {}
                 Some(mine) => {
                     let mut joined = (**mine).clone();
                     if joined.join(t) {
@@ -821,7 +883,7 @@ impl State {
                 None => new.push((*k, Rc::clone(t))),
             }
         }
-        let mut changed = !new.is_empty();
+        let mut changed = adopted || !new.is_empty();
         for (k, t) in new {
             self.vals.insert(k, t);
         }

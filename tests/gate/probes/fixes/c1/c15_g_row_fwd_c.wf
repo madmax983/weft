@@ -1,0 +1,14 @@
+// Gap G4 of stage C1.5 (issue #68): a stated row is no bound for code of a caller. Clean twin: the value resumes one time (or no loop), so there is no error.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn run_both(f: fn() / Ask, g: fn() / Ask) / Ask { f(); g() }
+fn outer(f: fn(), g: fn()) / Ask { run_both(f, g) }
+fn main() {
+    handle Ask { fn ask() { resume(true) } } in {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            let v = [1]
+            outer(|| { print(1) }, || print(take_v(v)))
+        }
+    }
+}

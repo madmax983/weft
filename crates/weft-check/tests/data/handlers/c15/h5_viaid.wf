@@ -1,0 +1,14 @@
+// Hole C1-H5 of stage C1.5: a closure that a callee made gives out a `once` capture after a value that resumes two times.
+effect Pick { multi fn pick() -> bool }
+struct H1 { f: fn() }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn id(g: fn()) -> fn() { g }
+fn mk(m: fn(), g: fn()) -> fn() -> fn() { || { m(); id(g) } }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        let w = mk(|| { if pick() { print(1) } }, || print(take_v(v)))
+        let k = w()   //~ W0503
+        k()
+    }
+}

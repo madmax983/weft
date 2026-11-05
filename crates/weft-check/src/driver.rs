@@ -324,7 +324,14 @@ fn as_result() {
         assert_eq!(alone.codes(), ir.codes());
         assert!(alone.ir.is_none());
         // Out of scope, the both mode has no ir side.
-        let old = check_source("a.wf", ESCAPE, Options::default());
+        let old = check_source(
+            "a.wf",
+            ESCAPE,
+            Options {
+                facts: weft_sema::FactGen::Old,
+                ..Options::default()
+            },
+        );
         assert!(old.ir.is_none());
     }
 

@@ -1046,10 +1046,12 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     );
     let path = format!("{dir}/nested_bad.wf");
     let path = path.as_str();
-    let old = cmd(&["check", path]);
+    let old = cmd(&["check", "--facts=old", path]);
     assert_eq!(old.code, 1, "{}", old.text);
     assert!(old.stderr.is_empty(), "{}", old.stderr);
-    assert_eq!(cmd(&["check", "--facts=old", path]), old);
+    // The `ir` pipeline is the default from plan stage C3: the command with
+    // no switch gives the note of `--facts=ir`.
+    assert_eq!(cmd(&["check", path]), cmd(&["check", "--facts=ir", path]));
     for f in ["--facts=ir", "--facts=both"] {
         let out = cmd(&["check", f, path]);
         assert_eq!(out.text, old.text, "{f}");
@@ -1238,4 +1240,36 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         "{}",
         out.stderr
     );
+}
+
+/// Plan stage C3: the `ir` pipeline is the default of `check`, and
+/// `--facts=old` still checks with the facts of the old lowering. The
+/// temporary of a branch ends before the join (`docs/ir.md` 5.12), so the
+/// `ir` pipeline rejects the program and the old pipeline accepts it.
+#[test]
+fn the_ir_pipeline_is_the_default_and_facts_old_still_works() {
+    let path = "tests/programs/164_branch_temporaries.wf";
+    let default = cmd(&["check", path]);
+    assert_eq!(cmd(&["check", "--facts=ir", path]), default);
+    assert_eq!(default.code, 1, "{}", default.text);
+    assert!(default.text.contains("error[W0301]"), "{}", default.text);
+    let old = cmd(&["check", "--facts=old", path]);
+    assert_eq!(old.code, 0, "{}", old.text);
+    assert!(!old.text.contains("error["), "{}", old.text);
+}
+
+/// Plan stage C3: the IR engine is the default of `run`, and `--engine=ast`
+/// still runs the AST compiler. The IR reads a place operand where it is
+/// written (choice A, `docs/ir.md` 5.1.1): `x + { x = 5; 1 }` gives 2 on
+/// the IR engine and 6 on the AST engine.
+#[test]
+fn the_ir_engine_is_the_default_and_engine_ast_still_works() {
+    let path = "tests/gate/probes/ir/probes/p1_late_operand.wf";
+    let default = cmd(&["run", path]);
+    assert_eq!(default.code, 0, "{}", default.stderr);
+    assert_eq!(default.text, "2\n");
+    assert_eq!(cmd(&["run", "--engine=ir", path]), default);
+    let ast = cmd(&["run", "--engine=ast", path]);
+    assert_eq!(ast.code, 0, "{}", ast.stderr);
+    assert_eq!(ast.text, "6\n");
 }

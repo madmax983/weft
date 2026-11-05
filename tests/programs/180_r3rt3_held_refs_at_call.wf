@@ -9,7 +9,11 @@
 // Decision (ADR 0003, open item): for a reference argument whose pointee holds
 // references, the caller adds the held places to `call_arg`, with the root of
 // the argument, to the reads of the call node, and to the reads of a task that
-// makes the call. The checker does not enforce it yet.
+// makes the call. The old pipeline
+// (`--facts=old`) does not enforce it. Done at plan stage C3: the `ir`
+// pipeline (the default) enforces it, and the file moved here from
+// `tests/ir_targets`. The markers give the result of the `ir` pipeline, and
+// the codes after `old:` the result of the old pipeline.
 struct Entity { hp: i32 }
 struct World { entities: Vec<Entity> }
 struct Wrap<T> { x: T }
@@ -40,36 +44,42 @@ fn show_first(rs: &Vec<&Entity>) / clock { sleep(1.ms); print(rs[0].hp) }
 fn call_vec(world: &World) / mut(world.entities) {
     let rs = Vec.new()
     rs.push(&world.entities[0])
-    read_both(&rs, world)   //~ W0312
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    read_both(&rs, world)   //~ W0312 old:
 }
 fn call_tuple(world: &World) / mut(world.entities) {
     let t = (&world.entities[0], 1)
-    read_both_tuple(&t, world)   //~ W0312
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    read_both_tuple(&t, world)   //~ W0312 old:
 }
 // Bad: the same call through a function value, and through a closure.
 fn call_fnval(world: &World) / mut(world.entities) {
     let rs = Vec.new()
     rs.push(&world.entities[0])
     let f = read_both
-    f(&rs, world)   //~ W0312
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    f(&rs, world)   //~ W0312 old:
 }
 fn call_closure(world: &World) / mut(world.entities) {
     let rs = Vec.new()
     rs.push(&world.entities[0])
     let f = |a: &Vec<&Entity>, w: &World| read_both(a, w)
-    f(&rs, world)   //~ W0312
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    f(&rs, world)   //~ W0312 old:
 }
 // Bad: the reference argument is a reference local.
 fn call_ref_local(world: &World) / mut(world.entities) {
     let rs = Vec.new()
     rs.push(&world.entities[0])
     let p = &rs
-    read_both(p, world)   //~ W0312
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    read_both(p, world)   //~ W0312 old:
 }
 // Bad: a field of the pointee holds the reference.
 fn call_field(world: &World) / mut(world.entities) {
     let w = Wrap { x: Some(&world.entities[0]) }
-    read_field(&w, world)   //~ W0312
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    read_field(&w, world)   //~ W0312 old:
 }
 // Bad: the task reads through the references in `rs` while the parent frees
 // them (W0405).
@@ -78,7 +88,8 @@ fn task_reads_held(world: &World) / mut(world.entities), async, clock {
     rs.push(&world.entities[0])
     scope { s =>
         s.spawn(|| show_first(&rs))
-        world.entities.clear()   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        world.entities.clear()   //~ W0405 old:
     }
 }
 // Bad: the same task calls through a function value.
@@ -88,7 +99,8 @@ fn task_fnval(world: &World) / mut(world.entities), async, clock {
     let f = show_first
     scope { s =>
         s.spawn(|| f(&rs))
-        world.entities.clear()   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT3, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        world.entities.clear()   //~ W0405 old:
     }
 }
 

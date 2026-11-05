@@ -104,6 +104,10 @@ pub struct Handlers {
     /// terminator of each block can assign (one bit set for each block;
     /// `crate::factgen::handlers::unassigned`).
     pub assigned: BTreeMap<BodyId, Vec<Vec<u64>>>,
+    /// For each body: its locals that a closure captures and that can hold
+    /// a reference, with their variables
+    /// (`crate::factgen::handlers::unbound_at_aborts`).
+    pub unbound_vars: BTreeMap<BodyId, Vec<(weft_ir::LocalId, weft_facts::VarId)>>,
     /// The state at the re-entry of each node of a handled body that runs a
     /// clause of a `multi` handler (plan stage F16): the state before its
     /// `Copy` node, by body and block, with the values that the later

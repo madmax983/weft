@@ -1,0 +1,15 @@
+// Hole C1-H6, gap G2 of stage C1.5: a resume inside a nested body runs the code after the nested body again.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn f(g: fn()) / Pick {
+    let h = || g()
+    handle Ask { fn ask() { resume(true) } } in { if pick() { print(1) } }
+    h()
+}
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        f(|| print(take_v(v)))
+    }
+}

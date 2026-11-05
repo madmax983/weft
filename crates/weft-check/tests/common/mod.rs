@@ -29,15 +29,15 @@ pub enum Pipeline {
     Ir,
 }
 
-/// The words after `//~` that make the codes after them apply to one
-/// pipeline only: `old:` and `ir:`.
-pub const PIPELINE_WORDS: [&str; 2] = ["old:", "ir:"];
+/// The word after `//~` that starts the codes of the old pipeline: `old:`.
+pub const OLD_WORD: &str = "old:";
 
-/// Returns the expected `(line, word)` pairs of the old pipeline: error
-/// codes, and task words (see [`expected_for`]).
+/// Returns the expected `(line, word)` pairs of the default pipeline (the
+/// `ir` pipeline from plan stage C3): error codes, and task words (see
+/// [`expected_for`]).
 #[allow(dead_code)]
 pub fn expected(src: &str) -> (Codes, Marks) {
-    expected_for(src, Pipeline::Old)
+    expected_for(src, Pipeline::Ir)
 }
 
 /// Returns the expected `(line, word)` pairs of the pipeline `pipe`: error
@@ -45,24 +45,32 @@ pub fn expected(src: &str) -> (Codes, Marks) {
 ///
 /// A line that ends with `//~ CODE ...` expects those error codes on that
 /// line. A code that occurs two times expects two errors with that code.
-/// The word `old:` or `ir:` makes the codes after it apply to that pipeline
-/// only, until the next such word: `//~ old: W0301 ir: W0302` expects W0301
-/// from the old pipeline and W0302 from the ir pipeline.
+/// The codes before the word `old:` are the result of the `ir` pipeline (the
+/// default from plan stage C3). The codes after `old:` are the result of the
+/// old pipeline (`--facts=old`) on that line: `//~ W0302 old: W0301` expects
+/// W0302 from the ir pipeline and W0301 from the old pipeline, and
+/// `//~ W0301 old:` expects nothing from the old pipeline. A line with no
+/// `old:` expects the same codes from both pipelines.
 pub fn expected_for(src: &str, pipe: Pipeline) -> (Codes, Marks) {
     let (mut codes, mut tasks) = (Vec::new(), BTreeSet::new());
     for (i, line) in src.lines().enumerate() {
-        if let Some(pos) = line.find("//~") {
-            let mut on = true;
-            for word in line[pos + 3..].split_whitespace() {
-                match word {
-                    "old:" => on = pipe == Pipeline::Old,
-                    "ir:" => on = pipe == Pipeline::Ir,
-                    _ if !on => {}
-                    w if TASK_WORDS.contains(&w) => {
-                        tasks.insert((i + 1, w.to_string()));
-                    }
-                    w => codes.push((i + 1, w.to_string())),
-                }
+        let Some(pos) = line.find("//~") else {
+            continue;
+        };
+        let words: Vec<&str> = line[pos + 3..].split_whitespace().collect();
+        let (default, old) = match words.iter().position(|w| *w == OLD_WORD) {
+            Some(k) => (&words[..k], Some(&words[k + 1..])),
+            None => (&words[..], None),
+        };
+        let mine = match (pipe, old) {
+            (Pipeline::Old, Some(old)) => old,
+            _ => default,
+        };
+        for w in mine {
+            if TASK_WORDS.contains(w) {
+                tasks.insert((i + 1, (*w).to_string()));
+            } else {
+                codes.push((i + 1, (*w).to_string()));
             }
         }
     }
@@ -70,16 +78,13 @@ pub fn expected_for(src: &str, pipe: Pipeline) -> (Codes, Marks) {
     (codes, tasks)
 }
 
-/// True if a marker of `src` has an expectation for one pipeline only
-/// (`old:` or `ir:`).
+/// True if a marker of `src` has an expectation of the old pipeline that
+/// differs from the default (`old:`).
 #[allow(dead_code)]
 pub fn has_pipeline_markers(src: &str) -> bool {
     src.lines().any(|line| {
-        line.find("//~").is_some_and(|pos| {
-            line[pos + 3..]
-                .split_whitespace()
-                .any(|w| PIPELINE_WORDS.contains(&w))
-        })
+        line.find("//~")
+            .is_some_and(|pos| line[pos + 3..].split_whitespace().any(|w| w == OLD_WORD))
     })
 }
 

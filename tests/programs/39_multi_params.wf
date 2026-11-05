@@ -67,10 +67,13 @@ fn via_method(s: &S) -> bool {
 }
 
 // Controls: the parameter type states effects with no `multi` operation, and
-// the token is consumed before the call.
+// the token is consumed before the call. The `ir` pipeline does not trust a
+// stated row for `multi`: a value with no row can go into a place of a type
+// with a row (issue #68), so the first and the last control are W0503 there.
 fn run_log(f: fn() -> bool / log) -> bool / log {
     let t = mint()
-    let b = f()
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage C1.5 (gap G4, issue #68; cost: issue #69)
+    let b = f()   //~ W0503 old:
     spend(t)
     b
 }
@@ -86,7 +89,8 @@ fn call_log(s: &L) -> bool / log {
 }
 fn via_callee_log(s: &L) -> bool / log {
     let t = mint()
-    let b = call_log(s)
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage C1.5 (gap G4, issue #68; cost: issue #69)
+    let b = call_log(s)   //~ W0503 old:
     spend(t)
     b
 }

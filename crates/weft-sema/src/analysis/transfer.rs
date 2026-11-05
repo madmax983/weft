@@ -1897,7 +1897,7 @@ pub struct RunOf {
     /// The values of the interface whose run comes before on a path where
     /// code of a caller can resume more than once (`Run::after`; filled by
     /// the fact generator, `crate::factgen` `runs_after`).
-    pub after: BTreeSet<(u32, bool)>,
+    pub after: BTreeSet<super::summary::RunKey>,
 }
 
 /// One summary that a run node of a function value applies (`docs/ir.md`
@@ -2265,6 +2265,11 @@ struct Apps {
     /// a second run of it). [`apply_runs`] finds a value that two runs reach
     /// with it (class H-ORD of the final check of group C: `both(h, || h())`).
     reached: Vec<FnVal>,
+    /// The values that the application of each value reached (the values
+    /// that it runs, at each depth), from its first application in
+    /// [`apply_runs`]: a later application of the value adds only the value
+    /// to `reached` (gap G5 of stage C1.5).
+    inner: std::collections::HashMap<FnVal, BTreeSet<FnVal>>,
 }
 
 /// The run node of a `Call` of the function value `callee` of block `block`
@@ -2802,16 +2807,26 @@ fn apply_runs(
     let keys: BTreeSet<(u32, bool)> = runs.iter().map(|x| (x.param, x.capture)).collect();
     let two = keys.len() > 1;
     // The values that the runs of each key reach, also through the values
-    // that a value runs (`Apps::reached`).
-    let mut reached: BTreeMap<(u32, bool), BTreeSet<FnVal>> = BTreeMap::new();
+    // that a value runs (`Apps::reached`). The key of a run of a result of
+    // a parameter is not the key of the run of the parameter (`Run::after`,
+    // gap G3 of stage C1.5).
+    let mut reached: BTreeMap<super::summary::RunKey, BTreeSet<FnVal>> = BTreeMap::new();
+    // The keys whose values the node does not know (gap G5 of stage C1.5):
+    // they count as values that can resume more than once.
+    let mut open: BTreeSet<super::summary::RunKey> = BTreeSet::new();
     // The values that each run reaches, by the index of the run.
     let mut per_run: Vec<(usize, Vec<FnVal>, (BodyId, Operand))> = Vec::new();
     for (index, run) in runs.iter().enumerate() {
         let first = apps.reached.len();
         let many = run.many || two;
+        let key = (run.param, run.capture, run.result);
         let Some((fns, src, src_body)) = of(cx, run)? else {
+            open.insert(key);
             continue;
         };
+        if fns.is_empty() {
+            open.insert(key);
+        }
         let mut places = Vec::new();
         for a in &run.args {
             places.extend(super::apply::iplaces(cx, sigma, a)?);
@@ -2851,6 +2866,7 @@ fn apply_runs(
             }
             let start = apps.out.len();
             let fresh = !apps.modes.contains(&(g.clone(), Some(places.clone())));
+            let from = apps.reached.len();
             apply_value(
                 cx,
                 r,
@@ -2861,6 +2877,16 @@ fn apply_runs(
                 depth + 1,
                 apps,
             )?;
+            if fresh {
+                let got: BTreeSet<FnVal> = apps
+                    .reached
+                    .get(from + 1..)
+                    .unwrap_or_default()
+                    .iter()
+                    .cloned()
+                    .collect();
+                apps.inner.entry(g.clone()).or_default().extend(got);
+            }
             for a in apps.out.iter_mut().skip(start) {
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
@@ -2946,7 +2972,6 @@ fn apply_runs(
                 }
             }
         }
-        let key = (run.param, run.capture);
         let got = apps.reached.get(first..).unwrap_or_default();
         reached.entry(key).or_default().extend(got.iter().cloned());
         per_run.push((index, got.to_vec(), (src_body, src.clone())));
@@ -2964,33 +2989,99 @@ fn apply_runs(
             .iter()
             .any(|d| d.identity == e && d.ops.iter().any(|o| o.multi))
     };
-    let multi_keys: BTreeSet<(u32, bool)> = reached
-        .iter()
-        .filter(|(_, vals)| {
-            vals.iter().any(|v| {
-                apps.seen
-                    .get(v)
-                    .and_then(|&k| apps.out.get(k))
-                    .is_some_and(|a| {
-                        a.summary.multi
-                            || a.summary.unknown_multi
-                            || a.summary.performs.iter().any(|pf| {
-                                matches!(pf.cap, super::summary::CapIface::Cap(_))
-                                    && multi_effect(&pf.effect)
-                            })
+    // A value can resume more than once if its own app can, or the app of
+    // a value that its application reached (`Apps::inner`), or if it has
+    // no app (gap G5 of stage C1.5).
+    let app_multi = |v: &FnVal| {
+        apps.seen
+            .get(v)
+            .and_then(|&k| apps.out.get(k))
+            .is_none_or(|a| {
+                a.summary.multi
+                    || a.summary.unknown_multi
+                    || a.summary.performs.iter().any(|pf| {
+                        matches!(pf.cap, super::summary::CapIface::Cap(_))
+                            && multi_effect(&pf.effect)
                     })
             })
-        })
+    };
+    // A value of the interface of this body (a parameter, a capture, a
+    // result of a parameter) is code of a caller here: the caller of this
+    // body decides if it can resume more than once. A run after it gets its
+    // key in `after` (below), not `again` (stage C1.5, exception E3).
+    let iface = |v: &FnVal| match v {
+        FnVal::Param(i) => Some((*i, false, false)),
+        FnVal::ParamResult(i) => Some((*i, false, true)),
+        FnVal::Capture(k) => Some((*k, true, false)),
+        _ => None,
+    };
+    let can_multi = |v: &FnVal| {
+        let mut seen: BTreeSet<&FnVal> = BTreeSet::new();
+        let mut work = vec![v];
+        while let Some(x) = work.pop() {
+            if !seen.insert(x) {
+                continue;
+            }
+            if iface(x).is_none() && app_multi(x) {
+                return true;
+            }
+            work.extend(apps.inner.get(x).into_iter().flatten());
+        }
+        false
+    };
+    let multi_keys: BTreeSet<super::summary::RunKey> = reached
+        .iter()
+        .filter(|(_, vals)| vals.iter().any(can_multi))
         .map(|(k, _)| *k)
+        .chain(open.iter().copied())
+        .collect();
+    // The keys of the interface of this body that the values of each key
+    // reach, also through the values that they run.
+    let lifted: BTreeMap<super::summary::RunKey, BTreeSet<super::summary::RunKey>> = reached
+        .iter()
+        .map(|(k, vals)| {
+            let mut out = BTreeSet::new();
+            let mut seen: BTreeSet<&FnVal> = BTreeSet::new();
+            let mut work: Vec<&FnVal> = vals.iter().collect();
+            while let Some(x) = work.pop() {
+                if !seen.insert(x) {
+                    continue;
+                }
+                out.extend(iface(x));
+                work.extend(apps.inner.get(x).into_iter().flatten());
+            }
+            (*k, out)
+        })
         .collect();
     for (index, got, arg) in &per_run {
         let Some(run) = runs.get(*index) else {
             continue;
         };
-        if !run.after.iter().any(|k| multi_keys.contains(k)) {
+        let now = run.after.iter().any(|k| multi_keys.contains(k));
+        let later: BTreeSet<super::summary::RunKey> = run
+            .after
+            .iter()
+            .filter_map(|k| lifted.get(k))
+            .flatten()
+            .copied()
+            .collect();
+        if !now && later.is_empty() {
             continue;
         }
         for v in got {
+            // A run of a value of the interface after a value of the
+            // interface: the caller decides (its part `after`).
+            if !now && iface(v).is_some() {
+                if let Some(x) = apps
+                    .seen
+                    .get(v)
+                    .and_then(|&k| apps.out.get_mut(k))
+                    .and_then(|a| a.run.as_mut())
+                {
+                    x.after.extend(later.iter().copied());
+                }
+                continue;
+            }
             // A closure that a callee made holds the values of its captures
             // in its own value: a capture that runs again runs a `once`
             // value of it again, so the run moves the value of the closure
@@ -3687,7 +3778,7 @@ fn apply_value(
 /// not in the value: code of a caller ([`FnVal::Unknown`]) stands for them.
 /// A closure that is not in `held` is the result of a run of a value of
 /// `held` (`with_results`): the values that it holds are not known there.
-fn made_held(
+pub(crate) fn made_held(
     p: &Program,
     c: weft_ir::ClosureId,
     k: u32,
@@ -3761,36 +3852,12 @@ fn with_results(
     r: Run0<'_>,
     mut fns: BTreeSet<FnVal>,
 ) -> Result<BTreeSet<FnVal>, AlphaError> {
-    use super::summary::RetFn;
+    // The values that the operand holds: a closure that a callee made holds
+    // the values of its captures there (`made_held`).
+    let held = fns.clone();
     let mut level = fns.clone();
     for _ in 0..RESULT_DEPTH {
-        let mut next = BTreeSet::new();
-        for f in &level {
-            let sum = match f {
-                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok().cloned(),
-                FnVal::Item(g, _) => cx.sums.get(*g).ok().cloned(),
-                _ => None,
-            };
-            let Some(sum) = sum else {
-                continue;
-            };
-            for rf in &sum.ret.fns {
-                match (rf, f) {
-                    (RetFn::Item(g, t), _) => {
-                        next.insert(FnVal::Item(*g, t.clone()));
-                    }
-                    (RetFn::Made(c), _) => {
-                        next.insert(FnVal::Made(*c));
-                    }
-                    (RetFn::Capture(k), FnVal::Closure(c)) => {
-                        next.extend(capture_fns(cx, r, *c, *k, false, &BTreeSet::new())?);
-                    }
-                    _ => {
-                        next.insert(FnVal::Unknown);
-                    }
-                }
-            }
-        }
+        let mut next = gives_back(cx, r, &level, &held)?;
         next.retain(|f| !fns.contains(f));
         if next.is_empty() {
             return Ok(fns);
@@ -3801,6 +3868,70 @@ fn with_results(
     Err(AlphaError::Later(
         "a chain of function values that give back function values (stage F13)",
     ))
+}
+
+/// True if capture `k` of closure `c` is a `ByMove` capture.
+fn by_move(p: &Program, c: weft_ir::ClosureId, k: u32) -> bool {
+    p.closures
+        .get(c.index())
+        .and_then(|d| d.captures.get(k as usize))
+        .is_some_and(|cap| cap.mode == weft_ir::CaptureMode::ByMove)
+}
+
+/// The values that one run of each value of `level` gives back (part
+/// `ret`), at run node `r`. `held` is the set of values that the operand
+/// holds: a closure that a callee made holds the values of its captures
+/// there.
+///
+/// # Errors
+///
+/// The errors of α.
+fn gives_back(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    level: &BTreeSet<FnVal>,
+    held: &BTreeSet<FnVal>,
+) -> Result<BTreeSet<FnVal>, AlphaError> {
+    use super::summary::RetFn;
+    let mut next = BTreeSet::new();
+    for f in level {
+        let sum = match f {
+            FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok().cloned(),
+            FnVal::Item(g, _) => cx.sums.get(*g).ok().cloned(),
+            _ => None,
+        };
+        let Some(sum) = sum else {
+            continue;
+        };
+        for rf in &sum.ret.fns {
+            match (rf, f) {
+                (RetFn::Item(g, t), _) => {
+                    next.insert(FnVal::Item(*g, t.clone()));
+                }
+                (RetFn::Made(c), _) => {
+                    next.insert(FnVal::Made(*c));
+                }
+                // A `ByMove` capture: the value of the closure holds its
+                // values, as for a closure that a callee made (`apply_value`).
+                (RetFn::Capture(k), FnVal::Closure(c)) if by_move(cx.p, *c, *k) => {
+                    next.extend(held.iter().filter(|v| **v != FnVal::Closure(*c)).cloned());
+                }
+                (RetFn::Capture(k), FnVal::Closure(c)) => {
+                    next.extend(capture_fns(cx, r, *c, *k, false, &BTreeSet::new())?);
+                }
+                // A closure that a callee made gives back a capture: the
+                // values that the operand holds (gap G3 of stage C1.5:
+                // `run2(mk(m, g))` with `fn run2(w) { let k = w(); k() }`).
+                (RetFn::Capture(k), FnVal::Made(c)) => {
+                    next.extend(made_held(cx.p, *c, *k, held));
+                }
+                _ => {
+                    next.insert(FnVal::Unknown);
+                }
+            }
+        }
+    }
+    Ok(next)
 }
 
 /// The values that runs of the function values `fns` give back, not the
@@ -3832,8 +3963,11 @@ fn results_of(
             }
         }
     }
-    let all = with_results(cx, r, known.clone())?;
-    out.extend(all.into_iter().filter(|f| !known.contains(f)));
+    // The values that a run of a known value gives back, and their results.
+    // A value that the operand holds too is a result here (gap G3 of stage
+    // C1.5: `|| { pick(); g }` gives back `g`, which it captures).
+    let first = gives_back(cx, r, &known, &known)?;
+    out.extend(with_results(cx, r, first)?);
     Ok(out)
 }
 
@@ -3842,7 +3976,8 @@ const RESULT_DEPTH: usize = 16;
 
 /// The function values of capture `k` of closure `c` at run node `r`: the
 /// values that its source in the maker reaches; for a closure that a callee
-/// made, the values of the callee (`callee`) and code of a caller.
+/// made, the values that the value of the callee holds (`callee`,
+/// [`made_held`]).
 ///
 /// # Errors
 ///
@@ -3855,14 +3990,12 @@ fn capture_fns(
     made: bool,
     callee: &BTreeSet<FnVal>,
 ) -> Result<BTreeSet<FnVal>, AlphaError> {
+    // A closure that a callee made holds the values of its `Kept` captures
+    // in its own value (`made_held`); the values of another capture are
+    // code of a caller (stage C1.5: the result `k` of `let k = w()` for
+    // `w = mk(m, g)` is `g`, not only code of a caller).
     if made {
-        let mut out: BTreeSet<FnVal> = callee
-            .iter()
-            .filter(|f| **f != FnVal::Made(c))
-            .cloned()
-            .collect();
-        out.insert(FnVal::Unknown);
-        return Ok(out);
+        return Ok(made_held(cx.p, c, k, callee));
     }
     let p = cx.p;
     let Some(decl) = p.closures.get(c.index()) else {

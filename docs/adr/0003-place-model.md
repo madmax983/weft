@@ -430,7 +430,9 @@ Status: accepted. Date: 2026-10-18.
   a local of the closure that the closure puts there is not checked either.
 - What stays open until the core IR replaces the fact generation (review round 3).
   The checker does not enforce these rules yet. Each rule has an acceptance target in
-  `tests/ir_targets` (`docs/traceability.md`):
+  `tests/ir_targets` (`docs/traceability.md`). From plan stage C3, the `ir` pipeline (the
+  default) enforces each rule whose target moved to `tests/programs`; the old pipeline
+  (`--facts=old`) does not:
   - A `match` that reaches its scrutinee through a reference binds a reference to a
     part, such as `e` in `match p { Some(e) => .. }` for `p: &Option<&Entity>`. A
     place below the binding is a place where the stored reference points, not a place
@@ -440,7 +442,7 @@ Status: accepted. Date: 2026-10-18.
     the binding leaves the arm (`let e = match p { .. }`), and when the arm changes
     these places after the binding. A callee that does the same `match` on a
     reference parameter makes its caller put in these places (W0312) (R3RT2,
-    `tests/ir_targets/r3rt2_match_through_ref.wf`).
+    `tests/programs/179_r3rt2_match_through_ref.wf`).
   - A reference argument can point to a value that holds references, such as `&rs`
     for `rs: Vec<&Entity>`. The rule: the caller adds the places that the references
     behind the argument point into (the held places) to `call_arg`, with the root of
@@ -448,7 +450,7 @@ Status: accepted. Date: 2026-10-18.
     task that makes the call. This is true for a call of an item, a call through a
     function value or a closure, an argument that is a reference local, and a
     pointee whose field holds the references. A by-value argument that holds
-    references does this today (R3RT3, `tests/ir_targets/r3rt3_held_refs_at_call.wf`).
+    references does this today (R3RT3, `tests/programs/180_r3rt3_held_refs_at_call.wf`).
   - A closure or a clause can keep its reference parameter in an outer local, or
     store it there. A callee that runs the closure, or that performs the operation of
     the clause, can give it a reference into a local of the callee. The caller cannot
@@ -471,4 +473,4 @@ Status: accepted. Date: 2026-10-18.
     of a pass of a loop body), or a move or a new value of a value that holds it
     conflicts with a task that reads through it (W0405), as for a `Box`. When a
     field holds the handle, a move or a new value of the field conflicts too (O3-6,
-    `tests/ir_targets/o3_6_rc_handle_tasks.wf`).
+    `tests/programs/178_o3_6_rc_handle_tasks.wf`).

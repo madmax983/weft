@@ -1,0 +1,14 @@
+// Hole C1-H6, gap G2 of stage C1.5: a resume inside a nested body runs the code after the nested body again. Clean twin: the value resumes one time (or no loop), so there is no error.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn f(m: fn(), g: fn()) {
+    handle Ask { fn ask() { resume(true) } } in { m() }
+    g()
+}
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        f(|| { print(1) }, || print(take_v(v)))
+    }
+}

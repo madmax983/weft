@@ -59,13 +59,67 @@
 //! The entry node and each `handler clause` node stay (the diagnostics
 //! start a search there).
 //!
+//! **New values that nodes share** (plan stage C1.4b, issue #62). An abort
+//! to a local handler gives each captured local that no path assigned a new
+//! value at its `AbortValue` node (`handlers::unbound_at_aborts`). After `n`
+//! operations in a line, the abort of operation `i` gives `n - i` locals a
+//! new value: a quadratic number of `rebound_at` rows
+//! (`verify/s5/S5a/x/p/scale_ops.wf`). These nodes lead to one node, and
+//! their sets of variables are in a chain: each set is a part of the set
+//! before it. `share_new_values` puts the rows on a chain of new nodes:
+//! the node of each set goes to a new node with the variables of its set
+//! that the next smaller set does not have, which goes to the node of the
+//! next smaller set, and the last one goes to the successor. So each path
+//! from a node `X` to its successor `C` gives the same variables new values
+//! as `X` did, and each variable has one row in the chain.
+//!
+//! A node `X` takes part if it has exactly one successor `C` (not `X`) and
+//! no row other than `rebound_at`, `uses`, `empty_at` and `reads_at`. So no
+//! fact starts at `X` (no `invalidated_at`, `frees_at`, `moved_at`,
+//! `unset_at`, `spawned_at`), and no violation that reads a fact of the
+//! flow at `X` other than through `uses` (no `multi_at`, `resumes_at`,
+//! `performs_at`, `may_abort`, `scope_end`). Only the rows of a variable
+//! that is not `linear` move. Then for such a variable `V` the rules give
+//! the same facts at each node of the old graph:
+//!
+//! - `invalid`, `moved`, `unset` (forward, stopped by `rebound_at`): a fact
+//!   of `V` at `X` reaches `C` in the old graph if `V` is not in the set of
+//!   `X`. In the new graph the path from `X` to `C` goes through the nodes
+//!   of the sets of `X` and of each smaller set below it in the chain. Their
+//!   union is the set of `X`, so the fact reaches `C` under the same
+//!   condition. No fact of `V` starts at `X` or at a new node, so no other
+//!   fact reaches `C`. The new nodes have no other row, so no other path
+//!   changes.
+//! - `live_in`, `live_out` (backward, stopped by `rebound_at`): `live_out(V,
+//!   X)` holds in the new graph if `live_in(V, C)` holds and `V` is not in
+//!   the set of `X`, by the same chain. That is `live_in(V, X)` of the old
+//!   graph with no `uses(V, X)`; `uses(V, X)` stays at `X`. `live_out(V,
+//!   X)` itself can change, but only `live_across_multi` reads it, at a
+//!   node with `multi_at`, `performs_at` or `resumes_at`, and `X` has none.
+//! - `live_linear` and `overwritten` read `rebound_at` only for a `linear`
+//!   variable, whose rows stay.
+//! - A violation needs a row at its node other than `rebound_at` and
+//!   `cfg_edge`, and a new node has none. At `X`, `error`,
+//!   `use_after_move` and `use_before_set` read `invalid`, `moved` and
+//!   `unset` at `X`, which come from the predecessors of `X` and do not
+//!   change. `active` (tasks) and `live_linear` (of a `linear` variable)
+//!   follow each edge; the new nodes have no `joined_at`, `unwound_at` or
+//!   `moved_at`, so they reach the same nodes, and a new node gives no
+//!   violation with them.
+//!
+//! The chain of a group starts at the smallest set. A set goes after the
+//! largest earlier set that is a part of it (the walk looks at the set
+//! before it and up its chain, at most `SHARE_WALK` steps). A set that is
+//! not in a chain with another set stays at its node. Then the nodes with
+//! no row leave the graph again (`merge_free_nodes`).
+//!
 //! **Places that no row names.** Last, a tree that is not read and whose
 //! places no row names leaves the place table (`compact_places`): its
 //! rows of `place`, `parent`, `unstable`, `wildcard`, `one_place`,
 //! `step_alias` and `step_within` join only rows of places of the same tree.
 //! The places that stay keep their order, with new ids.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use weft_facts::{FnFacts, NodeId, PlaceId, VarId};
 
@@ -170,7 +224,161 @@ pub fn prune(facts: &mut FnFacts) {
     facts.rebound_at.retain(|&(v, _)| test(&flow, v));
     facts.uses.retain(|&(v, _)| test(&flow, v));
     merge_free_nodes(facts);
+    if share_new_values(facts) {
+        // A node that gave all its new values to a chain has no row now.
+        merge_free_nodes(facts);
+    }
     compact_places(facts);
+}
+
+/// The longest walk up the chain of earlier sets in [`share_new_values`].
+const SHARE_WALK: usize = 8;
+
+/// Gives the nodes that lead to one node the same new values from a chain of
+/// nodes (see the module documentation). True if the graph changed.
+fn share_new_values(facts: &mut FnFacts) -> bool {
+    let n = facts.nodes.len();
+    let mut succ: Vec<Vec<NodeId>> = vec![Vec::new(); n];
+    for &(a, b) in &facts.cfg_edge {
+        if b.index() >= n {
+            // An edge out of the table: keep the graph as it is.
+            return false;
+        }
+        match succ.get_mut(a.index()) {
+            Some(s) => s.push(b),
+            None => return false,
+        }
+    }
+    // The nodes with a row that a rule reads for more than a flow through
+    // them: a fact that starts there, or a violation.
+    let busy = busy_nodes(facts, true);
+    // The variables that each node of one successor gives a new value and
+    // nothing else that a rule reads: not `linear` (`live_linear`,
+    // `overwritten`).
+    let plain = |v: VarId| facts.vars.get(v.index()).is_some_and(|i| !i.linear);
+    let mut sets: Vec<Vec<VarId>> = vec![Vec::new(); n];
+    for &(v, x) in &facts.rebound_at {
+        let i = x.index();
+        let one = succ
+            .get(i)
+            .is_some_and(|s| s.len() == 1 && s.first() != Some(&x));
+        if one && !busy.contains(&x) && plain(v) {
+            if let Some(s) = sets.get_mut(i) {
+                s.push(v);
+            }
+        }
+    }
+    // The nodes with such variables, by their successor.
+    let mut groups: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for (i, s) in sets.iter_mut().enumerate() {
+        if s.is_empty() {
+            continue;
+        }
+        s.sort_unstable();
+        s.dedup();
+        let x = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
+        if let Some(&c) = succ.get(i).and_then(|s| s.first()) {
+            groups.entry(c).or_default().push(x);
+        }
+    }
+    let mut keys: Vec<NodeId> = groups.keys().copied().collect();
+    keys.sort_unstable();
+    // The first node of the chain of each node that gives its new values to
+    // a chain.
+    let mut to_chain: Vec<Option<NodeId>> = vec![None; n];
+    for c in keys {
+        let Some(mut xs) = groups.remove(&c) else {
+            continue;
+        };
+        if xs.len() < 2 {
+            continue;
+        }
+        let size = |x: &NodeId| sets.get(x.index()).map_or(0, Vec::len);
+        xs.sort_by_key(|x| (size(x), *x));
+        let set = |x: NodeId| sets.get(x.index()).map_or(&[][..], Vec::as_slice);
+        // The parent of each set: an earlier (so not larger) set that is a
+        // part of it.
+        let mut parent: Vec<Option<usize>> = vec![None; xs.len()];
+        let mut child = vec![false; xs.len()];
+        for i in 1..xs.len() {
+            let Some(&x) = xs.get(i) else { continue };
+            let mut at = Some(i - 1);
+            for _ in 0..SHARE_WALK {
+                let Some(j) = at else { break };
+                let Some(&y) = xs.get(j) else { break };
+                if is_subset(set(y), set(x)) {
+                    parent[i] = Some(j);
+                    child[j] = true;
+                    break;
+                }
+                at = parent.get(j).copied().flatten();
+            }
+        }
+        // The first node of the chain of each set.
+        let mut head: Vec<NodeId> = vec![c; xs.len()];
+        for (i, &x) in xs.iter().enumerate() {
+            let p = parent.get(i).copied().flatten();
+            if p.is_none() && !child.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let next = p.and_then(|j| head.get(j).copied()).unwrap_or(c);
+            let own = set(x);
+            let rest = p.and_then(|j| xs.get(j)).map_or(&[][..], |&y| set(y));
+            let diff: Vec<VarId> = own
+                .iter()
+                .copied()
+                .filter(|v| rest.binary_search(v).is_err())
+                .collect();
+            let h = if diff.is_empty() {
+                next
+            } else {
+                let info = facts.nodes.get(x.index()).cloned();
+                let k = NodeId(u32::try_from(facts.nodes.len()).unwrap_or(u32::MAX));
+                facts.nodes.push(weft_facts::NodeInfo {
+                    kind: "new values".to_string(),
+                    ..info.unwrap_or_else(|| weft_facts::NodeInfo {
+                        span: weft_facts::Span::default(),
+                        label: String::new(),
+                        detail: String::new(),
+                        kind: String::new(),
+                        at: String::new(),
+                    })
+                });
+                facts.rebound_at.extend(diff.iter().map(|&v| (v, k)));
+                facts.cfg_edge.push((k, next));
+                k
+            };
+            if let Some(hd) = head.get_mut(i) {
+                *hd = h;
+            }
+            if let Some(t) = to_chain.get_mut(x.index()) {
+                *t = Some(h);
+            }
+        }
+    }
+    if to_chain.iter().all(Option::is_none) {
+        return false;
+    }
+    // Each row of a variable in the set of a node that goes to a chain
+    // leaves the node: the set of the node has each such row.
+    let chained = |x: NodeId| to_chain.get(x.index()).is_some_and(Option::is_some);
+    facts.rebound_at.retain(|&(v, x)| !(chained(x) && plain(v)));
+    facts.rebound_at.sort_unstable();
+    for e in &mut facts.cfg_edge {
+        if let Some(Some(h)) = to_chain.get(e.0.index()) {
+            e.1 = *h;
+        }
+    }
+    true
+}
+
+/// Each element of the sorted list `a` is in the sorted list `b`.
+fn is_subset(a: &[VarId], b: &[VarId]) -> bool {
+    if a.len() > b.len() {
+        return false;
+    }
+    let mut it = b.iter();
+    a.iter().all(|x| it.any(|y| y == x))
 }
 
 /// Each place of a row of `facts` (not of the place table), once for each
@@ -378,8 +586,11 @@ fn compact_places(facts: &mut FnFacts) {
 }
 
 /// The nodes of `facts` with a row of a relation other than `cfg_edge`, or
-/// with a site of a diagnostic.
-fn busy_nodes(facts: &FnFacts) -> HashSet<NodeId> {
+/// with a site of a diagnostic. With `flow`, only the nodes with a row of a
+/// relation other than `cfg_edge`, `rebound_at`, `uses`, `empty_at` and
+/// `reads_at` (and no site of a diagnostic): the nodes that a rule reads for
+/// more than a flow through them (`share_new_values`).
+fn busy_nodes(facts: &FnFacts, flow: bool) -> HashSet<NodeId> {
     // Each field, so that a new relation of the facts cannot miss its
     // nodes.
     let FnFacts {
@@ -457,19 +668,21 @@ fn busy_nodes(facts: &FnFacts) -> HashSet<NodeId> {
         place_index: _,
     } = facts;
     let mut out: HashSet<NodeId> = HashSet::new();
-    out.extend(arg_sites.iter().map(|x| x.node));
-    out.extend(ref_sites.iter().map(|x| x.node));
+    if !flow {
+        out.extend(arg_sites.iter().map(|x| x.node));
+        out.extend(ref_sites.iter().map(|x| x.node));
+        out.extend(reads_at.iter().map(|x| x.0));
+        for rel in [rebound_at, uses, empty_at] {
+            out.extend(rel.iter().map(|x| x.1));
+        }
+    }
     out.extend(mutates_at.iter().map(|x| x.0));
-    out.extend(reads_at.iter().map(|x| x.0));
     out.extend(performs_at.iter().map(|x| x.0));
     for rel in [
-        rebound_at,
-        uses,
         moved_at,
         scope_end,
         overwrites,
         unset_at,
-        empty_at,
         unwound_at,
         rest_linear,
         spared_at,
@@ -505,7 +718,7 @@ fn busy_nodes(facts: &FnFacts) -> HashSet<NodeId> {
 /// successor, and is not its own successor. The node stays in the node
 /// table with no edge. The number of edges does not grow.
 fn merge_free_nodes(facts: &mut FnFacts) {
-    let mut busy = busy_nodes(facts);
+    let mut busy = busy_nodes(facts, false);
     busy.insert(NodeId(0));
     for (i, n) in facts.nodes.iter().enumerate() {
         if n.label == "handler clause" {
@@ -556,4 +769,78 @@ fn merge_free_nodes(facts: &mut FnFacts) {
             s.iter().map(move |&b| (a, b))
         })
         .collect();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use weft_facts::{RootKind, Span, VarInfo, VarKind};
+
+    /// `n` nodes after the entry lead to one node, and node `i` gives the
+    /// variables `i..n` new values: the abort shape of stage C1.4b
+    /// (`unbound_at_aborts`, `n (n + 1) / 2` rows). The prune puts the rows
+    /// on one chain: one row for each variable, and the path from the entry
+    /// through each node gives the same variables new values as before.
+    #[test]
+    fn nested_new_values_share_one_chain() {
+        let n = 40;
+        let mut f = FnFacts::default();
+        let root = f.add_root("v", RootKind::Local);
+        let entry = f.add_node(Span::default(), "entry", "");
+        let vars: Vec<VarId> = (0..n)
+            .map(|j| {
+                let v = f.add_var(VarInfo::plain(
+                    format!("r{j}"),
+                    VarKind::Local,
+                    Span::default(),
+                    "&u64",
+                ));
+                f.points_into.push((v, root));
+                v
+            })
+            .collect();
+        let xs: Vec<NodeId> = (0..n)
+            .map(|_| f.add_node(Span::default(), "abort value", ""))
+            .collect();
+        let to = f.add_node(Span::default(), "after", "");
+        for (i, &x) in xs.iter().enumerate() {
+            f.cfg_edge.push((entry, x));
+            f.cfg_edge.push((x, to));
+            for &v in vars.iter().skip(i) {
+                f.rebound_at.push((v, x));
+            }
+        }
+        for &v in &vars {
+            f.uses.push((v, to));
+        }
+        f.normalize();
+        assert_eq!(f.rebound_at.len(), n * (n + 1) / 2);
+        prune(&mut f);
+        assert_eq!(f.rebound_at.len(), n);
+        // The variables that get a new value on each path from the entry to
+        // `to`: each path is a chain with one successor at each node.
+        let succ: BTreeMap<NodeId, Vec<NodeId>> =
+            f.cfg_edge.iter().fold(BTreeMap::new(), |mut m, &(a, b)| {
+                m.entry(a).or_default().push(b);
+                m
+            });
+        let mut sets: Vec<BTreeSet<VarId>> = Vec::new();
+        for &first in succ.get(&entry).into_iter().flatten() {
+            let mut set = BTreeSet::new();
+            let mut at = first;
+            while at != to {
+                set.extend(f.rebound_at.iter().filter(|r| r.1 == at).map(|r| r.0));
+                let next = succ.get(&at).map(Vec::as_slice).unwrap_or_default();
+                assert_eq!(next.len(), 1, "one successor in the chain");
+                at = next[0];
+            }
+            sets.push(set);
+        }
+        sets.sort_by_key(BTreeSet::len);
+        let want: Vec<BTreeSet<VarId>> = (0..n)
+            .map(|i| vars.iter().skip(n - 1 - i).copied().collect())
+            .collect();
+        assert_eq!(sets, want);
+    }
 }

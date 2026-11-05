@@ -108,6 +108,11 @@ pub fn heads(b: &Body, rank: &[usize]) -> Vec<bool> {
 
 /// The blocks of the bodies of a component that are in a cycle of the CFG
 /// (normal and `unwind` edges).
+///
+/// A handled body, a scope body and a clause body run in a frame of their
+/// own, at a block of their site (the `handle` or the `scope`). Each query
+/// also reads the chain of sites: a body runs again when its site block is
+/// in a cycle (gap G1 of stage C1.5: `while .. { handle .. in { g() } }`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Cycles {
     /// The blocks in a cycle.
@@ -118,17 +123,73 @@ pub struct Cycles {
     /// For each block, the run nodes of code of a caller
     /// ([`Self::add_code_rows_at`]) whose re-entry edges reach the block: a
     /// resume there runs the block again (hole C1-H1 of stage C1.1).
-    code_from: std::collections::BTreeMap<(BodyId, BlockId), BTreeSet<(BodyId, BlockId)>>,
+    code_from: BTreeMap<(BodyId, BlockId), BTreeSet<(BodyId, BlockId)>>,
+    /// The site of each nested body of the component: the block whose
+    /// terminator runs it (`Handle` for a handled body and its clauses,
+    /// `Scope` for a scope body).
+    site: BTreeMap<BodyId, (BodyId, BlockId)>,
+    /// The nested bodies that each site block runs.
+    opens: BTreeMap<(BodyId, BlockId), Vec<BodyId>>,
+    /// The clause bodies of the component, with their handled body.
+    clauses: BTreeMap<BodyId, BodyId>,
 }
 
 impl Cycles {
-    /// The blocks in a cycle of each body of `comp`.
+    /// The blocks in a cycle of each body of `comp`, and the sites of the
+    /// nested bodies of `comp`. A nested body with no site in `comp` is in
+    /// a cycle (a conservative result).
     pub fn of(p: &Program, comp: &[BodyId]) -> Self {
         let mut out = Self::default();
+        let inside: BTreeSet<BodyId> = comp.iter().copied().collect();
         for &bid in comp {
-            if let Some(b) = p.bodies.get(bid.index()) {
-                for blk in cyclic_blocks(b) {
-                    out.insert((bid, blk), false);
+            let Some(b) = p.bodies.get(bid.index()) else {
+                continue;
+            };
+            for blk in cyclic_blocks(b) {
+                out.insert((bid, blk), false);
+            }
+            for (i, blk) in b.blocks.iter().enumerate() {
+                let at = (bid, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
+                let nested: Vec<BodyId> = match &blk.term.kind {
+                    weft_ir::TermKind::Handle { handler, .. } => {
+                        p.handlers.get(handler.index()).map_or_else(Vec::new, |hd| {
+                            for (_, c) in &hd.clauses {
+                                out.clauses.insert(*c, hd.handled);
+                            }
+                            std::iter::once(hd.handled)
+                                .chain(hd.clauses.iter().map(|(_, c)| *c))
+                                .collect()
+                        })
+                    }
+                    weft_ir::TermKind::Scope { scope, .. } => p
+                        .scopes
+                        .get(scope.index())
+                        .map_or_else(Vec::new, |s| vec![s.body]),
+                    _ => Vec::new(),
+                };
+                let nested: Vec<BodyId> =
+                    nested.into_iter().filter(|n| inside.contains(n)).collect();
+                for &n in &nested {
+                    out.site.insert(n, at);
+                }
+                if !nested.is_empty() {
+                    out.opens.insert(at, nested);
+                }
+            }
+        }
+        for &bid in comp {
+            let Some(b) = p.bodies.get(bid.index()) else {
+                continue;
+            };
+            let nested = matches!(
+                b.kind,
+                weft_ir::BodyKind::Handled(_)
+                    | weft_ir::BodyKind::Scope(_)
+                    | weft_ir::BodyKind::Clause(..)
+            );
+            if nested && !out.site.contains_key(&bid) {
+                for i in 0..b.blocks.len() {
+                    out.insert((bid, BlockId(u32::try_from(i).unwrap_or(u32::MAX))), false);
                 }
             }
         }
@@ -225,7 +286,8 @@ impl Cycles {
     /// `multi` (a run of a value of the interface whose value the body does
     /// not know, issue #56). The blocks are in a cycle, but
     /// [`Self::has_strict`] does not count them: the caller gives the value
-    /// and applies its `multi` part at its own node.
+    /// and applies its `multi` part at its own node (exception E1 of stage
+    /// C1.5, `docs/ir.md`).
     pub fn add_code_rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)]) {
         self.rows_at(p, comp, rows, true);
     }
@@ -243,101 +305,219 @@ impl Cycles {
         self.blocks.insert(key);
     }
 
+    /// The successors of block `x` of body `b` in the spliced graph of the
+    /// component (gap G2 of stage C1.5): the successors in the body; the
+    /// entry of each body that the block runs (a `handle` or a `scope`, and
+    /// the clauses of the handler); from a `Return` of a nested body, the
+    /// normal successors of its site; from an `UnwindExit`, the `unwind`
+    /// block of the site (with none, each `UnwindExit` of the site body);
+    /// from a `resume`, the entry of the handled body of the clause (the
+    /// continuation can be at each perform there).
+    fn next_of(&self, p: &Program, (b, x): (BodyId, BlockId), out: &mut Vec<(BodyId, BlockId)>) {
+        let Some(blk) = p
+            .bodies
+            .get(b.index())
+            .and_then(|bd| bd.blocks.get(x.index()))
+        else {
+            return;
+        };
+        let kind = &blk.term.kind;
+        out.extend(kind.successors().into_iter().map(|y| (b, y)));
+        if let Some(ns) = self.opens.get(&(b, x)) {
+            for &n in ns {
+                if let Some(nb) = p.bodies.get(n.index()) {
+                    out.push((n, nb.entry));
+                }
+            }
+        }
+        if matches!(kind, weft_ir::TermKind::Resume { .. }) {
+            if let Some(h) = self.clause_of(b) {
+                if let Some(hb) = p.bodies.get(h.index()) {
+                    out.push((h, hb.entry));
+                }
+            }
+        }
+        let Some(&(sb, sx)) = self.site.get(&b) else {
+            return;
+        };
+        let Some(site) = p.bodies.get(sb.index()) else {
+            return;
+        };
+        let Some(st) = site.blocks.get(sx.index()).map(|k| &k.term.kind) else {
+            return;
+        };
+        match kind {
+            weft_ir::TermKind::Return => {
+                out.extend(st.normal_successors().into_iter().map(|y| (sb, y)));
+            }
+            weft_ir::TermKind::UnwindExit => match st.unwind() {
+                Some(u) => out.push((sb, u)),
+                None => out.extend(
+                    site.blocks
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, k)| matches!(k.term.kind, weft_ir::TermKind::UnwindExit))
+                        .map(|(i, _)| (sb, BlockId(u32::try_from(i).unwrap_or(u32::MAX)))),
+                ),
+            },
+            _ => {}
+        }
+    }
+
+    /// The handled body of the clause that body `b` is, or is inside (up
+    /// the chain of sites).
+    fn clause_of(&self, b: BodyId) -> Option<BodyId> {
+        let mut at = b;
+        for _ in 0..=self.site.len() {
+            if let Some(&h) = self.clauses.get(&at) {
+                return Some(h);
+            }
+            at = self.site.get(&at)?.0;
+        }
+        None
+    }
+
+    /// The nodes (a body and a block) that the walk of the spliced graph
+    /// ([`Self::next_of`]) reaches from the successors of the nodes
+    /// `from`, in the bodies of `comp`; with `own`, the nodes `from` too.
+    fn walk(
+        &self,
+        p: &Program,
+        comp: &BTreeSet<BodyId>,
+        from: &[(BodyId, BlockId)],
+        own: bool,
+    ) -> BTreeSet<(BodyId, BlockId)> {
+        let mut seen: BTreeSet<(BodyId, BlockId)> = BTreeSet::new();
+        let mut work: Vec<(BodyId, BlockId)> = Vec::new();
+        if own {
+            work.extend(from.iter().copied());
+        } else {
+            for &f in from {
+                self.next_of(p, f, &mut work);
+            }
+        }
+        let mut next = Vec::new();
+        while let Some(n) = work.pop() {
+            if !comp.contains(&n.0) || !seen.insert(n) {
+                continue;
+            }
+            next.clear();
+            self.next_of(p, n, &mut next);
+            work.extend(next.iter().copied());
+        }
+        seen
+    }
+
     /// The cycles of the re-entry edges after the nodes `rows`; `code` as in
-    /// [`Self::insert`].
+    /// [`Self::insert`]. The re-entry runs the code after the node again:
+    /// each node that the walk of the spliced graph reaches from the node,
+    /// and each block of the bodies that splice into the body of the node.
     fn rows_at(&mut self, p: &Program, comp: &[BodyId], rows: &[(BodyId, BlockId)], code: bool) {
+        if rows.is_empty() {
+            return;
+        }
         if code {
             for &row in rows {
                 self.note_code_row(p, comp, row);
             }
         }
+        let inside: BTreeSet<BodyId> = comp.iter().copied().collect();
+        for key in self.walk(p, &inside, rows, true) {
+            self.insert(key, code);
+        }
+        for key in Self::spliced_blocks(p, comp, rows) {
+            self.insert(key, code);
+        }
+    }
+
+    /// Each block of the bodies of `comp` that splice into the body of a
+    /// node of `rows`.
+    fn spliced_blocks(
+        p: &Program,
+        comp: &[BodyId],
+        rows: &[(BodyId, BlockId)],
+    ) -> Vec<(BodyId, BlockId)> {
         let bodies: BTreeSet<BodyId> = rows.iter().map(|r| r.0).collect();
-        for bid in bodies {
-            let rows: Vec<BlockId> = rows.iter().filter(|r| r.0 == bid).map(|r| r.1).collect();
-            let Some(b) = p.bodies.get(bid.index()) else {
+        let mut out = Vec::new();
+        for &other in comp {
+            let root = crate::factgen::handlers::splice_root(p, other);
+            if other == root || !bodies.contains(&root) {
                 continue;
-            };
-            let mut seen = vec![false; b.blocks.len()];
-            let mut work = rows;
-            while let Some(x) = work.pop() {
-                match seen.get_mut(x.index()) {
-                    Some(s) if !*s => *s = true,
-                    _ => continue,
-                }
-                self.insert((bid, x), code);
-                if let Some(blk) = b.blocks.get(x.index()) {
-                    work.extend(blk.term.kind.unwind());
-                    work.extend(blk.term.kind.normal_successors());
-                }
             }
-            for &other in comp {
-                if other != bid && crate::factgen::handlers::splice_root(p, other) == bid {
-                    if let Some(ob) = p.bodies.get(other.index()) {
-                        for i in 0..ob.blocks.len() {
-                            let key = (other, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
-                            self.insert(key, code);
-                        }
-                    }
+            if let Some(ob) = p.bodies.get(other.index()) {
+                for i in 0..ob.blocks.len() {
+                    out.push((other, BlockId(u32::try_from(i).unwrap_or(u32::MAX))));
                 }
             }
         }
+        out
     }
 
     /// The run nodes of code of a caller (a body and a block) whose re-entry
-    /// edges reach block `block` of body `body` ([`Self::add_code_rows_at`]).
-    pub fn code_from(&self, body: BodyId, block: BlockId) -> Option<&BTreeSet<(BodyId, BlockId)>> {
-        self.code_from.get(&(body, block))
+    /// edges reach block `block` of body `body` ([`Self::add_code_rows_at`]),
+    /// also through the sites of the body.
+    pub fn code_from(&self, body: BodyId, block: BlockId) -> BTreeSet<(BodyId, BlockId)> {
+        let mut out = BTreeSet::new();
+        let mut at = (body, block);
+        for _ in 0..=self.site.len() {
+            if let Some(s) = self.code_from.get(&at) {
+                out.extend(s.iter().copied());
+            }
+            match self.site.get(&at.0) {
+                Some(&s) => at = s,
+                None => break,
+            }
+        }
+        out
     }
 
-    /// Notes for each block that the re-entry edges after the run node `row`
+    /// Notes for each node that the re-entry edges after the run node `row`
     /// of code of a caller reach that the row reaches it ([`Self::code_from`]):
-    /// the successors of the row, their successors, and each block of the
-    /// handled bodies that splice into the body.
+    /// the nodes that the walk of the spliced graph reaches from the
+    /// successors of the row, and each block of the bodies that splice into
+    /// the body of the row.
     fn note_code_row(&mut self, p: &Program, comp: &[BodyId], row: (BodyId, BlockId)) {
-        let (bid, x0) = row;
-        let Some(b) = p.bodies.get(bid.index()) else {
-            return;
-        };
-        let mut seen = vec![false; b.blocks.len()];
-        let mut work: Vec<BlockId> = b.blocks.get(x0.index()).map_or_else(Vec::new, |blk| {
-            let mut w = blk.term.kind.unwind().into_iter().collect::<Vec<_>>();
-            w.extend(blk.term.kind.normal_successors());
-            w
-        });
-        while let Some(x) = work.pop() {
-            match seen.get_mut(x.index()) {
-                Some(s) if !*s => *s = true,
-                _ => continue,
-            }
-            self.code_from.entry((bid, x)).or_default().insert(row);
-            if let Some(blk) = b.blocks.get(x.index()) {
-                work.extend(blk.term.kind.unwind());
-                work.extend(blk.term.kind.normal_successors());
-            }
-        }
-        for &other in comp {
-            if other != bid && crate::factgen::handlers::splice_root(p, other) == bid {
-                if let Some(ob) = p.bodies.get(other.index()) {
-                    for i in 0..ob.blocks.len() {
-                        let key = (other, BlockId(u32::try_from(i).unwrap_or(u32::MAX)));
-                        self.code_from.entry(key).or_default().insert(row);
-                    }
-                }
-            }
+        let inside: BTreeSet<BodyId> = comp.iter().copied().collect();
+        let mut keys = self.walk(p, &inside, &[row], false);
+        keys.extend(Self::spliced_blocks(p, comp, &[row]));
+        for key in keys {
+            self.code_from.entry(key).or_default().insert(row);
         }
     }
 
-    /// True if block `block` of body `body` is in a cycle.
+    /// True if block `block` of body `body` is in a cycle, or a site of the
+    /// body is.
     pub fn has(&self, body: BodyId, block: BlockId) -> bool {
-        self.blocks.contains(&(body, block))
+        let mut at = (body, block);
+        for _ in 0..=self.site.len() {
+            if self.blocks.contains(&at) {
+                return true;
+            }
+            match self.site.get(&at.0) {
+                Some(&s) => at = s,
+                None => return false,
+            }
+        }
+        true
     }
 
-    /// True if block `block` of body `body` is in a cycle for a reason other
-    /// than the re-entry edges after code of a caller
-    /// ([`Self::add_code_rows_at`]): a run of a value of the interface there
-    /// runs the value more than once (part `runs`, issue #56).
+    /// True if block `block` of body `body`, or a site of the body, is in a
+    /// cycle for a reason other than the re-entry edges after code of a
+    /// caller ([`Self::add_code_rows_at`]): a run of a value of the
+    /// interface there runs the value more than once (part `runs`, issue
+    /// #56; exception E2 of stage C1.5).
     pub fn has_strict(&self, body: BodyId, block: BlockId) -> bool {
-        self.has(body, block) && !self.code.contains(&(body, block))
+        let mut at = (body, block);
+        for _ in 0..=self.site.len() {
+            if self.blocks.contains(&at) && !self.code.contains(&at) {
+                return true;
+            }
+            match self.site.get(&at.0) {
+                Some(&s) => at = s,
+                None => return false,
+            }
+        }
+        true
     }
 }
 

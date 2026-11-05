@@ -25,23 +25,28 @@ fn local_inner() {
     out.push(&inner)
     put(&v, &out)
     v.clear()
-    print(inner[0].hp)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
+    print(inner[0].hp)   //~ W0301 old:
 }
 
 fn param_inner(v: &Vec<Entity>, inner: &Vec<&Entity>) / mut(v.., inner..) {
     let out = Vec.new()
     out.push(inner)
     put(v, &out)
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
     v.clear()   //~ old: W0301
-    print(inner[0].hp)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
+    print(inner[0].hp)   //~ W0301 old:
 }
 
 fn param_field(v: &Vec<Entity>, h: &HB) / mut(v.., h..) {
     let out = Vec.new()
     out.push(&h.rs)
     put(v, &out)
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
     v.clear()   //~ old: W0301
-    print(h.rs[0].hp)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
+    print(h.rs[0].hp)   //~ W0301 old:
 }
 
 // The callee sets an `Option` field through the held reference. `w` is
@@ -59,7 +64,8 @@ fn option_slot() {
     v.clear()
     print(w.hp)
     match h.o {
-        Some(r) => print(r.hp),   //~ ir: W0301
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
+        Some(r) => print(r.hp),   //~ W0301 old:
         None => {},
     }
 }
@@ -75,7 +81,8 @@ fn shared() {
     b.push(&inner)
     put(&v, &a)
     v.clear()
-    print(b[0][0].hp)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
+    print(b[0][0].hp)   //~ W0301 old:
 }
 
 // Controls: no change of `v` after the store; a callee that changes only
@@ -96,6 +103,7 @@ fn param_no_change(v: &Vec<Entity>, inner: &Vec<&Entity>) / mut(inner..) {
     let out = Vec.new()
     out.push(inner)
     put(v, &out)
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F10.2 (hole H-C)
     print(inner[0].hp)   //~ old: W0301
 }
 

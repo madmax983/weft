@@ -80,7 +80,9 @@ fn closure_param_hof(c: Rc<Calls>) / mut(Calls) {
 fn clause_param(c: Rc<Calls>) / mut(Calls) {
     let v: Vec<u64> = Vec.new()
     v.push(7)
-    handle Keep { fn keep(x) { c.refs.push(x)   //~ ir: W0204
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F17 (class D-C of group D)
+    handle Keep { fn keep(x) { c.refs.push(x)   //~ W0204 old:
+ // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F17 (class D-C of group D)
  resume(()) } } in keep(&v[0])   //~ old: W0204
 }
 // A reference behind a local `Rc` handle of another `rc` type: the object can
@@ -128,11 +130,13 @@ fn main() {
     let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
     fill_self(c.clone())
     fill_value(c.clone())
-    print(c.refs.len(), c.data.len())   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F17 (class D-C of group D)
+    print(c.refs.len(), c.data.len())   //~ W0301 old:
     let k = Rc.new(Calls { fs: Vec.new(), refs: Vec.new(), data: Vec.new() })
     closure_param_group(k.clone())
     store_closure_value(k.clone())
     let f = k.fs[0]
     f()
-    print(k.refs.len())   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F17 (class D-C of group D)
+    print(k.refs.len())   //~ W0301 old:
 }

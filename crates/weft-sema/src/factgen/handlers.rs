@@ -798,17 +798,13 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
     Ok(())
 }
 
-/// The locals of body `body` that no path from its entry to the terminator
-/// of block `block` assigns (plan stage F15). The sets are computed once
-/// for each body (`Handlers::assigned`).
-fn unassigned(
-    p: &Program,
-    hx: &mut Handlers,
-    body: BodyId,
-    block: BlockId,
-) -> Vec<weft_ir::LocalId> {
+/// For each block of body `body`: the locals that a path from the entry to
+/// the terminator of the block can assign, one bit for each local (plan
+/// stage F15). The sets are computed once for each body
+/// (`Handlers::assigned`).
+fn assigned<'h>(p: &Program, hx: &'h mut Handlers, body: BodyId) -> &'h [Vec<u64>] {
     let Some(b) = p.body(body) else {
-        return Vec::new();
+        return &[];
     };
     let words = b.locals.len().div_ceil(64);
     let sets = hx.assigned.entry(body).or_insert_with(|| {
@@ -843,8 +839,11 @@ fn unassigned(
         }
         // A forward may analysis: the set at the terminator of a block is
         // the join of the sets of its predecessors and its own statements.
+        // The first block comes first from the stack: a block in the
+        // reverse order went to each of its successors again for each
+        // block before it (a quadratic number of steps on a long chain).
         let mut at: Vec<Vec<u64>> = own.clone();
-        let mut work: Vec<usize> = (0..b.blocks.len()).collect();
+        let mut work: Vec<usize> = (0..b.blocks.len()).rev().collect();
         while let Some(i) = work.pop() {
             let Some(blk) = b.blocks.get(i) else {
                 continue;
@@ -870,13 +869,7 @@ fn unassigned(
         }
         at
     });
-    let Some(set) = sets.get(block.index()) else {
-        return Vec::new();
-    };
-    (0..b.locals.len())
-        .filter(|&i| set.get(i / 64).is_some_and(|w| w & (1u64 << (i % 64)) == 0))
-        .map(|i| weft_ir::LocalId(u32::try_from(i).unwrap_or(u32::MAX)))
-        .collect()
+    sets
 }
 
 /// The locals that bind at the `AbortValue` nodes of an abort.
@@ -896,25 +889,40 @@ pub fn unbound_at_aborts(em: &mut Em<'_>, block: BlockId, values: &[(u32, NodeId
     }
     let body = em.body;
     let p = em.p;
-    let captured: HashSet<weft_ir::LocalId> = clause::captured_locals(p, body)
-        .into_iter()
-        .filter(|k| k.0 == body)
-        .map(|k| k.1)
-        .collect();
-    if captured.is_empty() {
+    // The variables of the locals that a closure captures and that can hold
+    // a reference, once for each body (`clause::captured_locals` reads each
+    // closure of the program).
+    if !em.hx.unbound_vars.contains_key(&body) {
+        let vars: Vec<(weft_ir::LocalId, VarId)> = clause::captured_locals(p, body)
+            .into_iter()
+            .filter(|k| k.0 == body)
+            .filter_map(|k| {
+                // Only a local that can hold a reference: it gets no linear
+                // part there (`empty_at`).
+                let refs = p
+                    .body(body)
+                    .and_then(|b| b.local(k.1))
+                    .is_some_and(|d| d.props.holds_refs || crate::props::ir_has_fns(em.tys, d.ty));
+                let v = em.vars.get(&VarKey::S(body, k.1)).filter(|_| refs)?;
+                Some((k.1, v))
+            })
+            .collect();
+        em.hx.unbound_vars.insert(body, vars);
+    }
+    let Some(vars) = em.hx.unbound_vars.get(&body).cloned() else {
+        return;
+    };
+    if vars.is_empty() {
         return;
     }
-    let ls = unassigned(p, em.hx, body, block);
-    for l in ls.into_iter().filter(|l| captured.contains(l)) {
-        // Only a local that can hold a reference: it gets no linear part
-        // there (`empty_at`).
-        let refs = p
-            .body(body)
-            .and_then(|b| b.local(l))
-            .is_some_and(|d| d.props.holds_refs || crate::props::ir_has_fns(em.tys, d.ty));
-        let Some(v) = em.vars.get(&VarKey::S(body, l)).filter(|_| refs) else {
-            continue;
-        };
+    let Some(set) = assigned(p, em.hx, body).get(block.index()).cloned() else {
+        return;
+    };
+    let free = |l: weft_ir::LocalId| {
+        set.get(l.index() / 64)
+            .is_some_and(|w| w & (1u64 << (l.index() % 64)) == 0)
+    };
+    for (_, v) in vars.into_iter().filter(|&(l, _)| free(l)) {
         for &(_, n) in values {
             em.facts.rebound_at.push((v, n));
             em.facts.empty_at.push((v, n));

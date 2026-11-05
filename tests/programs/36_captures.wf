@@ -18,18 +18,22 @@ fn ret_vec_closure(v: Vec<u64>) -> fn() -> usize { || v.len() }   //~ W0204
 fn block_vec() {
     let f = {
         let v: Vec<u64> = Vec.new()
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (R3RT5)
         || v.len()   //~ old: W0301
     }
-    print(f())   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (R3RT5)
+    print(f())   //~ W0301 old:
 }
 
 // A closure that moves a capture takes it when it runs. Until then the
 // variable holds it, so the closure cannot leave the scope of the variable.
+// C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (R3RT5)
 fn ret_moving_closure(b: Bag) -> fn() -> usize { || take_bag(b) }   //~ old: W0204
 fn block_moving() {
     let f = {
         let b = Bag { items: Vec.new() }
         b.items.push(1)
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (R3RT5)
         || take_bag(b)   //~ old: W0301
     }
     print(f())

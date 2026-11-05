@@ -12,9 +12,13 @@ checker decides on the hazard, and the oracle shows whether the hazard is real.
 """
 import os
 import random
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PRE = open(os.path.join(HERE, "lib/pre3.wf")).read()
+sys.path.insert(0, HERE)
+# The prelude is a hand probe of the gate (tests/gate/probes/r3/oracle/lib).
+LIB = os.path.join(HERE, "../../../tests/gate/probes/r3/oracle/lib")
+PRE = open(os.path.join(LIB, "pre3.wf")).read()
 OFF = set(filter(None, os.environ.get("GEN_OFF", "").split(",")))
 
 
@@ -505,5 +509,5 @@ def generate(seed):
 
 
 if __name__ == "__main__":
-    import sys
-    print(generate(int(sys.argv[1]) if len(sys.argv) > 1 else 1))
+    import genmain
+    genmain.main("gen3", generate)

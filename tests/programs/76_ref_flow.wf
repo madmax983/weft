@@ -126,8 +126,10 @@ fn popped(world: &World) / mut(world.entities) {
     rs.push(&world.entities[0])
     let o = rs.pop()
     world.entities.push(Entity { hp: 1 })
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F20 (class F20-HIDDEN)
     match o {   //~ old: W0301
-        Some(r) => print(r.hp),   //~ ir: W0301
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F20 (class F20-HIDDEN)
+        Some(r) => print(r.hp),   //~ W0301 old:
         None => {}
     }
 }
@@ -172,8 +174,10 @@ fn use_find() {
     v.push(1)
     let o = find(&v)
     v.push(2)
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F20 (class F20-HIDDEN)
     match o {   //~ old: W0301
-        Some(r) => print(r),   //~ ir: W0301
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F20 (class F20-HIDDEN)
+        Some(r) => print(r),   //~ W0301 old:
         None => {}
     }
 }
@@ -182,8 +186,10 @@ fn use_find_in() {
     v.push(1)
     let o = find_in(&v)
     v.push(2)
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F20 (class F20-HIDDEN)
     match o {   //~ old: W0301
-        Some(r) => print(r),   //~ ir: W0301
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F20 (class F20-HIDDEN)
+        Some(r) => print(r),   //~ W0301 old:
         None => {}
     }
 }

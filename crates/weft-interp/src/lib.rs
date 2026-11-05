@@ -56,16 +56,22 @@ use crate::runtime::Runtime;
 use crate::value::{Cap, Obj, Value};
 
 /// The compiler that makes the code of a run.
+///
+/// From plan stage C3, [`Engine::Ir`] is the default. [`Engine::Ast`]
+/// stays behind its flag (`--engine=ast`) until plan stage R4 removes it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Engine {
-    /// The AST compiler ([`compile`]). It is the default.
-    #[default]
+    /// The AST compiler ([`compile`]). It reads an operand where it uses
+    /// it, not where the IR copies it (`docs/ir.md` 8.3). So a program that
+    /// the checker accepts can stop on this engine where the IR engine runs
+    /// it.
     Ast,
     /// The IR compiler ([`compile_ir`]): it compiles the core IR of the
     /// program (`docs/ir.md` 8.1). For a program with a body that has no
     /// IR (a type error, an error in a declaration, W0303), the AST compiler
     /// runs the program, and [`RunOutcome::fallback`] tells why. The checker
-    /// rejects these programs.
+    /// rejects these programs. It is the default.
+    #[default]
     Ir,
 }
 
@@ -91,7 +97,7 @@ pub struct RunOptions {
     /// buffer that a `Vec` moves, a linear leak, a data race and a stealable
     /// task that reaches a nonportable value are faults. Off by default.
     pub oracle: bool,
-    /// The compiler that makes the code.
+    /// The compiler that makes the code. The default is [`Engine::Ir`].
     pub engine: Engine,
     /// Turns on the fact oracle and trace conformance
     /// ([`oracle::facts`], `docs/ir.md` 8.5): the run checks the facts of
@@ -116,7 +122,7 @@ impl Default for RunOptions {
             quantum: 1000,
             no_runtime: false,
             oracle: false,
-            engine: Engine::Ast,
+            engine: Engine::Ir,
             fact_oracle: false,
             ir_trace: false,
         }

@@ -14,7 +14,11 @@
 // value that a callee returns) writes and reads what each closure stored there
 // writes and reads. A task or a fork branch has this footprint, also when a
 // callee of the task reads the closure from a container behind its reference
-// parameter. The checker does not enforce it yet.
+// parameter. The old pipeline
+// (`--facts=old`) does not enforce it. Done at plan stage C3: the `ir`
+// pipeline (the default) enforces it, and the file moved here from
+// `tests/ir_targets`. The markers give the result of the `ir` pipeline, and
+// the codes after `old:` the result of the old pipeline.
 struct H { f: fn() }
 struct HH { h: H, n: u64 }
 struct HO { f: Option<fn()> }
@@ -34,7 +38,8 @@ fn bad_local_copy() {
     scope { s =>
         let g = h.f
         s.spawn(|| g())
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_in_task() {
@@ -42,7 +47,8 @@ fn bad_in_task() {
     let h = H { f: || v.push(2) }
     scope { s =>
         s.spawn(|| { let g = h.f; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_spawn_field() {
@@ -50,7 +56,8 @@ fn bad_spawn_field() {
     let h = H { f: || v.push(2) }
     scope { s =>
         s.spawn(h.f)
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_field_assigned() {
@@ -59,7 +66,8 @@ fn bad_field_assigned() {
     h.f = || v.push(2)
     scope { s =>
         s.spawn(|| { let g = h.f; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_nested() {
@@ -67,7 +75,8 @@ fn bad_nested() {
     let hh = HH { h: H { f: || v.push(2) }, n: 1 }
     scope { s =>
         s.spawn(|| { let g = hh.h.f; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_callee() {
@@ -75,7 +84,8 @@ fn bad_callee() {
     let h = H { f: || v.push(2) }
     scope { s =>
         s.spawn(|| run_h(&h))
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 // Bad: the callee of the task reads the closure out of a container behind
@@ -86,7 +96,8 @@ fn bad_callee_vec() {
     h.push(|| v.push(2))
     scope { s =>
         s.spawn(|| run_vec(&h))
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_callee_tuple() {
@@ -94,7 +105,8 @@ fn bad_callee_tuple() {
     let h = (|| v.push(2), 1)
     scope { s =>
         s.spawn(|| run_tuple(&h))
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 // Bad: the closure is in an `Option` field, in a `Vec` field, or in a
@@ -104,7 +116,8 @@ fn bad_opt_field() {
     let h = HO { f: Some(|| v.push(2)) }
     scope { s =>
         s.spawn(|| match h.f { Some(g) => g(), None => {} })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_vec_field() {
@@ -113,7 +126,8 @@ fn bad_vec_field() {
     h.fs.push(|| v.push(2))
     scope { s =>
         s.spawn(|| { let g = h.fs[0]; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_typed_vec() {
@@ -122,7 +136,8 @@ fn bad_typed_vec() {
     fs.push(|| v.push(2))
     scope { s =>
         s.spawn(|| { let g = fs[0]; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 // Bad: the struct is in a `Box`, or the task reads it through a reference.
@@ -131,7 +146,8 @@ fn bad_boxed_struct() {
     let h = Box.new(H { f: || v.push(2) })
     scope { s =>
         s.spawn(|| { let g = h.f; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 fn bad_ref_struct() {
@@ -140,7 +156,8 @@ fn bad_ref_struct() {
     let p = &h
     scope { s =>
         s.spawn(|| { let g = p.f; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 // Bad: a callee makes the struct, and its closure writes the argument.
@@ -149,7 +166,8 @@ fn bad_returned_struct() {
     let h = mk_h(&v)
     scope { s =>
         s.spawn(|| { let g = h.f; g() })
-        print(v.len())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        print(v.len())   //~ W0405 old:
     }
 }
 // Bad: the same with no task. The closure can grow `v`, so `r` dangles.
@@ -159,7 +177,8 @@ fn bad_returned_seq() {
     let r = &v[0]
     let g = h.f
     g()
-    print(r)   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    print(r)   //~ W0301 old:
 }
 fn bad_returned_tuple_seq() {
     let v = mk_v()
@@ -167,7 +186,8 @@ fn bad_returned_tuple_seq() {
     let r = &v[0]
     let g = t.0
     g()
-    print(r)   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+    print(r)   //~ W0301 old:
 }
 // Bad: two tasks run the closure, and each one writes `v`.
 fn bad_two_tasks() {
@@ -176,7 +196,8 @@ fn bad_two_tasks() {
     scope { s =>
         let g = h.f
         s.spawn(|| g())
-        s.spawn(|| g())   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        s.spawn(|| g())   //~ W0405 old:
     }
 }
 // Bad: one task runs the closure, and a sibling task reads `v`.
@@ -185,20 +206,23 @@ fn bad_sibling() {
     let h = H { f: || v.push(2) }
     scope { s =>
         s.spawn(|| { let g = h.f; g() })
-        s.spawn(|| print(v.len()))   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ledger `changed`, stage F19 (class F19-W0405)
+        s.spawn(|| print(v.len()))   //~ W0405 old:
     }
 }
 // Bad: one branch runs the closure, and the other reads `v`.
 fn bad_fork_branch() {
     let v = mk_v()
     let h = H { f: || v.push(2) }
-    let _ = fork(|| { let g = h.f; g() }, || print(v.len()))   //~ W0405
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ADR 0006: a fork branch that runs a closure that changes a captured local is W0403, as `fork(|| v.push(2), ...)` is
+    let _ = fork(|| { let g = h.f; g() }, || print(v.len()))   //~ W0403 W0405 old:
 }
 // Bad: each branch runs the closure.
 fn bad_fork_two() {
     let v = mk_v()
     let h = H { f: || v.push(2) }
-    let _ = fork(|| { let g = h.f; g() }, || { let g = h.f; g() })   //~ W0405
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ADR 0006: a fork branch that runs a closure that changes a captured local is W0403, as `fork(|| v.push(2), ...)` is
+    let _ = fork(|| { let g = h.f; g() }, || { let g = h.f; g() })   //~ W0403 W0403 W0405 old:
 }
 
 // Control: the checker finds today the same closure in a `Vec` whose element
@@ -404,19 +428,21 @@ fn ok_sibling() {
         s.spawn(|| print(v.len()))
     }
 }
-// Clean: the branches touch different vectors.
+// Runs clean (different vectors), but W0403 by ADR 0006, as `fork(|| v.push(2), ...)` is.
 fn ok_fork_branch() {
     let v = mk_v()
     let w = mk_v()
     let h = H { f: || v.push(2) }
-    let _ = fork(|| { let g = h.f; g() }, || print(w.len()))
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ADR 0006: a fork branch that runs a closure that changes a captured local is W0403, as `fork(|| v.push(2), ...)` is
+    let _ = fork(|| { let g = h.f; g() }, || print(w.len()))   //~ W0403 old:
 }
 fn ok_fork_two() {
     let v = mk_v()
     let w = mk_v()
     let h = H { f: || v.push(2) }
     let k = H { f: || w.push(2) }
-    let _ = fork(|| { let g = h.f; g() }, || { let g = k.f; g() })
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-5, done at C3; ADR 0006: a fork branch that runs a closure that changes a captured local is W0403, as `fork(|| v.push(2), ...)` is
+    let _ = fork(|| { let g = h.f; g() }, || { let g = k.f; g() })   //~ W0403 W0403 old:
 }
 
 test "ok_local_copy" { ok_local_copy() }

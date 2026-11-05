@@ -1,6 +1,7 @@
 # ADR 0012: A core IR between the typed tree and the facts
 
-Status: proposed. Date: 2026-10-20.
+Status: accepted (plan stage C3: the `ir` pipeline and the IR engine are the defaults).
+Date: 2026-10-20. Accepted: 2026-11-04.
 
 The specification is `docs/ir.md`. The plan is `docs/plan/core-ir.md`. The inputs of the
 design (the root-cause analysis, the semantics map, the lowering map, three designs and

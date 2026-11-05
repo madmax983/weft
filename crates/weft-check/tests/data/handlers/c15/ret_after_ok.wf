@@ -1,0 +1,11 @@
+// Gap G3 of stage C1.5: a closure that a callee gives back runs after the value that resumes two times. Clean twin: the value resumes one time (or no loop), so there is no error.
+effect Pick { multi fn pick() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn f(m: fn(), g: fn()) -> fn() { m(); || g() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        let h = f(|| { print(1) }, || print(take_v(v)))
+        h()
+    }
+}

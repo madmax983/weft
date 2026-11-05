@@ -147,6 +147,20 @@ fn integer_overflow_and_division_by_zero_are_errors() {
 fn unsigned_underflow_is_an_error() {
     let src = "struct C { n: u64 }\nfn main() {\n let c = C { n: 1 }\n c.n -= 1\n print(c.n)\n c.n -= 1\n}";
     let e = run(src, &opts(0)).unwrap_err();
+    // The IR engine (the default from plan stage C3) checks the result of
+    // the operation against the integer type (`docs/ir.md` 5.7); the AST
+    // engine checks the field.
+    assert!(
+        e.message
+            .contains("integer underflow: -1 does not fit in `u64`"),
+        "{e}"
+    );
+    assert_eq!(e.outcome.stdout, "0\n");
+    let ast = RunOptions {
+        engine: weft_interp::Engine::Ast,
+        ..opts(0)
+    };
+    let e = run(src, &ast).unwrap_err();
     assert!(
         e.message
             .contains("unsigned underflow: field `n` would be -1"),

@@ -16,7 +16,8 @@
 //! [`engines`] runs each program with the two engines of the interpreter
 //! and compares the runs (the engine differential). [`sigdiff`] compares
 //! the signatures that the `ir` pipeline infers with those of the old
-//! inference.
+//! inference. [`sweep`] generates new programs, checks them with the `ir`
+//! pipeline and runs the oracle on each program that the checker accepts.
 
 use std::path::PathBuf;
 
@@ -35,6 +36,7 @@ pub mod pool;
 pub mod report;
 pub mod sigdiff;
 pub mod snapshot;
+pub mod sweep;
 pub mod thir;
 
 /// An error of the gate tools.
@@ -97,6 +99,10 @@ pub enum Error {
         /// What to do.
         message: String,
     },
+    /// A generator of the sweep fails, or a setting of the sweep is not
+    /// correct.
+    #[error("the sweep: {0}")]
+    Sweep(String),
     /// The system cannot start a worker thread.
     #[error("cannot start a worker thread: {0}")]
     Thread(std::io::Error),

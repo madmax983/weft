@@ -38,7 +38,8 @@ pub struct Options {
     pub library: bool,
     /// The embedded profile: no `std.rt`, so `main` must handle every standard effect.
     pub no_runtime: bool,
-    /// The fact pipeline (`--facts`, plan §2.6).
+    /// The fact pipeline (`--facts`, plan §2.6). The default is
+    /// [`FactGen::Ir`] (plan stage C3).
     pub facts: FactGen,
     /// The construct groups that the `ir` pipeline checks (plan §2.6). A
     /// program that uses a group that is off goes to the old pipeline. The
@@ -60,27 +61,31 @@ pub const DEFAULT_GROUPS: Groups = Groups::of(Group::A)
     .with(Group::F);
 
 impl Default for Options {
-    /// A program that is not a library, with the standard runtime, the old
-    /// fact pipeline, and the groups [`DEFAULT_GROUPS`].
+    /// A program that is not a library, with the standard runtime, the `ir`
+    /// fact pipeline ([`FactGen::Ir`], plan stage C3), and the groups
+    /// [`DEFAULT_GROUPS`] (each group is on).
     fn default() -> Self {
         Self {
             library: false,
             no_runtime: false,
-            facts: FactGen::Old,
+            facts: FactGen::Ir,
             ir_groups: DEFAULT_GROUPS,
         }
     }
 }
 
 /// The fact pipeline (`--facts`, plan §2.6 and stage F1).
+///
+/// From plan stage C3, [`FactGen::Ir`] is the default. [`FactGen::Old`]
+/// stays behind its flag (`--facts=old`) until plan stage R3 removes it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FactGen {
     /// The old lowering gives the facts (`crates/weft-sema/src/body/`).
-    #[default]
     Old,
     /// The fact generator of the IR gives the facts of a program in scope
     /// (`crate::factgen`). For a program out of scope, the old lowering
-    /// gives them, and [`Analysis::ir_scope`] says why.
+    /// gives them, and [`Analysis::ir_scope`] says why. It is the default.
+    #[default]
     Ir,
     /// Both: [`Analysis::bodies`] and [`Analysis::diags`] are those of the
     /// old lowering, and [`Analysis::ir_facts`] holds those of the IR for a
@@ -345,6 +350,11 @@ pub fn on_current_stack<T>(f: impl FnOnce() -> T) -> T {
 /// change after [`infer::parts_limit`] changes, the function gets W0704. If a
 /// row grows past the height of its lattice, the inference has a bug: it
 /// stops, and each function whose signature can still change gets W0706.
+///
+/// With the `ir` pipeline (the default, [`FactGen::Ir`]), the effect
+/// inference of a program in scope is a fixpoint over the summaries
+/// (`docs/ir.md` 6.8): the parts only grow, so W0704 and W0707 are not
+/// reported ([`IR_DROPS`]), and W0706 stays as a guard.
 pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
     on_large_stack(|| analyze_bounded(units, opts, None, None, factgen::emit))
 }

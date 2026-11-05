@@ -1,0 +1,14 @@
+// Gap G1 of stage C1.5: a loop around a `handle` or a `scope` runs the nested body (or the clause) again.
+effect Ask { fn ask() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn f(g: fn()) {
+    let i = 0
+    while i < 2 {
+        handle Ask { fn ask() { g(); resume(true) } } in { if ask() { print(0) } }
+        i += 1
+    }
+}
+fn main() {
+    let v = [1]
+    f(|| print(take_v(v)))   //~ W0502
+}

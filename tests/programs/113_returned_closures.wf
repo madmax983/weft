@@ -21,9 +21,11 @@ fn scope_ended() {
     let f = {
         let v = Vec.new()
         v.push(1)
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (stored values)
         reader(&v)   //~ old: W0301
     }
-    f()   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (stored values)
+    f()   //~ W0301 old:
 }
 fn cleared() {
     let v = Vec.new()
@@ -35,9 +37,11 @@ fn cleared() {
 fn plain_scope_ended() {
     let f = {
         let x = 5
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (stored values)
         elem_reader(&x)   //~ old: W0301
     }
-    f()   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (stored values)
+    f()   //~ W0301 old:
 }
 // A function argument flows into the result too.
 fn passed_on() {
@@ -137,8 +141,10 @@ fn out_elem_param() {
     let fs = Vec.new()
     let v = Vec.new()
     v.push(1)
-    out_elem(&v[0], &fs)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (stored values)
+    out_elem(&v[0], &fs)   //~ W0301 old:
     v.clear()
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (stored values)
     let f = fs[0]   //~ old: W0301
     f()
 }
@@ -193,7 +199,8 @@ fn held_before() {
     // only from the call on.
     let es = Vec.new()
     v.push(2)
-    out_elem(&v[0], &es)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F13 (stored values)
+    out_elem(&v[0], &es)   //~ W0301 old:
     let e = es[0]
     e()
     take(v)

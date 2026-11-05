@@ -1,0 +1,15 @@
+// Hole C1-HA of stage C1.6: a `once` closure from a call result is live across a value that resumes two times. With a value that does not resume two times, there is no error.
+effect Pick { multi fn pick() -> bool }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn picky() / Pick { if pick() { print(1) } }
+fn quiet() { print(1) }
+enum Cb { Run(fn()), Skip }
+fn mke(g: fn()) -> Cb { Run(g) }
+fn body() / Pick {
+    let v = [1]
+    let g = || print(take_v(v))
+    let h = match mke(g) { Run(k) => k, Skip => || print(0) }
+    quiet()
+    h()
+}
+fn main() { handle Pick { fn pick() { resume(true); resume(false) } } in body() }

@@ -43,9 +43,11 @@ fn closure_return_ref(world: &World) / mut(world.entities) {
     print(r.hp)   //~ W0301
 }
 fn closure_return_local() {
-    let f = || {   //~ ir: W0204
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F19 (class F19-HIDDEN, moved lines)
+    let f = || {   //~ W0204 old:
         let v: Vec<u64> = Vec.new()
         if v.len() > 0 { return &v[0] }   //~ W0204
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F19 (class F19-HIDDEN, moved lines)
         &v[1]   //~ old: W0204
     }
 }

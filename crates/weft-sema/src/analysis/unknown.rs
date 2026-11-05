@@ -157,9 +157,8 @@ pub(super) fn param_places(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>
 /// them through an unstable step, as for the old lowering), and
 /// `Caller..`. Its result points into the wildcard places of these places
 /// and into `Caller..`. It can abort (`raises`: the run node gets
-/// `may_abort`), and it can resume more than once if an effect of its row
-/// has a `multi` operation (with no row: an effect of the program has one,
-/// as `may_be_multi` of the old lowering). It performs the effects of a
+/// `may_abort`), and it can resume more than once if an effect of the
+/// program has a `multi` operation, with a stated row too (issue #68). It performs the effects of a
 /// stated row; with no row its effects pass through: the function value
 /// that the caller gives applies its own summary where the caller runs it
 /// (part `runs`).
@@ -216,13 +215,9 @@ pub fn code_of_caller(
             s.performs.insert(pf);
         }
     }
-    let multi = |e: &weft_ir::ty::EffectDecl| e.ops.iter().any(|o| o.multi);
-    s.multi = match row {
-        Some(es) => es
-            .iter()
-            .any(|e| tys.effects().get(e.index()).is_some_and(multi)),
-        None => tys.effects().iter().any(multi),
-    };
+    // A stated row is no bound for `multi`: a value with no row can go into
+    // a place of a type with a row (gap G4 of stage C1.5, issue #68).
+    s.multi = tys.effects().iter().any(|e| e.ops.iter().any(|o| o.multi));
     s.unknown_multi = s.multi;
     s
 }

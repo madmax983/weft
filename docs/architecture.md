@@ -2,12 +2,17 @@
 
 ## Pipeline
 
+From plan stage C3 (ADR 0012), the core IR is the default pipeline (`docs/ir.md` 1.3):
+
 ```mermaid
 flowchart LR
-    src[".wf source"] --> lex["lexer<br/>(statement ends)"] --> parse[parser] --> ast[AST]
+    src[".wf source"] --> lex["lexer<br/>(statement ends)"] --> parse[parser] --> ast["AST<br/>(an ExprId on each expression)"]
     prelude["std/prelude.wf"] --> parse
-    ast --> collect["items and signatures"] --> infer["effect inference<br/>(fixpoint)"] --> lower["lowering"]
-    lower --> facts["FnFacts<br/>(per function)"]
+    ast --> typeck["resolve and typeck<br/>(THIR: final types, callees,<br/>argument order, dereferences)"]
+    typeck --> build["IR builder<br/>(irbuild/)"] --> ir["core IR<br/>(bodies, blocks, locals,<br/>cleanup chains)"]
+    ir --> verify["verifier<br/>(V1 to V18)"]
+    ir --> analyze["analysis<br/>(abstract states for each body;<br/>summaries and effect rows<br/>for each SCC of the call graph)"]
+    analyze --> emit["fact generator<br/>(factgen/: templates)"] --> facts["FnFacts<br/>(per component)"]
     facts --> checker["production checker<br/>(weft-check)"]
     facts --> engine["Datalog engine<br/>(spec/weft.dl)"]
     checker --> violations1[Violations]
@@ -16,9 +21,28 @@ flowchart LR
     checker --> diags["diagnostics"]
     engine --> trees["derivation trees"]
     verified["weft-verified<br/>(Verus)"] --> checker
-    ast --> interp["reference interpreter"]
+    ir --> compile["compile_ir<br/>(landing pads)"] --> interp["reference interpreter<br/>(frames, effects,<br/>unwinder, scheduler)"]
     checker -- "stealable(T)" --> interp
 ```
+
+| Step | Code |
+| --- | --- |
+| THIR tables | `crates/weft-sema/src/thir/` (until plan stage R2, the old lowering records them) |
+| IR builder and scope of the groups | `crates/weft-sema/src/irbuild/` |
+| IR types, printer, verifier | `crates/weft-ir` |
+| analysis, summaries, effect inference | `crates/weft-sema/src/analysis/` |
+| fact generator, templates, the relation table `RELS` | `crates/weft-sema/src/factgen/` |
+| interpreter on the IR | `crates/weft-interp/src/compile_ir.rs` |
+
+The old pipeline stays behind its flags for one review round: `--facts=old` (the
+facts of the old lowering, `crates/weft-sema/src/body/`) and `--engine=ast` (the AST
+compiler of the interpreter, `crates/weft-interp/src/compile.rs`). Plan stages R3 and
+R4 remove them. A program that the `ir` pipeline does not cover (a body that the
+analysis does not support, `irbuild/scope.rs`) goes to the old pipeline, and
+`weft check` writes a note.
+
+The sections below that name `body/` describe the old lowering. The rules of the spec,
+the checker and the facts schema are the same in both pipelines.
 
 ## One mechanism for borrows and effects
 
@@ -85,6 +109,21 @@ and the caller sees the real mutation. A lent place is also a `call_mut` of the 
 so it must not overlap another argument (W0312). See ADR 0005.
 
 ## Effect inference
+
+In the `ir` pipeline (the default), effect inference is a monotone fixpoint over the
+summaries (`docs/ir.md` 6.6, 6.8; `crates/weft-sema/src/analysis/callgraph.rs`).
+Tarjan's algorithm gives the strongly connected components of the call graph, callees
+first. Each summary starts with the stated row (or an empty row) and empty inferred
+parts. A round runs the fact generator on each body of the component with the summaries
+of now, and joins the projection of its facts into the summaries. The parts start empty
+and only grow, so the first round with no growth is the fixpoint. No body is lowered
+again. So W0707 (the bound of the loop passes of the old lowering) and W0704 (the bound
+of the parts) are not reported. W0706 stays as a guard: a row that grows past the
+height of its lattice (`infer::growth_limit`) shows a bug. `analysis::sig::to_effect_sig`
+projects a summary onto the `EffectSig` that W0701, `weft deps` and the interpreter read.
+
+The old pipeline (`--facts=old`) infers the effects as described in the rest of this
+section.
 
 Sema infers the effects of each function that does not state them
 (`crates/weft-sema/src/infer.rs`). A worklist lowers callees before callers. When a
@@ -160,7 +199,7 @@ handler (`Held::Cap`) or a mark, such as `Held::Nonportable`, `Held::NotMany` or
 | --- | --- |
 | `weft check` | load (file or package) → sema → checker and, for a package, dependency authority (W0901, W0902) → diagnostics; `--explain` adds the spec derivations, each with the diagnostic that reports its fact |
 | `weft agree` | load → sema → checker and spec → compare the violation sets, and the evidence of W0301 and W0405 with the derivations of the spec (`weft_check::evidence`) |
-| `weft run`, `weft test` | load → sema → checker → refuse on errors (unless `--unchecked`) → interpreter |
+| `weft run`, `weft test` | load → sema → checker → refuse on errors (unless `--unchecked`) → interpreter (the IR engine; `--engine=ast` for the AST compiler) |
 | `weft deps` | load → sema → dependency authority (W0901, W0902) |
 
 Authority names only the standard effects: a user effect of a dependency needs a
@@ -259,8 +298,8 @@ meaning, and it is not done yet.
 | `lifecycle::Continuation` | a `once` continuation resumes at most once | interpreter |
 | `lifecycle::Linear` | a linear value is consumed or aborted at most once; a live value with no `on abort` does not unwind | interpreter |
 
-## Core IR (proposed)
+## Core IR
 
-A core IR between the typed tree and the facts is planned. Fact generation will read the IR,
-not the AST. See ADR 0012, `docs/ir.md` and `docs/plan/core-ir.md`. Until the plan lands,
-`crates/weft-sema/src/body/` lowers the AST to facts as described above.
+The core IR is the default pipeline from plan stage C3. See ADR 0012, `docs/ir.md` and
+`docs/plan/core-ir.md`. Plan stages R1 to R5 remove the old lowering
+(`crates/weft-sema/src/body/`) and the AST compiler of the interpreter.

@@ -151,10 +151,17 @@ fn the_hints_name_an_effect_of_a_dependency_as_the_project_writes_it() {
         "the runtime handles only the standard effects; handle `json.Note` in `main`",
         "error[W0101]: unknown effect `Note`",
         "the effect with this name is written `json.Note` here",
-        "add `json.Note` to the effects after `/`, or handle it here",
     ] {
         assert!(out.text.contains(want), "missing `{want}`:\n{}", out.text);
     }
+    // The hint of W0702 in `stated`, whose signature names an unknown
+    // effect: only the old pipeline gives it. The `ir` pipeline (the default
+    // from plan stage C3) builds no IR for a function with an error in its
+    // signature, and W0101 already rejects the program.
+    let out = cmd(&["check", "--facts=old", &pkg]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    let want = "add `json.Note` to the effects after `/`, or handle it here";
+    assert!(out.text.contains(want), "missing `{want}`:\n{}", out.text);
 }
 
 #[test]
@@ -178,7 +185,10 @@ fn the_project_cannot_name_a_private_effect_of_a_dependency() {
         .filter(|l| l.starts_with("error[W0101]") && l.contains("is private"))
         .count();
     assert_eq!(private, 3, "{}", out.text);
-    // The hints do not give a name that the project cannot write.
+    // The hints do not give a name that the project cannot write. The hint
+    // is a note of W0702, which only the old pipeline gives for these
+    // functions (see `the_hints_name_an_effect_of_a_dependency_as_the_project_writes_it`).
+    let out = cmd(&["check", "--facts=old", &pkg]);
     assert!(
         out.text
             .contains("`json.Secret` is private in its package: code outside the package cannot state or handle it"),

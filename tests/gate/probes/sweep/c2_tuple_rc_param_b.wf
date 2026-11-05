@@ -1,0 +1,14 @@
+// Stage C2 sweep (gen4, seed 1002955, reduced by hand). A part of a tuple
+// result points into the object of the `Rc` handle `a`. A new value of `a`
+// frees the object, so the read of `r` is W0301. Before the fix of stage C2
+// the `ir` pipeline accepted the program: the part did not get the handle
+// place `a.*`. The old pipeline rejects it.
+struct R { items: Vec<u64>, n: u64 }
+fn mk_r() -> Rc<R> { let v = Vec.new(); v.push(1); Rc.new(R { items: v, n: 0 }) }
+fn pair_of(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+fn main() {
+    let a = mk_r()
+    let (r, _) = pair_of(&a.items)
+    a = mk_r()
+    print(r + 1)
+}

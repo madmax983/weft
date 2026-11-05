@@ -12,7 +12,7 @@ fn main() {
     handle Pick { fn pick() { resume(true); resume(false) } } in {
         let t = mk_v()
         let o = H1 { f: || print(0) }
-        pass(|| { if pick() { print(1) } }, || print(take_v(t)), &o)   //~ W0503
+        pass(|| { if pick() { print(1) } }, || print(take_v(t)), &o)   //~ W0503 W0503
         let k = o.f
         k()
     }

@@ -16,8 +16,10 @@ fn via_param(f: fn(&World) -> &Entity, world: &World) / mut(world.entities) {
 fn via_param_option(f: fn(&World) -> Option<&Entity>, world: &World) / mut(world.entities) {
     let o = f(world)
     world.entities.clear()
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
     match o {   //~ old: W0301
-        Some(e) => print(e.hp),   //~ ir: W0301
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
+        Some(e) => print(e.hp),   //~ W0301 old:
         None => {},
     }
 }

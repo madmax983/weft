@@ -518,6 +518,8 @@ fn the_committed_tier1_manifest_is_current() {
         "run `cargo run -p weft-gate -- manifest --tier 1`"
     );
     let sets = |s: &str| fresh.entries.iter().filter(|e| e.set == s).count();
-    assert_eq!(sets("ir_targets"), 6);
+    // Plan stage C3 moved the targets O3-5, O3-6, R3RT2 and R3RT3 to the
+    // corpus: the `ir` pipeline (the default) reports each marker.
+    assert_eq!(sets("ir_targets"), 2);
     assert!(sets("probes") > 3000, "{} probes", sets("probes"));
 }

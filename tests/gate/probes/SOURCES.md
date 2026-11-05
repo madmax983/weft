@@ -776,3 +776,27 @@ others come from the self-attack of the stage (scratchpad `c1/att/`). Before the
   arguments of the call (W0312).
 - `fixes/c1/n59_*.wf` (claim C1-59): a run of a closure that changes a captured `u64`
   gives it no linear value.
+- `fixes/c1/c15_*.wf` (stage C1.5; claims C1-H5, C1-H6, C1-G1 to C1-G4): the counterexamples of
+  the reviews of C1.3, from `crates/weft-check/tests/data/handlers/c15/`. The `_b.wf`
+  programs run a `once` closure two times: in a loop around a `handle` or a `scope`
+  (`loop_*`), after a resume inside a nested body (`h6_*`), as a result of a run that
+  resumes two times (`res_*`), as a capture that a made closure gives out (`h5_*`, W0503), or through a parameter whose stated row has no `multi`
+  effect (`g_row_fwd`). The `_c.wf` programs are the clean twins: no loop, or a value that
+  does not resume two times. The `ir` pipeline accepts each `_c.wf`.
+- `fixes/c1/c16_*.wf` (stage C1.6, issue #71; claims C1-HA, C1-HB, C1-HC): the holes of the
+  review of C1.5, from `crates/weft-check/tests/data/handlers/c16/`. The `_b.wf` programs
+  keep a `once` closure across a value that resumes two times, and run it after the value:
+  a local gets it from a call result through a destructure, a projection or a `match` arm
+  (`ha_*`), a struct gets it by a store or from a callee (`hb_*`), or a callee gives it
+  back in a struct or in a field of a reference argument after a late run of the value
+  (`hc_*`). The `_c.wf` programs are the clean twins: a value that does not resume two
+  times. The old pipeline and the `ir` pipeline accept each `_c.wf`.
+- `sweep/` (stage C2, the fresh sweep `weft-gate sweep`): the accepted faults of the
+  sweep, reduced by hand. `c2_tuple_rc_param_b.wf`, `c2_tuple_rc_each_b.wf` (gen4, seed
+  1002955) and `c2_tuple_rc_group_b.wf`: a part of a tuple result points into the object
+  of an `Rc` handle, and a new value of the handle frees the object (W0301; the `ir`
+  pipeline accepted them before stage C2, the old pipeline rejects them).
+  `c2_tuple_rc_c.wf` is the clean twin. `c2_spawn_linear_no_abort.wf` (mutate3, seeds
+  1000291, 1001825 and 1006663): a spawn in statement position gives a linear result
+  with no `on abort` to a scope that aborts (finding F3-6, verdict "stays"; both
+  pipelines accept it; ledger class `edge`, issue #73).

@@ -842,6 +842,26 @@ fn one_result(tys: &TyTable, t: TyId) -> bool {
     }
 }
 
+/// σ of the stated place `p` of the result (or of a part of a tuple
+/// result), with the handles that the place depends on: the handle places on
+/// the way to the argument of a `Param` root, or the handles of the group of
+/// a `Group` root ([`group_deps`]). A new value of such a handle can free
+/// the object, so the reference depends on it (ADR 0003). A part of a tuple
+/// result gets them too (stage C2: the sweep found a part with no handle).
+///
+/// # Errors
+///
+/// The errors of σ.
+fn stated_places(cx: &mut Cx<'_>, s: &Sigma, p: &IPlace) -> Result<Vec<PlaceId>, AlphaError> {
+    let mut out = places(cx, s, p, Base::Args)?;
+    match p.root {
+        IRoot::Param(i) => out.extend(s.deps.get(i as usize).into_iter().flatten().copied()),
+        IRoot::Group(_) => out.extend(group_deps(cx, s)),
+        _ => {}
+    }
+    Ok(out)
+}
+
 /// The value of the result of a run node of `sum` with σ `s`, for a result
 /// of type `ret` (part `ret`).
 ///
@@ -857,14 +877,7 @@ pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result
     let props = ir_props(cx.tys, ret);
     let mut top = AbsVal::of_type(props.linear || sum.ret.linear);
     for p in &sum.ret.places {
-        top.refs.extend(places(cx, s, p, Base::Args)?);
-        match p.root {
-            IRoot::Param(i) => top
-                .refs
-                .extend(s.deps.get(i as usize).into_iter().flatten().copied()),
-            IRoot::Group(_) => top.refs.extend(group_deps(cx, s)),
-            _ => {}
-        }
+        top.refs.extend(stated_places(cx, s, p)?);
     }
     if !sum.ret.places.is_empty() && sum.ret.uniq {
         top.uniq = true;
@@ -900,7 +913,7 @@ pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result
         match sum.ret.parts.iter().find(|(i, _, _)| *i == k) {
             Some((_, ps, uniq)) => {
                 for p in ps {
-                    v.refs.extend(places(cx, s, p, Base::Args)?);
+                    v.refs.extend(stated_places(cx, s, p)?);
                 }
                 v.uniq = *uniq;
             }

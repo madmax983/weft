@@ -12,7 +12,9 @@ fn borrowed_ends() {
         let v = mk_v()
         fs.push(|| print(v[0]))
     }
-    let g = fs[0]   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F12 (F12-fix H4)
+    let g = fs[0]   //~ W0301 old:
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F12 (F12-fix H4)
     g()             //~ old: W0301
 }
 
@@ -23,7 +25,9 @@ fn moved_refs_change() {
     let ks = Vec.new()
     ks.push(|| eat_h(h))
     v.clear()
-    let g = ks[0]   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F12 (F12-fix H4)
+    let g = ks[0]   //~ W0301 old:
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F12 (F12-fix H4)
     g()             //~ old: W0301
 }
 

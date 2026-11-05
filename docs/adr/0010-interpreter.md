@@ -163,6 +163,41 @@ Status: accepted. Date: 2026-10-18.
   the exit code shows only the run. The binary writes the output and the log of each
   test before its result line. A file with no test blocks gets a note.
 
+## The interpreter runs the core IR (plan stage C3)
+
+From plan stage C3 (ADR 0012), the interpreter compiles the core IR
+(`crates/weft-interp/src/compile_ir.rs`, `docs/ir.md` 8.1). `Engine::Ir` is the
+default of `RunOptions`, `weft run` and `weft test`. The AST compiler
+(`crates/weft-interp/src/compile.rs`) stays behind `--engine=ast` for one review round,
+and plan stage R4 removes it.
+
+- A program with a body that has no IR (a type error, an error in a declaration, W0303)
+  runs on the AST compiler, and a note tells why. The checker rejects these programs,
+  so only `--unchecked` runs them.
+- **The order of evaluation (choice A, `docs/ir.md` 5.1.1).** An operand is read where
+  it is written: a place operand of a binary operator, of `print`, and the base of an
+  index. So `x + { x = 5; 1 }` gives 2, not 6. The AST engine reads an operand where it
+  uses it, so a program that both checkers accept can stop on the AST engine with
+  "a place does not exist (the value changed shape)", for example
+  `r.hp * { v.clear(); 1 }` (`--engine=ir` prints 1). The IR engine is the reference
+  semantics (the claims sem-N1 and sem-N2 hold only for it).
+- **The end of temporaries (`docs/ir.md` 5.1.2, 5.12).** A temporary ends at the end of
+  its statement. The tail temporaries of a loop body end at each iteration. The
+  temporaries of a branch of `if` or `match` end before the join.
+- **Landing pads (`docs/ir.md` 8.2).** Each `Code` of the IR has a table from each op
+  that can abort the frame to the first op of its cleanup chain (`Code::pads`). The
+  unwinder runs the chain as code in unwind mode (root handlers only): `UnwindValue`
+  runs the `on abort` of each live linear part, `UnwindKont` aborts a fresh
+  continuation, and `UnwindExit` takes the frame off the stack. The scan of the frame
+  (`frame_values`) stays as an oracle check: a live linear value that the chain did not
+  finish is a fault with the oracle on.
+- **The unwind order (`docs/ir.md` 5.1.6).** In a frame: the value of the frame (`_0`)
+  first, then the temporaries newest first, then the locals from the highest index, then
+  the parameters. In a clause, the fresh continuation unwinds first, before the values
+  of the clause frame (the order of the effects model). The AST engine unwinds the
+  clause frame first. The engine differential of the gate records this difference
+  (ledger class `unwind-order`).
+
 ## Consequences
 
 - The interpreter demonstrates the runtime design. It does not measure task density or

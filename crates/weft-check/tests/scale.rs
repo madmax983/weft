@@ -175,7 +175,7 @@ fn causes_of(n: [usize; 7]) -> Vec<CauseCase> {
 #[test]
 fn each_cause_checks_quickly() {
     for (name, n, src, cause, next) in causes() {
-        let c = check_source("causes.wf", &src, Options::default());
+        let c = check_source("causes.wf", &src, old_facts());
         let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
             panic!("{name}: no body");
         };
@@ -227,7 +227,7 @@ fn each_cause_checks_in_linear_work() {
         true,
     ));
     for (name, n, src, cause, _) in cases {
-        let c = check_source("causes.wf", &src, Options::default());
+        let c = check_source("causes.wf", &src, old_facts());
         let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
             panic!("{name}: no body");
         };
@@ -576,7 +576,7 @@ fn nested_wildcard_places_check_quickly() {
     for (calls, loops) in [(32, 0), (0, 4), (64, 8), (1000, 0)] {
         for push in [false, true] {
             let src = walk(calls, loops, push);
-            let c = check_source("walk.wf", &src, Options::default());
+            let c = check_source("walk.wf", &src, old_facts());
             assert!(c.analysis.diags.is_empty(), "{:?}", c.analysis.diags);
             let body = c.analysis.bodies.iter().find(|b| b.facts.name == "walk");
             let Some(body) = body else { panic!("no body") };
@@ -613,7 +613,7 @@ fn nested_wildcard_places_check_quickly() {
 /// The work of sema and of the checker for a program: the counts of sema, and
 /// the sum of the counts of the checker over the bodies.
 fn work_of(src: &str) -> (weft_sema::Work, usize, u64, u64) {
-    let c = check_source("work.wf", src, Options::default());
+    let c = check_source("work.wf", src, old_facts());
     assert!(c.analysis.diags.is_empty(), "{:?}", c.analysis.diags);
     let (mut overlaps, mut searches) = (0, 0);
     for b in &c.analysis.bodies {
@@ -816,6 +816,34 @@ fn closures_that_call_closures_cost_polynomial_work() {
     }
 }
 
+/// `n` operations of a local handler in a line, each one followed by a new
+/// closure in a local of the site that captures its result
+/// (`verify/s5/S5a/x/p/scale_ops.wf` with `n` = 1500). The clause can stop
+/// with no `resume`: each operation is an abort to the handler, and the
+/// closure runs after the `handle`.
+fn aborts(n: usize) -> String {
+    let mut s = String::from(
+        "effect Pick { fn pick() -> &u64 }\nfn many() {\n    let v = Vec.new()\n    v.push(1)\n    \
+         let f = || print(0)\n    handle Pick { fn pick() { if v.len() > 0 { resume(&v[0]) } } } in {\n",
+    );
+    for i in 0..n {
+        let _ = writeln!(s, "        let r{i} = pick()\n        f = || print(r{i})");
+    }
+    s.push_str("    }\n    f()\n}\nfn main() { many() }\n");
+    s
+}
+
+/// The old pipeline (`--facts=old`). The tests of the work of the checker
+/// on the shapes of the old facts (the causes of W0301, QA4, QA7, QA8)
+/// and the comparisons with the old facts name it, because the default is
+/// the `ir` pipeline from plan stage C3.
+fn old_facts() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Old,
+        ..Options::default()
+    }
+}
+
 /// The options of the `ir` pipeline with all groups (plan stage C1, §2.7.4).
 fn ir() -> Options {
     Options {
@@ -839,12 +867,19 @@ fn rows(f: &weft_facts::FnFacts) -> usize {
 /// an input relation of the spec that the checker reads. At stage C1 each
 /// test of a `match` gave each variant test variable of the scrutinee a new
 /// value (a quadratic number of rows: 14 times the old rows for 200
-/// variants), and the facts had rows that no rule reads. The bound is on
-/// rows, not on time, so it does not depend on the load of the machine.
+/// variants), and the facts had rows that no rule reads. At stage C1.4 an
+/// abort of each operation of [`aborts`] gave each captured local that no
+/// path assigned a new value at its own node (3.5 times the old rows for
+/// 200 operations, 22.6 times for 1500); stage C1.4b puts these rows on one
+/// chain of nodes. The bound is on rows, not on time, so it does not depend
+/// on the load of the machine.
 #[test]
 fn the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts() {
-    for (name, src) in many_locals([200, 200, 200, 200, 100]) {
-        let old = check_source("many.wf", &src, Options::default());
+    let cases = many_locals([200, 200, 200, 200, 100])
+        .into_iter()
+        .chain([("aborts", aborts(200))]);
+    for (name, src) in cases {
+        let old = check_source("many.wf", &src, old_facts());
         let new = check_source("many.wf", &src, ir());
         assert!(new.ok() && old.ok(), "{name}: {:?}", new.diags);
         assert!(
@@ -900,7 +935,7 @@ fn ir_cases() -> Vec<(String, String)> {
 #[test]
 fn the_programs_of_this_file_check_with_the_ir_facts() {
     for (name, src) in ir_cases() {
-        let old = check_source("scale.wf", &src, Options::default());
+        let old = check_source("scale.wf", &src, old_facts());
         let new = check_source("scale.wf", &src, ir());
         assert!(
             new.analysis

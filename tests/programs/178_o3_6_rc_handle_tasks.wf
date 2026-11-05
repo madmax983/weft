@@ -10,7 +10,11 @@
 // So a free or a new value of the handle conflicts with the task (W0405). This
 // is true for a move or a new value of the field that holds the handle, a new
 // value of the struct that holds it, and the end of its scope in a loop body.
-// The checker does not enforce it yet.
+// The old pipeline
+// (`--facts=old`) does not enforce it. Done at plan stage C3: the `ir`
+// pipeline (the default) enforces it, and the file moved here from
+// `tests/ir_targets`. The markers give the result of the `ir` pipeline, and
+// the codes after `old:` the result of the old pipeline.
 struct Node { v: u64 }
 struct Hold { r: Rc<Node>, n: u64 }
 struct HoldB { r: Box<Node>, n: u64 }
@@ -22,7 +26,8 @@ fn bad_move_generic() {
     let shared = Rc.new(Node { v: 5 })
     scope { s =>
         let b = s.spawn(|| shared.v + 1)
-        take(shared)   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        take(shared)   //~ W0405 old:
         print(b.join())
     }
 }
@@ -30,7 +35,8 @@ fn bad_move_let() {
     let shared = Rc.new(Node { v: 5 })
     scope { s =>
         let b = s.spawn(|| shared.v + 1)
-        let m = shared   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        let m = shared   //~ W0405 old:
         print(b.join())
     }
 }
@@ -38,7 +44,8 @@ fn bad_move_typed() {
     let shared = Rc.new(Node { v: 5 })
     scope { s =>
         let b = s.spawn(|| shared.v + 1)
-        take_rc(shared)   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        take_rc(shared)   //~ W0405 old:
         print(b.join())
     }
 }
@@ -47,7 +54,8 @@ fn bad_new_value() {
     let shared = Rc.new(Node { v: 5 })
     scope { s =>
         let b = s.spawn(|| shared.v + 1)
-        shared = Rc.new(Node { v: 6 })   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        shared = Rc.new(Node { v: 6 })   //~ W0405 old:
         print(b.join())
     }
 }
@@ -58,7 +66,8 @@ fn bad_scope_end() {
         {
             let shared = Rc.new(Node { v: 5 })
             s.spawn(|| { sleep(1.s); print(shared.v) })
-        }   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        }   //~ W0405 old:
         print(0)
     }
 }
@@ -67,7 +76,8 @@ fn bad_field_handle() {
     let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
     scope { s =>
         let b = s.spawn(|| h.r.v + 1)
-        take(h)   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        take(h)   //~ W0405 old:
         print(b.join())
     }
 }
@@ -77,7 +87,8 @@ fn bad_field_move() {
     let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
     scope { s =>
         let b = s.spawn(|| h.r.v + 1)
-        take(h.r)   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        take(h.r)   //~ W0405 old:
         print(b.join())
     }
 }
@@ -85,7 +96,8 @@ fn bad_field_new_value() {
     let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
     scope { s =>
         let b = s.spawn(|| h.r.v + 1)
-        h.r = Rc.new(Node { v: 6 })   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        h.r = Rc.new(Node { v: 6 })   //~ W0405 old:
         print(b.join())
     }
 }
@@ -94,7 +106,8 @@ fn bad_whole_new_value() {
     let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
     scope { s =>
         let b = s.spawn(|| h.r.v + 1)
-        h = Hold { r: Rc.new(Node { v: 6 }), n: 2 }   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        h = Hold { r: Rc.new(Node { v: 6 }), n: 2 }   //~ W0405 old:
         print(b.join())
     }
 }
@@ -105,7 +118,8 @@ fn bad_loop_scope_end() {
         for i in 0..2 {
             let shared = Rc.new(Node { v: i })
             s.spawn(|| { sleep(1.s); print(shared.v) })
-        }   //~ W0405
+        // C3: the default marker is the ir result; old: is the old pipeline: core IR target O3-6, done at C3; ledger `changed`, stage F20 (class F20-HIDDEN, O3-6)
+        }   //~ W0405 old:
         print(0)
     }
 }

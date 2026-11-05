@@ -36,7 +36,13 @@ fn pipeline(src: String) -> Option<String> {
                 }
                 assert!(!format!("{file:?}").is_empty());
                 drop(file);
-                let checked = weft_check::check_source("limit.wf", &src, Options::default());
+                // The old pipeline, named: the verdict of the `ir` pipeline
+                // (the default from plan stage C3) is compared with it.
+                let old_opts = Options {
+                    facts: FactGen::Old,
+                    ..Options::default()
+                };
+                let checked = weft_check::check_source("limit.wf", &src, old_opts);
                 assert!(weft_check::agreement(&checked).is_ok());
                 // The facts of the IR (plan §2.7.4) take the same stack and
                 // give the same verdict.
