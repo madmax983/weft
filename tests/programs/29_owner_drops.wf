@@ -45,14 +45,18 @@ fn block_value() {
     let r = {
         let v = Vec.new()
         v.push(1)
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
         &v[0]   //~ old: W0301
     }
-    print(r)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
+    print(r)   //~ W0301 old:
 }
 
 fn block_value_field() {
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
     let r = { let e = Entity { hp: 1 }; &e.hp }   //~ old: W0301
-    print(r)   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
+    print(r)   //~ W0301 old:
 }
 
 // A reference that is given a place in an inner block outlives it.
@@ -71,9 +75,11 @@ fn closure_outlives() {
     let f = {
         let n = Vec.new()
         n.push(1)
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
         || print(n.len())   //~ old: W0301
     }
-    f()   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
+    f()   //~ W0301 old:
 }
 
 // A reference into a loop body local does not reach the next iteration.
@@ -110,9 +116,11 @@ fn rc_block() {
     let a = Rc.new(Cell2 { items: Vec.new() })
     let r = {
         let b = a.clone()
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
         &b.items   //~ old: W0301
     }
-    print(r.len())   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (block-value-line class)
+    print(r.len())   //~ W0301 old:
 }
 
 fn box_overwrite() {

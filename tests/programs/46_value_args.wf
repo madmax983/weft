@@ -49,11 +49,13 @@ fn closure_perform() {
     handle Run {
         fn run(f) {
             v.clear()
-            f()   //~ ir: W0301
+            // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F17 (class D-MOVED)
+            f()   //~ W0301 old:
             resume(())
         }
     } in {
-        run(|| print(r))   //~ W0312 old: W0301
+        // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F17 (class D-MOVED)
+        run(|| print(r))   //~ W0312 old: W0312 W0301
     }
 }
 fn option_perform() {

@@ -4,10 +4,11 @@
 //! default construct groups (`weft_sema::DEFAULT_GROUPS`). For each program
 //! in scope (plan §2.6), the errors must be the `//~` markers of the `ir`
 //! pipeline (`common::expected_for`), and the checker must agree with the
-//! spec on each body. A marker that has an expectation for one pipeline only
-//! (`//~ old: W0301 ir: W0302`) changes the class of the program in the gate,
-//! so the gate ledger (`tests/gate/ledger.toml`) must name the program, unless
-//! the old pipeline accepts it (then the program is `fixed`).
+//! spec on each body. A marker with the codes of the old pipeline after
+//! `old:` (`//~ W0302 old: W0301`, plan stage C3) changes the class of the
+//! program in the gate, so the gate ledger (`tests/gate/ledger.toml`) must
+//! name the program, unless the old pipeline accepts it (then the program
+//! is `fixed`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -221,19 +222,44 @@ fn a_marker_of_one_pipeline_needs_a_ledger_entry() {
 }
 
 #[test]
-fn a_pipeline_word_selects_the_codes_after_it() {
-    let src = "fn f() {\n    g()   //~ W0301 old: W0302 ir: W0303 W0304\n}\n";
+fn the_old_word_selects_the_codes_of_the_old_pipeline() {
+    // Plan stage C3: the codes before `old:` are the result of the `ir`
+    // pipeline (the default), the codes after it the result of the old
+    // pipeline.
+    let src = "fn f() {\n    g()   //~ W0301 W0303 old: W0301 W0302\n    h()   //~ W0304 old:\n    k()   //~ W0305\n}\n";
     let (old, _) = expected_for(src, Pipeline::Old);
     let (ir, _) = expected_for(src, Pipeline::Ir);
-    let line = |c: &[&str]| -> Vec<(usize, String)> {
-        let mut v: Vec<_> = c.iter().map(|c| (2, (*c).to_string())).collect();
+    let codes = |c: &[(usize, &str)]| -> Vec<(usize, String)> {
+        let mut v: Vec<_> = c.iter().map(|(l, c)| (*l, (*c).to_string())).collect();
         v.sort();
         v
     };
-    assert_eq!(old, line(&["W0301", "W0302"]));
-    assert_eq!(ir, line(&["W0301", "W0303", "W0304"]));
+    assert_eq!(old, codes(&[(2, "W0301"), (2, "W0302"), (4, "W0305")]));
+    assert_eq!(
+        ir,
+        codes(&[(2, "W0301"), (2, "W0303"), (3, "W0304"), (4, "W0305")])
+    );
+    assert_eq!(common::expected(src).0, ir);
     assert!(has_pipeline_markers(src));
     assert!(!has_pipeline_markers("fn f() {} //~ W0301\n"));
+}
+
+/// The word `ir:` of the markers before plan stage C3 is gone: the default
+/// codes are the result of the `ir` pipeline.
+#[test]
+fn no_corpus_marker_has_the_word_ir() {
+    for path in corpus_paths() {
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        for (i, line) in src.lines().enumerate() {
+            let words = line.find("//~").map_or("", |p| &line[p + 3..]);
+            assert!(
+                !words.split_whitespace().any(|w| w == "ir:"),
+                "{}:{}: `ir:` (use `CODES old: CODES`)",
+                path.display(),
+                i + 1
+            );
+        }
+    }
 }
 
 /// The diagnostics of `src` with the pipeline `facts` and the groups A, B

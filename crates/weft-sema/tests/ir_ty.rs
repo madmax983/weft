@@ -11,9 +11,16 @@ use weft_sema::props::{ir_prop, ir_props, PROPS};
 use weft_sema::types::{ir_ty_table, to_ir_ty, FnTy, Infer, IntTy, IrTyError, Ty};
 use weft_sema::{analyze_source, AdtId, Program};
 
-/// Returns the program of `src`, with the prelude.
+/// Returns the program of `src`, with the prelude, analyzed with the old
+/// pipeline: the tests compare the final types with the flags of the
+/// variables of the old facts (`Analysis::bodies`). The default is the `ir`
+/// pipeline from plan stage C3.
 fn program(src: &str) -> weft_sema::Analysis {
-    match analyze_source(src, weft_sema::Options::default()) {
+    let opts = weft_sema::Options {
+        facts: weft_sema::FactGen::Old,
+        ..weft_sema::Options::default()
+    };
+    match analyze_source(src, opts) {
         Ok(a) => a,
         Err(d) => panic!("the source does not parse: {}", d.message),
     }

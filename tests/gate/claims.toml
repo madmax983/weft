@@ -3328,7 +3328,7 @@ verdict = "construction"
 group = "A"
 stage = "F8"
 repro = [
-    "tests/ir_targets/r3rt2_match_through_ref.wf",
+    "tests/programs/179_r3rt2_match_through_ref.wf",
     "tests/gate/probes/r3/redteam/p/i6_destr.wf",
 ]
 code = "W0301"

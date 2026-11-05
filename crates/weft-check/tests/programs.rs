@@ -4,7 +4,10 @@
 //!
 //! A line that ends with `//~ CODE ...` expects those error codes on that line.
 //! A code that occurs two times expects two errors with that code: the test
-//! counts the errors.
+//! counts the errors. The test checks with the default options: the `ir`
+//! pipeline from plan stage C3. The codes after the word `old:` are the result
+//! of the old pipeline on that line (`--facts=old`), and the test `corpus_old`
+//! checks them (see `common::expected_for`).
 //! The words `stealable` and `pinned` after `//~` expect each task closure on
 //! that line to be stealable, or not. A file that uses one of these words must
 //! mark every line with a task closure.
@@ -20,7 +23,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use common::{actual, expected, write_disagreements, Marks, TASK_WORDS};
+use common::{actual, expected_for, write_disagreements, Marks, Pipeline, TASK_WORDS};
 use weft_check::{bridge, check_source, Checked};
 use weft_datalog::{evaluate, parse_program_named, EvalOptions, Value};
 use weft_sema::Options;
@@ -43,6 +46,12 @@ fn task_lines(checked: &Checked, file: &SourceFile) -> Marks {
 }
 
 fn run(path: &Path) -> Result<(), String> {
+    run_with(path, Pipeline::Ir)
+}
+
+/// [`run`] with the pipeline `pipe`: the default options for
+/// [`Pipeline::Ir`], and `--facts=old` for [`Pipeline::Old`].
+fn run_with(path: &Path, pipe: Pipeline) -> Result<(), String> {
     let src = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let name = path
         .file_name()
@@ -55,11 +64,14 @@ fn run(path: &Path) -> Result<(), String> {
     if !unknown.is_empty() {
         return Err(format!("unknown file markers {unknown:?}"));
     }
-    let opts = Options::from_markers(&src);
+    let mut opts = Options::from_markers(&src);
+    if pipe == Pipeline::Old {
+        opts.facts = weft_sema::FactGen::Old;
+    }
     let checked = check_source(&name, &src, opts);
     let file = SourceFile::new(&name, src.as_str());
     let found = actual(&checked, &file);
-    let (want, want_tasks) = expected(&src);
+    let (want, want_tasks) = expected_for(&src, pipe);
     let mut msg = String::new();
     if found != want {
         let _ = writeln!(msg, "{name}: expected {want:?}\n  found {found:?}");
@@ -218,6 +230,25 @@ fn corpus() {
     assert!(
         failures.is_empty(),
         "{} of {} programs failed:\n{}",
+        failures.len(),
+        paths.len(),
+        failures.join("\n")
+    );
+}
+
+/// The old pipeline stays behind `--facts=old` until plan stage R3: each
+/// program gives the codes of its `old:` markers, and the codes of the
+/// markers with no `old:` word, with the old pipeline.
+#[test]
+fn corpus_old() {
+    let paths = corpus_paths();
+    let failures: Vec<String> = paths
+        .iter()
+        .filter_map(|p| run_with(p, Pipeline::Old).err())
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} of {} programs failed with --facts=old:\n{}",
         failures.len(),
         paths.len(),
         failures.join("\n")

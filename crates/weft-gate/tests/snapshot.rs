@@ -43,10 +43,16 @@ fn violation(file: &str, function: &str, relation: &str, args: &[&str]) -> Viola
     }
 }
 
-/// Counts the facts of `relation` in the output of `weft facts PATH`.
+/// Counts the facts of `relation` in the output of `weft facts --facts=old
+/// PATH`: the records of these tests are those of the old pipeline, and the
+/// default is the `ir` pipeline from plan stage C3.
 fn facts_count(path: &str, relation: &str) -> usize {
     let full = data().join(path);
-    let args = ["facts".to_string(), full.display().to_string()];
+    let args = [
+        "facts".to_string(),
+        "--facts=old".to_string(),
+        full.display().to_string(),
+    ];
     let out = weft_cli::run(&args).expect("weft facts");
     assert_eq!(out.code, 0, "weft facts {path}: {}", out.stderr);
     let head = format!("{relation}(");

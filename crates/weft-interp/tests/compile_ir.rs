@@ -218,6 +218,19 @@ fn run_unchecked(src: &str, engine: Engine) -> RunOutcome {
     }
 }
 
+/// Plan stage C3: the IR engine is the default. `--engine=ast` stays behind
+/// its flag until plan stage R4.
+#[test]
+fn the_ir_engine_is_the_default() {
+    assert_eq!(RunOptions::default().engine, Engine::Ir);
+    assert_eq!(Engine::default(), Engine::Ir);
+    let src = "fn main() {\n let x = 1\n let y = x + { x = 5; 1 }\n print(y)\n}";
+    let c = weft_check::check_source("t.wf", src, Options::default());
+    let o = run_main(&c, &RunOptions::default()).unwrap();
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "2\n");
+}
+
 #[test]
 fn an_operand_is_read_where_it_is_written() {
     // Choice A (`docs/ir.md` 5.1.1, probe p1): the IR reads `x` before the
@@ -668,7 +681,11 @@ fn a_payload_place_of_a_variant_reads_the_payload_or_faults() {
     assert_eq!(e.outcome.fallback, None);
     assert_eq!(e.outcome.stdout, "3\n");
     assert!(e.message.contains("another variant"), "{}", e.message);
-    let e = run_main(&c, &RunOptions::default()).unwrap_err();
+    let ast = RunOptions {
+        engine: Engine::Ast,
+        ..RunOptions::default()
+    };
+    let e = run_main(&c, &ast).unwrap_err();
     assert_eq!(e.outcome.stdout, "");
     assert!(e.message.contains("no field `Some`"), "{}", e.message);
 }

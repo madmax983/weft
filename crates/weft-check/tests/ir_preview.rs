@@ -11,6 +11,17 @@ use std::path::Path;
 use weft_check::{agreement, check_analysis};
 use weft_sema::{analyze_source, factgen, irbuild, Options};
 
+/// The options of the file markers with the old pipeline: the preview
+/// compares the facts of the IR with the bodies of the old lowering
+/// (`Analysis::bodies`), so it names the old pipeline. The default is the
+/// `ir` pipeline from plan stage C3.
+fn old_options(src: &str) -> Options {
+    Options {
+        facts: weft_sema::FactGen::Old,
+        ..Options::from_markers(src)
+    }
+}
+
 #[test]
 fn the_checker_and_the_spec_agree_on_the_ir_facts_of_the_bodies_with_no_call() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");
@@ -29,7 +40,7 @@ fn the_checker_and_the_spec_agree_on_the_ir_facts_of_the_bodies_with_no_call() {
         let Ok(src) = fs::read_to_string(f) else {
             continue;
         };
-        let Ok(a) = analyze_source(&src, Options::from_markers(&src)) else {
+        let Ok(a) = analyze_source(&src, old_options(&src)) else {
             continue;
         };
         let built = irbuild::build(&a);
@@ -90,7 +101,7 @@ fn the_preview_gives_the_old_diagnostics_on_the_bodies_of_the_temporaries_progra
     // promoted temporary, so the facts of the IR agree.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs/32_temporaries.wf");
     let src = fs::read_to_string(path).unwrap_or_default();
-    let a = analyze_source(&src, Options::from_markers(&src))
+    let a = analyze_source(&src, old_options(&src))
         .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
     let built = irbuild::build(&a);
     let mut seen = Vec::new();
@@ -165,7 +176,7 @@ fn the_prelude_calls_give_the_call_facts_and_the_diagnostics_of_the_old_pipeline
         "{}\nfn more(world: &World) / mut(world.entities) {{\n    let v = Vec.new()\n    v.push(1)\n    let n = v.len()\n    v.clear()\n    print(n + world.entities.len())\n    world.entities.clear()\n}}\n",
         bad.replace("Entity.new()", "Entity { hp: 10 }")
     );
-    let a = analyze_source(&src, Options::from_markers(&src))
+    let a = analyze_source(&src, old_options(&src))
         .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
     let built = irbuild::build(&a);
     let mut seen = Vec::new();
@@ -305,7 +316,7 @@ fn the_result_of_an_operation_of_a_caller_points_into_its_argument() {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/ir/work/map/opres.wf");
     let src = fs::read_to_string(path).unwrap_or_default();
-    let a = analyze_source(&src, Options::from_markers(&src))
+    let a = analyze_source(&src, old_options(&src))
         .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
     let built = irbuild::build(&a);
     let i = built
@@ -515,7 +526,7 @@ fn corpus_bodies(
         .join("../../tests/programs")
         .join(file);
     let src = fs::read_to_string(path).unwrap_or_default();
-    let a = analyze_source(&src, Options::from_markers(&src))
+    let a = analyze_source(&src, old_options(&src))
         .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
     let built = irbuild::build(&a);
     let line = |lo: u32| {
@@ -636,7 +647,7 @@ fn main() {}
 
 /// The codes and lines of the diagnostics of `src` with the old pipeline.
 fn old_codes(src: &str) -> Vec<(String, usize)> {
-    let a = analyze_source(src, Options::from_markers(src))
+    let a = analyze_source(src, old_options(src))
         .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
     let line = |lo: u32| {
         src.get(..lo as usize)

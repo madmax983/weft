@@ -34,6 +34,16 @@ fn opts(facts: FactGen, on: Groups) -> Options {
     }
 }
 
+/// The default options with the old pipeline: a test that compares with
+/// the old pipeline names it, because the default is the `ir` pipeline from
+/// plan stage C3.
+fn old_options() -> Options {
+    Options {
+        facts: FactGen::Old,
+        ..Options::default()
+    }
+}
+
 /// Analyzes `src` with the stub fact generator.
 fn analyze(src: &str, o: Options) -> Analysis {
     weft_sema::analyze(&units(src), o)
@@ -226,7 +236,7 @@ fn plain(n: u64) -> u64 { n + 1 }
 
 #[test]
 fn the_old_pipeline_checks_a_program_out_of_scope_and_says_why() {
-    let old = analyze(ESCAPE, Options::default());
+    let old = analyze(ESCAPE, old_options());
     assert!(old.ir_scope.is_none(), "the old pipeline computes no scope");
     assert!(old.ir_facts.is_none());
     // No group is on.
@@ -239,7 +249,7 @@ fn the_old_pipeline_checks_a_program_out_of_scope_and_says_why() {
     assert_eq!(diags(&ir), diags(&old));
     // Every group is on, but the fact generator does not support the
     // program.
-    let old = analyze(KONT, Options::default());
+    let old = analyze(KONT, old_options());
     let ir = analyze(KONT, opts(FactGen::Ir, Groups::ALL));
     let why = ir
         .ir_scope
@@ -265,7 +275,7 @@ fn a_group_that_is_off_keeps_the_program_out_of_scope_with_the_hook() {
 
 #[test]
 fn the_ir_mode_keeps_only_the_typeck_diagnostics_of_the_old_lowering() {
-    let old = analyze(ESCAPE, Options::default());
+    let old = analyze(ESCAPE, old_options());
     let codes = |a: &Analysis| -> BTreeSet<Code> { a.diags.iter().map(|d| d.code).collect() };
     assert!(codes(&old).contains(&Code::W0313), "{:?}", codes(&old));
     assert!(codes(&old).contains(&Code::W0101), "{:?}", codes(&old));
@@ -283,7 +293,7 @@ fn the_ir_mode_keeps_only_the_typeck_diagnostics_of_the_old_lowering() {
 
 #[test]
 fn the_both_mode_gives_both_fact_sets() {
-    let old = analyze(ESCAPE, Options::default());
+    let old = analyze(ESCAPE, old_options());
     let both = analyze_empty(ESCAPE, FactGen::Both);
     assert_eq!(shape(&both.bodies), shape(&old.bodies));
     assert_eq!(diags(&both), diags(&old));
@@ -311,7 +321,7 @@ fn the_ir_mode_gives_the_w0315_of_the_builder() {
                 handle E { fn op() { resume(()) } } in { break }
             }
         }";
-    let old = analyze(src, Options::default());
+    let old = analyze(src, old_options());
     assert!(old.diags.iter().any(|d| d.code == Code::W0315));
     let ir = analyze_empty(src, FactGen::Ir);
     let n = ir.diags.iter().filter(|d| d.code == Code::W0315).count();
@@ -367,7 +377,7 @@ fn the_ir_pipeline_fills_the_exports_of_the_interpreter() {
             c
         }
         fn neg(a: i32) -> i32 { -a }";
-    let old = analyze(src, Options::default());
+    let old = analyze(src, old_options());
     let want = exports(&old.bodies);
     assert!(!want.0.is_empty() && !want.1.is_empty() && !want.2.is_empty());
     let ir = analyze_empty(src, FactGen::Ir);
@@ -378,7 +388,7 @@ fn the_ir_pipeline_fills_the_exports_of_the_interpreter() {
 /// (`crates/weft-sema/tests/exports_parity.rs`): a closure body that copies a
 /// function value out of a capture. The old lowering moves the capture; the
 /// IR copies the function value.
-const CLOSURE_COPY: [&str; 1] = ["143_arg_roots.wf"];
+const CLOSURE_COPY: [&str; 2] = ["143_arg_roots.wf", "177_o3_5_field_closure_tasks.wf"];
 
 /// Each program of the corpus: the exports of the `ir` pipeline (with the hook)
 /// are the exports of the old lowering. The captures of function values that
@@ -447,6 +457,18 @@ fn with_no_group_on_no_program_is_in_scope() {
     // of `typeck`.
     let a = analyze(src, opts(FactGen::Ir, Groups::of(Group::A)));
     assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+}
+
+/// Plan stage C3: the `ir` pipeline is the default, with each construct
+/// group on. `--facts=old` stays behind its flag until plan stage R3.
+#[test]
+fn the_ir_pipeline_is_the_default() {
+    assert_eq!(Options::default().facts, FactGen::Ir);
+    assert_eq!(FactGen::default(), FactGen::Ir);
+    let a = analyze(ESCAPE, Options::default());
+    assert!(a.ir_scope.is_some(), "the ir pipeline computes a scope");
+    let old = analyze(ESCAPE, old_options());
+    assert!(old.ir_scope.is_none(), "the old pipeline computes no scope");
 }
 
 #[test]

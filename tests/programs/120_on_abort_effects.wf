@@ -62,8 +62,10 @@ linear struct J { fs: Vec<fn()> }
 fn undo_elems(j: J) {   //~ W0118
     let J(fs) = j
     let f = fs[0]
-    f()   //~ ir: W0602
-}   //~ ir: W0601
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage C3 (W0601 and W0602 of a `Vec<fn()>` of a linear struct; the program has W0118 in both pipelines)
+    f()   //~ W0602 old:
+// C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage C3 (W0601 and W0602 of a `Vec<fn()>` of a linear struct; the program has W0118 in both pipelines)
+}   //~ W0601 old:
 
 // The runtime raises a failure at a read of a file, a `join` of a failed
 // task, a `fork` with a failed branch and the end of a scope with a failed

@@ -67,16 +67,19 @@ fn late_once() {
 // A captured reference variable gets a `@ shared` place: the closure writes it.
 fn late_shared(st: &Stats @ shared, d: &Stats) / mut(d, st) {
     let r = d
-    let f = || r.count += 1   //~ ir: W0402
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F19 (class F19-HIDDEN)
+    let f = || r.count += 1   //~ W0402 old:
     r = st
     f()   //~ W0402
 }
 // A captured `@ uniq` variable gets an aliased value.
 fn late_alias(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
     let (l, r) = v.split_mut(1)
-    let f = || needs_uniq(l)   //~ ir: W0406
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F19 (class F19-HIDDEN)
+    let f = || needs_uniq(l)   //~ W0406 old:
     let (a, b) = w.split_at(1)
     l = a
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F19 (class F19-HIDDEN)
     f()   //~ old: W0406
 }
 

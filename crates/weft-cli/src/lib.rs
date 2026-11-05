@@ -37,11 +37,11 @@ its profile with marker lines: `// weft: library` and `// weft: no-runtime`.
 A package sets it in weft.toml. A flag wins over both.
 
 FACTS is --facts=old|ir|both: the fact pipeline (docs/plan/core-ir.md 2.6).
---facts=old (the default) uses the facts of the old lowering. --facts=ir uses
-the facts of the core IR for a program in scope: each construct group that
-the program uses must be on. Else the old pipeline checks the program, and a
-note tells why. --facts=both makes both fact sets: the output is that of the
-old pipeline; `check` writes a note for each diagnostic that only one
+--facts=ir (the default) uses the facts of the core IR for a program in
+scope: each construct group that the program uses must be on. Else the old
+pipeline checks the program, and a note tells why. --facts=old uses the facts
+of the old lowering. --facts=both makes both fact sets: the output is that of
+the old pipeline; `check` writes a note for each diagnostic that only one
 pipeline gives, `facts` also prints the facts of the ir pipeline, and `agree`
 compares both. FACTS can also have --groups=LETTERS (for example --groups=A):
 the construct groups that are on (A to F, in order). Each group (A to F) is
@@ -59,11 +59,12 @@ run (docs/ir.md 8.5): each step follows an edge of the facts, and the facts of
 each node cover the references, frees, changes, moves and aborts of the run.
 A failure is a run-time error; a note gives what the oracle checked.
 --ir-trace writes the IR location of each step of each frame to standard error.
---engine=ir runs the core IR (docs/ir.md 8.1). A program with a body that has
-no IR (a type error, an error in a declaration, W0303, a conflict in the THIR
-tables, a variant payload) is not run on the IR: the AST compiler runs it, and
-a note tells why. --engine=ast (the default) runs the AST
-compiler.
+--engine=ir (the default) runs the core IR (docs/ir.md 8.1). A program with a
+body that has no IR (a type error, an error in a declaration, W0303, a
+conflict in the THIR tables, a variant payload) is not run on the IR: the AST
+compiler runs it, and a note tells why. --engine=ast runs the AST compiler.
+The AST compiler reads an operand where it uses it, not where the IR reads it
+(docs/ir.md 8.3): a program that the checker accepts can stop on it.
 
 Exit codes: 0 on success; 1 when the program has errors or fails; 2 on a usage
 error or a file that cannot be read. With --unchecked, the exit code of `run`
@@ -358,10 +359,11 @@ fn path_arg(f: &Flags) -> Result<&str> {
         .context("missing PATH; see `weft help`")
 }
 
-/// Loads, analyzes and checks a file or a package. The flags win over the
-/// options of the manifest or of the file markers.
+/// Loads, analyzes and checks a file or a package with the default fact
+/// pipeline ([`FactGen::Ir`]) and the default construct groups. The flags win
+/// over the options of the manifest or of the file markers.
 pub fn check_path(path: &Path, profile: Profile) -> Result<(Package, Checked)> {
-    check_path_with(path, profile, FactGen::Old, Groups::NONE)
+    check_path_with(path, profile, FactGen::default(), weft_sema::DEFAULT_GROUPS)
 }
 
 /// Loads, analyzes and checks a file or a package with a fact pipeline.

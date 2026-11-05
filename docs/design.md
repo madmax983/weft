@@ -356,6 +356,52 @@ Rules that keep it prescriptive:
 - Libraries may intercept standard effects but may not install root handlers.
 - The standard effect interfaces change only with a language edition.
 
+## Order of evaluation and cleanup
+
+The checker and the interpreter use one order (ADR 0012, `docs/ir.md` 5.1 and 8.3).
+
+### Order of evaluation
+
+Operands are evaluated from left to right. An operand is read where it is written
+(choice A): a place operand of a binary operator, of `print`, and the base of an index
+are read before the next operand runs.
+
+```weft
+let x = 1
+print(x + { x = 5; 1 })   // prints 2: `x` is read before the block changes it
+```
+
+These exceptions are written once in the compiler:
+
+- Named arguments are evaluated in parameter order (ADR 0009).
+- In an assignment, the value is evaluated before the target.
+- A positional struct literal is evaluated in field order.
+- A method receiver is read at the call, after the arguments.
+
+### The end of temporaries
+
+- A temporary ends at the end of its statement. A block tail belongs to the statement
+  around the block.
+- The tail temporaries of a loop body end at the end of each iteration.
+- The temporaries of a branch of `if` or `match` end before the branches join. So
+  `show(if c { first(&mk_v()) } else { &u })` is an error (W0301): the temporary
+  vector ends before `show` reads it.
+- A borrowed temporary of plain data, such as `let r = &1`, lives to the end of the
+  frame.
+
+### The unwind order
+
+When an abort unwinds a frame, the frame finishes its values in this order:
+
+1. In a clause, the fresh continuation first.
+2. The value of the frame, if it has one.
+3. The temporaries, the newest first.
+4. The locals, the last declared first.
+5. The parameters.
+
+Each linear value runs its `on abort` at its turn. The value of the frame goes before the
+locals, so its `on abort` can still read a local that it points into.
+
 ## Static semantics as Datalog
 
 Weft's rules for places, effects and modes are published as a Datalog program over facts the compiler extracts from its intermediate representation. That program is the specification.

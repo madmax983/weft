@@ -10,12 +10,14 @@ fn show(r: &u64) { print(r + 1) }
 
 fn if_temp(c: bool) {
     let keep = mk_v()
-    show(if c { first(&mk_v()) } else { &keep[0] })   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: class `fixed` (the old pipeline accepts the program), stage I5 (docs/ir.md 5.12)
+    show(if c { first(&mk_v()) } else { &keep[0] })   //~ W0301 old:
 }
 
 fn match_temp(n: u64) {
     let keep = mk_v()
-    show(match n { 0 => first(&mk_v()), _ => &keep[0] })   //~ ir: W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: class `fixed` (the old pipeline accepts the program), stage I5 (docs/ir.md 5.12)
+    show(match n { 0 => first(&mk_v()), _ => &keep[0] })   //~ W0301 old:
 }
 
 // Controls: a local in place of the temporary lives past the join, and a

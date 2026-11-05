@@ -52,6 +52,13 @@ exit code is 0 on success, 1 when the program has errors (a syntax error too) or
 fails, and 2 on a usage error or a file that cannot be read. With `--unchecked`, the
 exit code shows only the run. A command rejects an option that it does not use.
 
+The checker and the interpreter use the core IR (ADR 0012, `docs/ir.md`). The old
+pipeline stays behind two flags for one review round: `--facts=old` checks with the
+facts of the old lowering, and `--engine=ast` runs the AST compiler of the
+interpreter. The AST compiler reads an operand where it uses it, not where the IR
+reads it, so a program that the checker accepts can stop on it (`docs/design.md`,
+"Order of evaluation and cleanup").
+
 A single file sets its options with marker lines. `// weft: library` checks it as a
 library (no root handlers). `// weft: no-runtime` selects the embedded profile (`main`
 handles every standard effect). An unknown word in a marker line gets the warning
@@ -65,12 +72,14 @@ win over the markers and the manifest.
 | --- | --- |
 | `spec/weft.dl` | The static semantics as Datalog. This is the specification. |
 | `crates/weft-syntax` | Lexer with automatic statement ends, parser, AST, pretty-printer, diagnostics. |
-| `crates/weft-sema` | Names, types, places, modes, effect inference, fact generation. |
+| `crates/weft-sema` | Names, types, places, modes, the core IR builder (`irbuild/`), the analysis and effect inference (`analysis/`), fact generation (`factgen/`). |
+| `crates/weft-ir` | The core IR: types, printer, verifier. |
 | `crates/weft-facts` | The fact tables that the rules query, and the violation sets. |
 | `crates/weft-datalog` | A Datalog engine with stratified negation and provenance. |
 | `crates/weft-check` | The production checker, the bridge to the spec, diagnostics, `weft explain` texts. |
 | `crates/weft-verified` | The verified core (Verus): place algebra, gen/kill fixpoint, modes, lifecycles. |
-| `crates/weft-interp` | The reference interpreter: handlers, continuations, scopes, deterministic simulation. |
+| `crates/weft-interp` | The reference interpreter: it compiles the core IR (`compile_ir.rs`); handlers, continuations, scopes, deterministic simulation. |
+| `crates/weft-gate` | The diff gate of the core IR migration (not published). |
 | `crates/weft-cli` | The `weft` command and packages (`weft.toml`). |
 | `proofs/` | Verus soundness models: group borrowing and algebraic effects. See `proofs/README.md`. |
 | `std/prelude.wf` | The standard prelude. |
@@ -79,19 +88,20 @@ win over the markers and the manifest.
 | `tests/packages` | Packages for the tests of `weft deps`. |
 | `examples/` | A package with dependencies, a library, and a lint rule file. |
 | `examples/ecs/` | A typed archetype ECS, reference-validity tests, and optional Rust/Bevy comparison controls. See its [README](examples/ecs/README.md). |
-| `docs/` | The design, the plan, ADRs, the grammar, the architecture and the traceability matrix. `docs/ir.md` and `docs/plan/core-ir.md` specify and plan the core IR (ADR 0012, proposed). |
+| `docs/` | The design, the plan, ADRs, the grammar, the architecture and the traceability matrix. `docs/ir.md` and `docs/plan/core-ir.md` specify and plan the core IR (ADR 0012, accepted). |
 
 ## Status
 
 - Phase 1 gate 1b (the checker agrees with the spec): tested on every corpus program and
   on random fact sets. Agreement is over the facts that sema emits. The fact generator
-  is not proved.
+  of the core IR is the default (plan stage C3); a fact oracle and a summary oracle test
+  it on runs (`docs/ir.md` 8.5). The fact generator is not proved.
 - Phase 1 gate 1a (mechanized soundness): not complete. `proofs/borrowing` proves B1-B5
   for its model, and `proofs/effects` proves E1-E5 for its model. `proofs/link` proves
   B6: the exec core agrees with the models. `proofs/link/README.md` gives its gaps.
   `proofs/README.md` lists what is proved and what is not.
-- The reference interpreter runs `main` and test blocks (`weft run`, `weft test`). It is
-  the dynamic semantics, not the Phase 2 runtime.
+- The reference interpreter runs `main` and test blocks (`weft run`, `weft test`) on the
+  core IR. It is the dynamic semantics, not the Phase 2 runtime.
 - Phase 2 (native compiler, `std.rt` on io_uring/kqueue/IOCP, HTTP/2/3, TLS) and Phase 3
   (GC tier) are not started. See `docs/adr/0001-phase-1-scope.md`.
 

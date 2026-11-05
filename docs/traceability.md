@@ -31,6 +31,51 @@ corpus numbers are unique (`corpus_numbers_are_unique`); S5b gave new numbers to
 files that shared a number (`52_raw_pointers`, `53_overwritten`, `54_stealable`,
 `55_alias_in_one_task`).
 
+## Core IR: each rule to its template and summary part (ADR 0012, plan stage C3)
+
+From plan stage C3, the `ir` pipeline gives the facts (`--facts=ir` is the default). The
+tables below still name the modules of the old lowering (`body/`) in the column
+**Sema**: they hold for `--facts=old` until plan stage R3. This table gives, for each
+rule of the spec, the part of the `ir` pipeline that gives its facts:
+
+- **Templates** names the functions of `crates/weft-sema/src/factgen/` that emit the
+  input facts of the rule at a statement or a terminator of the IR (`templates.rs`,
+  `handlers.rs` for handlers and clauses, `generic.rs` for type parameters,
+  `holders.rs` for holders and slots, `nodes.rs` for the graph). A name with no module
+  is in `templates.rs`.
+- **Summary part** names the part of a summary (`crates/weft-sema/src/analysis/`,
+  `docs/ir.md` 6.7) that carries the input facts across a call. The relation table
+  `RELS` (`factgen/rels.rs`) has one row for each input relation; "none" means that the
+  relation stays in its body, with the reason of its row.
+
+| Rule (code) | Sink relation | Input relations | Templates | Summary part |
+| --- | --- | --- | --- | --- |
+| W0301 | `error` | `points_into`, `mutates_at`, `owner`, `moved_at`, `moved_part`, `scope_end`, `releases_at`, `lends_mut`, `writes_via`, `uses`, `rebound_at`, `cfg_edge` | `entry`, `closure_entry`, `assign` (`whole`, `part`, `through`, `element`), `call` and `emit_apps` (the summary at a run node, `analysis::apply`), `ret`, `dead`, `unwind_value`; `handlers::copy_node`, `handlers::copy_part`, `handlers::continuations`; `holders::finish_parts`; `nodes::block_edges`, `nodes::splice` | `ret` (`points_into`), `muts` (`mutates_at`), `frees` (`moved_part`, `releases_at`), `lends` (`lends_mut`), `uses_moves` (`uses`, `moved_at`), `rebinds` (`rebound_at`), `only_self` (`writes_via`) |
+| W0302 | `use_after_move` | `moved_at`, `uses`, `rebound_at` | `moved`, `operand_moves`, `dup_moves`, `call_value`, `assign` | `uses_moves`, `rebinds` |
+| W0304 | `use_before_set` | `unset_at`, `empty_at`, `rebound_at`, `uses` | `uninit`, `relocate`, `entry`, `closure_entry`, `whole`, `part` | `uses_moves`; `unset_at` and `empty_at`: none (a variable of this body only) |
+| W0312 | `alias_conflict` | `call_mut`, `call_arg` | `perform`, `call`; `handlers::perform_local` | `muts`, `reads` |
+| W0203 | `arg_outside` | `arg_at`, `param_in` | `call` (`analysis::apply`: the checks of one call node) | none (a check of one call node) |
+| W0204, W0605 | `ref_outside` | `ref_at`, `ref_in` | `ret`, `place_field`, `literal_fields`; the store form of W0204 is a Rust check (`handlers.rs`, `alpha.rs`) | none (a check of one stated place) |
+| W0401, W0403 | `nonportable_capture`, `shared_mut_capture` | `task`, `captures`, `nonportable`, `mut_through`, `kept` | `spawn`, `fork`, `task_start`, `task_captures` | `tasks` |
+| W0402 | `shared_mutation` | `mutates_at`, `shared_root` | `assign`, `call` | `muts`; `shared_root`: none (static, `decls.rs`) |
+| W0405 | `task_conflict` | `spawned_at`, `joined_at`, `task_reads`, `task_writes`, `opaque`, `mutates_at`, the frees of W0301 | `spawn`, `fork`, `join`, `detach`, `scope_wait`, `task_start`, `task_ends`, `call_tasks`, `wait_tasks` (issue #50) | `tasks` (also the waits of a callee at a perform) |
+| W0406 | `not_uniq` | `uniq_param`, `arg_aliased` | `call` (`analysis::apply`) | `uniq_needs` |
+| W0501, W0502 | `use_after_move` of a continuation or a `once` closure | `moved_at`, `uses`, `once_var` | `handlers::resume`, `call_value`, `once_copied_out`, `mark_fn_once`, `given_out` | `uses_moves`, `runs` |
+| W0503 | `live_across_multi` | `multi_at`, `clause_multi`, `body_multi`, and the liveness of W0601 | `perform`, `handlers::handle_main`, `handlers::continuations`, `generic::held_across`, `given_out`, `held_like_call` | `multi`, `runs` (`after`, `again`), `holds` |
+| W0601 | `unconsumed`, `overwritten` | `linear`, `rebound_at`, `moved_at`, `rest_linear`, `empty_at`, `overwrites`, `scope_end` | `assign`, `moved`, `dead`, `ret`, `end_frames`, `gets_linear`, `mark_fn_linear`; `generic::dropped_value` | `uses_moves`, `drops`; `overwrites`, `rest_linear`, `scope_end`: none (this body only) |
+| W0602 | `abort_unhandled` | `may_abort`, `has_on_abort`, `spared_at`, `unwound_at` | `call`, `perform`, `assert`, `join`, `fork`, `unwind_value`, `unwind_exit`; `handlers::spare` | `aborts`, `holds`; `spared_at`: none (computed at each node) |
+| W0604 | `moved_immovable` | `immovable`, `moved_at` | `moved` | `uses_moves` |
+| W0702 | `unauthorized_effect` | `performs_at`, `footprint`, `declared_effect`, `escapes_at`, `resumes_at` | `perform`, `spawn`, `fork`, `join`, `scope_main`; `handlers::perform_local`, `handlers::resume` | `performs` |
+| W0703 | `unauthorized_mut` | `mutates_at`, `declared_mut` | `assign`, `call` | `muts` |
+| W0705 | `arg_effect_outside` | `fn_arg_effect`, `param_effect` | `fn_arg_effects` | none (a check of one call node) |
+| W0801, W0802, W0803, W0805 | `root_handler_in_lib`, `sim_in_lib`, `embedded_effect`, `unhandled_effect` | `handler`, `std_effect`, `library`, `sim_root`, `sim_run_at`, `no_runtime` | `sim_run`; `decls.rs` | `runs` (`sim_run_at`); the others: none (static) |
+
+Checks in Rust over the analysis (`docs/ir.md` 6.9; ADR 0012, gap 8): W0313 and W0314
+(`factgen/checks.rs`, `task_w0314`), the store form of W0204. Effect inference and
+W0701, W0706: `analysis/callgraph.rs` (the fixpoint over the summaries) and
+`analysis::sig::to_effect_sig`. W0704 and W0707 are not reported in the `ir` pipeline.
+The interpreter runs the IR (`crates/weft-interp/src/compile_ir.rs`, ADR 0010).
+
 ## Places and mutation (design: "Places and mutation", ADR 0003)
 
 | Rule | Spec | Sema | Interp | Tests | Proof | Status |
@@ -241,16 +286,19 @@ that fault at run time, controls that the checker finds today, and clean cases t
 its test blocks run. The markers give the correct result. The test `ir_targets` of
 `weft-check` expects the checker to miss at least one marker in each file and to give no
 error with no marker. When the checker reports each marker, that test fails, and the
-file moves to `tests/programs`. The test `ir_targets` of `weft-interp` makes sure that
+file moves to `tests/programs`. At plan stage C3 the `ir` pipeline became the default,
+and four targets moved (O3-5, O3-6, R3RT2, R3RT3). The markers of O3-5 got W0403 at the
+fork branches that run a closure of a field that changes a captured local: ADR 0006
+rejects such a branch, as it rejects `fork(|| v.push(2), ...)`. The test `ir_targets` of `weft-interp` makes sure that
 each bad case faults, that each clean case runs clean with the oracle for each seed and
 worker count that it tries, and that each marker is in a function that a bad case
 reaches.
 
 | Rule | Finding | File | Status |
 | --- | --- | --- | --- |
-| A by-reference binding of a `match` whose type holds references gets the held places of the part, as a field read through a reference does, also when the binding leaves the arm or the arm changes the places after the binding (W0301, W0312; ADR 0003) | R3RT2 | `tests/ir_targets/r3rt2_match_through_ref.wf` | open: the checker does not enforce it yet |
-| A caller adds the places that the references behind a reference argument point into to `call_arg`, to the reads of the call node and to the reads of a task that makes the call, for a call of an item, a function value or a closure (W0312, W0405; ADR 0003) | R3RT3 | `tests/ir_targets/r3rt3_held_refs_at_call.wf` | open: the checker does not enforce it yet |
+| A by-reference binding of a `match` whose type holds references gets the held places of the part, as a field read through a reference does, also when the binding leaves the arm or the arm changes the places after the binding (W0301, W0312; ADR 0003) | R3RT2 | `tests/programs/179_r3rt2_match_through_ref.wf` | done at plan stage C3: the `ir` pipeline (the default) enforces it; the old pipeline (`--facts=old`) does not (the `old:` markers) |
+| A caller adds the places that the references behind a reference argument point into to `call_arg`, to the reads of the call node and to the reads of a task that makes the call, for a call of an item, a function value or a closure (W0312, W0405; ADR 0003) | R3RT3 | `tests/programs/180_r3rt3_held_refs_at_call.wf` | done at plan stage C3: the `ir` pipeline (the default) enforces it; the old pipeline (`--facts=old`) does not (the `old:` markers) |
 | A place that a callee lends to a closure or a clause, and that the caller cannot name, gets a root of its own; a hidden variable owns it and goes out of scope right after the call, or at the end of the `handle` on the abort path; a store of it behind a reference parameter or into an `rc` object is W0204 for a closure and a clause; also through a function value, a nested higher-order call and a nested perform (W0301, W0204; ADRs 0003, 0005) | F3-2 | `tests/ir_targets/f3_2_callee_local_refs.wf` | open: the checker does not enforce it yet |
 | A spawn whose handle is not kept drops `T` (W0601 at the spawn, or where a plain linear value in the same position gets it: an `if`, a block, a loop body, a closure call, the body of the scope; W0602 at the scope for a linear `T` with no `on abort`; `T` in `drops` in a generic body); a `fork` that can abort needs `on abort` for each linear type of a branch value (W0602 at the `fork`); a `join` that can abort needs `on abort` for a linear `T` (W0602 at the `join`) (ADRs 0006, 0007) | F3-6 (O3-4, I3-1) | `tests/ir_targets/f3_6_task_results.wf` | open: the checker does not enforce it yet |
-| A run of a function value that can be a closure stored in a place (a field, an element or a part, also behind a reference, in a `Box`, or in a value that a callee returns) writes and reads what each closure stored there writes and reads; a task or a fork branch has this footprint, also when its callee reads the closure from a container behind a reference parameter (W0405, W0301; ADRs 0005, 0006) | O3-5 | `tests/ir_targets/o3_5_field_closure_tasks.wf` | open: the checker does not enforce it yet |
-| A place through an `Rc` handle also reads the handle place, also in the reads of a task, so a move, a new value or the end of the scope of the handle (also in a loop body), or a move or a new value of the field or the value that holds it, conflicts with the task (W0405; ADR 0003) | O3-6 | `tests/ir_targets/o3_6_rc_handle_tasks.wf` | open: the checker does not enforce it yet |
+| A run of a function value that can be a closure stored in a place (a field, an element or a part, also behind a reference, in a `Box`, or in a value that a callee returns) writes and reads what each closure stored there writes and reads; a task or a fork branch has this footprint, also when its callee reads the closure from a container behind a reference parameter (W0405, W0301; ADRs 0005, 0006) | O3-5 | `tests/programs/177_o3_5_field_closure_tasks.wf` | done at plan stage C3: the `ir` pipeline (the default) enforces it; the old pipeline (`--facts=old`) does not (the `old:` markers) |
+| A place through an `Rc` handle also reads the handle place, also in the reads of a task, so a move, a new value or the end of the scope of the handle (also in a loop body), or a move or a new value of the field or the value that holds it, conflicts with the task (W0405; ADR 0003) | O3-6 | `tests/programs/178_o3_6_rc_handle_tasks.wf` | done at plan stage C3: the `ir` pipeline (the default) enforces it; the old pipeline (`--facts=old`) does not (the `old:` markers) |

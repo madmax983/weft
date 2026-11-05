@@ -3167,8 +3167,14 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
             facts: weft_sema::FactGen::Ir,
             ..Options::default()
         };
+        // The old pipeline, named: the default is the `ir` pipeline from
+        // plan stage C3.
+        let old_opts = Options {
+            facts: weft_sema::FactGen::Old,
+            ..Options::default()
+        };
         let (Ok(old), Ok(ir)) = (
-            analyze_source(&src, Options::default()),
+            analyze_source(&src, old_opts),
             analyze_source(&src, ir_opts),
         ) else {
             continue;

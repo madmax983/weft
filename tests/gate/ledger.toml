@@ -142,6 +142,13 @@ stage = "G6"
 
 [[entry]]
 class = "changed"
+files = ["tests/programs/120_on_abort_effects.wf"]
+codes = ["W0118", "W0601", "W0602"]
+reason = "stage C3 (the marker of the corpus moved; the difference is older, from stage F19, when group E put the program in scope): the `on abort` function `undo_elems` destructures `J { fs: Vec<fn()> }` and runs `fs[0]`. The `ir` pipeline gives the local `fs` the linearity of the closures that a `Vec<fn()>` of a linear struct can hold (a closure can move a linear value), so `fs` is W0602 across the run of an unknown function value and W0601 at the end of the function. The old pipeline does not see `fs` as linear. Both pipelines reject the program with the same W0118 errors (the run of an unknown function value in an `on abort` function); stricter, no fault"
+stage = "C3"
+
+[[entry]]
+class = "changed"
 files = ["**"]
 both_have = ["W01*", "W0303"]
 reason = "a body with a type error (W01xx) or a move through a reference (W0303) has no IR (docs/ir.md 5.36). Both pipelines reject the program with the same typeck errors (or W0303); the `ir` pipeline gives no fact of such a body, so it does not give the other errors of the old lowering in it (W0302, W0601, W0602, W0702, W0805, W0313, W0315, ...). Decision of the orchestrator after F1/F2"
@@ -196,7 +203,7 @@ stage = "F8"
 [[entry]]
 class = "changed"
 files = [
-    "tests/ir_targets/r3rt2_match_through_ref.wf",
+    "tests/programs/179_r3rt2_match_through_ref.wf",
     "tests/gate/probes/r3/redteam/repro/R3RT2_match_through_ref.wf",
     "tests/gate/probes/r3/redteam/p/i6_destr.wf",
     "tests/gate/probes/r3/redteam/p/q2_held.wf",
@@ -333,7 +340,7 @@ files = [
     "tests/gate/probes/ir/probes/p2_late_operand_ref.wf",
     "tests/gate/probes/ir/probes/p9_print_late.wf",
 ]
-reason = "choice A (docs/ir.md 5.1.1): the IR reads a place operand of an operator or of `print` where the source writes it. p1 prints 2, not 6; p2 and p9 read before the reference dangles (findings sem-N1, sem-N2)"
+reason = "choice A (docs/ir.md 5.1.1): the IR reads a place operand of an operator or of `print` where the source writes it. p1 prints 2, not 6; p2 and p9 read before the reference dangles (findings sem-N1, sem-N2). From stage C3 the IR engine is the default of `weft run` and `weft test` and is the reference semantics: the claims sem-N1 and sem-N2 hold only with it. The AST engine stays behind `--engine=ast` until stage R4 and keeps the late read: p1 prints 6, p2 and p9 read through a reference that the push can make dangle (the oracle of the AST engine faults), and a program that both checkers accept, such as `r.hp * { v.clear(); 1 }`, stops on the AST engine with \"a place does not exist (the value changed shape)\" where the IR engine prints 1"
 stage = "I5"
 
 [[entry]]
@@ -2484,8 +2491,8 @@ files = [
     "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/rr4_v.wf",
     "tests/gate/probes/verify/s5/R3a/p/o313.wf",
     "tests/gate/probes/verify/s5/R3a/p/o313b.wf",
-    "tests/ir_targets/o3_5_field_closure_tasks.wf",
-    "tests/ir_targets/r3rt3_held_refs_at_call.wf",
+    "tests/programs/177_o3_5_field_closure_tasks.wf",
+    "tests/programs/180_r3rt3_held_refs_at_call.wf",
     "tests/programs/34_task_frees.wf",
     "verify/partb/S3/p/r12c.wf",
     "verify/partb/S3/p/r12g.wf",
@@ -2502,7 +2509,7 @@ files = [
     "verify/s5/R3a/p/o313b.wf",
 ]
 codes = ["W0204", "W0301", "W0312", "W0403", "W0405"]
-reason = "class F19-W0405 of group E (stage F19): W0405 at the nodes of the `ir` pipeline. A task of the IR has the footprint of the run of its value at the spawn (`templates::task_start`); a value that a callee runs as a task is a task of the call (`templates::call_tasks`); a spawn in a closure or a clause starts at the node that runs it (part `tasks`). So the `ir` pipeline reports a conflict at each access while the task runs, also where the old pipeline gives W0312 (f1, f7, a1_callee_writes_ref: the W0405 at the same line stays) or W0301 of a reference into a place that the task changes (34 line 35, esc_fork_move: W0301 at the same line instead of W0405), at the borrow of a scope capability that leaves the scope (RR4, rr4_v, s_scope_escape, c7, e5: W0405 of the escaping task instead of W0301; RR4/V134 stay open, plan F19.1), and not at a copy of a reference (o313 line 52) or at a node of the old pipeline that the IR does not have (y1_kept, o313b, r12g, h2, or5_v line 54: the program has a W0405 or W0301 for the same task). Rejected by both pipelines"
+reason = "class F19-W0405 of group E (stage F19): W0405 at the nodes of the `ir` pipeline. A task of the IR has the footprint of the run of its value at the spawn (`templates::task_start`); a value that a callee runs as a task is a task of the call (`templates::call_tasks`); a spawn in a closure or a clause starts at the node that runs it (part `tasks`). So the `ir` pipeline reports a conflict at each access while the task runs, also where the old pipeline gives W0312 (f1, f7, a1_callee_writes_ref: the W0405 at the same line stays) or W0301 of a reference into a place that the task changes (34 line 35, esc_fork_move: W0301 at the same line instead of W0405), at the borrow of a scope capability that leaves the scope (RR4, rr4_v, s_scope_escape, c7, e5: W0405 of the escaping task instead of W0301; RR4/V134 stay open, plan F19.1), and not at a copy of a reference (o313 line 52) or at a node of the old pipeline that the IR does not have (y1_kept, o313b, r12g, h2, or5_v line 54: the program has a W0405 or W0301 for the same task). Rejected by both pipelines. Stage C3: in `tests/programs/177_o3_5_field_closure_tasks.wf` (the target O3-5, moved to the corpus) the `ir` pipeline also gives W0403 at each `fork` branch that runs a closure of a field that changes a captured local (`bad_fork_branch`, `bad_fork_two`, `ok_fork_branch`, `ok_fork_two`), as both pipelines do for `fork(|| v.push(2), ...)` (ADR 0006); the old pipeline does not see the closure of the field (O3-5). The two `ok_fork` functions run clean: W0403 is a rule of the modes, not a fault of the run"
 stage = "F19"
 
 [[entry]]
@@ -2686,7 +2693,7 @@ files = [
     "tests/gate/probes/verify/s5/p/i2_fp_closure_call.wf",
     "tests/gate/probes/verify/s5/p/i4_fp_with_timeout.wf",
     "tests/gate/probes/verify/s5/p/st1.wf",
-    "tests/ir_targets/o3_5_field_closure_tasks.wf",
+    "tests/programs/177_o3_5_field_closure_tasks.wf",
     "tests/programs/163_task_starts.wf",
     "verify/partb/S3/p/r12c.wf",
     "verify/partb/p/c10_clause_task.wf",
@@ -2726,7 +2733,7 @@ files = [
     "tests/gate/probes/r3/oracle/probes/sd6_fork_field.wf",
     "tests/gate/probes/r3/oracle/probes/sd7_field_ref_after_join.wf",
     "tests/gate/probes/r3/oracle/repro/O3-5_task_runs_field_closure.wf",
-    "tests/ir_targets/o3_5_field_closure_tasks.wf",
+    "tests/programs/177_o3_5_field_closure_tasks.wf",
 ]
 reason = "class F19-SIG-PINS (stage F19): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`: an `opaque` task or a task that captures a nonportable value or mutates through a shared capture), not counting a task that is `opaque` only because it runs code of a caller; a task that a closure body starts is `opaque` (its captures are not named). The old inference pins for other reasons (a value from a field that it does not follow); the old part `reaches` (a body that runs a stored function value) has no part of the IR: the IR applies the values that the arguments reach at the run node (as the `sig` entries of stage F17)"
 stage = "F19"
@@ -2895,7 +2902,7 @@ files = [
     "tests/gate/probes/r3/redteam/p/h2_spawn_stored.wf",
     "tests/gate/probes/verify/partb/p/c9_noruntime_task.wf",
     "tests/gate/probes/verify/s5/R2d/p/e5_scope_vec.wf",
-    "tests/ir_targets/r3rt3_held_refs_at_call.wf",
+    "tests/programs/180_r3rt3_held_refs_at_call.wf",
     "tests/programs/07_scopes.wf",
     "verify/partb/p/c9_noruntime_task.wf",
     "verify/s5/R2d/p/e5_scope_vec.wf",
@@ -3768,7 +3775,7 @@ stage = "F20"
 [[entry]]
 class = "changed"
 files = [
-    "tests/ir_targets/o3_6_rc_handle_tasks.wf",
+    "tests/programs/178_o3_6_rc_handle_tasks.wf",
     "tests/gate/probes/r3/oracle/repro/O3-6_task_rc_handle_move.wf",
 ]
 codes = ["W0405"]

@@ -90,7 +90,15 @@ fn the_corpus_functions_meet_the_hypotheses_of_the_link() {
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let file = SourceFile::new(&name, src.as_str());
         let marked = marked_lines(&src);
-        let c = check_source(&name, &src, Options::from_markers(&src));
+        // The facts of the old lowering, one function at a time: the test
+        // `the_corpus_components_in_ir_mode_meet_the_hypotheses_of_the_link`
+        // checks the components of the `ir` pipeline (the default from plan
+        // stage C3).
+        let opts = Options {
+            facts: weft_sema::FactGen::Old,
+            ..Options::from_markers(&src)
+        };
+        let c = check_source(&name, &src, opts);
         for b in c.analysis.bodies.iter().filter(|b| b.unit == ROOT_UNIT) {
             let Some((first, last)) = body_lines(&c.analysis, b, &file) else {
                 continue;

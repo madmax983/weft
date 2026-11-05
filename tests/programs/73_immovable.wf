@@ -119,8 +119,10 @@ fn param_frame_set(f: Frame) {
 // A closure that reads a place field reads it where the closure is made.
 fn closure_reads_unset() {
     let f = Frame { buf: [1, 2, 3, 4] }
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (F11-U1)
     let c = || print(f.cur)   //~ old: W0304
-    c()   //~ ir: W0304
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `moved`, stage F13 (F11-U1)
+    c()   //~ W0304 old:
 }
 fn closure_reads_set() {
     let f = Frame { buf: [1, 2, 3, 4] }

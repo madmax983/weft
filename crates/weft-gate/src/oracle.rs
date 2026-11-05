@@ -666,7 +666,14 @@ pub fn run_configs(
             return;
         }
     };
-    let opts = pkg.options(Profile::default());
+    // The run is `--unchecked`, so the verdict does not depend on the fact
+    // pipeline. Name the old pipeline, as before plan stage C3, so that the
+    // exports of the AST engine (`by_value`, `arg_order`, `int_ops`) and the
+    // verdicts of the cache do not change with the default.
+    let opts = weft_sema::Options {
+        facts: weft_sema::FactGen::Old,
+        ..pkg.options(Profile::default())
+    };
     let analysis = weft_sema::analyze(&pkg.units, opts);
     for (config, &(seed, workers)) in CONFIGS
         .iter()

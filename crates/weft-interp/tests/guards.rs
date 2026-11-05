@@ -3,7 +3,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
-use weft_interp::{run_analysis_main, run_analysis_tests, ErrorKind, RunOptions, RunOutcome};
+use weft_interp::{
+    run_analysis_main, run_analysis_tests, Engine, ErrorKind, RunOptions, RunOutcome,
+};
 use weft_sema::Options;
 
 fn opts() -> RunOptions {
@@ -16,6 +18,31 @@ fn opts() -> RunOptions {
 fn run(src: &str) -> Result<RunOutcome, weft_interp::RuntimeError> {
     let a = weft_sema::analyze_source(src, Options::default()).unwrap();
     run_analysis_main(&a, &opts())
+}
+
+/// [`run`] on the AST engine (`--engine=ast`).
+fn run_ast(src: &str) -> Result<RunOutcome, weft_interp::RuntimeError> {
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let o = RunOptions {
+        engine: Engine::Ast,
+        ..opts()
+    };
+    run_analysis_main(&a, &o)
+}
+
+/// [`fault`] on the AST engine. A test that uses it pins a guard text of
+/// the AST compiler: the IR engine (the default from plan stage C3) stops
+/// these programs too, with the text of its own op (for a moved `Vec`: "a
+/// `Vec` is needed here").
+fn fault_ast(src: &str, want: &str) {
+    match run_ast(src) {
+        Ok(o) => panic!("expected `{want}`, but the program ran: {}", o.stdout),
+        Err(e) => assert!(
+            e.message.contains(want),
+            "expected `{want}`, found `{}`",
+            e.message
+        ),
+    }
 }
 
 fn fault(src: &str, want: &str) {
@@ -31,45 +58,47 @@ fn fault(src: &str, want: &str) {
 
 #[test]
 fn guards_on_values() {
-    fault(
+    // The guard texts of the AST compiler (plan stage C3: the IR engine stops
+    // these programs with the texts of its own ops).
+    fault_ast(
         "fn main() { let v = Vec.new()\n let w = v\n print(v.len()) }",
         "used after it was moved",
     );
-    fault("fn main() { let n = 5\n n(1) }", "cannot be called");
-    fault(
+    fault_ast("fn main() { let n = 5\n n(1) }", "cannot be called");
+    fault_ast(
         "struct P { x: u64 }\nfn main() { let p = P { x: 1 }\n print(p.y) }",
         "no field `y`",
     );
-    fault("fn main() { let n = 5\n n.foo() }", "no method `foo`");
-    fault("fn main() { let n = 5\n print(n[0]) }", "has no elements");
-    fault("fn main() { print(1 + true) }", "cannot apply");
-    fault("fn main() { if 1 { print(1) } }", "a boolean is needed");
-    fault("fn main() { print(-true) }", "`-` needs an integer");
-    fault("fn main() { print(!5) }", "a boolean is needed");
-    fault("fn main() { let v = [1]\n print(v[-1]) }", "out of bounds");
-    fault("fn main() { print(1.s - 2.s) }", "duration underflow");
+    fault_ast("fn main() { let n = 5\n n.foo() }", "no method `foo`");
+    fault_ast("fn main() { let n = 5\n print(n[0]) }", "has no elements");
+    fault_ast("fn main() { print(1 + true) }", "cannot apply");
+    fault_ast("fn main() { if 1 { print(1) } }", "a boolean is needed");
+    fault_ast("fn main() { print(-true) }", "`-` needs an integer");
+    fault_ast("fn main() { print(!5) }", "a boolean is needed");
+    fault_ast("fn main() { let v = [1]\n print(v[-1]) }", "out of bounds");
+    fault_ast("fn main() { print(1.s - 2.s) }", "duration underflow");
     // A field of a literal, other than the duration units `s` and `ms`.
-    fault("fn main() / clock { sleep(1.sleep) }", "no field `sleep`");
-    fault("fn main() { print(2.s, 500.x) }", "no field `x`");
-    fault(
+    fault_ast("fn main() / clock { sleep(1.sleep) }", "no field `sleep`");
+    fault_ast("fn main() { print(2.s, 500.x) }", "no field `x`");
+    fault_ast(
         "fn main() { print(18446744073709551615) }",
         "integer literal is too large",
     );
-    fault("fn main() { for x in 5 { print(x) } }", "has no elements");
-    fault(
+    fault_ast("fn main() { for x in 5 { print(x) } }", "has no elements");
+    fault_ast(
         "fn main() { let (a, b) = (1, 2, 3) }",
         "not a tuple of that size",
     );
-    fault(
+    fault_ast(
         "struct S { x: u64 }\nfn main() { let S(a) = 5 }",
         "not a struct of that size",
     );
-    fault(
+    fault_ast(
         "fn main() { let x = 9223372036854775807\n print(x * 2) }",
         "integer overflow",
     );
-    fault("fn main() { let z = 0\n print(5 % z) }", "division by zero");
-    fault(
+    fault_ast("fn main() { let z = 0\n print(5 % z) }", "division by zero");
+    fault_ast(
         "fn main() { print(2 - 3 + -9223372036854775807 - 9) }",
         "overflow",
     );
@@ -219,9 +248,11 @@ fn unchecked_tests_run() {
 
 #[test]
 fn a_closure_takes_a_moved_capture_when_it_is_made() {
+    // The guard texts of the AST compiler (plan stage C3: the IR engine stops
+    // these programs with the texts of its own ops).
     // The checker reports W0302 at `v.push(2)`: the closure has the value of
     // `v`, also if it never runs.
-    fault(
+    fault_ast(
         "fn take(v: Vec<u64>) -> usize { v.len() }\n\
          fn main() {\n let v = Vec.new()\n v.push(1)\n let f = || print(take(v))\n \
          v.push(2)\n print(v.len())\n}",
@@ -259,11 +290,13 @@ fn a_multi_continuation_cannot_resume_after_its_clause_ends() {
 }
 
 /// Runs `src` with the oracle checks, and with the stock machine.
-fn oracle_run(src: &str) -> (Result<RunOutcome, weft_interp::RuntimeError>, bool) {
+fn oracle_run(src: &str, engine: Engine) -> (Result<RunOutcome, weft_interp::RuntimeError>, bool) {
     let a = weft_sema::analyze_source(src, Options::default()).unwrap();
-    let stock = run_analysis_main(&a, &opts()).is_ok();
+    let stock = RunOptions { engine, ..opts() };
+    let stock = run_analysis_main(&a, &stock).is_ok();
     let strict = RunOptions {
         oracle: true,
+        engine,
         ..opts()
     };
     (run_analysis_main(&a, &strict), stock)
@@ -351,15 +384,24 @@ fn the_oracle_reports_what_the_stock_machine_lets_pass() {
         ),
     ];
     for (src, want) in cases {
-        let (strict, stock) = oracle_run(src);
-        assert!(stock, "the stock machine fails: {src}");
-        match strict {
-            Ok(_) => panic!("expected `{want}`: {src}"),
-            Err(e) => assert!(
-                e.message.contains("oracle") && e.message.contains(want),
-                "expected `{want}`, found `{}`",
-                e.message
-            ),
+        for engine in [Engine::Ast, Engine::Ir] {
+            // In the IR, `let (a, b) = q` through a reference binds
+            // references to the parts (`docs/ir.md` 5.13): nothing reads
+            // `t.0`, and the `ir` pipeline accepts the program. Only the AST
+            // engine copies the parts.
+            if engine == Engine::Ir && src.contains("let (a, b) = q") {
+                continue;
+            }
+            let (strict, stock) = oracle_run(src, engine);
+            assert!(stock, "{engine:?}: the stock machine fails: {src}");
+            match strict {
+                Ok(_) => panic!("{engine:?}: expected `{want}`: {src}"),
+                Err(e) => assert!(
+                    e.message.contains("oracle") && e.message.contains(want),
+                    "{engine:?}: expected `{want}`, found `{}`",
+                    e.message
+                ),
+            }
         }
     }
 }
@@ -372,7 +414,7 @@ fn the_oracle_accepts_correct_programs() {
         fn main() / async { let n = 0\n let v = Vec.new()\n v.push(1)\n\
         scope { s => s.spawn(|| n += 1) }\n n += 1\n v.push(2)\n let r = &v[1]\n print(r)\n\
         let t = Tx { id: n }\n done(t)\n print(n) }";
-    let (strict, stock) = oracle_run(src);
+    let (strict, stock) = oracle_run(src, Engine::default());
     assert!(stock);
     let out = strict.expect("the oracle accepts the program");
     assert_eq!(out.stdout, "2\n2\n");
@@ -390,7 +432,7 @@ fn the_oracle_accepts_reads_after_a_join_and_an_unwound_frame() {
         scope { s => s.spawn(|| { v[0] = 3 }) }\n let q = &v[0]\n print(q + 0)\n show(q)\n\
         handle Keep { fn keep(r) { print(r + 1) } } in deep()\n\
         let w = v\n print(w) }";
-    let (strict, stock) = oracle_run(src);
+    let (strict, stock) = oracle_run(src, Engine::default());
     assert!(stock);
     let out = strict.expect("the oracle accepts the program");
     assert_eq!(out.stdout, "3\n3\n6\n[3]\n");

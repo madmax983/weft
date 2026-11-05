@@ -175,7 +175,7 @@ fn causes_of(n: [usize; 7]) -> Vec<CauseCase> {
 #[test]
 fn each_cause_checks_quickly() {
     for (name, n, src, cause, next) in causes() {
-        let c = check_source("causes.wf", &src, Options::default());
+        let c = check_source("causes.wf", &src, old_facts());
         let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
             panic!("{name}: no body");
         };
@@ -227,7 +227,7 @@ fn each_cause_checks_in_linear_work() {
         true,
     ));
     for (name, n, src, cause, _) in cases {
-        let c = check_source("causes.wf", &src, Options::default());
+        let c = check_source("causes.wf", &src, old_facts());
         let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
             panic!("{name}: no body");
         };
@@ -576,7 +576,7 @@ fn nested_wildcard_places_check_quickly() {
     for (calls, loops) in [(32, 0), (0, 4), (64, 8), (1000, 0)] {
         for push in [false, true] {
             let src = walk(calls, loops, push);
-            let c = check_source("walk.wf", &src, Options::default());
+            let c = check_source("walk.wf", &src, old_facts());
             assert!(c.analysis.diags.is_empty(), "{:?}", c.analysis.diags);
             let body = c.analysis.bodies.iter().find(|b| b.facts.name == "walk");
             let Some(body) = body else { panic!("no body") };
@@ -613,7 +613,7 @@ fn nested_wildcard_places_check_quickly() {
 /// The work of sema and of the checker for a program: the counts of sema, and
 /// the sum of the counts of the checker over the bodies.
 fn work_of(src: &str) -> (weft_sema::Work, usize, u64, u64) {
-    let c = check_source("work.wf", src, Options::default());
+    let c = check_source("work.wf", src, old_facts());
     assert!(c.analysis.diags.is_empty(), "{:?}", c.analysis.diags);
     let (mut overlaps, mut searches) = (0, 0);
     for b in &c.analysis.bodies {
@@ -833,6 +833,17 @@ fn aborts(n: usize) -> String {
     s
 }
 
+/// The old pipeline (`--facts=old`). The tests of the work of the checker
+/// on the shapes of the old facts (the causes of W0301, QA4, QA7, QA8)
+/// and the comparisons with the old facts name it, because the default is
+/// the `ir` pipeline from plan stage C3.
+fn old_facts() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Old,
+        ..Options::default()
+    }
+}
+
 /// The options of the `ir` pipeline with all groups (plan stage C1, §2.7.4).
 fn ir() -> Options {
     Options {
@@ -868,7 +879,7 @@ fn the_ir_facts_have_at_most_three_times_the_rows_of_the_old_facts() {
         .into_iter()
         .chain([("aborts", aborts(200))]);
     for (name, src) in cases {
-        let old = check_source("many.wf", &src, Options::default());
+        let old = check_source("many.wf", &src, old_facts());
         let new = check_source("many.wf", &src, ir());
         assert!(new.ok() && old.ok(), "{name}: {:?}", new.diags);
         assert!(
@@ -924,7 +935,7 @@ fn ir_cases() -> Vec<(String, String)> {
 #[test]
 fn the_programs_of_this_file_check_with_the_ir_facts() {
     for (name, src) in ir_cases() {
-        let old = check_source("scale.wf", &src, Options::default());
+        let old = check_source("scale.wf", &src, old_facts());
         let new = check_source("scale.wf", &src, ir());
         assert!(
             new.analysis

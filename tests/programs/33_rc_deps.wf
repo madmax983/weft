@@ -31,7 +31,8 @@ fn callee_result_field() {
 // moved handle `a`.
 fn receiver_moved() {
     let a = mk()
-    a.items.push(eat(a))   //~ old: W0301 ir: W0302
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F8 (receiver order, docs/ir.md 5.19)
+    a.items.push(eat(a))   //~ W0302 old: W0301
 }
 
 // A reference through the handle as the receiver.
@@ -45,6 +46,7 @@ fn receiver_ref() {
 // reads the receiver after the arguments (docs/ir.md 5.19): the receiver is
 // the new handle, so the call is valid there. A control of the ir pipeline.
 fn receiver_field(s: &S) / mut(s.h, Cell2) {
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F8 (receiver order, docs/ir.md 5.19)
     s.h.items.push(reset(s))   //~ old: W0301
 }
 

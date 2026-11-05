@@ -62,11 +62,13 @@ fn renamed() / fail {
 // A generic function used as a value: code that the body does not follow calls
 // it, so the value gets the checks of a call.
 fn item_value_holds() / fail {
-    let m = apply_lock(lock(), hold_fail)   //~ W0602 ir: W0503
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage C1.5 (gap G4, issue #68; cost: issue #69)
+    let m = apply_lock(lock(), hold_fail)   //~ W0602 W0503 old: W0602
     unlock(m)
 }
 fn item_value_generic() / fail {
-    let m = apply_gen(lock(), hold_fail)   //~ W0602 ir: W0503
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage C1.5 (gap G4, issue #68; cost: issue #69)
+    let m = apply_gen(lock(), hold_fail)   //~ W0602 W0503 old: W0602
     unlock(m)
 }
 fn item_value_drops() {
@@ -78,7 +80,8 @@ fn foreign_holds() / fail {
     unlock(m)
 }
 fn item_value_guarded() / fail {
-    let t = apply_gen(begin(), hold_fail)   //~ ir: W0503
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage C1.5 (gap G4, issue #68; cost: issue #69)
+    let t = apply_gen(begin(), hold_fail)   //~ W0503 old:
     rollback(t)
 }
 fn guarded() / fail {

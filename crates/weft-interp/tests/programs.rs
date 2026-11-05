@@ -190,8 +190,12 @@ fn static_corpus_runs() {
                     "{}: the checker rejects main",
                     path.display()
                 ),
+                // A program that the checker rejects can run a bad case
+                // from `main` to show the fault (164: the IR engine, the
+                // default from plan stage C3, ends the temporary of a branch
+                // before the join). Only an oracle fault is allowed then.
                 Err(e) => assert!(
-                    main_rejected,
+                    main_rejected || (!checked.ok() && e.message.starts_with("oracle:")),
                     "{}: main failed at run time: {e}",
                     path.display()
                 ),

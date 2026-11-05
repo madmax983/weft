@@ -31,8 +31,10 @@ fn kept_once() {
 }
 fn returns_local() -> fn() {
     let b = Buf { items: Vec.new() }
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F20 (class F20-HIDDEN, R3RT5)
     || eat(b)   //~ old: W0204
 }
 fn returns_param(b: Buf) -> fn() {
+    // C3: the default marker is the ir result; old: is the old pipeline: ledger `changed`, stage F20 (class F20-HIDDEN, R3RT5)
     || eat(b)   //~ old: W0204
 }

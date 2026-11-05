@@ -8,7 +8,11 @@
 // places after the binding.
 // Decision (ADR 0003, open item): a by-reference binding whose type holds
 // references gets the held places of the slot, as a field read through a
-// reference does. The checker does not enforce it yet.
+// reference does. The old pipeline
+// (`--facts=old`) does not enforce it. Done at plan stage C3: the `ir`
+// pipeline (the default) enforces it, and the file moved here from
+// `tests/ir_targets`. The markers give the result of the `ir` pipeline, and
+// the codes after `old:` the result of the old pipeline.
 struct Entity { hp: i32 }
 struct World { entities: Vec<Entity> }
 struct Wrap<T> { x: T }
@@ -24,38 +28,44 @@ fn ref_to_option(world: &World) / mut(world.entities) {
     let o = Some(&world.entities[0])
     let p = &o
     world.entities.clear()
-    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301 old:
 }
 fn field_of_ref(world: &World) / mut(world.entities) {
     let w = Wrap { x: Some(&world.entities[0]) }
     let p = &w
     world.entities.clear()
-    match p.x { Some(e) => print(e.hp), None => {} }   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    match p.x { Some(e) => print(e.hp), None => {} }   //~ W0301 old:
 }
 fn ref_to_result(world: &World) / mut(world.entities) {
     let r: Result<&Entity, u64> = Ok(&world.entities[0])
     let p = &r
     world.entities.clear()
-    match p { Ok(e) => print(e.hp), Err(n) => {} }   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    match p { Ok(e) => print(e.hp), Err(n) => {} }   //~ W0301 old:
 }
 fn element_ref(world: &World) / mut(world.entities) {
     let v = Vec.new()
     v.push(Some(&world.entities[0]))
     let p = &v[0]
     world.entities.clear()
-    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301 old:
 }
 fn ref_to_tuple(world: &World) / mut(world.entities) {
     let t = (1, &world.entities[0])
     let p = &t
     world.entities.clear()
-    match p { (n, e) => print(e.hp) }   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    match p { (n, e) => print(e.hp) }   //~ W0301 old:
 }
 fn write_through(world: &World) / mut(world.entities) {
     let o = Some(&world.entities[0])
     let p = &o
     world.entities.clear()
-    match p { Some(e) => { e.hp = 5 }, None => {} }   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    match p { Some(e) => { e.hp = 5 }, None => {} }   //~ W0301 old:
 }
 
 // Bad: the binding leaves the arm. The change comes after the `match`.
@@ -64,14 +74,16 @@ fn match_value(world: &World) / mut(world.entities) {
     let p = &o
     let e = match p { Some(e) => e, None => { return } }
     world.entities.clear()
-    print(e.hp)   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    print(e.hp)   //~ W0301 old:
 }
 // Bad: the arm makes the binding first, and then changes the places of the
 // payload.
 fn bind_then_clear(world: &World) / mut(world.entities) {
     let o = Some(&world.entities[0])
     let p = &o
-    match p { Some(e) => { world.entities.clear(); print(e.hp) }, None => {} }   //~ W0301
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    match p { Some(e) => { world.entities.clear(); print(e.hp) }, None => {} }   //~ W0301 old:
 }
 
 // Bad: the same binding in a callee. The caller gives places that overlap.
@@ -81,7 +93,8 @@ fn clear_then(o: &Option<&Entity>, w: &World) / mut(w.entities) {
 }
 fn callee_side(world: &World) / mut(world.entities) {
     let o = Some(&world.entities[0])
-    clear_then(&o, world)   //~ W0312
+    // C3: the default marker is the ir result; old: is the old pipeline: core IR target R3RT2, done at C3; ledger `changed`, stage F8 (new true positives, R3RT2)
+    clear_then(&o, world)   //~ W0312 old:
 }
 
 // Control: the checker finds a field read through a reference today.

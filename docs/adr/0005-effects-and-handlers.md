@@ -546,7 +546,9 @@ Status: accepted. Date: 2026-10-18.
     from a parameter of a closure, or from an operation of a handler of a caller.
 - What stays open until the core IR replaces the fact generation (review round 3).
   The checker does not enforce these rules yet. Each rule has an acceptance target in
-  `tests/ir_targets` (`docs/traceability.md`):
+  `tests/ir_targets` (`docs/traceability.md`). From plan stage C3, the `ir` pipeline (the
+  default) enforces each rule whose target moved to `tests/programs`; the old pipeline
+  (`--facts=old`) does not:
   - A closure or a clause that keeps or stores its reference parameter, when a callee
     gives it a reference into a local of the callee (F3-2). The rule is in ADR 0003:
     such a place gets a root of its own, and a hidden variable that owns the root
@@ -569,5 +571,5 @@ Status: accepted. Date: 2026-10-18.
     is the type of the closure, and only when the task itself reads it. It does
     not find a closure in a place whose declared type is `fn()` (a field, or a
     `Vec<fn()>`), a closure that a callee of the task reads, or a closure in a
-    value that a callee returns (`tests/ir_targets/o3_5_field_closure_tasks.wf`,
+    value that a callee returns (`tests/programs/177_o3_5_field_closure_tasks.wf`,
     ADR 0006).

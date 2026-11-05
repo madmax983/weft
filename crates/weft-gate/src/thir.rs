@@ -125,7 +125,12 @@ pub fn check(base: &Path, entry: &Entry) -> Outcome {
             }
         }
     };
-    let opts = pkg.options(weft_cli::package::Profile::default());
+    // D0 reads the tables and the facts of the old lowering: name the old
+    // pipeline, because the default is the `ir` pipeline from plan stage C3.
+    let opts = weft_sema::Options {
+        facts: weft_sema::FactGen::Old,
+        ..pkg.options(weft_cli::package::Profile::default())
+    };
     let analysis = weft_sema::analyze(&pkg.units, opts);
     let report = d0::d0(&analysis);
     let ir = ir_counts(&analysis);

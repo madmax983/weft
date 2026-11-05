@@ -661,7 +661,7 @@ const CLOSURE_COPY: [&str; 14] = [
     "tests/gate/probes/verify/partb/S4/p/c10_tuple_np.wf",
     "tests/gate/probes/verify/partb/S4/p/c5_nonportable.wf",
     "tests/gate/probes/verify/s5/R2c/p/c2.wf",
-    "tests/ir_targets/o3_5_field_closure_tasks.wf",
+    "tests/programs/177_o3_5_field_closure_tasks.wf",
     "tests/programs/143_arg_roots.wf",
 ];
 
