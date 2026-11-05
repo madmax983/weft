@@ -1919,6 +1919,25 @@ fn place_field(em: &mut Em<'_>, st: &State, n: NodeId, place: &Place, v: &Tree) 
     if refs.is_empty() {
         return Ok(());
     }
+    // The text names the places of the struct in the body (`f.buf[]`), as
+    // the old lowering, if the struct is a local or a parameter of the
+    // source. Else it is the stated place (`self.buf[]`).
+    let named =
+        em.p.bodies
+            .get(em.body.index())
+            .and_then(|b| b.locals.get(place.local.index()))
+            .is_some_and(|d| {
+                d.name.is_some() && matches!(d.kind, LocalKind::User | LocalKind::Param(_))
+            });
+    let text = if named && !allowed.is_empty() {
+        let shown: Vec<&str> = allowed
+            .iter()
+            .map(|&d| em.facts.place(d).display.as_str())
+            .collect();
+        shown.join(" | ")
+    } else {
+        text
+    };
     let sp = em.facts.node(n).span;
     let m = em.facts.add_ir_node(sp, "field", "field", "");
     em.facts.ref_in.extend(allowed.into_iter().map(|d| (m, d)));
@@ -2933,12 +2952,24 @@ pub fn call(
                 continue;
             }
         }
-        let mut info = weft_facts::VarInfo::plain(
-            callee.clone(),
-            weft_facts::VarKind::Dropped,
-            at,
-            em.tys.show(targ),
-        );
+        // The diagnostic names the argument if it can (as the old
+        // lowering), else the callee.
+        let named = if by_value.is_none() {
+            dropped_arg_name(em, &decl.params, j, args)
+        } else {
+            None
+        };
+        let mut info = match named {
+            Some(name) => {
+                weft_facts::VarInfo::plain(name, weft_facts::VarKind::Temp, at, em.tys.show(targ))
+            }
+            None => weft_facts::VarInfo::plain(
+                callee.clone(),
+                weft_facts::VarKind::Dropped,
+                at,
+                em.tys.show(targ),
+            ),
+        };
         info.linear = true;
         info.has_on_abort = props.on_abort;
         info.generic.linear =
@@ -2947,6 +2978,8 @@ pub fn call(
         if let Some(v) = &by_value {
             info.has_on_abort = closure_on_abort(em, v);
             info.generic.linear = fns_generic(em, v);
+            // The value is a closure: the diagnostic says so.
+            info.callable = true;
         }
         let v = em.facts.add_var(info);
         em.facts.rebound_at.push((v, main));
@@ -3030,6 +3063,8 @@ pub fn call(
         info.has_on_abort = closure_on_abort(em, &v);
         if !results {
             info.generic.linear = fns_generic(em, &v);
+            // A closure that moves a linear value: the diagnostic says so.
+            info.callable = true;
         }
         let var = em.facts.add_var(info);
         em.facts.rebound_at.push((var, main));
@@ -3065,6 +3100,59 @@ pub fn call(
         em.facts.unwound_at.extend(drops.iter().map(|&v| (v, a)));
     }
     Ok(())
+}
+
+/// Returns true if type `t` names type parameter `j`.
+fn names_param(tys: &TyTable, t: TyId, j: u32, depth: usize) -> bool {
+    let Some(ty) = tys.try_get(t) else {
+        return false;
+    };
+    if depth > 32 {
+        return true;
+    }
+    let m = |x: &TyId| names_param(tys, *x, j, depth + 1);
+    match ty {
+        Ty::Param(i) => *i == j,
+        Ty::Tuple(ts) | Ty::Adt(_, ts) => ts.iter().any(m),
+        Ty::Array(x, _) | Ty::Slice(x) | Ty::Ref(x) | Ty::Iter(x) => m(x),
+        Ty::Cont(a, b) => m(a) || m(b),
+        Ty::Fn(f) => f.params.iter().any(m) || m(&f.ret),
+        Ty::Unit | Ty::Bool | Ty::Never | Ty::Int(_) | Ty::Scope | Ty::Cap(_) => false,
+    }
+}
+
+/// Returns the name of the argument that gives a value of type parameter
+/// `j` to a callee that can drop it (part `drops`), as the old lowering
+/// names it. The diagnostic names the argument only if one parameter (of
+/// the types `params`) names `j`, and the type of that parameter is `j`.
+/// The argument must be a local or a parameter of the source. Else the
+/// result is `None`, and the diagnostic names the callee.
+fn dropped_arg_name(em: &Em<'_>, params: &[TyId], j: u32, args: &[Operand]) -> Option<String> {
+    let mut given = params
+        .iter()
+        .enumerate()
+        .filter(|(_, &t)| names_param(em.tys, t, j, 0));
+    let (i, &t) = given.next()?;
+    let exact = matches!(em.tys.try_get(t), Some(Ty::Param(x)) if *x == j);
+    if given.next().is_some() || !exact {
+        return None;
+    }
+    let (Operand::Copy(q) | Operand::Move(q)) = args.get(i)? else {
+        return None;
+    };
+    if !q.proj.is_empty() {
+        return None;
+    }
+    let d =
+        em.p.bodies
+            .get(em.body.index())?
+            .locals
+            .get(q.local.index())?;
+    if matches!(d.kind, LocalKind::User | LocalKind::Param(_)) {
+        d.name.clone()
+    } else {
+        None
+    }
 }
 
 /// The values of the type parameters in the part `holds` of the summary
@@ -3939,6 +4027,8 @@ fn dropped_fn_args(
         info.has_on_abort = closure_on_abort(em, &v);
         if !results {
             info.generic.linear = fns_generic(em, &v);
+            // A closure that moves a linear value: the diagnostic says so.
+            info.callable = true;
         }
         let var = em.facts.add_var(info);
         em.facts.rebound_at.push((var, main));

@@ -1057,6 +1057,17 @@ pub fn emit_parts(
         generic::Found::default()
     };
     facts.normalize();
+    // The entry node of each clause names the capability of its handler in
+    // its detail (`c3`), as the old lowering: a diagnostic finds the reads of
+    // the clause from a node that performs through the capability.
+    for &(cb, en) in &clause_entries {
+        let Some(weft_ir::BodyKind::Clause(h, _)) = p.body(cb).map(|b| b.kind) else {
+            continue;
+        };
+        if let (Some(&(_, c)), Some(n)) = (hx.ids.get(&h), facts.nodes.get_mut(en.index())) {
+            n.detail = format!("c{}", c.0);
+        }
+    }
     let handler_caps = hx.ids.iter().map(|(&h, &(_, c))| (h, c)).collect();
     Ok(Emitted {
         drops: found.drops,

@@ -139,7 +139,7 @@ fn the_hints_name_an_effect_of_a_dependency_as_the_project_writes_it() {
             ("weft.toml", MANIFEST),
             (
                 "src/main.wf",
-                "fn main() {\n    json.noting()\n}\nfn stated() / Note {\n    json.noting()\n}\n",
+                "fn main() {\n    json.noting()\n}\nfn stated() / Note {\n    json.noting()\n}\nfn other() / par {\n    json.noting()\n}\n",
             ),
             ("deps/json/src/lib.wf", NOTE_LIB),
         ],
@@ -154,12 +154,10 @@ fn the_hints_name_an_effect_of_a_dependency_as_the_project_writes_it() {
     ] {
         assert!(out.text.contains(want), "missing `{want}`:\n{}", out.text);
     }
-    // The hint of W0702 in `stated`, whose signature names an unknown
-    // effect: only the old pipeline gives it. The `ir` pipeline (the default
-    // from plan stage C3) builds no IR for a function with an error in its
-    // signature, and W0101 already rejects the program.
-    let out = cmd(&["check", "--facts=old", &pkg]);
-    assert_eq!(out.code, 1, "{}", out.text);
+    // The hint of W0702 in `other`, whose signature states another effect.
+    // (The `ir` pipeline builds no IR for `stated`, whose signature names an
+    // unknown effect: W0101 already rejects it. The old pipeline also gave
+    // the hint there.)
     let want = "add `json.Note` to the effects after `/`, or handle it here";
     assert!(out.text.contains(want), "missing `{want}`:\n{}", out.text);
 }
@@ -172,7 +170,7 @@ fn the_project_cannot_name_a_private_effect_of_a_dependency() {
             ("weft.toml", MANIFEST),
             (
                 "src/main.wf",
-                "fn main() {\n    handle json.Secret { fn secret(x) { resume(()) } } in json.hiding()\n}\nfn stated() / json.Secret { json.hiding() }\nfn direct() { json.Secret.secret(1) }\n",
+                "fn main() {\n    handle json.Secret { fn secret(x) { resume(()) } } in json.hiding()\n}\nfn stated() / json.Secret { json.hiding() }\nfn direct() { json.Secret.secret(1) }\nfn other() / par { json.hiding() }\n",
             ),
             ("deps/json/src/lib.wf", NOTE_LIB),
         ],
@@ -186,9 +184,11 @@ fn the_project_cannot_name_a_private_effect_of_a_dependency() {
         .count();
     assert_eq!(private, 3, "{}", out.text);
     // The hints do not give a name that the project cannot write. The hint
-    // is a note of W0702, which only the old pipeline gives for these
-    // functions (see `the_hints_name_an_effect_of_a_dependency_as_the_project_writes_it`).
-    let out = cmd(&["check", "--facts=old", &pkg]);
+    // is a note of W0702 in `other`, whose signature states another effect.
+    // (The `ir` pipeline builds no IR for the functions with an error in
+    // their signature or body, see
+    // `the_hints_name_an_effect_of_a_dependency_as_the_project_writes_it`.)
+    assert!(!out.text.contains("add `json.Secret`"), "{}", out.text);
     assert!(
         out.text
             .contains("`json.Secret` is private in its package: code outside the package cannot state or handle it"),

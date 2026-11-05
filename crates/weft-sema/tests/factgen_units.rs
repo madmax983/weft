@@ -2347,14 +2347,16 @@ fn a_held_argument_moves_at_main_and_a_held_value_is_live_across_a_node_of_its_o
     assert!(f.vars[v.0 as usize].linear);
     assert!(has(&f.uses, v, r) && has(&f.moved_at, v, r));
     // `keep` can drop a value of its type parameter: a linear type argument
-    // goes away at the call (W0601).
+    // goes away at the call (W0601). The variable has the name of the
+    // argument `t`, as the old lowering: the diagnostic names it.
     let dropped: Vec<VarId> = (0..f.vars.len())
-        .filter(|&i| f.vars[i].kind == weft_facts::VarKind::Dropped)
         .map(|i| VarId(id(i)))
+        .filter(|&v| has(&f.rebound_at, v, main) && has(&f.scope_end, v, ret))
         .collect();
     assert_eq!(dropped.len(), 1, "{:?}", f.vars);
-    assert!(has(&f.rebound_at, dropped[0], main));
-    assert!(has(&f.scope_end, dropped[0], ret));
+    let info = &f.vars[dropped[0].0 as usize];
+    assert_eq!(info.name, "t", "{info:?}");
+    assert!(info.linear, "{info:?}");
 }
 
 #[test]
