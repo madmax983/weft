@@ -428,10 +428,7 @@ fn ok_sibling() {
         s.spawn(|| print(v.len()))
     }
 }
-// The branches touch different vectors, and the run is clean. But a fork branch that
-// runs a closure that changes a captured local is W0403 by ADR 0006, as the direct
-// form `fork(|| v.push(2), ...)` is in both pipelines. So `ok_fork_branch` and
-// `ok_fork_two` get W0403 in the ir pipeline.
+// Runs clean (different vectors), but W0403 by ADR 0006, as `fork(|| v.push(2), ...)` is.
 fn ok_fork_branch() {
     let v = mk_v()
     let w = mk_v()
