@@ -23,11 +23,20 @@
 //!    root. The roots of a component are finite, so the state is stable
 //!    after a finite number of visits.
 //!
+//! 5. A part of the value of a local deeper than [`DEPTH_MAX`] steps at a
+//!    loop head becomes one summary part: the part at depth [`DEPTH_MAX`]
+//!    is a leaf with the join of the part and of each part below it
+//!    (`Tree::limit_depth`, stage R0c). A loop that builds a value of a
+//!    recursive type (`l = Cons(i, l)`) gives a value one level deeper at
+//!    each visit; with this rule the depth of the values is finite.
+//!
 //! The places of each heap slot (a value stored behind a reference
 //! parameter) widen with the same rules.
 //!
 //! Each rule gives a place at or above the old one, so the widened state
-//! holds each place that the join holds (a sound result). The function
+//! holds each place that the join holds (a sound result). A summary part
+//! holds each value of the parts that it replaces, and a read below it gets
+//! the summary: it also holds each value that the join holds. The function
 //! values of group B are items (a finite set): they need no widening (the
 //! function sets of stage F12 do).
 //!
@@ -44,6 +53,11 @@ use crate::factgen::alpha::Roots;
 
 /// The most places of one root in the value of one local at a loop head.
 pub const PLACES_MAX: usize = 16;
+
+/// The most steps of a path of parts of the value of one local at a loop
+/// head (rule 5). A level of an enum is two steps (the variant and the
+/// field), so a list keeps four levels of its own parts.
+pub const DEPTH_MAX: usize = 8;
 
 /// The visits of a loop head before rule 4, in a body with `locals` locals.
 ///
@@ -658,6 +672,8 @@ pub fn widen(
         return false;
     }
     let to_root = head.visits > roots_after(locals);
+    // Rule 5: the depth of the values is finite.
+    st.limit_depth(DEPTH_MAX);
     let known = old.places();
     let empty = BTreeSet::new();
     for (k, _) in st.places() {

@@ -1637,13 +1637,10 @@ stage = "F13"
 # F13-fix: the classes of the review of stage F13 part 1 (scratchpad
 # f13/review.md).
 
-[[entry]]
-class = "edge"
-issue = 41
-files = ["tests/gate/probes/fixes/f13b/ab_rc1/a13_nested_rc_rc_b.wf"]
-finding = "F13B-AB-RC1"
-reason = "old hole AB-RC1 (review of stage F13): a reference through a whole local handle of a new object goes into an object that an `Rc<Rc<Cache>>` parameter reaches. The handle of the store is a handle in an `rc` object, so the facts cannot tell if the objects are the same: the old pipeline checks the program, and it skips each whole local handle of the same `rc` type (no W0204). Stage C1: an old hole of the ship rule (issue #41)."
-stage = "F13"
+# Plan stage R0c removed the `edge` entry of issue #41
+# (`fixes/f13b/ab_rc1/a13_nested_rc_rc_b.wf`, old hole AB-RC1): the `ir`
+# pipeline reports W0204 for a reference through a local `rc` handle that can
+# be a copy of a handle of the object, so the program is `fixed`.
 
 [[entry]]
 class = "edge"
@@ -8163,3 +8160,17 @@ files = [
 ]
 reason = "stage R0b: a handler with no clause for an operation passes the operation on to the handler outside it, as the interpreter does (`semantics.rs` `partial_handler_forwards_other_operations`). The builder gives the perform the capability of the row (`Builder::op_cap`), so the row that the ir pipeline infers has the effect. The old inference counts the perform as handled by the handler with no clause, so its row misses the effect: `182_handler_no_clause.wf` `passes_on` and `main` fault at run time with no handler for `Note.note` (class `fixed` of the gate)"
 stage = "R0b"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/redteam/t03_items.wf"]
+codes = ["W0702"]
+reason = "stage R0c (reason A2 of the scope report): before R0c the clause of `spawn_closure` ran in a task, so the program went to the old pipeline. Now the facts skip the runs of a clause on a task that W0314 rejects. Both pipelines give W0314 at each task. The `ir` pipeline also gives W0702 at the spawn of the item `noter` (6) and at the first fork branch (17): the task performs `Note`, the handler of `Note` is on the stack of the parent task, so the effect leaves the function and the row (`async`, `par`) does not allow it. Rejected in both"
+stage = "R0c"
+
+[[entry]]
+class = "changed"
+files = ["r3/oracle/sweep3/callee__task_result.wf"]
+codes = ["W0313", "W0805"]
+reason = "stage R0c (reason A2 of the scope report): a task in a scope runs `mk_asker()`, whose closure performs `Ask`, inside a local `handle Ask`; the task gives the closure back through `join`, and `main` runs it after the `handle`. Before R0c the program went to the old pipeline. Both pipelines give W0314 at the task (15). The old pipeline gives W0313 (the closure escapes its handler, 15); the `ir` pipeline gives W0805 at the run of the closure (16: `main` performs `Ask` and no handler handles it), the place where the run faults with no handler. Rejected in both"
+stage = "R0c"

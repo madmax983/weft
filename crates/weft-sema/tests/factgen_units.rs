@@ -1297,7 +1297,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // An `on abort` function: the summary of the function at the node,
         // with the root handlers (plan stage F7).
         // The `UnwindValue` of the `ScopeCap` local of a scope body cancels
-        // and joins the tasks of the scope (V084, plan stage F18).
+        // and joins the tasks of the scope (V084, plan stage F18). The frames
+        // of the callees of a task end where the task ends
+        // (`templates::task_end_lends`, plan stage F19; corpus 185, plan
+        // stage R0c).
         "unwind value" => (
             &[
                 "cfg_edge",
@@ -1306,6 +1309,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "mutates_at",
                 "lends_mut",
                 "task",
+                "scope_end",
             ],
             &[],
         ),
@@ -1513,7 +1517,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // The scope ends its tasks; the `TaskResult` locals get the results;
-        // a child failure runs the `fail` clause of a local handler.
+        // a child failure runs the `fail` clause of a local handler. The
+        // frames of the callees of a task end where the task ends
+        // (`templates::task_end_lends`, plan stage F19): a task that calls a
+        // function (corpus 185, plan stage R0c).
         "scope wait" => (
             &[
                 "cfg_edge",
@@ -1525,6 +1532,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "empty_at",
                 "performs_at",
                 "releases_at",
+                "scope_end",
             ],
             &[],
         ),
@@ -1583,7 +1591,8 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // A `join`: the handle moves (the machine takes the task out of its
-        // place), the tasks that only it holds end.
+        // place), the tasks that only it holds end, with the frames of their
+        // callees (`templates::task_end_lends`).
         "join" => (
             &[
                 "cfg_edge",
@@ -1597,6 +1606,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "may_abort",
                 "performs_at",
                 "releases_at",
+                "scope_end",
             ],
             &[],
         ),

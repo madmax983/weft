@@ -1,0 +1,466 @@
+fn f0 newc() -> Rc<Cache>: b0
+fn f1 newp() -> Rc<Pool>: b1
+fn f2 newb() -> Rc<Bag>: b2
+fn f3 other_object(Rc<Rc<Cache>>) -> () / (): b3
+fn f4 maybe_copy(Rc<Pool>, bool) -> () / (): b4
+fn f5 copy_of_handle(Rc<Bag>) -> () / (): b5
+fn f6 same_handle(Rc<Bag>) -> () / (): b6
+fn f7 main() -> () / (): b7
+fn f8 Rc.new<T0>(T0) -> Rc<T0> / (): extern
+fn f9 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f10 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f11 Rc.clone<T0>(&Rc<T0>) -> Rc<T0> / (): extern
+cap_env e0
+
+body b0: fn newc; cap_env e0; unwind_exit bb4
+  _0: Rc<Cache> (Return)
+  _1: Cache (Temp(Operand))
+  _2: Vec<&u64> (Temp(Operand))
+  _3: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call Vec.new<&u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    _3 = call Vec.new<u64>() / e0 -> [bb2]
+  bb2:
+    _1 = Cache { move _2, move _3 }
+    _0 = call Rc.new<Cache>(move _1) / e0 -> [bb3]
+  bb3:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: fn newp; cap_env e0; unwind_exit bb4
+  _0: Rc<Pool> (Return)
+  _1: Pool (Temp(Operand))
+  _2: Vec<&u64> (Temp(Operand))
+  _3: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call Vec.new<&u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    _3 = call Vec.new<u64>() / e0 -> [bb2]
+  bb2:
+    _1 = Pool { move _2, move _3 }
+    _0 = call Rc.new<Pool>(move _1) / e0 -> [bb3]
+  bb3:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: fn newb; cap_env e0; unwind_exit bb4
+  _0: Rc<Bag> (Return)
+  _1: Bag (Temp(Operand))
+  _2: Vec<&u64> (Temp(Operand))
+  _3: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call Vec.new<&u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    _3 = call Vec.new<u64>() / e0 -> [bb2]
+  bb2:
+    _1 = Bag { move _2, move _3 }
+    _0 = call Rc.new<Bag>(move _1) / e0 -> [bb3]
+  bb3:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: fn other_object; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Rc<Rc<Cache>> (Param(0) `c`)
+  _2: Rc<Cache> (User `d`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<u64> (Temp(Receiver))
+  _5: &u64 (Temp(Operand))
+  _6: usize (Temp(Operand))
+  _7: &Vec<&u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call newc() / e0 -> [bb1, unwind: bb4]
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_2).1
+    _3 = call Vec.push<u64>(move _4, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    Live(_6)
+    _6 = const 0usize
+    Bounds((*_2).1, copy _6)
+    _5 = &(*_2).1[_6]
+    Live(_7)
+    _7 = &(*(*_1)).0
+    _0 = call Vec.push<&u64>(move _7, move _5) / e0 -> [bb3]
+  bb3:
+    Dead(_2)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b4: fn maybe_copy; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Rc<Pool> (Param(0) `c`)
+  _2: bool (Param(1) `fresh`)
+  _3: Rc<Pool> (User `d`)
+  _4: &Rc<Pool> (Temp(Receiver))
+  _5: () (Temp(Discarded))
+  _6: Rc<Pool> (Temp(Operand))
+  _7: () (Temp(Discarded))
+  _8: &Vec<u64> (Temp(Receiver))
+  _9: &u64 (Temp(Operand))
+  _10: usize (Temp(Operand))
+  _11: &Vec<&u64> (Temp(Receiver))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    _3 = call Rc.clone<Pool>(move _4) / e0 -> [bb1]
+  bb1:
+    Dead(_4)
+    Live(_5)
+    switch copy _2 -> [1: bb2, otherwise: bb9]
+  bb2:
+    Live(_6)
+    _6 = call newp() / e0 -> [bb3, unwind: bb4]
+  bb3:
+    _3 = move _6
+    Dead(_6)
+    _5 = const ()
+    Goto(bb10)
+  bb4 (cleanup):
+    UnwindValue(_6, Drop)
+    Dead(_6)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_5)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+  bb9:
+    _5 = const ()
+    Goto(bb10)
+  bb10:
+    Dead(_5)
+    Live(_7)
+    Live(_8)
+    _8 = &(*_3).1
+    _7 = call Vec.push<u64>(move _8, const 1u64) / e0 -> [bb11]
+  bb11:
+    Dead(_8)
+    Dead(_7)
+    Live(_9)
+    Live(_10)
+    _10 = const 0usize
+    Bounds((*_3).1, copy _10)
+    _9 = &(*_3).1[_10]
+    Live(_11)
+    _11 = &(*_1).0
+    _0 = call Vec.push<&u64>(move _11, move _9) / e0 -> [bb12]
+  bb12:
+    Dead(_3)
+    Dead(_11)
+    Dead(_10)
+    Dead(_9)
+    Dead(_2)
+    Dead(_1)
+    Return
+
+body b5: fn copy_of_handle; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Rc<Bag> (Param(0) `c`)
+  _2: Rc<Bag> (User `d`)
+  _3: &Rc<Bag> (Temp(Receiver))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Receiver))
+  _6: &u64 (Temp(Operand))
+  _7: usize (Temp(Operand))
+  _8: &Vec<&u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Rc.clone<Bag>(move _3) / e0 -> [bb1]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_2).1
+    _4 = call Vec.push<u64>(move _5, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Live(_6)
+    Live(_7)
+    _7 = const 0usize
+    Bounds((*_2).1, copy _7)
+    _6 = &(*_2).1[_7]
+    Live(_8)
+    _8 = &(*_1).0
+    _0 = call Vec.push<&u64>(move _8, move _6) / e0 -> [bb3]
+  bb3:
+    Dead(_2)
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b6: fn same_handle; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: Rc<Bag> (Param(0) `c`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: &u64 (Temp(Operand))
+  _5: usize (Temp(Operand))
+  _6: &Vec<&u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &(*_1).1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb1]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_1).1, copy _5)
+    _4 = &(*_1).1[_5]
+    Live(_6)
+    _6 = &(*_1).0
+    _0 = call Vec.push<&u64>(move _6, move _4) / e0 -> [bb2]
+  bb2:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b7: fn main; cap_env e0; unwind_exit bb32
+  _0: () (Return)
+  _1: Rc<Bag> (User `k`)
+  _2: () (Temp(Discarded))
+  _3: Rc<Bag> (Temp(Operand))
+  _4: &Rc<Bag> (Temp(Receiver))
+  _5: Rc<Bag> (User `m`)
+  _6: () (Temp(Discarded))
+  _7: Rc<Bag> (Temp(Operand))
+  _8: &Rc<Bag> (Temp(Receiver))
+  _9: Rc<Pool> (User `p`)
+  _10: () (Temp(Discarded))
+  _11: Rc<Pool> (Temp(Operand))
+  _12: &Rc<Pool> (Temp(Receiver))
+  _13: Rc<Rc<Cache>> (User `c`)
+  _14: Rc<Cache> (Temp(Operand))
+  _15: () (Temp(Discarded))
+  _16: Rc<Rc<Cache>> (Temp(Operand))
+  _17: &Rc<Rc<Cache>> (Temp(Receiver))
+  _18: &u64 (User `r`)
+  _19: usize (Temp(Operand))
+  _20: () (Temp(Discarded))
+  _21: u64 (Temp(Operand))
+  _22: &u64 (User `q`)
+  _23: usize (Temp(Operand))
+  _24: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call newb() / e0 -> [bb1, unwind: bb30]
+  bb1:
+    Live(_2)
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    _3 = call Rc.clone<Bag>(move _4) / e0 -> [bb2]
+  bb2:
+    _2 = call copy_of_handle(move _3) / e0 -> [bb3, unwind: bb27]
+  bb3:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Live(_5)
+    _5 = call newb() / e0 -> [bb4, unwind: bb26]
+  bb4:
+    Live(_6)
+    Live(_7)
+    Live(_8)
+    _8 = &_5
+    _7 = call Rc.clone<Bag>(move _8) / e0 -> [bb5]
+  bb5:
+    _6 = call same_handle(move _7) / e0 -> [bb6, unwind: bb23]
+  bb6:
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Live(_9)
+    _9 = call newp() / e0 -> [bb7, unwind: bb22]
+  bb7:
+    Live(_10)
+    Live(_11)
+    Live(_12)
+    _12 = &_9
+    _11 = call Rc.clone<Pool>(move _12) / e0 -> [bb8]
+  bb8:
+    _10 = call maybe_copy(move _11, const true) / e0 -> [bb9, unwind: bb19]
+  bb9:
+    Dead(_12)
+    Dead(_11)
+    Dead(_10)
+    Live(_13)
+    Live(_14)
+    _14 = call newc() / e0 -> [bb10, unwind: bb17]
+  bb10:
+    _13 = call Rc.new<Rc<Cache>>(move _14) / e0 -> [bb11]
+  bb11:
+    Dead(_14)
+    Live(_15)
+    Live(_16)
+    Live(_17)
+    _17 = &_13
+    _16 = call Rc.clone<Rc<Cache>>(move _17) / e0 -> [bb12]
+  bb12:
+    _15 = call other_object(move _16) / e0 -> [bb13, unwind: bb14]
+  bb13:
+    Dead(_17)
+    Dead(_16)
+    Dead(_15)
+    Live(_18)
+    Live(_19)
+    _19 = const 0usize
+    Bounds((*(*_13)).0, copy _19)
+    _18 = copy (*(*_13)).0[_19]
+    Dead(_19)
+    Live(_20)
+    Live(_21)
+    _21 = Add<u64>(copy (*_18), const 0u64)
+    Print(copy _21)
+    _20 = const ()
+    Dead(_21)
+    Dead(_20)
+    Live(_22)
+    Live(_23)
+    _23 = const 0usize
+    Bounds((*_9).0, copy _23)
+    _22 = copy (*_9).0[_23]
+    Dead(_23)
+    Live(_24)
+    _24 = Add<u64>(copy (*_22), const 0u64)
+    Print(copy _24)
+    _0 = const ()
+    Dead(_22)
+    Dead(_18)
+    Dead(_13)
+    Dead(_9)
+    Dead(_5)
+    Dead(_1)
+    Dead(_24)
+    Return
+  bb14 (cleanup):
+    Dead(_17)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindValue(_16, Drop)
+    Dead(_16)
+    Goto(bb16)
+  bb16 (cleanup):
+    Dead(_15)
+    Goto(bb18)
+  bb17 (cleanup):
+    UnwindValue(_14, Drop)
+    Dead(_14)
+    Goto(bb18)
+  bb18 (cleanup):
+    UnwindValue(_13, Drop)
+    Dead(_13)
+    Goto(bb22)
+  bb19 (cleanup):
+    Dead(_12)
+    Goto(bb20)
+  bb20 (cleanup):
+    UnwindValue(_11, Drop)
+    Dead(_11)
+    Goto(bb21)
+  bb21 (cleanup):
+    Dead(_10)
+    Goto(bb22)
+  bb22 (cleanup):
+    UnwindValue(_9, Drop)
+    Dead(_9)
+    Goto(bb26)
+  bb23 (cleanup):
+    Dead(_8)
+    Goto(bb24)
+  bb24 (cleanup):
+    UnwindValue(_7, Drop)
+    Dead(_7)
+    Goto(bb25)
+  bb25 (cleanup):
+    Dead(_6)
+    Goto(bb26)
+  bb26 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb30)
+  bb27 (cleanup):
+    Dead(_4)
+    Goto(bb28)
+  bb28 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb29)
+  bb29 (cleanup):
+    Dead(_2)
+    Goto(bb30)
+  bb30 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb31)
+  bb31 (cleanup):
+    Dead(_0)
+    Goto(bb32)
+  bb32 (cleanup):
+    UnwindExit

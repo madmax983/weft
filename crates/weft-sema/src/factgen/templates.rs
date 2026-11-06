@@ -235,7 +235,8 @@ pub struct Stored {
     /// The handle places of `refs` of a whole local handle of the `rc` type
     /// of the store that can be a copy of a handle of the object
     /// (`let d = c.clone()`): the fact generator cannot tell if the object
-    /// is the same. The old pipeline checks the program.
+    /// is the same (`same_object` does not show it). The check reports
+    /// them as handles of another object (W0204, stage R0c).
     pub maybe_same: Vec<PlaceId>,
     /// A store of a clause, with the places of its parameters mapped onto
     /// the places of the arguments (`handlers::map_stored`): a reference
@@ -1714,7 +1715,9 @@ fn store(
 /// A handle of the store itself (in `own`) is a handle of the object. A
 /// local whose value can come from the same local or parameter as a handle
 /// of the store (`let d = c.clone()`) can be a copy: the facts cannot tell
-/// if the objects are the same. Another local is a handle of another object
+/// if the objects are the same, unless the IR shows that the local is a
+/// copy of the one handle parameter of the store ([`same_object`], stage
+/// R0c). Another local is a handle of another object
 /// (`let d = newc()`, a second parameter): the object of `h` can go away at
 /// the return, so the check reports it (class AB-RC1 of the review of stage
 /// F13). A handle in a container, a struct or a tuple is no whole local:
@@ -1792,10 +1795,221 @@ fn rc_handles(
         }
         let shared = mine.is_none_or(|m| m.iter().any(|x| sources.contains(x)));
         if !known || shared {
-            maybe.push(r);
+            // A copy of the one handle of the store that is sure to be a
+            // handle of its object (stage R0c, [`same_object`]).
+            if store_handle(em, own).is_some_and(|h| same_object(em.p, k, h)) {
+                same.push(r);
+            } else {
+                maybe.push(r);
+            }
         }
     }
     (same, maybe)
+}
+
+/// The key of the parameter or the local `h` if each handle place of `own`
+/// is the handle place `h.*` of the whole value of `h`: the store reaches
+/// the object through `h` only.
+fn store_handle(em: &Em<'_>, own: &[PlaceId]) -> Option<Key> {
+    let mut out: Option<Key> = None;
+    for &r in own {
+        let parent = em.facts.places.get(r.index())?.parent?;
+        let info = em.facts.places.get(parent.index())?;
+        if !info.steps.is_empty() {
+            return None;
+        }
+        let k = match em.roots.role(info.root)? {
+            super::alpha::Role::Local(k) => k,
+            super::alpha::Role::Param(b, i) => param_key(em, b, i)?,
+            _ => return None,
+        };
+        if out.is_some_and(|o| o != k) {
+            return None;
+        }
+        out = Some(k);
+    }
+    out
+}
+
+/// True if the whole handle in local `k` is sure to be a handle of the
+/// object of the handle in parameter `h` at each point of the frame (the
+/// W0204 store check, stage R0c): `k` gets a value at one place only, `let
+/// d = c.clone()` (or a copy `let d = c`), and `h` never gets a new value.
+///
+/// The rule reads the IR of each body of the frame (the upvar locals of
+/// `k` and `h` are the same cells). It fails (the check then reports W0204)
+/// for each other write of the handles: a second assignment of `k`, an
+/// assignment of `h`, a reference to the whole handle (other than the
+/// receiver of an `Rc.clone`), and a closure that captures `k` or `h` by
+/// reference (`ByRef`, `Kept`). A write through a handle (`d.data.push(1)`)
+/// changes the object, not the handle, so it does not count.
+fn same_object(p: &weft_ir::Program, k: Key, h: Key) -> bool {
+    use weft_ir::{Callee, LocalKind, Proj, Rvalue, StmtKind};
+    if k == h {
+        return true;
+    }
+    let is_param = p
+        .body(h.0)
+        .and_then(|b| b.local(h.1))
+        .is_some_and(|d| matches!(d.kind, LocalKind::Param(_)));
+    if !is_param {
+        return false;
+    }
+    let owner = |b: BodyId, l: weft_ir::LocalId| super::alpha::owner_local(p, b, l).ok();
+    // The handle (`k` or `h`) whose whole value the place `q` names: not a
+    // place through the handle.
+    let target = |b: BodyId, q: &Place| -> Option<Key> {
+        if matches!(q.proj.first(), Some(Proj::Deref(_))) {
+            return None;
+        }
+        owner(b, q.local).filter(|o| *o == k || *o == h)
+    };
+    let is_clone = |f: weft_ir::FnId| {
+        p.fns
+            .get(f.index())
+            .is_some_and(|d| d.body.is_none() && d.name == "Rc.clone")
+    };
+    // A closure that captures a cell of `k` or `h`.
+    for c in &p.closures {
+        for cap in &c.captures {
+            let by_cell = matches!(
+                cap.mode,
+                weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
+            );
+            if by_cell && target(c.maker, &cap.source).is_some() {
+                return false;
+            }
+        }
+    }
+    let mut defs = 0usize;
+    for (bi, b) in p.bodies.iter().enumerate() {
+        let Ok(bi) = u32::try_from(bi) else {
+            return false;
+        };
+        let body = BodyId(bi);
+        // The temporaries that hold a reference to the whole handle of `h`:
+        // each one must be the receiver of an `Rc.clone`.
+        let mut refs: Vec<weft_ir::LocalId> = Vec::new();
+        for blk in &b.blocks {
+            for st in &blk.stmts {
+                match &st.kind {
+                    StmtKind::Assign(q, rv) => {
+                        if let Some(o) = target(body, q) {
+                            if o == h {
+                                return false;
+                            }
+                            defs += 1;
+                            if !copies_handle(p, body, rv, h) {
+                                return false;
+                            }
+                        }
+                        if let Rvalue::Ref(x) = rv {
+                            match target(body, x) {
+                                Some(o) if o == h && q.proj.is_empty() && x.proj.is_empty() => {
+                                    refs.push(q.local);
+                                }
+                                Some(_) => return false,
+                                None => {}
+                            }
+                        }
+                    }
+                    StmtKind::Uninit(q) if target(body, q).is_some() => return false,
+                    _ => {}
+                }
+            }
+            let dest = match &blk.term.kind {
+                TermKind::Call { dest, .. }
+                | TermKind::Perform { dest, .. }
+                | TermKind::Resume { dest, .. }
+                | TermKind::Handle { dest, .. }
+                | TermKind::Scope { dest, .. }
+                | TermKind::Join { dest, .. }
+                | TermKind::Fork { dest, .. }
+                | TermKind::IterNext { dest, .. } => Some(dest),
+                TermKind::Spawn { dest, .. } => dest.as_ref(),
+                _ => None,
+            };
+            if let Some(o) = dest.and_then(|q| target(body, q)) {
+                if o == h {
+                    return false;
+                }
+                defs += 1;
+                // The one form of a call that gives `k` its value:
+                // `Rc.clone(&h)`.
+                let TermKind::Call {
+                    callee: Callee::Fn(f, _),
+                    args,
+                    ..
+                } = &blk.term.kind
+                else {
+                    return false;
+                };
+                let arg_ok = matches!(
+                    args.as_slice(),
+                    [Operand::Move(t) | Operand::Copy(t)]
+                        if t.proj.is_empty() && is_ref_of(p, body, t.local, h)
+                );
+                if !is_clone(*f) || !arg_ok {
+                    return false;
+                }
+            }
+        }
+        // Each reference to the whole handle of `h` goes to an `Rc.clone`.
+        for t in refs {
+            let receiver = b.blocks.iter().any(|blk| {
+                matches!(
+                    &blk.term.kind,
+                    TermKind::Call { callee: Callee::Fn(f, _), args, .. }
+                        if is_clone(*f)
+                            && matches!(args.as_slice(), [Operand::Move(x) | Operand::Copy(x)] if x.local == t && x.proj.is_empty())
+                )
+            });
+            let temp = b
+                .local(t)
+                .is_some_and(|d| matches!(d.kind, LocalKind::Temp(_)));
+            if !receiver || !temp {
+                return false;
+            }
+        }
+    }
+    defs == 1
+}
+
+/// True if the rvalue `rv` of body `body` is a copy or a move of the whole
+/// handle of `h`.
+fn copies_handle(p: &weft_ir::Program, body: BodyId, rv: &weft_ir::Rvalue, h: Key) -> bool {
+    match rv {
+        weft_ir::Rvalue::Use(Operand::Copy(q) | Operand::Move(q)) => {
+            q.proj.is_empty() && super::alpha::owner_local(p, body, q.local).ok() == Some(h)
+        }
+        _ => false,
+    }
+}
+
+/// True if local `t` of body `body` gets a value at one place only, a
+/// reference to the whole handle of `h` (`_t = &_h`).
+fn is_ref_of(p: &weft_ir::Program, body: BodyId, t: weft_ir::LocalId, h: Key) -> bool {
+    let Some(b) = p.body(body) else {
+        return false;
+    };
+    let mut found = 0usize;
+    for blk in &b.blocks {
+        for st in &blk.stmts {
+            if let weft_ir::StmtKind::Assign(q, rv) = &st.kind {
+                if q.local != t {
+                    continue;
+                }
+                let ok = q.proj.is_empty()
+                    && matches!(rv, weft_ir::Rvalue::Ref(x)
+                        if x.proj.is_empty() && super::alpha::owner_local(p, body, x.local).ok() == Some(h));
+                if !ok {
+                    return false;
+                }
+                found += 1;
+            }
+        }
+    }
+    found == 1
 }
 
 /// The key of local `h` if `r` is the handle place `h.*` of the whole local
@@ -3738,7 +3952,7 @@ fn call_tasks(
             .filter(|a| a.task_run == Some(idx))
             .cloned()
             .collect();
-        task_w0314(em, &mine, origin, Some(callee));
+        let bad = task_w0314(em, &mine, origin, Some(callee));
         let marks = (
             em.facts.mutates_at.len(),
             em.facts.lends_mut.len(),
@@ -3776,6 +3990,10 @@ fn call_tasks(
             }
             _ => std::collections::BTreeSet::new(),
         };
+        // A clause that the task runs runs on another task (stage R0c).
+        if bad {
+            w0314_bodies(em, &fns);
+        }
         task_captures(em, st, t, &fns, &writes)?;
         let code = mine.iter().any(|a| a.code);
         let pins = mine.iter().any(|a| a.summary.pins);
@@ -5790,13 +6008,13 @@ fn task_effects_at(
 /// with no runtime, each effect: W0314. `Fail` goes to the task that joins
 /// the task. Another effect of the row goes to
 /// a handler of a caller: part `task_effects` of the body (the caller
-/// checks it at its call).
+/// checks it at its call). Returns true if it reports W0314.
 fn task_w0314(
     em: &mut Em<'_>,
     apps: &[transfer::Applied],
     origin: weft_ir::Span,
     callee: Option<&str>,
-) {
+) -> bool {
     use crate::analysis::summary::CapIface;
     let env = em.p.body(em.body).map(|b| b.cap_env);
     let local = |em: &Em<'_>, e: &str| {
@@ -5842,6 +6060,19 @@ fn task_w0314(
         };
         em.w0314.push((origin, msg));
     }
+    bad
+}
+
+/// The bodies of the closures `fns` of a task that W0314 rejects go into
+/// `Handlers::w0314_bodies` (stage R0c).
+fn w0314_bodies(em: &mut Em<'_>, fns: &std::collections::BTreeSet<FnVal>) {
+    for f in fns {
+        if let FnVal::Closure(c) | FnVal::Made(c) = f {
+            if let Some(d) = em.p.closures.get(c.index()) {
+                em.hx.w0314_bodies.insert(d.body);
+            }
+        }
+    }
 }
 
 /// The start of the task of site `site` at node `n`: the run of the task
@@ -5880,7 +6111,10 @@ fn task_start(
     // A failure of the task is a child failure: `join` and `ScopeWait` run
     // the `fail` clause of a local handler (`clause::runs_clauses`). An
     // operation of another handler of this task is W0314.
-    task_w0314(em, &out.apps, origin, None);
+    // A clause that the task runs runs on another task (stage R0c).
+    if task_w0314(em, &out.apps, origin, None) {
+        w0314_bodies(em, &fns);
+    }
     // A late run (a value that the task body runs through a capture)
     // applies at `n`: the whole run of the task is at `n` (plan stage F19).
     // A run again (a value that runs another value more than once, OR3)

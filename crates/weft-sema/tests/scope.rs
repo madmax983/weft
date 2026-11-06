@@ -647,3 +647,128 @@ fn a_body_with_no_ir_for_an_error_of_the_program_keeps_the_program_in_scope() {
         assert_eq!(fallback_a(src), None, "{src}");
     }
 }
+
+#[test]
+fn a_reference_through_a_copy_of_an_rc_handle_stays_in_scope() {
+    // Plan stage R0c (reason A1 of the scope report): the store check
+    // decides if a copy of a handle (`let d = c.clone()`) is a handle of the
+    // object that gets the reference, and the program stays in scope. A copy
+    // of the handle parameter of the store that gets no other value is a
+    // handle of the same object: no W0204.
+    let copy = "struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+        fn fill(c: Rc<Cache>) / mut(Cache) {
+            let d = c.clone()
+            d.data.push(1)
+            c.refs.push(&d.data[0])
+        }";
+    assert_eq!(fallback(copy), None);
+    let a = analyze(copy, Options::default());
+    assert!(
+        !a.diags.iter().any(|d| d.code == Code::W0204),
+        "{:?}",
+        diags(&a)
+    );
+    // Else the facts cannot tell, and the check reports W0204: a store
+    // handle in an `rc` object, and a local that can get another value.
+    let cases = [
+        "struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+        fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+        fn fill(c: Rc<Rc<Cache>>) / mut(Cache) {
+            let d = newc()
+            d.data.push(1)
+            c.refs.push(&d.data[0])
+        }",
+        "struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+        fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+        fn fill(c: Rc<Cache>, b: bool) / mut(Cache) {
+            let d = c.clone()
+            if b { d = newc() }
+            d.data.push(1)
+            c.refs.push(&d.data[0])
+        }",
+    ];
+    for src in cases {
+        assert_eq!(fallback(src), None, "{src}");
+        let a = analyze(src, Options::default());
+        assert!(
+            a.diags.iter().any(|d| d.code == Code::W0204),
+            "{src}: {:?}",
+            diags(&a)
+        );
+    }
+}
+
+#[test]
+fn a_task_that_performs_through_a_handler_of_this_task_is_w0314_in_scope() {
+    // Plan stage R0c (reason A2 of the scope report): the clause would run
+    // on another task, so the continuation of its `resume` has no node of
+    // the handled body. The part `tasks` reports W0314, and the program
+    // stays in scope.
+    let cases = [
+        "effect Tick { fn tick() }
+        fn worker() / Tick, async { tick() }
+        fn main() / async {
+            let n = 0
+            handle Tick { fn tick() { n += 1; resume(()) } } in {
+                scope { s => s.spawn(|| worker()) }
+            }
+            print(n)
+        }",
+        "effect Tick { fn tick() }
+        fn main() / par {
+            let n = 0
+            handle Tick { fn tick() { n += 1; resume(()) } } in fork(|| tick(), || print(2))
+            print(n)
+        }",
+    ];
+    for src in cases {
+        assert_eq!(fallback(src), None, "{src}");
+        let a = analyze(src, Options::default());
+        assert!(
+            a.diags.iter().any(|d| d.code == Code::W0314),
+            "{src}: {:?}",
+            diags(&a)
+        );
+    }
+}
+
+#[test]
+fn a_loop_that_builds_a_recursive_value_ends() {
+    // Plan stage R0c (reason B1 of the scope report): rule 5 of the
+    // widening limits the depth of the values at a loop head, so the
+    // analysis of the loop ends and the program stays in scope.
+    let clean = "enum List { Cons(u64, List), Nil }
+        fn main() {
+            let l = Nil
+            let i = 0
+            while i < 10 {
+                l = Cons(i, l)
+                i += 1
+            }
+        }";
+    assert_eq!(fallback(clean), None);
+    assert!(analyze(clean, Options::default()).diags.is_empty());
+    let deep = "enum Refs { More(&u64, Refs), End }
+        fn first(l: &Refs) -> u64 {
+            match l {
+                More(r, _) => r + 0,
+                End => 0,
+            }
+        }
+        fn main() {
+            let v = Vec.new()
+            v.push(1)
+            let w: u64 = 3
+            let l = More(&v[0], End)
+            let i = 0
+            while i < 20 {
+                l = More(&w, l)
+                i += 1
+            }
+            v.push(2)
+            print(first(&l))
+        }";
+    // The checker reports W0301 for `deep` (corpus
+    // `186_recursive_list_loop.wf`).
+    assert_eq!(fallback(deep), None);
+}

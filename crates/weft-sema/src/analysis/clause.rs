@@ -177,6 +177,12 @@ pub struct Handlers {
     /// The program runs with no runtime (`// weft: no-runtime`): no root
     /// handler serves a standard effect on a task (plan stage F18).
     pub no_runtime: bool,
+    /// The closure bodies that a task runs, for each task that W0314
+    /// rejects (`crate::factgen::templates::task_start`, stage R0c). A
+    /// clause that a node of such a body runs runs on another task: the
+    /// continuation of its `resume` has no node of the handled body
+    /// (`crate::factgen::handlers`, `Region::starts`).
+    pub w0314_bodies: std::collections::BTreeSet<BodyId>,
 }
 
 /// How a closure that captures the capability of a handler leaves the

@@ -1,0 +1,66 @@
+// A reference through a whole local `rc` handle goes into an `rc` object of
+// the same type (plan stage R0c, the W0204 store check of `docs/ir.md` 6.9).
+// The local handle can be a copy of a handle of the object that gets the
+// reference (`let d = c.clone()`). If the local gets its value at one place
+// only, from the handle parameter of the store, and neither handle gets a
+// new value, the objects are the same: the reference goes away with the
+// object. Else the facts cannot tell if the objects are the same, and the
+// `ir` pipeline reports W0204: the object of the local handle can go away at
+// the return. The old pipeline accepts each case.
+
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+struct Pool { refs: Vec<&u64>, data: Vec<u64> }
+struct Bag { refs: Vec<&u64>, data: Vec<u64> }
+
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn newp() -> Rc<Pool> { Rc.new(Pool { refs: Vec.new(), data: Vec.new() }) }
+fn newb() -> Rc<Bag> { Rc.new(Bag { refs: Vec.new(), data: Vec.new() }) }
+
+// The bad cases. In `other_object`, `d` is the handle of a new object, and
+// `c` reaches the object that gets the reference through a second handle.
+// In `maybe_copy`, `d` is a copy of `c` or the handle of a new object. The
+// new object goes away at the return, and `main` reads the reference.
+// R0c: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: a read of a freed cell), stage R0c
+fn other_object(c: Rc<Rc<Cache>>) / mut(Cache) {
+    let d = newc()
+    d.data.push(1)
+    c.refs.push(&d.data[0])   //~ W0204 old:
+}
+
+// R0c: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: a read of a freed cell), stage R0c
+fn maybe_copy(c: Rc<Pool>, fresh: bool) / mut(Pool) {
+    let d = c.clone()
+    if fresh {
+        d = newp()
+    }
+    d.data.push(1)
+    c.refs.push(&d.data[0])   //~ W0204 old:
+}
+
+// The clean cases: `d` is a copy of the handle parameter of the store, and
+// a reference through the handle of the store itself.
+fn copy_of_handle(c: Rc<Bag>) / mut(Bag) {
+    let d = c.clone()
+    d.data.push(1)
+    c.refs.push(&d.data[0])
+}
+
+fn same_handle(c: Rc<Bag>) / mut(Bag) {
+    c.data.push(1)
+    c.refs.push(&c.data[0])
+}
+
+fn main() / mut(Cache), mut(Pool), mut(Bag) {
+    let k = newb()
+    copy_of_handle(k.clone())
+    let m = newb()
+    same_handle(m.clone())
+    let p = newp()
+    maybe_copy(p.clone(), true)
+    let c = Rc.new(newc())
+    other_object(c.clone())
+    let r = c.refs[0]
+    print(r + 0)
+    let q = p.refs[0]
+    print(q + 0)
+}

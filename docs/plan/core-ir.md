@@ -1914,8 +1914,8 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | Stage | Goal | Reasons of the scope report | Size |
 | --- | --- | --- | --- |
 | R0a | The diagnostic texts of the `ir` pipeline name the source value (issue #74) | (texts) | done (77efbd0) |
-| R0b | A callee with no IR, or an extern callee, gets a worst-case summary from its declaration; N1 becomes a `typeck` error (W0121); a handler with no clause for an operation passes it on (I1) | C3, E6, P1, C1 with a type error, N1, I1 | done (this stage) |
-| R0c | The leftovers of groups A and B | A1, A2, B1 | S to M |
+| R0b | A callee with no IR, or an extern callee, gets a worst-case summary from its declaration; N1 becomes a `typeck` error (W0121); a handler with no clause for an operation passes it on (I1) | C3, E6, P1, C1 with a type error, N1, I1 | done (e13c8d3) |
+| R0c | The leftovers of groups A and B | A1, A2, B1 | done (this stage) |
 | R0d | Handlers in closure bodies | D2, C5, C8, D5 | L |
 | R0e | Tasks in closure bodies | E1, E3 | L |
 | R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, E2, E4, E5, C7 | M |
@@ -2015,6 +2015,94 @@ R0b as built:
   closure in its handled body that performs the operation (a perform through a
   captured capability), and a handler with no clause nested in another one of the
   same effect with no clause.
+
+R0c as built:
+
+- A1 (a reference through a copy of an `rc` handle into an `rc` object of the same type,
+  `factgen::stored_behind`): the W0204 store check decides the case and the program stays
+  in scope. A must alias from the IR shows that the objects are the same
+  (`templates::same_object`): the store reaches the object through one whole handle
+  parameter `c` only, the local handle `d` gets its value at one place of the frame only
+  (`d = Rc.clone(&c)` or `d = c`), `c` never gets a new value, no reference to the whole
+  handle of `d` or `c` exists other than the receiver of an `Rc.clone`, and no closure
+  captures `d` or `c` by reference. Each body of the frame counts (upvar locals are the
+  same cells). Then `d` holds a copy of the value of `c`, so the reference goes away with
+  the object: no W0204. In each other case the check reports W0204 as for a handle of
+  another object (`Stored::maybe_same`): the facts cannot tell, and the object of `d` can
+  go away at the return. Why this choice: a conservative W0204 alone is the smallest sound
+  fix, but it made `k01_clone_of_param.wf` (clean, the form of the scope example) a second
+  `new-fp` probe of tier 1, over the 0.1 % rule (2 of 1460 probes that `old` accepts). A
+  precise identity in the analysis (a must alias in the values) is larger: the values are
+  may sets, and a handle can get a new value between the copy and the store. The rule of
+  the IR covers the common form (a copy of the handle parameter) and is sound by
+  construction: each write of the two handles fails it. `a13_nested_rc_rc_b.wf` (the store
+  handle is in an `rc` object, old hole AB-RC1, issue #41) is W0204 now (`fixed`; the
+  `edge` entry is gone; claim F13B-AB-RC1 names it). `docs/ir.md` 6.9.
+- A2 (a perform whose rest of the handled body the facts do not find, `handlers.rs`
+  `Region::starts`): the clause runs in a task. A task that W0314 rejects
+  (`templates::task_w0314`, at a spawn, a fork branch or a task of a callee) puts the
+  bodies of its closures into `Handlers::w0314_bodies`. `Region::starts` skips a run of a
+  clause at a node of such a body, or of a body inside it: the clause cannot run on this
+  task, so the rest of the handled body does not run after it. This is sound because the
+  set only gets a body when W0314 is reported for the task: the `ir` pipeline rejects each
+  such program. The runs of the clause on this task keep their region. The diagnostic is
+  W0314 from the part `tasks`, on the line of the old one (the span starts at the spawn
+  call, not at the closure). 1 program of tier 2 keeps the reason in another form
+  (`r2/oracle/runs/g7/p43333.wf`: a `return` in a handled body, W0315 in both pipelines,
+  leaves dead code whose closure runs the clause; no task).
+- B1 (a loop whose widening does not end, `analysis/mod.rs`): rule 5 of the widening
+  (`widen.rs`, `docs/ir.md` 6.6). At a loop head a part of the value of a local deeper than
+  `DEPTH_MAX` = 8 steps becomes one summary part: the part at depth 8 is a leaf with the
+  join of the part and of each part below it (`Tree::limit_depth`). A read below it gets
+  the summary (`Tree::get` joins the tops above the path), so the widened value holds each
+  value of the join (each reference, function value, capability, task, and the must flags
+  of the join): sound. The depth is finite, so a loop that builds a list (`l = Cons(i,
+  l)`) ends. Precision: a list keeps four levels of its own parts; the elements from the
+  fifth on share one summary. A reference deep in a list stays in the value
+  (`186_recursive_list_loop.wf` `deep`: W0301 after a push of the vector that the first
+  element points into). The rule changes no program of tier 1 or tier 2 that was in scope.
+- Tests: `crates/weft-sema/tests/scope.rs`
+  (`a_reference_through_a_copy_of_an_rc_handle_stays_in_scope`,
+  `a_task_that_performs_through_a_handler_of_this_task_is_w0314_in_scope`,
+  `a_loop_that_builds_a_recursive_value_ends`); corpus
+  `tests/programs/184_rc_handle_copy.wf` (W0204 with `old:` markers: `fixed`, the clean
+  copy of a handle parameter), `185_task_perform_rest.wf` (W0314 of a spawn, of a closure
+  that runs on this task and as a task, and of a fork branch; a clean task; `main` runs
+  the clean case only, as `static_corpus_runs` of `weft-interp` needs),
+  `186_recursive_list_loop.wf` (W0301 in a list, at the head and deep; clean lists), with
+  their IR goldens.
+- The fallbacks, before (e13c8d3) and after, tier 1 / tier 2, by the note of `weft check`
+  (scratchpad `r0c/after-t*.tsv`): A1 2/0 to 0/0, A2 2/9 to 0/1, B1 2/2 to 0/0. The other
+  reasons do not change. Total 318/7382 to 312/7372. 6 programs of tier 1 and 10 of
+  tier 2 come into scope (with the 3 corpus files: 9 of tier 1).
+- Gates: tier 1 0 blockers (3603 same, 9 open, 248 fixed, 1 new-fp, 101 lost-clean, 125
+  moved, 450 changed; `fixed` +2: `184_rc_handle_copy.wf` and `a13_nested_rc_rc_b.wf`;
+  `open` -1: the `edge` entry of issue #41 is gone; `changed` +1: `redteam/t03_items.wf`,
+  W0702 at the spawn of an item and at a fork branch next to the W0314 of both pipelines,
+  ledger entry of R0c); the old records of the 3 new corpus files are new in
+  `tests/gate/baseline-tier1.jsonl`. Tier 2 (2 workers) 0 blockers after a `changed`
+  entry for `r3/oracle/sweep3/callee__task_result.wf` (old W0313 at the escape of the closure, `ir`
+  W0805 at its run; W0314 in both); the old records of tier 2 do not change: 43731 same
+  (-4), 10 open, 88 fixed, 12 new-fp (0.096 %, the rows of C1), 0 lost-fault, 2476
+  lost-clean, 1605 moved, 9471 changed (+4: `t03_items.wf`, `callee__task_result.wf`,
+  `g00032.wf`, `g01306.wf`; the last two have entries of their own). Fact oracle tier 1
+  0 failures (the 7 faults of C3; 1179 pass, +3: `k01_clone_of_param.wf` and the two `m1`
+  lists). Sigdiff tier 1 0 rows with no entry. The review script of group E
+  (`ereview/ev.sh`) on the 19 programs that come into scope (the 3 corpus files, 6 of
+  tier 1, 10 of tier 2): 0 HOLE (7 `held`,
+  2 `oldmiss`: `a13_nested_rc_rc_b.wf` and `184_rc_handle_copy.wf`, faults that only the
+  `ir` pipeline rejects; 5 `both-reject` with no fault in the run; 5 `nofault`: `k01` and
+  the `m1` lists, accepted and clean).
+- Open: `p43333.wf` (above). The rule of `same_object` covers a copy of a handle
+  parameter only: a copy of a local handle, a chain of copies and a store handle in an
+  `rc` object stay W0204 (sound, not precise). The summary part of rule 5 loses the
+  position of the elements of a list from the fifth on.
+- Other tests that change: `weft-check` `ir_stored.rs` (`rc_clone_handle.wf` is in scope
+  and accepted now); the template table of `factgen_units.rs` lets the nodes where a
+  task ends give `scope_end` (`scope wait`, the `unwind value` of a
+  scope, `join`: the frames of the callees of a task end where the task ends,
+  `templates::task_end_lends` of stage F19; `spawned` of corpus 185 is the first body of
+  the corpus with a task that calls a function and no call of its own).
 
 #### R1 Standalone `typeck`, part 1
 
@@ -2143,6 +2231,7 @@ gate and the exit of its parent, limited to its group of differences.
 | C2 | C1 | the fresh sweep (`weft-gate sweep`, 50 000 programs from each of the seed bases 1 000 000 and 2 000 000): lost-fault W0301 / none of a part of a tuple result into an `rc` object (gen4 seed 1002955; fix `apply::stated_places`, claim C2-TUPLE-RC, probes `sweep/c2_tuple_rc_*`); F3-6 (both pipelines accept; issue #73, ledger `edge`, probe `sweep/c2_spawn_linear_no_abort.wf`). The last sweep: 3 accepted faults, each the shape of issue #73. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 of 12548 (0.096 %), each class count as C1.6; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (C2) |
 | C3 | C2 | the switch of the defaults (`--facts=ir` with all groups, `--engine=ir`): no difference of the gate; the corpus markers give the `ir` result (`old:` for the old pipeline); the core IR targets O3-5, O3-6, R3RT2 and R3RT3 move to the corpus; the baselines `tests/gate/baseline-c3.jsonl` and `target/gate/baseline-c3-tier2.jsonl` (`tests/gate/baseline-c3-tier2.sha256`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %); fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `weft agree` on 220 programs; `sweep --n 2000 --seed-base 3000000` 0 accepted faults | done (C3) |
 | R0b | C3 | the fallbacks of a callee with no IR (C3, E6, P1, C1 with a type error), N1 and I1 (Phase R, R0b): a worst-case summary from the declaration, W0121, a handler with no clause passes the operation on. Fallbacks 331/7770 to 318/7382 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (R0b) |
+| R0c | R0b | the fallbacks A1, A2 and B1 (Phase R, R0c): W0204 for a reference through a local `rc` handle that is not sure to be a copy of the handle parameter of the store (`templates::same_object`), the region of a `resume` skips the runs of a clause in a task that W0314 rejects, rule 5 of the widening (a summary part below depth 8). Fallbacks 318/7382 to 312/7372 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 19 programs that come into scope | done (R0c) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -2213,6 +2302,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | C3 (tier 2, groups A to F, the new defaults) | 46957 of 57393 (one more check timeout at the limit of 60 s on a loaded machine) | 44710 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1610 | 8487 | 10 (as C1.1); each row has the class and the entry of C2 |
 | R0b (tier 1, the defaults) | 4163 of 4534 | 3602 | 246 (+1: `182_handler_no_clause.wf`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 449 (+19: programs that come into scope, W01xx in both) | 10 (as C3) |
 | R0b (tier 2, the defaults) | 47345 of 57393 | 43735 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1605 | 9467 | 10 (as C3) |
+| R0c (tier 1, the defaults) | 4172 of 4537 | 3603 (+1: the new corpus files 185 and 186; `t03_items.wf` leaves) | 248 (+2: `184_rc_handle_copy.wf`, `a13_nested_rc_rc_b.wf`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 450 (+1: `t03_items.wf`, ledgered) | 9 (the `edge` entry of issue #41 is gone) |
+| R0c (tier 2, the defaults) | 47355 of 57393 | 43731 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1605 | 9471 (+4, ledgered) | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts
