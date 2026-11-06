@@ -329,6 +329,36 @@ impl Tree {
         changed
     }
 
+    /// Makes each part at depth `max` (`max` steps below this node) one
+    /// summary part: a leaf whose top is the join of the part and of each
+    /// part below it ([`Self::flat`]). A read below the summary part gets
+    /// the summary ([`Self::get`]), so it gets each value that the parts
+    /// below held (a sound result). Returns true if a part changed.
+    pub fn limit_depth(&mut self, max: usize) -> bool {
+        if max == 0 {
+            if self.kids.is_empty() {
+                return false;
+            }
+            let flat = self.flat();
+            *self = Self::leaf(flat);
+            return true;
+        }
+        let mut changed = false;
+        for k in self.kids.values_mut() {
+            changed |= k.limit_depth(max - 1);
+        }
+        changed
+    }
+
+    /// The number of steps of the longest path of parts below this node.
+    pub fn depth(&self) -> usize {
+        self.kids
+            .values()
+            .map(|k| k.depth().saturating_add(1))
+            .max()
+            .unwrap_or(0)
+    }
+
     /// True if a join of `o` into `self` does not change `self` (and so
     /// returns false), part by part ([`AbsVal::includes`]).
     pub fn includes(&self, o: &Self) -> bool {
@@ -805,6 +835,26 @@ impl State {
         if copy.map_refs(f) {
             self.vals.insert(key, Rc::new(copy));
         }
+    }
+
+    /// Makes each part of the value of each local at depth `max` one
+    /// summary part ([`Tree::limit_depth`], `super::widen`). Only a tree
+    /// that changes is copied. Returns true if a value changed.
+    pub fn limit_depth(&mut self, max: usize) -> bool {
+        let deep: Vec<Key> = self
+            .vals
+            .iter()
+            .filter(|(_, t)| t.depth() > max)
+            .map(|(k, _)| *k)
+            .collect();
+        for &k in &deep {
+            if let Some(t) = self.vals.get(k) {
+                let mut copy = (**t).clone();
+                copy.limit_depth(max);
+                self.vals.insert(k, Rc::new(copy));
+            }
+        }
+        !deep.is_empty()
     }
 
     /// Removes the value, the may part, the must part and the holes of each

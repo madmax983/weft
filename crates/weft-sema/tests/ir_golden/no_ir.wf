@@ -1,8 +1,9 @@
 // Bodies with no IR (`docs/ir.md` 5.36, plan stage B12). A move of a value
 // that is not plain data through a reference is W0303 of the old lowering:
 // the body gets no IR (`steal`, also in a closure: `steal_in_closure`). A
-// payload of a variant with two fields is not a place (`pair`). An assignment
-// to a value (W0112) and a constructor as a value (W0101) are type errors.
+// payload of a variant with two fields is not a place (`pair`): W0121 of
+// `typeck` from plan stage R0b. An assignment to a value (W0112) and a
+// constructor as a value (W0101) are type errors.
 
 struct S { v: Vec<u64> }
 enum E { A(u64, u64), B(u64) }

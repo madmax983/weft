@@ -1,0 +1,94 @@
+// A loop builds a list of an inline recursive enum (plan stage R0c). At each
+// visit of the loop head the value of the list is one level deeper. Rule 5
+// of the widening (`docs/ir.md` 6.6) makes each part deeper than
+// `DEPTH_MAX` steps one summary part: the join of the parts below it. So
+// the analysis ends, and a reference deep in the list stays in the value.
+
+enum Refs { More(&u64, Refs), End }
+enum Nums { Cons(u64, Nums), Nil }
+
+fn first(l: &Refs) -> u64 {
+    match l {
+        More(r, _) => r + 0,
+        End => 0,
+    }
+}
+
+fn len(l: &Nums) -> u64 {
+    let n = 0
+    let cur = l
+    let go = true
+    while go {
+        match cur {
+            Cons(_, rest) => {
+                cur = rest
+                n += 1
+            }
+            Nil => { go = false }
+        }
+    }
+    n
+}
+
+// The bad cases: the list holds references into `v`, and `v` grows while
+// the list is live. In `deep` the reference into `v` is the last part of
+// the list, in the summary part.
+fn head() {
+    let v = Vec.new()
+    v.push(1)
+    let l = End
+    let i = 0
+    while i < 20 {
+        l = More(&v[0], l)
+        i += 1
+    }
+    v.push(2)
+    print(first(&l))   //~ W0301
+}
+
+fn deep() {
+    let v = Vec.new()
+    v.push(1)
+    let w: u64 = 3
+    let l = More(&v[0], End)
+    let i = 0
+    while i < 20 {
+        l = More(&w, l)
+        i += 1
+    }
+    v.push(2)
+    print(first(&l))   //~ W0301
+}
+
+// The clean cases: a list of numbers, and a list of references that is not
+// used after the change.
+fn numbers() {
+    let l = Nil
+    let i = 0
+    while i < 20 {
+        l = Cons(i, l)
+        i += 1
+    }
+    print(len(&l))
+}
+
+fn refs_before() {
+    let v = Vec.new()
+    v.push(1)
+    let l = End
+    let i = 0
+    while i < 20 {
+        l = More(&v[0], l)
+        i += 1
+    }
+    print(first(&l))
+    v.push(2)
+    print(v.len())
+}
+
+fn main() {
+    numbers()
+    refs_before()
+    head()
+    deep()
+}

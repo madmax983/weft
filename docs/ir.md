@@ -916,7 +916,11 @@ How the builder applies this (`irbuild/caps.rs`, plan stage B10):
 - Each body keeps the capabilities that it binds, with their places in the body: the
   `Cap` local of a handled body, the `Cap` fields of a closure, and the upvar locals of
   the capabilities of the site (made at the first perform). A perform takes the first of
-  these for its effect, else `Row(E)`.
+  these for its effect, else `Row(E)`. As built (plan stage R0b): in a handled body
+  whose handler has no clause for the operation, a perform takes the capability of the
+  site for its effect, else `Row(E)` (`Builder::op_cap`): the handler passes the
+  operation on to the handler outside it. V11 accepts this `Row(E)` although the
+  environment of the handled body binds `E`.
 - A handled body gets a new environment: its parent is the environment of the site, and
   it adds `(E, _1)`. A clause has the environment of its site. The place of an `adds`
   entry is a place of the body that opens the environment; a nested body names it
@@ -1092,7 +1096,7 @@ type asks for (RT9, V014, V098).
 | `a[i]` with `a: [T; n]` | `a[ti]` (stable element step) |
 | `t.0` | `t.0` |
 | `o.Some` | `td := Discriminant(o); Switch(move td) [Some: next, otherwise: Unreachable]`, then `(o as Some).0` (the interpreter faults on another variant) |
-| `o.A` with `A` of no field or of more than one field | no place: the type is `()` or a tuple that the payload does not hold; the body gets no IR (`NoIr::VariantPayload`, 5.36) |
+| `o.A` with `A` of no field or of more than one field | no place: `typeck` rejects it (W0121, plan stage R0b), so the body gets no IR (5.36) |
 | `&v[]` | `&v[]` (`Elems`) |
 
 No expression writes a split step. A split place (`v[..k]`, `v[k..]`) comes only from a
@@ -2083,8 +2087,25 @@ function no IR.
 Other bodies with no IR (plan stage B12), each with its reason:
 
 - `NoIr::VariantPayload`: a field expression `o.A` of a variant `A` with no field or
-  with more than one field (5.8). `typeck` gives it the type `()` or a tuple, but the
-  payload has no place of that type. No program of tiers 1 and 2 has one.
+  with more than one field (5.8). The payload has no place of the type `()` or of a
+  tuple. Until plan stage R0b `typeck` accepted it, so the body had no IR and no error,
+  and the old pipeline checked the program (5 hand probes of tier 1,
+  `tests/gate/probes/fixes/f10/hb/th15` to `th20`). From R0b `typeck` reports W0121
+  there: the body has no IR for a type error, and the builder keeps this reason only as
+  a guard. The smaller choice: an rvalue tuple of the fields would need a form for a
+  borrow, a move and an assignment of `o.A` too, and it would change what the IR engine
+  runs with no change of the interpreter sources (the key of the oracle cache).
+- A perform of an operation in the handled body of a handler with no clause for it
+  (`handle E {} in op()`, `handle Log { fn info(m) ... } in log.warn(..)`): the
+  handler passes the operation on to the handler outside it, as the interpreter does
+  (`semantics.rs` `partial_handler_forwards_other_operations`). Until plan stage R0b
+  the builder gave the perform the capability of that handler, and the fact generator
+  found no clause ("a place that does not fit its type"). From R0b the builder gives it
+  the capability of the handler outside (`Builder::op_cap`, 5.1.8): an upvar local of
+  the capability of the site, or `Row(E)` if no handler of the function is around the
+  `handle`. V11 accepts that `Row` operand in such a handled body. A closure in the
+  handled body and a handler with no clause inside another one with no clause keep the
+  old capability (the old pipeline checks such a program).
 - An assignment whose left side is not a place is W0112 of `typeck` (a type error). A
   constructor as a value is W0101 or W0104 (5.23). The builder never sees these bodies.
 
@@ -3032,7 +3053,9 @@ puts it in the default set):
   or a free of a place that a parameter of the clause points into (or of the
   handle of an `rc` object that the argument depends on) is a change or a free of
   the parameter (a change above it across an unstable step frees it). `Handle`
-  gives `body_multi` if a node of the handled body has `multi_at`.
+  gives `body_multi` if a node of the handled body has `multi_at`. As built (plan
+  stage R0c): a run of the clause in the body of a task that W0314 rejects runs on
+  another task, so it starts no part of the region (6.9, W0314).
 - The frames of the clauses end at `Post` and at `Landing`: `releases_at` of the
   roots of the locals of the clauses (`K(h)` of 6.3 in this form).
 - Parts of stage F15 in a first form: the value of the `handle` binds at the
@@ -3411,6 +3434,20 @@ local:
    deepest place of the local above it, or of its root. The roots are finite, so the head
    is stable after a finite number of visits; `2 (locals + 16) + 32` visits are a bug of
    the analysis (the program is out of scope: "a loop that the widening does not end").
+5. As built (plan stage R0c): a part of the value of a local deeper than 8 steps
+   (`widen::DEPTH_MAX`; a level of an enum is two steps, the variant and the field)
+   becomes one *summary part*: the part at depth 8 is a leaf whose value is the join of
+   the part and of each part below it (`Tree::limit_depth`). A loop that builds a value
+   of a recursive type (`l = Cons(i, l)`, an inline recursive enum) gives a value one
+   level deeper at each visit, so before R0c the head was never stable. A read below a
+   summary part gets the summary (`Tree::get` joins the tops above the path), so it gets
+   each reference, function value, capability and task of the parts that the summary
+   replaces, and the must flags (`empty`, `uniq`) of the join: the widened value holds
+   each value of the join (a sound result). The values of the parts at depth 8 and below
+   lose their positions: a reference in the tenth element of a list is a reference of
+   each element from the fifth on (`tests/programs/186_recursive_list_loop.wf`, `deep`).
+   The parts above depth 8 keep their positions. The paths of the move-path sets do not
+   grow in such a loop (the whole local moves and gets a new value).
 
 A chain of locals that rotate their values (RR1) needs one visit for each local: rule 4
 comes later. The function values of group B are items (a finite set); the function sets of
@@ -3700,7 +3737,8 @@ As built (plan stage F5, `crates/weft-sema/src/analysis/`):
   extern function too). The parts that only the old inference has for a function with a
   body (`drops`, `holds`, `raises`) come from `Analysis::sigs` until stage F6. A signature
   with a function value, a store into an `rc` object, a foreign change of an `rc` object,
-  or a task gives a reason, and the program stays with the old pipeline.
+  or a task gives a reason, and the program stays with the old pipeline. From plan stage
+  R0b a function with no summary of its body uses `from_declaration` (6.8).
 - `apply.rs`: `Sigma` maps `Param(i)` to the places of argument `i` (a reference
   argument, or a by-value argument whose parameter can hold references), `Held(i)` to
   the places that the references behind a reference argument point into (only if its
@@ -4161,10 +4199,21 @@ first round with no growth is the fixpoint; a component of one function that doe
 call itself needs one round. The emit pass takes the facts of the last round of each
 body. W0706: a row that grows more often than `infer::growth_limit` (the height of its
 lattice) stops the iteration of its component, and each function of it gets W0706; the
-`ir` pipeline drops the W0706 of the old inference. A body that the fact generator does
-not support gives its callers a reason with the group of its construct; a function with
-a stated row then keeps the summary of stage F5. A body with no IR (a type error) has
-the summary of its signature from the old inference.
+`ir` pipeline drops the W0706 of the old inference. As built (plan stage R0b): a body
+with no IR (a type error, W0303) and a body that the fact generator does not support
+give their callers the worst case of their declaration (`sig::from_declaration`); the
+summary reads only the types, the stated places and the stated row, never the parts of
+the old inference. With no stated row the body can change each place that a parameter
+reaches and each `rc` object, and perform each effect of the program. It can abort,
+resume more than once, give a place of its frame, and drop or hold each type parameter.
+It runs each function value of a parameter many times, also as a task on another thread
+(not `foreign`: the run node gives the accesses of the task, so a race is W0403 or
+W0405 at the call). A program in scope with such a body always has an error for it
+(`irbuild::Entry::reported`). For a body that the fact generator does not support the
+program goes to the old pipeline, and the note names the reason of that body, not a
+call of it. Before R0b these callees used the signature of the old inference, and a
+part that a summary cannot carry (a function value that the callee keeps, a task) sent
+the program to the old pipeline.
 
 `sig::to_effect_sig` gives the changed places (a `Held` root is its parameter with a
 first `Held` step; the text is the name of the parameter and the text of each step; a
@@ -4257,7 +4306,7 @@ the IR and the analysis, not a surface walk:
 | --- | --- |
 | W0313 (capability) | At the end of the capability root of handler `h` (the `Dead` of the `Cap` local at the frame end of the handled body, and on each cleanup copy of its chain), a value that holds that root leaves: `_0` of the handled body, the value of a clause, a variable of the site that has a cell, a heap slot that a site variable or a parameter reaches, or a `stores` entry. Each leak is W0313 at the span of the `handle` expression, as today. An `error(R, P)` of the spec whose evidence free is a capability root folds into that diagnostic as a note (its fact key goes into `Diagnostic::facts`). This keeps the escape rule of `codes.rs` and the 61 corpus markers (feasibility judge, 3.2). |
 | W0313 (continuation) | The same at the end of the continuation root (the frame end of the clause): a value that holds the root leaves through an upvar, `_0` of the clause, a store, or an argument of `resume`. The span is the leaking statement, as today. |
-| W0314 | A task (a `Spawn`, a `Fork` branch, or the `tasks` and `runs` parts at a run node) holds or uses a capability or a continuation of a handler that is on the stack of another task. A query over the `tasks` part and the abstract values. As built (F19, `templates::task_w0314`): an operation of the summaries that the task runs through a captured capability, an effect of the row that a local handler of the body handles, an effect that is not standard of a closure, or (with no runtime) any effect, except `Fail` and `Async`, is W0314 at the task; another effect goes to the summary part `task_effects`, and a call whose callee has a `task_effects` effect that a local handler handles is W0314 at the call. |
+| W0314 | A task (a `Spawn`, a `Fork` branch, or the `tasks` and `runs` parts at a run node) holds or uses a capability or a continuation of a handler that is on the stack of another task. A query over the `tasks` part and the abstract values. As built (F19, `templates::task_w0314`): an operation of the summaries that the task runs through a captured capability, an effect of the row that a local handler of the body handles, an effect that is not standard of a closure, or (with no runtime) any effect, except `Fail` and `Async`, is W0314 at the task; another effect goes to the summary part `task_effects`, and a call whose callee has a `task_effects` effect that a local handler handles is W0314 at the call. As built (plan stage R0c): the bodies of the closures of a task that W0314 rejects go into `Handlers::w0314_bodies`. A clause run at a node of such a body (or of a body inside it) is on another task, so the region of the `resume` of the clause (6.5, `Region::starts`) does not need a node of the handled body for it. Before R0c such a program went to the old pipeline ("a perform whose rest of the handled body the facts do not find"). The program has W0314, so the `ir` pipeline rejects it: the region of the `resume` loses only the runs of the clause that cannot run on this task. |
 | W0204 (local forms) | Not a Rust check any more: `uses(S(_0), Return)` makes the spec derive `error(_0, Return)`. `diagnose.rs` reports an `error` of `_0` at a `Return` node as W0204 for a function or a closure, at the span of the `Return` origin (the returned expression, V18). In a handled body, a scope body or a clause, the same `error` is W0301 with the text "the value leaves after its place ends". |
 | W0204 (store forms) | A `stores` entry of a reference into a root that ends at an exit, behind a reference parameter or into an `rc` object. A query over the summary of each body, also of closures and clauses (V087, V108, FD3). |
 | W0204 (signature) | A returned reference must state its place. A signature check. |
@@ -4386,14 +4435,37 @@ reference. This is stricter than the old pipeline when the other handle is a han
 living object (`other(c, d)` with `d` a handle that the caller keeps; two local objects of
 `main` that point into each other). A whole local handle whose value can come from the same
 local or parameter as a handle of the store (`let d = c.clone()`, `transfer` gives the clone
-the place of `c`) can be a handle of the same object: the facts cannot tell, so the program
-goes to the old pipeline ("a reference through a copy of an `rc` handle"). As built (class
+the place of `c`) can be a handle of the same object: the facts cannot tell. Until plan
+stage R0c the program went to the old pipeline ("a reference through a copy of an `rc`
+handle"). From R0c the check decides it (`templates::rc_handles`):
+
+- The objects are the same (no W0204) if the store reaches the object through one whole
+  handle parameter `c` only, and the local handle `d` is a copy of it that is sure to stay
+  a copy (`templates::same_object`, a must alias from the IR, not from the may values of
+  the analysis): `d` gets its value at one place of the frame only (`d = Rc.clone(&c)` or
+  `d = c`), `c` never gets a new value, no reference to the whole handle of `d` or of `c`
+  exists (other than the receiver of an `Rc.clone`), and no closure captures `d` or `c`
+  by reference (`ByRef`, `Kept`). The upvar locals of nested bodies are the same cells,
+  so the rule reads each body of the frame. A change through a handle (`d.data.push(1)`)
+  changes the object, not the handle. So at the store `d` holds a copy of the value that
+  `c` had at the copy, and `c` still has it: one object.
+- Else W0204, as for a handle of another object (`Stored::maybe_same`; the text adds "the
+  checker cannot tell if `d` is a handle of that object"). This is sound: the object of
+  the local handle can be another object that goes away at the return. Examples: a store
+  handle in an `rc` object (`c: Rc<Rc<Cache>>` with `let d = newc()`: the old pipeline
+  misses the dangling reference, issue #41), a second value of `d` (`if b { d = newc() }`),
+  a copy of a local handle, a chain of copies. It is a false positive when the copy is a
+  handle of the same object at run time.
+
+`tests/programs/184_rc_handle_copy.wf` has both sides. No program of tier 2 has this
+form, and the 2 programs of tier 1 come into scope (`k01_clone_of_param.wf` is clean,
+`a13_nested_rc_rc_b.wf` is W0204, `fixed`). As built (class
 AB-RC1-join of the final check of group C): a handle of the store is the handle of the object
 only if each other handle of the store is a handle of the same local. A store through a
 reference that can reach the object of the caller and a local object (`let x = if b { &c }
 else { &d }; x.refs.push(&d.data[0])`, the same through an `Option` or a loop) is W0204
 when the sources of the other handle and of `d` are disjoint, and goes to the old pipeline
-when they share one. Stricter than the old pipeline by design (class AB-RC1-copy-strict of
+when they share one (from R0c: W0204, as above). Stricter than the old pipeline by design (class AB-RC1-copy-strict of
 the final check of group C): a copy of a local handle that the facts do not follow to the
 store (`let keep = h.clone()` and then a store into `h` of a reference through `keep`; `let d
 = same(c.clone())` through a callee) is a handle of another object, so W0204, also when it

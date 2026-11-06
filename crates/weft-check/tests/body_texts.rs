@@ -15,19 +15,6 @@ fn errors(src: &str) -> String {
     checked.diags.iter().map(|d| d.render(&file)).collect()
 }
 
-/// [`errors`] with the old pipeline (`--facts=old`). A test that uses it
-/// pins a text of the old lowering (`body/`), which stays behind its flag
-/// until plan stage R3. The default is the `ir` pipeline from plan stage C3.
-fn errors_old(src: &str) -> String {
-    let opts = Options {
-        facts: weft_sema::FactGen::Old,
-        ..Options::default()
-    };
-    let checked = check_source("t.wf", src, opts);
-    let file = SourceFile::new("t.wf", src);
-    checked.diags.iter().map(|d| d.render(&file)).collect()
-}
-
 #[test]
 fn a_user_effect_is_named_as_written_in_the_hints() {
     let out = errors(
@@ -47,8 +34,7 @@ fn a_user_effect_is_named_as_written_in_the_hints() {
 
 #[test]
 fn a_linear_closure_says_that_it_needs_a_call() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
-    let out = errors_old(
+    let out = errors(
         "linear struct Tx { id: u64 }\n\
          fn rollback(t: Tx) { let Tx(i) = t }\n\
          fn ignore(f: fn()) {}\n\
@@ -173,20 +159,18 @@ fn overwrites_of_a_live_linear_value_are_errors() {
 
 #[test]
 fn a_part_holder_is_named_by_its_part() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
-    let out = errors_old(
+    let out = errors(
         "struct Wrap<T> { x: T }\n\
          fn f(v: &Vec<u64>) / mut(v) { let w = Wrap { x: &v[0] }\n w.x = &v[1]\n v.clear()\n print(w.x) }\n",
     );
-    // One error names the local. A note names the holder of the part.
+    // One error names the part: the value in `w.x` that line 3 gives it.
+    // (The old pipeline named the local `w`, and a note named the part. The
+    // facts of the IR give only the value of the part an error.)
     assert!(
-        out.contains("error[W0301]: `w` used after it was invalidated"),
+        out.contains("error[W0301]: the value in `w.x` used after it was invalidated"),
         "{out}"
     );
-    assert!(
-        out.contains("also the value in `w.x` : &u64 in v[]"),
-        "{out}"
-    );
+    assert!(out.contains("value in `w.x` : &u64 in v[]"), "{out}");
     assert_eq!(out.matches("error[W0301]").count(), 1, "{out}");
 }
 
@@ -201,8 +185,7 @@ fn a_name_bound_twice_is_named() {
 
 #[test]
 fn a_generic_drop_names_the_argument() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
-    let out = errors_old(
+    let out = errors(
         "linear struct Tx { id: u64 }\n\
          fn drop_it<T>(a: T, n: u64) {}\n\
          fn keep_first<T>(a: T, b: T) -> T { a }\n\
@@ -224,8 +207,7 @@ fn a_generic_drop_names_the_argument() {
 
 #[test]
 fn a_linear_operand_across_an_abort_is_named() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
-    let out = errors_old(
+    let out = errors(
         "linear struct Tok { id: u64 }\n\
          fn spend(a: Tok, b: Tok) { let Tok(i) = a\n let Tok(j) = b }\n\
          fn risky() -> Tok / fail { fail(\"no\")\n Tok { id: 2 } }\n\

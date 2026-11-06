@@ -963,23 +963,9 @@ fn rendered(src: &str) -> String {
     checked.diags.iter().map(|d| d.render(&file)).collect()
 }
 
-/// [`rendered`] with the old pipeline (`--facts=old`): it pins a text of the
-/// old lowering (`body/`). The default is the `ir` pipeline from plan stage
-/// C3.
-fn rendered_old(src: &str) -> String {
-    let opts = weft_sema::Options {
-        facts: weft_sema::FactGen::Old,
-        ..weft_sema::Options::default()
-    };
-    let checked = crate::check_source("t.wf", src, opts);
-    let file = weft_syntax::SourceFile::new("t.wf", src);
-    checked.diags.iter().map(|d| d.render(&file)).collect()
-}
-
 #[test]
 fn w0301_says_why_the_owner_is_gone() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
-    let out = rendered_old(
+    let out = rendered(
         "fn f() {
              let keep: Vec<u64> = Vec.new()
              let q = &keep
@@ -995,8 +981,11 @@ fn w0301_says_why_the_owner_is_gone() {
              print(r)
          }",
     );
+    // The facts of the IR give the frame of the closure, not its local `v`:
+    // the note names the closure that returns. (The old pipeline said
+    // "v : goes out of scope when `g` returns".)
     assert!(
-        out.contains("v : goes out of scope when `g` returns"),
+        out.contains("a local of the closure : goes out of scope when `g` returns"),
         "{out}"
     );
     assert!(

@@ -459,6 +459,8 @@ fn a_move_through_a_reference_gives_no_ir() {
     assert!(text.contains("// f: no IR: W0303"), "{text}");
 }
 
+/// From plan stage R0b `typeck` rejects the payload of a variant of two
+/// fields (W0121), so the body has no IR for a type error.
 #[test]
 fn a_payload_of_two_fields_gives_no_ir() {
     let (_, b) = build("enum E { A(u64, u64), B(u64) }\nfn f(e: E) -> u64 {\n    let p = e.A\n    p.0\n}\nfn g(e: E) -> u64 { e.B }\n");
@@ -468,7 +470,7 @@ fn a_payload_of_two_fields_gives_no_ir() {
             .find(|e| e.name == n)
             .map(|e| e.outcome.clone())
     };
-    assert_eq!(outcome("f"), Some(Outcome::NoIr(NoIr::VariantPayload)));
+    assert_eq!(outcome("f"), Some(Outcome::NoIr(NoIr::TypeError)));
     assert!(matches!(outcome("g"), Some(Outcome::Built(_))));
 }
 

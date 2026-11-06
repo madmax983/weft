@@ -32,8 +32,9 @@ fn mut_hint(f: &FnFacts, p: PlaceId) -> String {
 }
 
 /// Returns the first node that uses `var` in a handler clause that node `n` runs.
-/// Node `n` performs through a local handler. The entry node of a clause names
-/// the capability of its handler in its detail (`c3`). The search covers the
+/// Node `n` performs through a local handler. The entry node of a clause
+/// (`handler clause`, or `clause entry` in the facts of the IR) names the
+/// capability of its handler in its detail (`c3`). The search covers the
 /// part of the graph that starts at such an entry.
 fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
     let caps: Vec<String> = f
@@ -51,7 +52,10 @@ fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
     }
     let mut seen = vec![false; f.nodes.len()];
     let mut work: Vec<NodeId> = (0..f.nodes.len())
-        .filter(|&i| f.nodes[i].label == "handler clause" && caps.contains(&f.nodes[i].detail))
+        .filter(|&i| {
+            let x = &f.nodes[i];
+            (x.label == "handler clause" || x.kind == "clause entry") && caps.contains(&x.detail)
+        })
         .map(|i| NodeId(u32::try_from(i).unwrap_or(u32::MAX)))
         .collect();
     while let Some(a) = work.pop() {
@@ -512,6 +516,34 @@ fn footprint_text(f: &FnFacts, n: NodeId, m: PlaceId) -> Option<String> {
     Some(places.join(", "))
 }
 
+/// Returns the footprint of the handler that node `n` performs through, if
+/// only that handler changes place `m` at `n`. The facts of the IR give the
+/// changes of a handler at the node itself (`mutates_at`), with no
+/// `footprint`: the root of each such change (`call_mut`) is the root of
+/// the clauses of the handler (`weft_sema::body::roots::clause`).
+fn clause_footprint_text(f: &FnFacts, n: NodeId, m: PlaceId) -> Option<String> {
+    let mut roots = f
+        .call_mut
+        .iter()
+        .filter(|&&(p, q, _)| p == n && q == m)
+        .map(|&(_, _, i)| i);
+    let root = roots.next()?;
+    let clause = f
+        .performs_at
+        .iter()
+        .any(|&(p, c)| p == n && weft_sema::body::roots::clause(c) == root);
+    if !clause || roots.any(|i| i != root) {
+        return None;
+    }
+    let places: Vec<&str> = f
+        .call_mut
+        .iter()
+        .filter(|&&(p, _, i)| p == n && i == root)
+        .map(|&(_, q, _)| f.place(q).display.as_str())
+        .collect();
+    Some(places.join(", "))
+}
+
 /// Returns the notes of W0301 about the node that invalidates the reference of
 /// `inv`: what the node does, and why that invalidates the reference.
 fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
@@ -534,18 +566,28 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
     match inv.cause {
         Cause::Mutation(m) | Cause::Lend(m) => {
             let mutated = &f.place(m).display;
+            let footprint = |fp: String| {
+                format!(
+                    "{} : mut({fp}), the footprint of the handler that it performs through",
+                    at.label
+                )
+            };
+            // The facts of the IR give the changes of a handler at the node
+            // that performs through it.
+            let ir_footprint = (matches!(inv.cause, Cause::Mutation(_))
+                && f.mutates_at.contains(&(inv.at, m)))
+            .then(|| clause_footprint_text(f, inv.at, m))
+            .flatten();
             let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
                 // A perform, or a call that performs, reaches a handler: it is a
                 // call with the footprint of the handler.
                 _ if matches!(inv.cause, Cause::Mutation(_)) && !f.mutates_at.contains(&(inv.at, m)) => {
                     match footprint_text(f, inv.at, m) {
-                        Some(fp) => format!(
-                            "{} : mut({fp}), the footprint of the handler that it performs through",
-                            at.label
-                        ),
+                        Some(fp) => footprint(fp),
                         None => format!("{} : mut({mutated})", at.label),
                     }
                 }
+                _ if ir_footprint.is_some() => ir_footprint.map(footprint).unwrap_or_default(),
                 // A task that ends here can have changed the place while it ran.
                 _ if matches!(inv.cause, Cause::Lend(_)) && at.label == TASK_END => {
                     format!("{TASK_END} : the task could change {mutated} while it ran")
@@ -586,7 +628,14 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
             let owner = &f.var(o).name;
             (format!("{owner} : moved"), inside(owner, "is moved"))
         }
-        Cause::ScopeEnd(o) if f.var(o).kind == VarKind::Temp => (
+        // A temporary that ends at a call node of the facts of the IR is
+        // the callee frame (`a local of the closure`): the arm below says
+        // which callee returns.
+        Cause::ScopeEnd(o)
+            if f.var(o).kind == VarKind::Temp
+                && !at.kind.starts_with("call")
+                && !at.kind.starts_with("perform") =>
+        (
             // A scope body and a clause end their own temporaries.
             match at.label.as_str() {
                 l @ ("end of the scope body" | "end of the clause") => {
@@ -692,18 +741,33 @@ fn use_before_set(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .iter()
             .map(|&n| (clause_read(f, var, n).unwrap_or(n), n))
             .collect();
-        shown.sort_by_key(|&(read, n)| (node_span(f, read).lo, node_span(f, n).lo));
-        shown.dedup_by_key(|&mut (read, _)| read);
+        // The facts of the IR (nodes with a kind) keep the error at the
+        // node that runs the clause: the notes give the read in the clause.
+        let ir = sites.iter().any(|&n| !f.node(n).kind.is_empty());
+        if ir {
+            shown.sort_by_key(|&(read, n)| (node_span(f, n).lo, node_span(f, read).lo));
+        } else {
+            shown.sort_by_key(|&(read, n)| (node_span(f, read).lo, node_span(f, n).lo));
+            shown.dedup_by_key(|&mut (read, _)| read);
+        }
         let Some((&(read, n), rest)) = shown.split_first() else {
             continue;
         };
         let mut d = Diagnostic::error(
             Code::W0304,
             format!("{} is used before it has a value", shown_name(info)),
-            node_span(f, read),
+            node_span(f, if ir { n } else { read }),
         )
         .note_at(decl_note(info), info.span);
-        if read != n {
+        if read != n && ir {
+            d = d.note_at(
+                format!(
+                    "a handler clause reads it at line \u{1}line:{}\u{1} when it runs here",
+                    node_span(f, read).lo
+                ),
+                node_span(f, n),
+            );
+        } else if read != n {
             d = d.note_at(
                 "a handler clause reads it when it runs here",
                 node_span(f, n),

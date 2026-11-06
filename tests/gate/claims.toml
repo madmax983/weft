@@ -3525,12 +3525,25 @@ verdict = "construction"
 group = "A"
 stage = "F10.1"
 repro = [
-    "tests/gate/probes/fixes/f10/hb/th15_variantPayload.wf",
-    "tests/gate/probes/fixes/f10/hb/th17_variantPayloadTuple.wf",
     "tests/gate/probes/fixes/f10/hb/th20_variantPayloadInCallee.wf",
 ]
 code = "W0301"
-note = "a body with no IR and no error for it (review of stage F10, hole H-B: a variant payload of two fields): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults"
+note = "a body with no IR and no error for it (review of stage F10, hole H-B: a variant payload of two fields): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults. From stage R0b `typeck` reports W0121 at the payload in `show`: the program is in scope, and `bad`, which has IR, has the W0301"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th15_variantPayload.wf",
+    "tests/gate/probes/fixes/f10/hb/th17_variantPayloadTuple.wf",
+    "tests/gate/probes/fixes/f10/hb/th18_variantPayloadLinear.wf",
+    "tests/gate/probes/fixes/f10/hb/th19_variantPayloadMove.wf",
+]
+code = "W0121"
+note = "hole H-B (a variant payload of no field or of more than one field) in the body with the fault: from stage R0b `typeck` reports W0121 at the payload, so the body has no IR for an error of the program (docs/ir.md 5.36). Stage F10.1 sent the program to the old pipeline, which gave W0301 (th15, th17), W0601 (th18) and W0302 (th19)"
 
 [[claim]]
 finding = "F10-HB"
@@ -3547,30 +3560,6 @@ repro = [
 ]
 code = "W0301"
 note = "hole H-B in a loop: a local gets its type later in the loop body (a type error with no W01xx diagnostic, or a conflict in the THIR tables, before stage F10.1). The THIR tables keep the decisions of the last pass of the lowering (stage F10.1), so the body has IR and the ir pipeline rejects it; with group B off the old pipeline checks it"
-
-[[claim]]
-finding = "F10-HB"
-kind = "unsound"
-verdict = "construction"
-group = "A"
-stage = "F10.1"
-repro = [
-    "tests/gate/probes/fixes/f10/hb/th18_variantPayloadLinear.wf",
-]
-code = "W0601"
-note = "hole H-B with a linear value that nothing consumes (stage F10.1)"
-
-[[claim]]
-finding = "F10-HB"
-kind = "unsound"
-verdict = "construction"
-group = "A"
-stage = "F10.1"
-repro = [
-    "tests/gate/probes/fixes/f10/hb/th19_variantPayloadMove.wf",
-]
-code = "W0302"
-note = "hole H-B with a use after a move (stage F10.1)"
 
 [[claim]]
 finding = "F10-HA"
@@ -4470,9 +4459,10 @@ repro = [
     "tests/gate/probes/fixes/f13b/ab_rc1/a11_option_handle_local_b.wf",
     "tests/gate/probes/fixes/f13b/ab_rc1/b08_handle_by_value_param_b.wf",
     "tests/gate/probes/fixes/f13b/ab_rc1/b10_option_vec_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/a13_nested_rc_rc_b.wf",
 ]
 code = "W0204"
-note = "a reference through a whole local handle of another object (a new object, an `Option` payload, a second by-value handle parameter) goes into an `rc` object of the same type: W0204 (class AB-RC1 of the review of stage F13; the old pipeline misses it)"
+note = "a reference through a whole local handle of another object (a new object, an `Option` payload, a second by-value handle parameter) goes into an `rc` object of the same type: W0204 (class AB-RC1 of the review of stage F13; the old pipeline misses it). `a13`: the handle of the store is in an `rc` object (`Rc<Rc<Cache>>`), so the facts cannot tell if the objects are the same; until plan stage R0c the old pipeline checked it (issue #41), from R0c the `ir` pipeline reports W0204"
 
 [[claim]]
 finding = "F13B-AB-RC1"
@@ -4486,7 +4476,7 @@ repro = [
     "tests/gate/probes/fixes/f13b/ab_rc1/k01_clone_of_param.wf",
     "tests/gate/probes/fixes/f13b/ab_rc2/a10_vec_of_handles_local_c.wf",
 ]
-note = "the clean twins of AB-RC1 and AB-RC2, and a copy of the handle of the store (`k01`: the old pipeline checks it)"
+note = "the clean twins of AB-RC1 and AB-RC2, and a copy of the handle of the store (`k01`: until plan stage R0c the old pipeline checked it; from R0c `d` gets its value at one place only, `c.clone()` of the handle parameter of the store, so the objects are the same, `templates::same_object`)"
 
 [[claim]]
 finding = "F13B-AB-RC3"

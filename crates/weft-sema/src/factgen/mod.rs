@@ -990,7 +990,7 @@ pub fn emit_parts(
     let held = holders.held().to_vec();
     let (parts, slots) = holders.finish(facts);
     let handled_entries = handled_entries(p, &comp, &table);
-    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored)?;
+    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored);
     diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     let mut escapes = hx.escapes.clone();
     for e in closure_escapes {
@@ -1057,6 +1057,17 @@ pub fn emit_parts(
         generic::Found::default()
     };
     facts.normalize();
+    // The entry node of each clause names the capability of its handler in
+    // its detail (`c3`), as the old lowering: a diagnostic finds the reads of
+    // the clause from a node that performs through the capability.
+    for &(cb, en) in &clause_entries {
+        let Some(weft_ir::BodyKind::Clause(h, _)) = p.body(cb).map(|b| b.kind) else {
+            continue;
+        };
+        if let (Some(&(_, c)), Some(n)) = (hx.ids.get(&h), facts.nodes.get_mut(en.index())) {
+            n.detail = format!("c{}", c.0);
+        }
+    }
     let handler_caps = hx.ids.iter().map(|(&h, &(_, c))| (h, c)).collect();
     Ok(Emitted {
         drops: found.drops,
@@ -2129,11 +2140,11 @@ pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsuppo
 /// reference and each local, at the span of the node, as the old lowering
 /// (`check_stored_behind`).
 ///
-/// # Errors
-///
-/// Returns [`Unsupported`] for a reference through a whole local handle that
-/// can be a copy of a handle of the object that gets it
-/// (`templates::Stored::maybe_same`).
+/// A reference through a whole local handle that can be a copy of a handle
+/// of the object that gets it (`templates::Stored::maybe_same`, `let d =
+/// c.clone()`) is W0204 too (stage R0c): the facts cannot tell if the two
+/// handles are handles of the same object, and the object of the local
+/// handle can go away at the return.
 fn stored_behind(
     p: &weft_ir::Program,
     tys: &weft_ir::TyTable,
@@ -2141,7 +2152,7 @@ fn stored_behind(
     roots: &alpha::Roots,
     body: &weft_ir::Body,
     stored: &[templates::Stored],
-) -> Result<Vec<Diagnostic>, Unsupported> {
+) -> Vec<Diagnostic> {
     use weft_syntax::diag::Code;
     let mut out = Vec::new();
     let mut seen: Vec<(String, weft_facts::RootId)> = Vec::new();
@@ -2173,13 +2184,10 @@ fn stored_behind(
                 continue;
             }
             // A whole local handle that can be a copy of a handle of the
-            // object: the facts cannot tell if the object is the same.
-            if st.maybe_same.contains(&r) {
-                return Err(Unsupported {
-                    group: Group::A,
-                    reason: "a reference through a copy of an `rc` handle goes into an `rc` object of the same type".to_string(),
-                });
-            }
+            // object: the facts cannot tell if the object is the same, so
+            // the check reports it as a handle of another object (stage
+            // R0c).
+            let copy = st.maybe_same.contains(&r);
             // A reference into a local, or into the cell of a local that a
             // closure captures `ByRef` (a closure that captures the local,
             // stage F13).
@@ -2232,6 +2240,11 @@ fn stored_behind(
                     "`{}` puts a closure that captures `{name}` {into}: {what} goes out of scope at the return",
                     facts.name
                 )
+            } else if copy {
+                format!(
+                    "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return, and the checker cannot tell if `{name}` is a handle of that object",
+                    facts.name
+                )
             } else {
                 format!(
                     "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return",
@@ -2247,7 +2260,7 @@ fn stored_behind(
             out.push(diag);
         }
     }
-    Ok(out)
+    out
 }
 
 /// The W0204 check of the `Kept` captures of a closure that leaves the

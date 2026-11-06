@@ -86,6 +86,7 @@ impl Builder<'_> {
             sub.parent = Some(self.body_id);
             sub.cap_env = env;
             sub.site = Some(Box::new(site.clone()));
+            sub.handled_ops = Some((effect, ops.clone()));
             sub.handled_body(effect, body)?;
             self.diags.append(&mut sub.diags);
             let built = sub.finish(BodyKind::Handled(hid), body.span);

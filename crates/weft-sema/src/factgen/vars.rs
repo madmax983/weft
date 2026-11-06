@@ -565,8 +565,18 @@ impl Vars {
                     _ => (generic_linear(tys, d.ty, d.props.linear), d.props.on_abort),
                 };
                 let (linear, generic) = linear;
+                // An operand temporary that a call takes is an argument, as
+                // the old lowering names it.
+                let argument = d.name.is_none()
+                    && d.kind == LocalKind::Temp(TempKind::Operand)
+                    && to_callee.contains(&(bid, l));
+                let name = match result_text(&b.kind, d) {
+                    Some(t) => t,
+                    None if argument => "argument".to_string(),
+                    None => local_text(tys, d),
+                };
                 let info = VarInfo {
-                    name: result_text(&b.kind, d).unwrap_or_else(|| local_text(tys, d)),
+                    name,
                     kind: var_kind(tys, d),
                     span: span(d.origin.span),
                     ty: tys.show(d.ty),

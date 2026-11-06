@@ -2832,13 +2832,16 @@ impl Region<'_> {
                 // A perform in a closure body that a node of the handled
                 // body runs: that node is a run of the clause too (a call
                 // that runs a clause, plan stage F16). A closure that no
-                // node runs (dead code) runs no clause.
+                // node runs (dead code) runs no clause. A run in the body
+                // of a task that W0314 rejects is on another task: the
+                // rest of the handled body does not run after it (stage
+                // R0c).
                 None if !mapped => {
                     let mut runs = self
                         .hx
                         .runs
                         .iter()
-                        .filter(|y| y.clause == c && y.given.is_some())
+                        .filter(|y| y.clause == c && y.given.is_some() && !self.in_w0314_task(y.at))
                         .peekable();
                     if runs.peek().is_some() && !runs.any(|y| body.contains(&y.node)) {
                         return None;
@@ -2859,6 +2862,24 @@ impl Region<'_> {
             }
         }
         Some(out)
+    }
+
+    /// True if body `b` is inside the body of a task that W0314 rejects
+    /// (`Handlers::w0314_bodies`): `b` or a body around it.
+    fn in_w0314_task(&self, b: BodyId) -> bool {
+        let mut at = Some(b);
+        let mut steps = 0usize;
+        while let Some(x) = at {
+            if self.hx.w0314_bodies.contains(&x) {
+                return true;
+            }
+            steps += 1;
+            if steps > self.p.bodies.len() {
+                return false;
+            }
+            at = self.p.body(x).and_then(|d| d.parent);
+        }
+        false
     }
 
     /// The nodes from the nodes `starts` (each with the node itself or only

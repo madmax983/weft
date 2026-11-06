@@ -1637,13 +1637,10 @@ stage = "F13"
 # F13-fix: the classes of the review of stage F13 part 1 (scratchpad
 # f13/review.md).
 
-[[entry]]
-class = "edge"
-issue = 41
-files = ["tests/gate/probes/fixes/f13b/ab_rc1/a13_nested_rc_rc_b.wf"]
-finding = "F13B-AB-RC1"
-reason = "old hole AB-RC1 (review of stage F13): a reference through a whole local handle of a new object goes into an object that an `Rc<Rc<Cache>>` parameter reaches. The handle of the store is a handle in an `rc` object, so the facts cannot tell if the objects are the same: the old pipeline checks the program, and it skips each whole local handle of the same `rc` type (no W0204). Stage C1: an old hole of the ship rule (issue #41)."
-stage = "F13"
+# Plan stage R0c removed the `edge` entry of issue #41
+# (`fixes/f13b/ab_rc1/a13_nested_rc_rc_b.wf`, old hole AB-RC1): the `ir`
+# pipeline reports W0204 for a reference through a local `rc` handle that can
+# be a copy of a handle of the object, so the program is `fixed`.
 
 [[entry]]
 class = "edge"
@@ -8083,3 +8080,97 @@ files = ["tests/gate/probes/sweep/c2_spawn_linear_no_abort.wf"]
 finding = "F3-6"
 reason = "unwinder fault (stage C2 sweep, mutate3): a spawn in statement position gives a linear `Tx` with no `on abort` to the scope, and a failure ends the scope after the task is done. The runtime cannot finish the result. The old pipeline misses it too (`tests/ir_targets/f3_6_task_results.wf`, `bad_fresh`: the W0601 at the spawn and the W0602 at the scope are not enforced). Verdict of F3-6 in docs/ir.md 10.3: \"stays\" (the type rule for `Task<T>` with a linear `T`); issue #73."
 stage = "C2"
+
+[[entry]]
+class = "sig"
+parts = ["named", "multi", "raises", "pins", "task_effects", "reaches", "reach_repeats"]
+files = [
+    "tests/gate/probes/fixes/f10/hb/th20_variantPayloadInCallee.wf",
+    "tests/gate/probes/ir/probes/p14_return_in_handle.wf",
+    "tests/gate/probes/ir/probes/p26_move_through_ref.wf",
+    "tests/gate/probes/r2/fidelity/p/e1_resume_abort.wf",
+    "tests/gate/probes/r2/redteam/p/z_moveref.wf",
+    "tests/gate/probes/r3/interp/probe/h2_int_generic_op.wf",
+    "tests/gate/probes/r3/oracle/probes/n6_payload_via_fn.wf",
+    "tests/gate/probes/r3/redteam/p/b2_named_items.wf",
+    "tests/gate/probes/r3/redteam/p/b3_named_join.wf",
+    "tests/gate/probes/r3/redteam/p/d1_exh.wf",
+    "tests/gate/probes/r3/redteam/p/r1_drops.wf",
+    "tests/gate/probes/r3/redteam/p/u2_scope_param.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT8_scope_type_message.wf",
+    "tests/gate/probes/redteam/l03_self_by_value.wf",
+    "tests/gate/probes/s5/x.wf",
+    "tests/gate/probes/verify/partb/S4/p/r2_refs.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/abort1.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/gen1.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/crash/c07.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt7_variants.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/or9_v1.wf",
+    "tests/gate/probes/verify/s5/R2d/p/e4_scope_tuple_value.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_v.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/a12_param_shadow.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/a4_if.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/c2_generic.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/extra.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_a.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_g.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_t.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr13_f.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr13_f_b.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr13_f_c.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr14_a.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr14_c.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nb5_if.wf",
+    "tests/gate/probes/verify/s5/R3a/p/clausetemp2.wf",
+    "tests/gate/probes/verify/s5/R3a/p/rt1b.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1_variants.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_variants.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1v_p_job.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1v_p_opt.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1v_p_take_gen.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1v_p_through.wf",
+    "tests/gate/probes/verify/s5/S5c/p/x2_nested_match.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1a.wf",
+    "tests/gate/probes/verify/s5/diff/p/v3b.wf",
+    "tests/gate/probes/verify/s5/p/na2.wf",
+    "tests/gate/probes/verify/s5/p/na3.wf",
+    "tests/gate/probes/verify/s5/p/or1c.wf",
+    "tests/gate/probes/verify/s5/p/pkg2",
+    "tests/programs/183_no_ir_callee.wf",
+]
+reason = "stage R0b: each program calls a function with no IR (a type error or W0303; the program reports it). The callee gets the worst case of its declaration (sig::from_declaration): with no stated row it performs each effect of the program, and it can abort, resume more than once and run its function values as tasks. So the row that the ir pipeline infers for each caller has these effects, raises and multi; the old inference reads the partial body of the callee. No program runs: each has the error"
+stage = "R0b"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/S5c/mut/progs/m00297_113_returned_closures.wf",
+    "verify/s5/S5c/mut/progs/m01597_113_returned_closures.wf",
+]
+codes = ["W0301"]
+reason = "stage R0b: mutants of `tests/programs/113_returned_closures.wf` with W0101 (and W0104) in a body with no IR. Before R0b the callee with no IR had the signature of the old inference, which the summary cannot carry, so the old pipeline checked the program; now it has the worst case of its declaration, and the program is in scope. The W0301 lines move as in the corpus file (F13, stored values: the vector that a callee fills with closures holds the places of their environments from the first weak definition of its variable on, so the W0301 is one line earlier or later). Rejected in both"
+stage = "R0b"
+
+[[entry]]
+class = "sig"
+parts = ["named"]
+files = [
+    "tests/gate/probes/redteam/crash/c02.wf",
+    "tests/programs/182_handler_no_clause.wf",
+]
+reason = "stage R0b: a handler with no clause for an operation passes the operation on to the handler outside it, as the interpreter does (`semantics.rs` `partial_handler_forwards_other_operations`). The builder gives the perform the capability of the row (`Builder::op_cap`), so the row that the ir pipeline infers has the effect. The old inference counts the perform as handled by the handler with no clause, so its row misses the effect: `182_handler_no_clause.wf` `passes_on` and `main` fault at run time with no handler for `Note.note` (class `fixed` of the gate)"
+stage = "R0b"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/redteam/t03_items.wf"]
+codes = ["W0702"]
+reason = "stage R0c (reason A2 of the scope report): before R0c the clause of `spawn_closure` ran in a task, so the program went to the old pipeline. Now the facts skip the runs of a clause on a task that W0314 rejects. Both pipelines give W0314 at each task. The `ir` pipeline also gives W0702 at the spawn of the item `noter` (6) and at the first fork branch (17): the task performs `Note`, the handler of `Note` is on the stack of the parent task, so the effect leaves the function and the row (`async`, `par`) does not allow it. Rejected in both"
+stage = "R0c"
+
+[[entry]]
+class = "changed"
+files = ["r3/oracle/sweep3/callee__task_result.wf"]
+codes = ["W0313", "W0805"]
+reason = "stage R0c (reason A2 of the scope report): a task in a scope runs `mk_asker()`, whose closure performs `Ask`, inside a local `handle Ask`; the task gives the closure back through `join`, and `main` runs it after the `handle`. Before R0c the program went to the old pipeline. Both pipelines give W0314 at the task (15). The old pipeline gives W0313 (the closure escapes its handler, 15); the `ir` pipeline gives W0805 at the run of the closure (16: `main` performs `Ask` and no handler handles it), the place where the run faults with no handler. Rejected in both"
+stage = "R0c"

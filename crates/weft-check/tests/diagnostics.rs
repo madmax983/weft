@@ -15,21 +15,6 @@ fn diags(src: &str, code: &str) -> Vec<Diagnostic> {
         .collect()
 }
 
-/// [`diags`] with the old pipeline (`--facts=old`). A test that uses it
-/// pins a text of the old lowering (`body/`), which stays behind its flag
-/// until plan stage R3. The default is the `ir` pipeline from plan stage C3.
-fn diags_old(src: &str, code: &str) -> Vec<Diagnostic> {
-    let opts = Options {
-        facts: weft_sema::FactGen::Old,
-        ..Options::default()
-    };
-    check_source("t.wf", src, opts)
-        .diags
-        .into_iter()
-        .filter(|d| d.code == code)
-        .collect()
-}
-
 fn notes(d: &Diagnostic) -> Vec<&str> {
     d.notes.iter().map(|n| n.text.as_str()).collect()
 }
@@ -153,37 +138,49 @@ fn w0301_is_reported_once_for_each_reference_and_mutation() {
 
 #[test]
 fn w0301_is_reported_once_for_each_use_and_mutation() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
-    // `w` and the hidden holder of `w.x` are invalid at one use for one
-    // mutation: one error names `w`, and a note names the holder.
+    // The value of the part `w.x` that line 7 gives it is invalid at one
+    // use for one mutation: one error names the part. (The old pipeline
+    // named the local `w`, and a note named the part. The facts of the IR
+    // give only the value of the part an error.)
     let src = "struct Entity { hp: i32 }\nstruct World { entities: Vec<Entity> }\nstruct Wrap<T> { x: T }\nfn f(b: &World) / mut(b.entities) {\n    let w = Wrap { x: &b.entities[0] }\n    let e = &b.entities[0]\n    w.x = e\n    b.entities.clear()\n    print(w.x.hp)\n}\n";
-    let d = diags_old(src, "W0301");
+    let d = diags(src, "W0301");
     assert_eq!(d.len(), 1, "{d:?}");
-    assert_eq!(d[0].message, "`w` used after it was invalidated");
+    assert_eq!(
+        d[0].message,
+        "the value in `w.x` used after it was invalidated"
+    );
     let n = notes(&d[0]);
     assert!(
         n.iter()
-            .any(|t| t.starts_with("also the value in `w.x` : &Entity in b.entities[]")),
+            .any(|t| t.starts_with("value in `w.x` : &Entity in b.entities[]")),
         "{n:?}"
     );
-    // A stored closure and the reference to its holder, in one call: one error,
-    // with no hidden name in braces.
+    // A stored closure and the reference to its holder, in one call: each
+    // error names a local of the source, with no hidden name in braces.
+    // (The old pipeline gave one error for `cb`, with a note for the
+    // stored closure. The facts of the IR give `r`, which the closure
+    // reads when `run_ref` runs it, and `cb` uses of their own.)
     let src = "struct Entity { hp: i32 }\nstruct World { entities: Vec<Entity> }\nstruct Cb { f: fn() }\nfn run_ref(cb: &Cb) {\n    let g = cb.f\n    g()\n}\nfn stored_use(world: &World) / mut(world.entities) {\n    let r = &world.entities[0]\n    let cb = Cb { f: || print(r.hp) }\n    world.entities.clear()\n    run_ref(&cb)\n}\n";
-    let d = diags_old(src, "W0301");
-    assert_eq!(d.len(), 1, "{d:?}");
-    assert_eq!(d[0].message, "`cb` used after it was invalidated");
-    let n = notes(&d[0]);
-    assert!(
-        n.iter()
-            .any(|t| t.starts_with("also the stored closure : fn() -> ()")),
-        "{n:?}"
+    let d = diags(src, "W0301");
+    let text: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        text,
+        [
+            "`r` used after it was invalidated",
+            "`cb` used after it was invalidated"
+        ],
+        "{d:?}"
     );
-    assert!(n.iter().all(|t| !t.contains('{')), "{n:?}");
-    // A closure with no name.
+    for x in &d {
+        let n = notes(x);
+        assert!(n.iter().all(|t| !t.contains('{')), "{n:?}");
+    }
+    // A closure with no name: the error names the local that it captures.
+    // (The old pipeline named the closure.)
     let src = "fn twice(f: fn()) { f()\n f() }\nfn g() {\n    let v = Vec.new()\n    v.push(1)\n    let r = &v[0]\n    twice(|| { print(r + 1)\n v.clear() })\n}\n";
-    let d = diags_old(src, "W0301");
+    let d = diags(src, "W0301");
     assert_eq!(d.len(), 1, "{d:?}");
-    assert_eq!(d[0].message, "the closure used after it was invalidated");
+    assert_eq!(d[0].message, "`r` used after it was invalidated");
     // The iterators of two nested loops have different use nodes: two errors,
     // also though the span of the outer loop holds the inner loop.
     let src = "fn f(v: &Vec<u64>) / mut(v) {
@@ -194,10 +191,12 @@ fn w0301_is_reported_once_for_each_use_and_mutation() {
     }
 }
 ";
-    let d = diags_old(src, "W0301");
+    let d = diags(src, "W0301");
     assert_eq!(d.len(), 2, "{d:?}");
     // A callee that stores the closure and runs it two times: one error, from
-    // the second run. The stored value is not there before the call.
+    // the second run. The stored value is not there before the call. The
+    // error names the local `r` that the closure reads. (The old pipeline
+    // named the closure.)
     let src = "struct Wrap { f: fn() }
 fn st(f: fn()) { let w = Wrap { f: f }
  let g = w.f
@@ -211,9 +210,9 @@ fn g() {
  v.clear() })
 }
 ";
-    let d = diags_old(src, "W0301");
+    let d = diags(src, "W0301");
     assert_eq!(d.len(), 1, "{d:?}");
-    assert_eq!(d[0].message, "the closure used after it was invalidated");
+    assert_eq!(d[0].message, "`r` used after it was invalidated");
 }
 
 #[test]
@@ -400,9 +399,8 @@ fn w0601_names_the_generic_item_value_and_the_type() {
 
 #[test]
 fn w0601_at_a_generic_drop_of_a_closure_says_that_the_closure_moves_a_linear_value() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
     let src = "linear struct Tx { id: u64 }\nfn rollback(tx: Tx) { let Tx(i) = tx }\nfn gen_drop<T>(x: T) {}\nfn closure_arg() {\n    let tx = Tx { id: 1 }\n    gen_drop(|| rollback(tx))\n}\n";
-    let d = diags_old(src, "W0601");
+    let d = diags(src, "W0601");
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(
         d[0].message,
@@ -412,10 +410,9 @@ fn w0601_at_a_generic_drop_of_a_closure_says_that_the_closure_moves_a_linear_val
 
 #[test]
 fn w0601_at_a_generic_drop_names_a_local_called_temporary() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
     // The name of the local, not a callee text: no name is a marker.
     let src = "linear struct Tx { id: u64 }\nfn sink<T>(x: T) {}\nfn named() {\n    let temporary = Tx { id: 1 }\n    sink(temporary)\n}\n";
-    let d = diags_old(src, "W0601");
+    let d = diags(src, "W0601");
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(
         d[0].message,
@@ -499,12 +496,11 @@ fn w0801_names_the_effect_as_written_and_the_identity_only_when_a_user_effect_sh
 
 #[test]
 fn w0304_lists_the_read_in_a_clause_not_the_node_that_runs_it() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
     // The node `op()` runs the clause. The note names the read in the clause
     // (line 7), not the line of `op()` (line 9), and a note says where the
     // clause runs.
     let src = "effect Op { fn op() }\nfn f(c: bool) / Op {\n    let x: u64\n    if c { x = 1 }\n    let k = || print(x)\n    handle Op { fn op() {\n        print(x)\n        resume(())\n    } } in op()\n}\n";
-    let d = diags_old(src, "W0304");
+    let d = diags(src, "W0304");
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(
         notes(&d[0]),
@@ -522,10 +518,9 @@ fn w0304_lists_the_read_in_a_clause_not_the_node_that_runs_it() {
 
 #[test]
 fn w0301_at_a_perform_shows_the_footprint_of_the_handler() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
     // A perform is checked as a call with the footprint of the handler.
     let src = "effect Log { fn log(msg: String) }\nfn held() {\n    let lines = Vec.new()\n    lines.push(\"start\")\n    handle Log { fn log(msg) { lines.push(msg); resume(()) } } in {\n        let first = &lines[0]\n        log(\"x\")\n        print(first)\n    }\n}\n";
-    let d = diags_old(src, "W0301");
+    let d = diags(src, "W0301");
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(
         notes(&d[0])[1],
@@ -534,7 +529,7 @@ fn w0301_at_a_perform_shows_the_footprint_of_the_handler() {
     // A call of a function that performs reaches the handler too. The callee is
     // not an operation, so the note does not say that it has a handler.
     let src = "effect Note { fn note(m: u64) }\nfn helper() / Note { note(1) }\nfn held() {\n    let lines: Vec<u64> = Vec.new()\n    lines.push(1)\n    handle Note { fn note(m) { lines.push(m); resume(()) } } in {\n        let first = &lines[0]\n        helper()\n        print(first)\n    }\n}\n";
-    let d = diags_old(src, "W0301");
+    let d = diags(src, "W0301");
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(
         notes(&d[0])[1],
@@ -565,7 +560,6 @@ fn the_facts_of_two_bodies_with_one_name_have_two_keys() {
 
 #[test]
 fn w0204_and_w0605_of_a_stated_place_are_rules_of_the_spec() {
-    // The text of the old pipeline (plan stage C3: the ir text differs; see the report of C3).
     // A returned reference, and a new value of a place field, must be inside
     // the stated place (`ref_outside`). Each diagnostic reports its facts, so
     // `weft check --explain` shows the derivation.
@@ -588,7 +582,7 @@ fn cur_literal(v: &Vec<u8>) {
     let f = Frame { buf: [1, 2, 3, 4], cur: &v[0] }
 }
 ";
-    let d = diags_old(src, "W0204");
+    let d = diags(src, "W0204");
     let text: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
     assert_eq!(
         text,
@@ -597,7 +591,7 @@ fn cur_literal(v: &Vec<u8>) {
             "returned reference points into `w.a[]`, which is below `w.a` through an unstable step: state the place, or `w.a..`",
         ]
     );
-    let d2 = diags_old(src, "W0605");
+    let d2 = diags(src, "W0605");
     let text: Vec<&str> = d2.iter().map(|d| d.message.as_str()).collect();
     assert_eq!(
         text,

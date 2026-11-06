@@ -63,6 +63,27 @@ impl Builder<'_> {
         CapOperand::Row(e)
     }
 
+    /// Returns the capability of a perform of operation `op` of effect `e`
+    /// (`docs/ir.md` 5.1.8): as [`Self::cap_of`], but the handler of a
+    /// handled body with no clause for `op` passes the operation on to the
+    /// handler outside, as the interpreter does: the capability of the site,
+    /// or the capability of the row (plan stage R0b). A closure in the
+    /// handled body keeps the capability of the handler.
+    pub(super) fn op_cap(&mut self, e: EffectId, op: u32) -> CapOperand {
+        let passes = self
+            .handled_ops
+            .as_ref()
+            .is_some_and(|(x, ops)| *x == e && !ops.contains(&op));
+        if !passes {
+            return self.cap_of(e);
+        }
+        let v = self.site.as_ref().and_then(|s| s.cap(e)).cloned();
+        match v {
+            Some(v) => CapOperand::Local(self.upvar(&v)),
+            None => CapOperand::Row(e),
+        }
+    }
+
     /// Returns the capabilities that a call at the current point gives to
     /// its callee: the lexical environment (`docs/ir.md` 5.1.8, 5.34).
     pub(super) const fn cap_args(&self) -> CapArgs {
