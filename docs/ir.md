@@ -2147,7 +2147,15 @@ Other bodies with no IR (plan stage B12), each with its reason:
   to a capture of a `multi` handler is a row of `add_captured` (`frames::passes_out_multi`).
   The review found three holes of R0d here (`fixes/r0d/pi1` to `pi3`); the function-body
   form through a callee was a hole of R0c and of the old pipeline
-  (`pi_ph5_direct_callee.wf`, `pi_c6z_*`).
+  (`pi_ph5_direct_callee.wf`, `pi_c6z_*`). Fix 2 (round 2 of the review): an operation that
+  the handlers on the way (through any number of captures) pass on to a caller is an
+  operation of the row: a call through such a handler is a row of `frames::row_multi`
+  (`past` reads `serving_all(..).1`), and a perform through a captured capability or a
+  capture whose operation can reach a caller keeps its `multi_at` row in the summary of
+  the closure (`Handlers::cap_callers`). A call that a `multi` resume runs again (a
+  re-entry node) runs the clauses of the other handlers that the callee reaches at
+  `Ret` too, so a clause after the operation that resumed runs again
+  (`handlers::call_clauses`, `captured_calls`).
 - An assignment whose left side is not a place is W0112 of `typeck` (a type error). A
   constructor as a value is W0101 or W0104 (5.23). The builder never sees these bodies.
 

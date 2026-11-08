@@ -1784,6 +1784,7 @@ fn closure_summary(
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
             cap_performs: &hx.cap_performs,
+            cap_callers: &hx.cap_callers,
             joins: &joins,
             abort_joins: &abort_joins,
             then_runs: &closure_then,
@@ -2121,6 +2122,7 @@ fn merge_handlers(
     into.wait_tasks.append(&mut from.wait_tasks);
     into.w0314_bodies.append(&mut from.w0314_bodies);
     into.cap_performs.append(&mut from.cap_performs);
+    into.cap_callers.append(&mut from.cap_callers);
 }
 
 /// The bodies of each closure body of the component `comp` (stage R0d):

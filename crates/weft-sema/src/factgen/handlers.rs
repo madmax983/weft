@@ -663,6 +663,13 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
         }
     }
     let hs = clause::run_handlers(&em.cx(), body, block, t);
+    // A node that a `multi` resume runs again (its `Copy` node goes on at
+    // `Ret`): the callee runs again from the operation that resumed, and
+    // the clauses of the other handlers that it reaches after that
+    // operation run again too (stage R0d). The clauses also run at `Ret`.
+    let rerun = em.hx.reentry.contains_key(&(body, block))
+        || em.hx.dyn_rows.contains(&(body, block))
+        || super::frames::row_multi(em.p, em.tys, em.sums, body, t);
     let gv = if hs.is_empty() {
         clause::Given::default()
     } else {
@@ -692,6 +699,12 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                     }
                 }
             }
+            // An operation that passes on, through the captures on the
+            // way, to a caller: a `multi_at` row of the node stays a row of
+            // the summary of the closure.
+            if clause::serving_all(em.p, em.tys, h).1 {
+                em.hx.cap_callers.push(n);
+            }
             if !paths.contains(&clause::Served::Caller) {
                 let at = |x: &NodeId| *x == n || Some(*x) == nodes.ret;
                 em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
@@ -702,21 +715,24 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                 .get(h.index())
                 .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
                 .unwrap_or_default();
+        let again = nodes.ret.filter(|_| rerun && !clause::multi_twice(em.p, h));
         for clause in clauses {
             let (args, deps) = gv.sigma(em.p, em.tys, clause);
-            em.hx.runs.push(ClauseRun {
-                node: n,
-                handler: h,
-                clause,
-                post: false,
-                helds: args.clone(),
-                args,
-                deps,
-                at: body,
-                spares: None,
-                ins: Vec::new(),
-                given: Some(gv.roots.clone()),
-            });
+            for at_node in std::iter::once(n).chain(again) {
+                em.hx.runs.push(ClauseRun {
+                    node: at_node,
+                    handler: h,
+                    clause,
+                    post: false,
+                    helds: args.clone(),
+                    args: args.clone(),
+                    deps: deps.clone(),
+                    at: body,
+                    spares: None,
+                    ins: Vec::new(),
+                    given: Some(gv.roots.clone()),
+                });
+            }
         }
     }
     // After the local handlers: an operation that one of them passes on out
@@ -784,7 +800,9 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
         // runs its clause too, and an operation that no local handler
         // serves leaves the function (stage R0d).
         let (all, caller) = clause::serving_all(p, em.tys, h);
-        if !caller {
+        if caller {
+            em.hx.cap_callers.push(n);
+        } else {
             em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
         }
         em.hx.cap_performs.push((n, k, e));
@@ -813,6 +831,11 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
     }
     let block = em.at.0;
     let gv = clause::given(&mut em.cx(), body, block, st, t)?;
+    // A node that a `multi` resume runs again: the clauses run at `Ret` too
+    // (stage R0d, as in [`call_clauses`]).
+    let rerun = em.hx.reentry.contains_key(&(body, block))
+        || em.hx.dyn_rows.contains(&(body, block))
+        || super::frames::row_multi(p, em.tys, em.sums, body, t);
     for h in hs {
         let (_, cap) = ids(em, h);
         em.facts.performs_at.push((n, cap));
@@ -821,21 +844,24 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
             .get(h.index())
             .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
             .unwrap_or_default();
+        let again = nodes.ret.filter(|_| rerun && !clause::multi_twice(p, h));
         for clause in clauses {
             let (args, deps) = gv.sigma(p, em.tys, clause);
-            em.hx.runs.push(ClauseRun {
-                node: n,
-                handler: h,
-                clause,
-                post: false,
-                helds: args.clone(),
-                args,
-                deps,
-                at: body,
-                spares: None,
-                ins: Vec::new(),
-                given: Some(gv.roots.clone()),
-            });
+            for node in std::iter::once(n).chain(again) {
+                em.hx.runs.push(ClauseRun {
+                    node,
+                    handler: h,
+                    clause,
+                    post: false,
+                    helds: args.clone(),
+                    args: args.clone(),
+                    deps: deps.clone(),
+                    at: body,
+                    spares: None,
+                    ins: Vec::new(),
+                    given: Some(gv.roots.clone()),
+                });
+            }
         }
     }
     Ok(())

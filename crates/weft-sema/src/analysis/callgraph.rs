@@ -517,6 +517,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 rebind_nodes: &[],
                                 lends: &e.own_lends,
                                 cap_performs: &[],
+                                cap_callers: &[],
                                 joins: &e.joins,
                                 abort_joins: &e.abort_joins,
                                 then_runs: &e.then_runs,

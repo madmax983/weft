@@ -1,0 +1,19 @@
+// Stage R0d fix 2 (round 2 of the review, probe b8_fnlevel_passon_value_caller): a multi operation that handlers with no clause pass on to a caller, or a clause that a multi re-run runs again.
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+fn take(v: Vec<u64>) { print(v.len()) }
+fn helper() -> bool / P2 { pk() }
+fn later(g: fn() -> bool) -> bool { g() }
+fn g2() / P2 {
+  let v = [1]
+  let t = || take(v)
+  handle P2 { fn other() { resume(0) } } in {
+    let f = || helper()
+    let ff = f
+    print(ff())
+  }
+  t()
+}
+fn main() { handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in { g2() } }

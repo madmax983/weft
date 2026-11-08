@@ -498,6 +498,9 @@ pub struct FnParts<'a> {
     /// of the effect (plan stage F16). The summary performs through `Cap(k)`: the node that runs the
     /// closure runs the clause of the handler of the capability.
     pub cap_performs: &'a [(weft_facts::NodeId, u32, String)],
+    /// The nodes of `cap_performs` where an operation can pass on to a
+    /// caller (stage R0d, `clause::Handlers::cap_callers`).
+    pub cap_callers: &'a [weft_facts::NodeId],
     /// The task handles of the interface that the body joins on each path
     /// (part `joins`, plan stage F18).
     pub joins: &'a [u32],
@@ -1413,7 +1416,7 @@ pub fn closure(
         *rows.entry(n).or_default() += 1;
     }
     out.multi = rows.iter().any(|(n, &k)| {
-        !fv.cap_performs.iter().any(|(x, _, _)| x == n)
+        (!fv.cap_performs.iter().any(|(x, _, _)| x == n) || fv.cap_callers.contains(n))
             && k > code_rows.get(n).copied().unwrap_or(0)
     });
     for blk in &b.blocks {

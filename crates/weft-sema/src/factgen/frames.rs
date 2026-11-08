@@ -149,8 +149,15 @@ pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: 
                 CapArgs::Lexical(e) => Some(*e),
                 CapArgs::Root => None,
             };
-            let past =
-                |effect: &str| env.is_none_or(|e| resolve(p, tys, e, effect, true) == Dest::Past);
+            // An effect that a local handler with no clause for an operation
+            // passes on to a caller goes past the function too (stage R0d,
+            // `clause::serving_all`).
+            let past = |effect: &str| {
+                env.is_none_or(|e| match resolve(p, tys, e, effect, true) {
+                    Dest::Past => true,
+                    Dest::Handler { handler, .. } => clause::serving_all(p, tys, handler).1,
+                })
+            };
             match sums.get(*f) {
                 Ok(s) => {
                     let mut multi_ops = s

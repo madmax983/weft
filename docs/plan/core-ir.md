@@ -2223,6 +2223,24 @@ R0d as built:
   and classes (C1, C5, A3 of code of a caller) as 2400 rejected programs of tier 2 in
   scope at R0c (48 failures); none in an accepted program. The reviewer signed the
   lost-clean rows of R0d.
+- Fix 2 (round 2 of the review, a third commit), hole HOLE4: a `multi` operation of a
+  caller that two handlers with no clause pass on (the handler of a closure and the
+  handler of the function), performed by a callee in the closure. Fix 1 recorded
+  `Cap(k)` for the operation that leaves the closure, and the summary of a closure
+  leaves out each `multi_at` row at a node with `Cap(k)` (the clause of the handler of
+  the capture is the `multi` point): here no handler serves the operation, so the run
+  of the closure was no `multi` point of the row. Fix: `frames::row_multi` counts an
+  effect that a local handler passes on to a caller (`serving_all(..).1`, through
+  each capture) as an effect of the row; a node with `Cap(k)` whose operation can reach
+  a caller keeps its row in the summary (`Handlers::cap_callers`). The same rule closes
+  the function-level forms that R0c had too (`pj_a9f_no_inner_handler.wf`, `pj_b6_*`,
+  `pj_b8_*`), and `a9` of the review gets W0503. A call that a `multi` resume runs
+  again runs the clauses of the other handlers that the callee reaches at `Ret` too:
+  this closes `pj_b9c_*` and `pj_b9d_*` (both pipelines missed them; the clause after
+  the operation that resumed runs again). Probes `fixes/r0d/pj_*`, corpus 189
+  `caller_multi_pass_on` and its clean twin. Open (precision): `b10b_three_levels_ok_maybe.wf`
+  of the review (`served_dests` runs the clause of the outer handler for `a`, which a
+  middle handler of the closure serves).
 - Three covers of the fact and summary oracles that the new bodies needed: a handled body
   or a clause that moves a value out of the environment of the closure lends the place
   at the node (`templates::moved`; the machine takes the value out of a frame below);
@@ -2503,6 +2521,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0d (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %; `p43563.wf` leaves, `p23249.wf` comes, issue #56) | 2853 (+377; 371 in six classes of R0d, `signed_by` UNSIGNED) | 1707 | 10286 (ledgered) | 10 (as C3) |
 | R0d fix (tier 1, the defaults) | 4265 of 4597 | 3628 | 260 (+9: corpus 189 and the probes of the review holes, `fixes/r0d/pi*`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 108 (signed by the review of R0d) | 128 | 463 (+3, ledgered) | 9 |
 | R0d fix (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %, as R0d) | 2853 (signed by the review of R0d) | 1707 | 10286 | 10 (as C3) |
+| R0d fix 2 (tier 1, the defaults) | 4274 of 4606 | 3635 | 262 (+2: `fixes/r0d/pj_b9c_*` and `pj_b9d_*`, which both pipelines missed) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 108 (signed) | 128 | 463 | 9 |
+| R0d fix 2 (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %, as R0d) | 2853 (signed) | 1707 | 10286 | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

@@ -143,6 +143,10 @@ pub struct Handlers {
     /// effect (plan stage F16): the summary of the closure performs through
     /// `Cap(k)`.
     pub cap_performs: Vec<(weft_facts::NodeId, u32, String)>,
+    /// The nodes of [`Self::cap_performs`] where an operation can pass on to
+    /// a caller through the handlers on the way (stage R0d): a `multi_at`
+    /// row there stays a row of the summary of the closure.
+    pub cap_callers: Vec<weft_facts::NodeId>,
     /// The callee frames whose heap slots hold while the clauses that their
     /// calls run are running, with the body of the call, the innermost last
     /// (`run_clause`).
