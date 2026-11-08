@@ -647,7 +647,6 @@ fn spares(em: &Em<'_>, body: BodyId, t: &TermKind) -> Option<Vec<BodyId>> {
 /// the call (no `call_mut`: the callee gives the place, as it lends a place
 /// to an operation of a caller).
 pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
-    captured_calls(em, nodes, st, t)?;
     let n = nodes.main;
     let body = em.body;
     let block = em.at.0;
@@ -680,8 +679,23 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                 .and_then(|d| em.tys.effects().get(d.effect.index()))
                 .map(|e| e.identity.clone());
         if let Some(e) = effect {
-            let at = |x: &NodeId| *x == n || Some(*x) == nodes.ret;
-            em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+            // A handler with no clause for an operation passes it on (stage
+            // R0d): to a caller (the effect leaves the function), or out of
+            // the closure through a capture (the summary performs through
+            // `Cap(k)`, `captured_calls`).
+            let paths = clause::serving_paths(em.p, em.tys, h);
+            let unit = super::alpha::unit_closure(em.p, body);
+            for s in &paths {
+                if let clause::Served::Capture(cb, k) = *s {
+                    if Some(cb) == unit {
+                        em.hx.cap_performs.push((n, k, e.clone()));
+                    }
+                }
+            }
+            if !paths.contains(&clause::Served::Caller) {
+                let at = |x: &NodeId| *x == n || Some(*x) == nodes.ret;
+                em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+            }
         }
         let clauses: Vec<BodyId> =
             em.p.handlers
@@ -705,7 +719,9 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
             });
         }
     }
-    Ok(())
+    // After the local handlers: an operation that one of them passes on out
+    // of the closure is a perform through a capture (stage R0d).
+    captured_calls(em, nodes, st, t)
 }
 
 /// A call in a closure body whose effect goes to a capability that the

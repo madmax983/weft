@@ -1,0 +1,15 @@
+// Stage R0d fix: as pm2 with a `many` capture: no error.
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+fn show(v: &Vec<u64>) { print(v.len()) }
+fn helper() -> bool / P2 { pk() }
+fn main() {
+    handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in {
+        let v = [1]
+        let g = || show(&v)
+        let h = || { handle P2 { fn other() { resume(1) } } in { if helper() { print(1) } }; g() }
+        h()
+    }
+}

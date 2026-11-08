@@ -3049,7 +3049,8 @@ fn emit_block(
                 // a caller (stage R0d): a perform through the row.
                 weft_ir::CapOperand::Local(c)
                     if matches!(&blk.term.kind, weft_ir::TermKind::Perform { op, .. }
-                        if crate::analysis::clause::passes_to_caller(em.p, bid, c, *op).is_some()) =>
+                        if crate::analysis::clause::passes_to_caller(em.p, bid, c, *op).is_some()
+                            || crate::analysis::clause::passes_to_capture(em.p, bid, c, *op).is_some()) =>
                 {
                     templates::perform(em, &nodes, &st, &blk.term.kind)?;
                 }

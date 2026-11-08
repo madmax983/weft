@@ -5173,6 +5173,19 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
             // caller (stage R0d): a perform through the row.
             if let Some(e) = crate::analysis::clause::passes_to_caller(em.p, body, c, *op) {
                 (e, None)
+            } else if let Some((k, e)) =
+                crate::analysis::clause::passes_to_capture(em.p, body, c, *op)
+            {
+                // The operation passes on out of the closure through the
+                // capture `k` (stage R0d): as a perform through it.
+                let id = em
+                    .tys
+                    .effects()
+                    .get(e.index())
+                    .map(|d| d.identity.clone())
+                    .unwrap_or_default();
+                em.hx.cap_performs.push((nodes.main, k, id));
+                (e, Some(k))
             } else {
                 let Some((k, e)) = crate::analysis::clause::captured_cap(em.p, em.tys, body, c)
                 else {

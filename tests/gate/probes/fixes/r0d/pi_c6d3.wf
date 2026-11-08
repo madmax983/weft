@@ -1,0 +1,21 @@
+// Stage R0d fix (review of R0d, probe c6d3): an operation that a handler with no clause passes on, performed through a callee, a function value or an inner closure.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+effect Two {
+    fn a() -> u64
+    fn b() -> u64
+}
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn maybe(n: u64) -> u64 { if n > 1 { fail("big") }; n }
+fn apply(f: fn()) { f() }
+fn main() {
+  handle Fail { fn fail(m) { print(m) } } in {
+    let l = Lk { id: 1 }
+    handle Two { fn a() { maybe(2); resume(0) } fn b() { resume(1) } } in {
+      let f = || handle Two { fn b() { resume(2) } } in { let g = || a(); let y = g(); y }
+      print(f())
+    }
+    unlock(l)
+  }
+}

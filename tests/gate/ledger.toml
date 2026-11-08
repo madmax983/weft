@@ -8211,21 +8211,21 @@ files = [
 ]
 finding = "O3-8"
 reason = "stage R0d (reason D2): a closure with its own handler of a `multi` operation. The operation cannot leave the closure, so a run of the closure is no `multi` point and no abort point of the caller: the summary of the closure has no `multi` and no abort for a perform of a local handler of the closure (`clause_multi`, docs/ir.md 5.20, R0d). The old pipeline gives W0503 and W0602 at the run of the closure (O3-8, a false positive of the old pipeline); in `W0503_p2145.wf` the clause does not even resume. Each body with a handler that can resume more than once and a live linear value inside the handled body is still W0503 (`fixes/r0d/d2e_once_local_multi.wf`)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: the multi operation is served inside the closure; a run of the closure is no multi or abort point of the caller (same as a block); no fault seeds 1-12, both engines"
 stage = "R0d"
 
 [[entry]]
 class = "lost-clean"
 files = ["tests/gate/probes/fixes/r0d/d2c_fail_inside.wf"]
 reason = "stage R0d (reason D2): the `Fail` handler is inside the closure, its clause cannot resume (W0504), so it ends the `handle` with its value and a run of the closure cannot abort (`summarize::nested_aborts`). The old pipeline gives W0602 for the linear value that is live across the run. With the `Fail` handler outside the closure the run can abort, and both pipelines give W0602 (`d2c_fail_outside.wf`)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: the Fail handler inside the closure ends the handle with a value; a run cannot abort; nested_aborts probes n1-n8 hold for the bad forms"
 stage = "R0d"
 
 [[entry]]
 class = "lost-clean"
 files = ["tests/gate/probes/verify/s5/p/j1_shared_closure_cells.wf"]
 reason = "stage R0d (reason C5): the block of `with_timeout` captures the capability of `Fail`, and the closures that it makes capture it again. A task of the outer scope takes a closure that owns the linear `tx` (two `ByMove` captures on the way). When the timeout aborts the block, nothing of the block frame holds `tx`: the task owns it, and the scope waits for the task before its end. The old pipeline gives W0405 (the block frees `tx` while a task reads it); the interpreter runs it with no fault on each seed"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: tx moves into f and f into the task, so the block frame holds no tx at the timeout; old W0405 is a false positive; no fault seeds 1-12"
 stage = "R0d"
 
 [[entry]]
@@ -8347,7 +8347,7 @@ files = [
     "verify/s5/R3a/h_gen3/p70592.wf",
 ]
 reason = "stage R0d, tier 2 (91 programs): class R0D-T2-MULTI (O3-8, issue #12): a closure with its own handler of a `multi` operation, or a run of it. The operation does not leave the closure, so a run of the closure is no `multi` point and no abort point of the caller; the old pipeline gives W0503 and W0602 at the run (and the W0301, W0601 or W0405 of the same programs are of the classes below). Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: sampled, local multi handler in the closure (O3-8); no fault seeds 1-12 both engines, fact oracle ok"
 stage = "R0d"
 
 [[entry]]
@@ -8415,7 +8415,7 @@ files = [
     "verify/s5/R3a/h_gen3/p70164.wf",
 ]
 reason = "stage R0d, tier 2 (60 programs): class R0D-T2-ABORT: a closure whose handler is inside it (a `Fail` handler, or a clause of a user effect that resumes, or one that ends the `handle` with a value): a run of the closure does not abort past it (`summarize::nested_aborts`, the clause-run code of `emit_closure`); the old pipeline gives W0602 for a linear value that is live across the run. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: sampled, handler inside the closure resumes or ends the handle with a value; no abort past the closure; no fault seeds 1-12, fact oracle ok"
 stage = "R0d"
 
 [[entry]]
@@ -8461,7 +8461,7 @@ files = [
     "verify/quality/gen/p/g01194.wf",
 ]
 reason = "stage R0d, tier 2 (38 programs): class R0D-T2-ONCE: a closure that moves a linear value and that a callee runs on each path (`apply`, a `loop` with `break`): the summary of the callee runs it once; the old pipeline gives W0601 (a closure that can go out of scope with no call). Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: sampled, the callee (apply) runs the linear-moving closure once on each path; old W0601 is a false positive; no fault seeds 1-12"
 stage = "R0d"
 
 [[entry]]
@@ -8494,7 +8494,7 @@ files = [
     "r3/oracle/runs/t3/p185.wf",
 ]
 reason = "stage R0d, tier 2 (25 programs): class R0D-T2-ARGS: a callee gets a reference and a closure that changes the same place; its summary does not run the closure while it holds the reference (or the clause does not), so W0312 of the old pipeline does not hold. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: sampled (p20704: h0 never runs p1), the callee summary does not run the closure while it holds the reference; old W0312 is a false positive; no fault seeds 1-12"
 stage = "R0d"
 
 [[entry]]
@@ -8513,7 +8513,7 @@ files = [
     "r3/oracle/runs/g4p/p26841.wf",
 ]
 reason = "stage R0d, tier 2 (11 programs): class R0D-T2-TASK (O3-9 and the j1 shape of R0d): the task is joined (also through a tuple or a callee) before the code that the old pipeline flags, or it owns the value that the block frees. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: sampled, the task is joined before the flagged access, or no other access overlaps (p48327); no fault seeds 1-12"
 stage = "R0d"
 
 [[entry]]
@@ -8667,7 +8667,7 @@ files = [
     "verify/s5/R3a/h_gen4/p70382.wf",
 ]
 reason = "stage R0d, tier 2 (146 programs): class R0D-T2-W0301 (as F20.2-T2-SIGNED): old false positives of the groups A to D in programs that a handler in a closure body kept out of scope before: a block value or a closure that a block returns points into a local of the block and nothing uses it, a late capture reads the new value of its variable (O3-11), a reference into another field than the one that changes (the wildcard place of the old pipeline), a W0204 or W0701 of a declaration that the `ir` pipeline does not need. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
-signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+signed_by = "reviewer R0d: sampled, old false positives: a reference to the Vec itself, another field, or a block-returned closure that never runs; no fault seeds 1-12, fact oracle ok"
 stage = "R0d"
 
 [[entry]]
@@ -8756,4 +8756,18 @@ class = "changed"
 files = ["tests/gate/probes/fixes/r0d/c5_rc1.wf", "tests/gate/probes/fixes/r0d/c5_rc5.wf"]
 codes = ["W0502"]
 reason = "stage R0d (a capability captured again): the `once` closure `g` runs after a run of a closure that performs a `multi` operation through a capture of a capture. The `ir` pipeline gives W0503 and W0502 at the run of `h` (its summary runs the capture `g` more than once, as for `cap_nested.wf` of stage C1.5); the old pipeline gives W0503 inside `h`. The interpreter faults (a value used after it was moved). Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/189_indirect_pass_on.wf"]
+codes = ["W0301", "W0502", "W0503"]
+reason = "stage R0d fix (the review of R0d): the corpus file of an operation that a handler with no clause passes on, performed through a callee, a value or an inner closure. The `ir` pipeline gives W0301 in `callee_pass_on_fn` (a function body; the old pipeline misses it, `pi_ph5_direct_callee.wf` faults at run time) and W0502 W0503 at the run of `h` in `multi_pass_on`, where the old pipeline gives W0503 inside `h` (as `cap_nested.wf` of stage C1.5). The other markers are the same. Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0d/pi_pm2.wf", "tests/gate/probes/fixes/r0d/pi_pm3.wf"]
+codes = ["W0502"]
+reason = "stage R0d fix: a callee or an inner closure performs a `multi` operation that the handler of the closure passes on out of the closure (`frames::passes_out_multi`). The `ir` pipeline gives W0503 and W0502 at the run of `h` (its summary runs the `once` capture `g` more than once); the old pipeline gives W0503 inside `h`. The interpreter faults (a value used after it was moved). Rejected in both"
 stage = "R0d"

@@ -550,40 +550,119 @@ pub fn capture_handler(p: &Program, c: weft_ir::ClosureId, k: u32) -> Option<Han
 pub fn serving(p: &Program, h: HandlerId, op: weft_ir::OpIdx) -> Option<HandlerId> {
     let mut h = h;
     for _ in 0..=p.handlers.len() {
-        let d = p.handlers.get(h.index())?;
-        if d.clauses.iter().any(|(o, _)| *o == op) {
-            return Some(h);
+        match serving_path(p, h, op) {
+            Served::Local(x) => return Some(x),
+            Served::Caller => return None,
+            Served::Capture(cb, k) => {
+                let (c, _) = p.closure_of(cb)?;
+                h = capture_handler(p, c, k)?;
+            }
         }
-        let hb = p.body(d.handled)?;
-        let mut at = p.cap_envs.get(hb.cap_env.index())?.parent;
+    }
+    None
+}
+
+/// Where an operation that the capability of a handler gets goes, up to the
+/// first closure environment on the way ([`serving_path`], stage R0d).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Served {
+    /// A local handler with a clause for the operation.
+    Local(HandlerId),
+    /// The capture `k` of closure body `cb`: a handler outside the closure
+    /// serves it. The summary of the closure performs through `Cap(k)`.
+    Capture(BodyId, u32),
+    /// No handler of the program around serves it: a handler of a caller.
+    Caller,
+}
+
+/// [`serving`] up to the first closure environment on the way (stage R0d).
+pub fn serving_path(p: &Program, h: HandlerId, op: weft_ir::OpIdx) -> Served {
+    let mut h = h;
+    for _ in 0..=p.handlers.len() {
+        let Some(d) = p.handlers.get(h.index()) else {
+            return Served::Caller;
+        };
+        if d.clauses.iter().any(|(o, _)| *o == op) {
+            return Served::Local(h);
+        }
+        let Some(hb) = p.body(d.handled) else {
+            return Served::Caller;
+        };
+        let mut at = p.cap_envs.get(hb.cap_env.index()).and_then(|e| e.parent);
         let mut next = None;
         for _ in 0..=p.cap_envs.len() {
             let Some(id) = at else { break };
-            let env = p.cap_envs.get(id.index())?;
+            let Some(env) = p.cap_envs.get(id.index()) else {
+                break;
+            };
             if let Some((_, place)) = env.adds.iter().find(|(e, _)| *e == d.effect) {
                 next = Some((id, place.clone()));
                 break;
             }
             at = env.parent;
         }
-        let (id, place) = next?;
+        let Some((id, place)) = next else {
+            return Served::Caller;
+        };
         let opener = p.bodies.iter().enumerate().find_map(|(i, b)| {
             (b.cap_env == id && matches!(b.kind, BodyKind::Handled(_) | BodyKind::Closure(_)))
                 .then(|| BodyId(u32::try_from(i).unwrap_or(u32::MAX)))
-        })?;
-        h = match p.body(opener)?.kind {
-            BodyKind::Handled(h2) => h2,
-            BodyKind::Closure(_) => {
-                let (c, k, mode) = crate::factgen::alpha::env_capture(p, opener, &place)?;
-                if mode != weft_ir::CaptureMode::Cap {
-                    return None;
-                }
-                capture_handler(p, c, k)?
-            }
-            _ => return None,
+        });
+        let Some(opener) = opener else {
+            return Served::Caller;
         };
+        match p.body(opener).map(|b| b.kind) {
+            Some(BodyKind::Handled(h2)) => h = h2,
+            Some(BodyKind::Closure(_)) => {
+                return match crate::factgen::alpha::env_capture(p, opener, &place) {
+                    Some((_, k, weft_ir::CaptureMode::Cap)) => Served::Capture(opener, k),
+                    _ => Served::Caller,
+                };
+            }
+            _ => return Served::Caller,
+        }
     }
-    None
+    Served::Caller
+}
+
+/// [`serving_path`] of each operation of the effect of handler `h` (stage R0d).
+///
+/// For an operation that the node does not know: a callee or a closure
+/// that performs the effect.
+pub fn serving_paths(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> Vec<Served> {
+    let n = p
+        .handlers
+        .get(h.index())
+        .and_then(|d| tys.effects().get(d.effect.index()))
+        .map_or(0, |e| e.ops.len());
+    let mut out: Vec<Served> = (0..n)
+        .map(|i| serving_path(p, h, weft_ir::OpIdx(u32::try_from(i).unwrap_or(u32::MAX))))
+        .collect();
+    if out.is_empty() {
+        out.push(Served::Local(h));
+    }
+    out.dedup();
+    out
+}
+
+/// The capture and the effect of a perform that passes on out of the closure
+/// (stage R0d, [`Served::Capture`]).
+///
+/// The perform is through the capability local `cap` of body `body`, and
+/// the capture is a capture of the closure body of `body`.
+pub fn passes_to_capture(
+    p: &Program,
+    body: BodyId,
+    cap: &Place,
+    op: weft_ir::OpIdx,
+) -> Option<(u32, weft_ir::EffectId)> {
+    let h = cap_handler(p, body, cap)?;
+    match serving_path(p, h, op) {
+        Served::Capture(cb, k) if Some(cb) == crate::factgen::alpha::unit_closure(p, body) => {
+            p.handlers.get(h.index()).map(|d| (k, d.effect))
+        }
+        _ => None,
+    }
 }
 
 /// The handlers that a perform through the capability of handler `h` can
@@ -624,7 +703,10 @@ pub fn perform_target(
     cap: &Place,
     op: weft_ir::OpIdx,
 ) -> Option<Option<HandlerId>> {
-    cap_handler(p, body, cap).map(|h| serving(p, h, op))
+    cap_handler(p, body, cap).map(|h| match serving_path(p, h, op) {
+        Served::Local(x) => Some(x),
+        Served::Capture(..) | Served::Caller => None,
+    })
 }
 
 /// The effect of a perform that passes on to a caller ([`perform_target`]).
@@ -639,7 +721,7 @@ pub fn passes_to_caller(
     op: weft_ir::OpIdx,
 ) -> Option<weft_ir::EffectId> {
     let h = cap_handler(p, body, cap)?;
-    if serving(p, h, op).is_some() {
+    if serving_path(p, h, op) != Served::Caller {
         return None;
     }
     p.handlers.get(h.index()).map(|d| d.effect)
@@ -1533,9 +1615,12 @@ pub fn perform_run(
     // A handler with no clause for the operation passes it on (stage R0d,
     // [`serving`]). An operation that passes on to a caller is a perform
     // through the row (`transfer`).
-    let h = serving(p, h, op).ok_or_else(|| {
-        AlphaError::BadPlace(format!("handler h{} passes an operation to a caller", h.0))
-    })?;
+    let Served::Local(h) = serving_path(p, h, op) else {
+        return Err(AlphaError::BadPlace(format!(
+            "handler h{} passes an operation out of the body",
+            h.0
+        )));
+    };
     handler(p, h)?;
     let cb = clause_of(p, h, op).ok_or_else(|| {
         AlphaError::BadPlace(format!("handler h{} has no clause of an operation", h.0))

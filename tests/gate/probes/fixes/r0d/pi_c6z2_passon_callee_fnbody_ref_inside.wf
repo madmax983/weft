@@ -1,0 +1,21 @@
+// Stage R0d fix (review of R0d, probe c6z2_passon_callee_fnbody_ref_inside): an operation that a handler with no clause passes on, performed through a callee, a function value or an inner closure.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+effect Two {
+    fn a() -> u64
+    fn b() -> u64
+}
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn maybe(n: u64) -> u64 { if n > 1 { fail("big") }; n }
+fn apply(f: fn()) { f() }
+fn helper() -> u64 / Two { a() }
+fn main() {
+  let v = [1, 2]
+  handle Two { fn a() { v.push(3); resume(0) } fn b() { resume(1) } } in {
+    let r = &v[0]
+    let x = handle Two { fn b() { resume(2) } } in { helper() }
+    print(x)
+    print(r)
+  }
+}

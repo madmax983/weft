@@ -2194,6 +2194,35 @@ R0d as built:
   `ra2_resume_value_run_ok.wf`. A first form that took the abort off the `resume` broke
   the rule of ADR 0005 (W0602 for a value inside the handled body), and R0d does not
   keep it.
+- The fix of the review of R0d (a second commit). The review found three holes: an
+  operation that a handler in a closure body with no clause for it passes on, performed
+  through a callee, a function value or an inner closure (`fixes/r0d/pi1_*` to
+  `pi3_*`, and the variants `pi_c6*`). Cause: `serving` covered only a perform that
+  names the operation. A call names only the effect, so the destinations of the call
+  (`frames::reach`) took the innermost handler of the effect, `call_clauses` dropped
+  its `escapes_at` with no test of a pass-on, and a run of a closure that performs
+  through the capability of such a handler (`Cap(k)` with σ a local capability) gave
+  the closure summary nothing. Fix: `clause::serving_path` gives where each operation
+  goes, up to the first closure environment (`Served::Local`, `Capture(cb, k)`,
+  `Caller`); `frames::served_dests` replaces each local handler of a call by the
+  handlers that serve its operations (and past the function for the others), so the
+  analysis, the abort destinations and the clause runs of each consumer
+  (`call_handlers`, `run_handlers`, `call_clauses`) see them; `call_clauses` keeps the
+  `escapes_at` of an operation that passes on to a caller and records `Cap(k)` for one
+  that goes out of the closure (then `captured_calls` runs the clauses of the handler
+  of the capture); a perform through a local capability whose operation goes out of
+  the closure is a perform through the capture (`passes_to_capture`); a call in such a
+  handled body whose operation goes to a capture of a `multi` handler is a row of
+  `add_captured` (`frames::passes_out_multi`; probes `pi_pm1` to `pi_pm4`, which the
+  review did not have). The same rule closes the function-body form through a callee,
+  a hole of R0c and of the old pipeline (`pi_ph5_direct_callee.wf`, `pi_c6z_*`), and
+  the both-miss forms `pi_c6_passon_nested_closure`, `pi_c6g`, `pi_c6k`, `pi_c6q`; `pi_c6s`
+  gets its W0602. Corpus `tests/programs/189_indirect_pass_on.wf`. The fact oracle over
+  the 2391 programs of tier 2 that R0d brings into scope: 40 failures, each in a program
+  that the `ir` pipeline rejects (the oracle runs it with `--unchecked`): the same rate
+  and classes (C1, C5, A3 of code of a caller) as 2400 rejected programs of tier 2 in
+  scope at R0c (48 failures); none in an accepted program. The reviewer signed the
+  lost-clean rows of R0d.
 - Three covers of the fact and summary oracles that the new bodies needed: a handled body
   or a clause that moves a value out of the environment of the closure lends the place
   at the node (`templates::moved`; the machine takes the value out of a frame below);
@@ -2261,8 +2290,8 @@ R0d as built:
   `c16/att4`: 1936 programs): the same verdicts as the R0c binary (0 HOLE; the 2
   `HOLE(AST-only)` of the AST engine are older). Cost: tier 1 `check` CPU time old /
   `ir` 31.6 s / 51.5 s (1.63 times, 4267 programs in scope; R0c 1.55 on fewer
-  programs); `scale.rs` passes. The lost-clean rows of R0d say `signed_by =
-  "UNSIGNED: ..."`: the review of R0d signs them or rejects them.
+  programs); `scale.rs` passes. At the first commit the lost-clean rows of R0d said
+  `signed_by = "UNSIGNED"`; the review signed them with the fix (below).
 - Open: D5 and C8 (above). The tier-2 `new-fp` row `r2/oracle/runs/g5/p23249.wf` is a
   precision loss that function bodies have at R0c too (issue #56): a copied frame of a
   closure run holds a wildcard place of a reference parameter (`p2..`) that a later
@@ -2397,7 +2426,7 @@ gate and the exit of its parent, limited to its group of differences.
 | C3 | C2 | the switch of the defaults (`--facts=ir` with all groups, `--engine=ir`): no difference of the gate; the corpus markers give the `ir` result (`old:` for the old pipeline); the core IR targets O3-5, O3-6, R3RT2 and R3RT3 move to the corpus; the baselines `tests/gate/baseline-c3.jsonl` and `target/gate/baseline-c3-tier2.jsonl` (`tests/gate/baseline-c3-tier2.sha256`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %); fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `weft agree` on 220 programs; `sweep --n 2000 --seed-base 3000000` 0 accepted faults | done (C3) |
 | R0b | C3 | the fallbacks of a callee with no IR (C3, E6, P1, C1 with a type error), N1 and I1 (Phase R, R0b): a worst-case summary from the declaration, W0121, a handler with no clause passes the operation on. Fallbacks 331/7770 to 318/7382 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (R0b) |
 | R0c | R0b | the fallbacks A1, A2 and B1 (Phase R, R0c): W0204 for a reference through a local `rc` handle that is not sure to be a copy of the handle parameter of the store (`templates::same_object`), the region of a `resume` skips the runs of a clause in a task that W0314 rejects, rule 5 of the widening (a summary part below depth 8). Fallbacks 318/7382 to 312/7372 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 19 programs that come into scope | done (R0c) |
-| R0d | R0c | handlers in closure bodies (Phase R, R0d; D2, C5, and the two pass-on shapes of R0b): a handled body splices into the closure body and the clauses are parts of the facts of the closure (`closure_units`), the closure summary carries the code of the handlers in the terms of its interface, `clause::serving` for a handler with no clause for an operation (it closes three holes of the pipeline of R0c, `fixes/r0d/ph1`, `ph3`, `ph5`), a capability that a closure of a closure captures again, the sparing at `Post` when the rest of the handled body cannot abort (issue #57). D5 and C8 stay (design note in R0d). Fallbacks 312/7372 to 279/4981. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 669 programs that come into scope or change and on the review sets of group D and of the once-after-multi family. The lost-clean rows wait for the signature of the review | done (R0d) |
+| R0d | R0c | handlers in closure bodies (Phase R, R0d; D2, C5, and the two pass-on shapes of R0b): a handled body splices into the closure body and the clauses are parts of the facts of the closure (`closure_units`), the closure summary carries the code of the handlers in the terms of its interface, `clause::serving` for a handler with no clause for an operation (it closes three holes of the pipeline of R0c, `fixes/r0d/ph1`, `ph3`, `ph5`), a capability that a closure of a closure captures again, the sparing at `Post` when the rest of the handled body cannot abort (issue #57). D5 and C8 stay (design note in R0d). Fallbacks 312/7372 to 279/4981. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 669 programs that come into scope or change and on the review sets of group D and of the once-after-multi family. The review found three holes (an operation that a handler with no clause passes on, performed through a callee, a value or an inner closure): fixed in the second commit (`clause::serving_path`, `frames::served_dests`), which also closes the function-body form of R0c (`pi_ph5_direct_callee.wf`); the reviewer signed the lost-clean rows | done (R0d) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -2472,6 +2501,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0c (tier 2, the defaults) | 47355 of 57393 | 43731 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1605 | 9471 (+4, ledgered) | 10 (as C3) |
 | R0d (tier 1, the defaults) | 4237 of 4569 | 3612 | 251 (+3: `188_captured_pass_on.wf`, `fixes/r0d/ph1`, `ph7`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 108 (+7, ledgered; `signed_by` UNSIGNED, the review signs) | 128 (+3, ledgered) | 460 (+10, ledgered) | 9 |
 | R0d (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %; `p43563.wf` leaves, `p23249.wf` comes, issue #56) | 2853 (+377; 371 in six classes of R0d, `signed_by` UNSIGNED) | 1707 | 10286 (ledgered) | 10 (as C3) |
+| R0d fix (tier 1, the defaults) | 4265 of 4597 | 3628 | 260 (+9: corpus 189 and the probes of the review holes, `fixes/r0d/pi*`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 108 (signed by the review of R0d) | 128 | 463 (+3, ledgered) | 9 |
+| R0d fix (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %, as R0d) | 2853 (signed by the review of R0d) | 1707 | 10286 | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

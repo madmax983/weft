@@ -2132,7 +2132,22 @@ Other bodies with no IR (plan stage B12), each with its reason:
   handler. Before R0d the destinations took the innermost handler of the effect: a
   clause of the outer handler that ends with no `resume` gave no abort edge (a hole of
   R0b, `fixes/r0d/ph3_landing_pass_on.wf`), and a closure that performs the operation
-  ran no clause (a hole that the old pipeline has too, `ph1_closure_pass_on.wf`).
+  ran no clause (a hole that the old pipeline has too, `ph1_closure_pass_on.wf`). As
+  built (the fix of the review of R0d): a call does not name the operation, so each
+  local handler that the destinations of a call give is replaced by the handler that
+  serves each operation of its effect (`clause::serving_paths`, `frames::served_dests`):
+  a call through a handler with no clause for an operation runs the clauses of each
+  handler that serves one, and an operation that passes on to a caller, or out of the
+  closure, is an abort past the function. `clause::serving_path` stops at the first
+  closure environment on the way (`Served::Capture(cb, k)`): in closure body `cb` the
+  operation is a perform through the capture `k` (the summary gets `Cap(k)`,
+  `handlers::call_clauses` and `templates::perform`, `clause::passes_to_capture`). A
+  node keeps the `escapes_at` of the effect if an operation passes on to a caller. A
+  call in the handled body of such a handler whose operation goes out of the closure
+  to a capture of a `multi` handler is a row of `add_captured` (`frames::passes_out_multi`).
+  The review found three holes of R0d here (`fixes/r0d/pi1` to `pi3`); the function-body
+  form through a callee was a hole of R0c and of the old pipeline
+  (`pi_ph5_direct_callee.wf`, `pi_c6z_*`).
 - An assignment whose left side is not a place is W0112 of `typeck` (a type error). A
   constructor as a value is W0101 or W0104 (5.23). The builder never sees these bodies.
 

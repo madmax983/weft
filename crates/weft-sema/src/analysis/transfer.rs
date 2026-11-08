@@ -1265,10 +1265,13 @@ pub fn term(
             // operation of a handler outside the closure; the node that runs
             // the closure runs the clause (plan stage F16).
             Some((_, e)) => perform_row(cx, body, st, e, *op, args, dest),
-            None => match super::clause::passes_to_caller(cx.p, body, cap, *op) {
+            None => match super::clause::passes_to_caller(cx.p, body, cap, *op)
+                .or_else(|| super::clause::passes_to_capture(cx.p, body, cap, *op).map(|x| x.1))
+            {
                 // A handler with no clause for the operation passes it on,
-                // and no local handler serves it: an operation of a handler
-                // of a caller (stage R0d).
+                // and no local handler of the body serves it: an operation of
+                // a handler of a caller, or of the handler of a capability
+                // that the closure captures (stage R0d).
                 Some(e) => perform_row(cx, body, st, e, *op, args, dest),
                 None => super::clause::perform_local(cx, body, st, (cap, *op, args), dest),
             },
