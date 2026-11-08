@@ -207,7 +207,9 @@ pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: 
 /// (`Run::many`: the caller runs them again), but they get no re-entry edge:
 /// the copy of the frames gives a value that the closure moved a new copy.
 pub fn captured_multi_nodes(p: &Program, tys: &TyTable, body: BodyId) -> Vec<BlockId> {
-    let Some((c, _)) = p.closure_of(body) else {
+    // A handled body or a clause inside the closure body performs through
+    // the environment of the closure too (stage R0d).
+    let Some((c, _)) = super::alpha::unit_closure(p, body).and_then(|cb| p.closure_of(cb)) else {
         return Vec::new();
     };
     let Some(b) = p.body(body) else {
@@ -220,14 +222,48 @@ pub fn captured_multi_nodes(p: &Program, tys: &TyTable, body: BodyId) -> Vec<Blo
         .filter(|(_, blk)| match &blk.term.kind {
             TermKind::Perform {
                 cap: CapOperand::Local(place),
+                op,
                 ..
             } => clause::captured_cap(p, tys, body, place)
                 .and_then(|(k, _)| clause::capture_handler(p, c, k))
+                .and_then(|h| clause::serving(p, h, *op))
                 .is_some_and(|h| clause::multi_twice(p, h)),
+            // A run of a function value, if a closure that the closure body
+            // made captures a capability of a `multi` handler of the closure
+            // again (stage R0d): the value can be that closure.
+            TermKind::Call {
+                callee: Callee::Value(_),
+                ..
+            } => recaptures_multi(p, tys, c),
             _ => false,
         })
         .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
         .collect()
+}
+
+/// True if a closure that the body of closure `c` (or a body inside it)
+/// makes captures a `Cap` capture of `c` again whose handler, or a handler
+/// that serves an operation that it passes on, can resume more than once
+/// (stage R0d).
+fn recaptures_multi(p: &Program, tys: &TyTable, c: weft_ir::ClosureId) -> bool {
+    let Some(cb) = p.closures.get(c.index()).map(|d| d.body) else {
+        return false;
+    };
+    p.closures.iter().any(|d| {
+        super::alpha::unit_root(p, d.maker) == cb
+            && d.captures.iter().any(|cap| {
+                cap.mode == weft_ir::CaptureMode::Cap
+                    && super::alpha::env_capture(p, d.maker, &cap.source)
+                        .filter(|(oc, _, m)| *oc == c && *m == weft_ir::CaptureMode::Cap)
+                        .and_then(|(_, k, _)| clause::capture_handler(p, c, k))
+                        .is_some_and(|h| {
+                            clause::serving_all(p, tys, h)
+                                .0
+                                .iter()
+                                .any(|&x| clause::multi_twice(p, x))
+                        })
+            })
+    })
 }
 
 /// The blocks of body `body` whose terminator can wait at a `multi`
@@ -493,15 +529,27 @@ fn reach(
         }
         TermKind::Perform {
             cap: CapOperand::Local(place),
+            op,
             ..
         } => {
-            // The perform resolves its effect in its lexical environment. A
-            // field of a closure environment holds a captured capability.
-            let effect = cap_effect(p, tys, body, place);
-            out.push(match (effect, env_of(p, body)) {
-                (Some(e), Some(env)) => resolve(p, tys, env, e, true),
-                _ => Dest::Past,
-            });
+            // The perform goes to the handler that serves its operation: a
+            // handler with no clause for it passes it on (stage R0d,
+            // `clause::serving`), maybe to a caller. A field of a closure
+            // environment holds a captured capability.
+            match clause::perform_target(p, body, place, *op) {
+                Some(Some(handler)) => out.push(Dest::Handler {
+                    handler,
+                    value: true,
+                }),
+                Some(None) => out.push(Dest::Past),
+                None => {
+                    let effect = cap_effect(p, tys, body, place);
+                    out.push(match (effect, env_of(p, body)) {
+                        (Some(e), Some(env)) => resolve(p, tys, env, e, true),
+                        _ => Dest::Past,
+                    });
+                }
+            }
         }
         TermKind::Join { .. } | TermKind::Fork { .. } => {
             out.push(Dest::Past);
@@ -544,7 +592,7 @@ fn reach(
     // captured capability of a local handler: the node runs the clauses of
     // the handler (plan stage F16).
     if full && runs_values(p, tys, sums, body, t) {
-        for h in clause::captured_handlers(p) {
+        for h in clause::captured_handlers(p, tys) {
             let active = p
                 .handlers
                 .get(h.index())

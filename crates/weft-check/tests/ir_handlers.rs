@@ -885,25 +885,27 @@ fn the_review_programs_of_stage_c15_keep_their_errors() {
     }
 }
 
-/// The fallbacks that make two gaps of the analysis of rows safe (stage
-/// C1.5, `docs/ir.md` 5.20): a row in a clause body, and a handler in a
-/// closure body, stop the `ir` pipeline, and the old pipeline rejects each
-/// program. If a fallback goes away, this test fails: the rows of the body
-/// must be found first. Three more review programs stop at other fallbacks
-/// (a task in a nested body, a capability that leaves its handler, a value
-/// that code of a caller can run on another thread). In the fourth one,
-/// `g_row_struct.wf`, the callee `run_both` has a type error (W0105): from
+/// The fallback that makes a gap of the analysis of rows safe (stage C1.5,
+/// `docs/ir.md` 5.20): a row in a clause body stops the `ir` pipeline, and
+/// the old pipeline rejects each program. If the fallback goes away, this
+/// test fails: the rows of the clause must be found first. From stage R0d a
+/// handler in a closure body is in scope (`cap_nested.wf`, `h4_nested.wf`):
+/// the closure summary has the rows of its handled bodies, and the run of
+/// the closure is a `multi` point (W0502 and W0503 at the run, as for a
+/// closure with no handler). Three more review programs stop at other
+/// fallbacks (a task in a nested body, a capability that leaves its
+/// handler, a value that code of a caller can run on another thread). In
+/// `g_row_struct.wf` the callee `run_both` has a type error (W0105): from
 /// plan stage R0b its callers get the worst case of its declaration, so the
 /// program is in scope, and the type error rejects it.
 #[test]
-fn the_rows_of_clauses_and_closure_handlers_stay_with_the_old_pipeline() {
+fn the_rows_of_clauses_stay_with_the_old_pipeline() {
     let clause = "a `multi` operation of a handler of a caller in a clause";
-    let handler = "a handler in a closure body";
     c15_fallback("clause_m.wf", clause);
     c15_fallback("clause_after.wf", clause);
     c15_fallback("clause_after_m.wf", clause);
-    c15_fallback("cap_nested.wf", handler);
-    c15_fallback("h4_nested.wf", handler);
+    c15_check("cap_nested.wf");
+    c15_check("h4_nested.wf");
     c15_fallback("h4_scope.wf", "a task in a nested body");
     c15_fallback("dedup_key.wf", "a capability that leaves its handler");
     c15_fallback("gen_k.wf", "code of a caller can run on another thread");

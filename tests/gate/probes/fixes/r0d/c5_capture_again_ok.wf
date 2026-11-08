@@ -1,0 +1,12 @@
+// Stage R0d: a closure that a closure makes captures the capability again. No error (R0c: a fallback).
+effect Ask { fn ask() -> u64 }
+fn cap_again() {
+    handle Ask { fn ask() { resume(4) } } in {
+        let f = || {
+            let h = || ask()
+            h() + 1
+        }
+        print(f())
+    }
+}
+fn main() { cap_again() }

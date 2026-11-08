@@ -1,4 +1,4 @@
-// Stage C1.5 review: hole C1-H4 forms in a nested body of a closure (fallbacks).
+// Stage C1.5 review: hole C1-H4 forms in a nested body of a closure (in scope from stage R0d).
 effect Pick { multi fn pick() -> bool }
 effect Ask { fn ask() -> bool }
 fn take(v: Vec<u64>) { print(v.len()) }
@@ -7,8 +7,8 @@ fn main() {
     handle Pick { fn pick() { resume(true); resume(false) } } in {
         let v = [1]
         let g = || take(v)
-        apply(|| {
-            handle Ask { fn ask() { resume(true) } } in { if pick() { print(1) } }   //~ W0503
+        apply(|| {   //~ W0502 W0503
+            handle Ask { fn ask() { resume(true) } } in { if pick() { print(1) } }
             g()
         })
     }

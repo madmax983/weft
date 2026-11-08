@@ -1,0 +1,10 @@
+// A `Fail` handler inside the closure: a run of the closure cannot abort.
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn maybe(n: u64) -> u64 { if n > 1 { fail("big") }; n }
+fn main() {
+    let l = Lk { id: 1 }
+    let f = || handle Fail { fn fail(m) { 0 } } in { maybe(2) }
+    print(f())
+    unlock(l)
+}

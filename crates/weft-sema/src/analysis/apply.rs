@@ -1281,7 +1281,24 @@ pub fn main(
             // A perform through a captured capability of a local handler:
             // the node runs the clause of the handler (plan stage F16,
             // `clause::call_clauses`); the effect does not leave the body.
-            CapIface::Cap(_) => {}
+            // A capture of a capture of the closure body of the node (stage
+            // R0d): the closure body performs through its own capture, so
+            // its summary does, and the node that runs it runs the clause.
+            CapIface::Cap(k) => {
+                let mut own: Vec<u32> = s
+                    .captures
+                    .get(k as usize)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|&q| super::clause::env_cap_of(cx.p, cx.facts, cx.roots, q))
+                    .map(|(_, j)| j)
+                    .collect();
+                own.sort_unstable();
+                own.dedup();
+                for j in own {
+                    cx.hx.cap_performs.push((n, j, pf.effect.clone()));
+                }
+            }
         }
     }
     if sum.multi {

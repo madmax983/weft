@@ -1916,7 +1916,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0a | The diagnostic texts of the `ir` pipeline name the source value (issue #74) | (texts) | done (77efbd0) |
 | R0b | A callee with no IR, or an extern callee, gets a worst-case summary from its declaration; N1 becomes a `typeck` error (W0121); a handler with no clause for an operation passes it on (I1) | C3, E6, P1, C1 with a type error, N1, I1 | done (e13c8d3) |
 | R0c | The leftovers of groups A and B | A1, A2, B1 | done (this stage) |
-| R0d | Handlers in closure bodies | D2, C5, C8, D5 | L |
+| R0d | Handlers in closure bodies; the two shapes of a handler that passes an operation on that R0b left | D2, C5 (C8, D5 stay: design note of R0d) | done (this stage) |
 | R0e | Tasks in closure bodies | E1, E3 | L |
 | R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, E2, E4, E5, C7 | M |
 | R0g | Continuations and capabilities in closures | D1, D4, C4, C6 | L |
@@ -2104,6 +2104,171 @@ R0c as built:
   `templates::task_end_lends` of stage F19; `spawned` of corpus 185 is the first body of
   the corpus with a task that calls a function and no call of its own).
 
+R0d as built:
+
+- D2 (a handler in a closure body, `factgen/mod.rs`): the bodies of a closure are the
+  closure body and each handled body, clause and scope body whose root is the closure
+  body (`alpha::unit_root`, `closure_units`). A handled body splices into the closure
+  body as into a function body, in the facts of the summary (`closure_summary`) and in
+  the instantiated facts of the component of the function (`emit_closure`): the nodes
+  and the splice edges of each body that splices into it, the abort destinations of
+  `Frames::of_bodies` of the bodies of the closure, the re-entry edges of the rows of
+  each spliced body, the cycles of the handlers of the closure (`Cycles::add_handlers`).
+  The analysis of the closure body runs each `handle` as in a function body. Then the
+  facts of each clause of the closure come (`emit_clause`, from the states that the
+  analysis of the closure body found), and the passes over the clauses run on them:
+  `project`, the owners of the roots, `continuations` and `late_uses` in the facts of
+  the summary; in the component of the function the tables of the handlers of the
+  closure go into the tables of the function (`merge_handlers`), so the passes of the
+  function cover them. A closure that a clause of the closure makes starts from the
+  states of that clause. The function facts do not frame or emit a body of a closure.
+  A nested body names the environment of the closure through an upvar local:
+  `alpha::env_capture` follows the upvar chain, and the tests of the instantiation
+  (`kept_whole`, `place_value`, `in_interface`), `captured_cap`, `captured_calls`,
+  `captured_multi_nodes` and `clause_run_in_closure` read the root body. A run of a
+  clause of an inner handler in a closure maps to the node that runs the closure
+  (`Region::starts`). A closure with no nested body keeps the code of R0c (one test:
+  `unit.len() > 1`), so no program that was in scope changes (the tier-1 recount: 0
+  programs in scope with other codes).
+- What the closure summary carries, in the terms of its interface (`docs/ir.md` 6.5,
+  "Handlers in closure bodies"): the code of each clause at the nodes that run it (with
+  σ of each perform), the effects that leave the closure, the performs through a
+  captured capability (`Cap(k)`, also from a nested body), the aborts of the nested
+  bodies (`summarize::nested_aborts`: an `assert`, and a failure of a callee unless the
+  `Fail` handler of the call is a handler of the closure), part `multi` from the
+  `multi_at` rows (a perform of a local handler of the closure is no such row, O3-8),
+  the runs of the values of the interface in a clause (each `many`), a reference into a
+  local of a nested body as a place of the frame. The `multi` re-entry of a handler in
+  the closure: the runs of the values of the interface after such a node are in a cycle
+  (E2 of `docs/ir.md` 5.20), so they are `many`; the run of the closure is no `multi`
+  point of the caller for it. The C1.5 allow-list does not change: each exception E1 to
+  E4 reads the cycles and the rows of the bodies of the closure now, and the fallback
+  test of C1.5 (`ir_handlers.rs`) keeps the row in a clause as a fallback and puts
+  `cap_nested.wf` and `h4_nested.wf` in scope (W0502 and W0503 at the run of the
+  closure, as for the same closure with no handler; the old pipeline gives W0503 inside
+  the closure).
+- C5 (a capability in a closure that a closure makes): α of a `Cap` field of an
+  environment is the place of the field, and its value holds that place
+  (`factgen::env_value`, `transfer::move_path`). A run node in the closure body that
+  applies a summary with `Cap(k)` whose σ is such a field (`clause::env_cap_of`) is a
+  perform through the capture of the closure body itself: its summary gets `Cap(j)`
+  (`apply::main`), and the node that runs it runs the clause (`check_cap_apps` accepts
+  it). The node that runs such a closure in the instantiated facts runs the clauses of
+  the handler of the capture (`captured_calls`, also for a late run at `Ret` of a
+  callee), and a run of a function value in a closure body counts as a perform of a
+  `multi` handler when a closure that the body makes captures a capability of such a
+  handler again (`frames::recaptures_multi`, a row of `Cycles::add_captured`). A
+  perform through a captured capability reads the field. A `Kont` capture stays with
+  the old pipeline (stage R0g). The interpreter check of the old review sets found the
+  first two forms open in a first build (`r67/v/a05_nested_closure.wf`,
+  `f172/att/a29_nested_closure_in_closure_rowfn.wf`: programs of the reason "a
+  capability that leaves its handler" that the C5 rule put in scope); probes
+  `fixes/r0d/c5_rc1.wf` to `c5_rc8.wf` (a run through a callee, a vector, a struct
+  field, three levels).
+- The two shapes of a handler that passes an operation on (R0b): `clause::serving`
+  gives the handler that serves an operation (the handler of the capability if it has a
+  clause for it, else the handler of the effect around its `handle`: the first
+  environment of that chain that adds the effect, through the capture of a closure
+  environment), or none: the operation passes on to a caller (`passes_to_caller`, a
+  perform through the row). The analysis (`perform_run`, `note_reentry`), the templates
+  (`perform_local`, `templates::perform`, `clause_run_in_closure`, `captured_calls`
+  with `serving_all`), the abort destinations (`frames::reach`) and
+  `captured_multi_nodes` use it. Before R0d the destinations took the innermost handler
+  of the effect, and a closure that performs the operation ran no clause. Three of these
+  forms were holes of the `ir` pipeline in scope at R0c (`fixes/r0d/ph1_closure_pass_on.wf`
+  and `ph5_callee_pass_on.wf`: W0301, the old pipeline misses them too;
+  `ph3_landing_pass_on.wf`: W0602, the old pipeline gives it); `ph2` and `ph7` were the
+  fallback of R0b ("handler h1 has no clause of an operation").
+- A clause of a handler in a closure body that performs through a captured capability
+  forwards the effect (`clause_performs`, so W0801 does not count it as a root handler;
+  `m01732_15_library.wf`).
+- The sparing at `Post` (issue #57): a later `resume` of a `multi` clause runs the rest
+  of the handled body again at `Post`; if no node of the handled body can abort in the
+  facts (a node that runs a clause of another handler counts, before the projection),
+  the values outside the handled body are spared there, as at a perform of the handler
+  (ADR 0005, `handlers::quiet_reruns`). The `resume` itself still can abort. Before R0d
+  the static destinations made each run of a function value an abort past the
+  function. This closes the tier-2 `new-fp` row `r2/oracle/runs/g7/p43563.wf` (its
+  ledger entry of issue #57 is gone) and the new one `p3926.wf`; probes
+  `fixes/r0d/ra1_resume_aborts.wf` (W0602 stays where the rest can fail) and
+  `ra2_resume_value_run_ok.wf`. A first form that took the abort off the `resume` broke
+  the rule of ADR 0005 (W0602 for a value inside the handled body), and R0d does not
+  keep it.
+- Three covers of the fact and summary oracles that the new bodies needed: a handled body
+  or a clause that moves a value out of the environment of the closure lends the place
+  at the node (`templates::moved`; the machine takes the value out of a frame below);
+  a `Kept` source of a closure literal through a reference (`*env.k`) reads the
+  reference, also in a program with tasks (OR8 kept the read out); and the timeout of
+  `with_timeout` runs the clause of the local `Fail` handler while the frame of the
+  block waits at its `UnwindExit`: the reads and the changes of the clause are at those
+  nodes too (`handlers::timeout_unwind_nodes`; `interrupt_inside_on_abort.wf`, whose
+  function `rollback` fails the summary oracle at R0c too).
+- Design note: D5 and C8 stay fallbacks (a row of a caller, or a `multi` local handler,
+  re-enters a clause). The size: a second `resume` of the outer handler runs the code
+  of the clause after the row again, then the continuation of the clause (the rest of
+  the handled body after the perform P that ran the clause), then the rest of the
+  function. The facts need (1) re-entry edges in the component of the clause, from its
+  `Return`, its landing and its `Resume` nodes to a `Copy` node of the row, and a run
+  of the analysis of the clause from the block after the row (`run_rows` for a clause
+  body, with the locals of the clause copied and the heap of the end of the function);
+  (2) each node that runs the clause as a row of the function (P: a `Copy` node with
+  edges from the `Return`s of the function, also on the path of the abort of a clause
+  that lands, to its `Landing`; for a row in the `post` part, the `Post` node of the
+  `handle`, which has no `Copy` phase today); (3) the cycles of E2 for P and for `Post`;
+  (4) for C8, the same with the `Post` of the local `multi` handler in place of the
+  `Return` of the function (`handle_run` with `nested`). The once-after-multi family
+  showed that each re-entry form needs its own proof of E1 to E4; this one needs a new
+  kind of copied frame (a clause frame that waits for a continuation) and a new cover
+  of the fact oracle (A4 for copied clause frames). The old pipeline gives W0503 for
+  the `once` continuation that is live across the row (the D5 and C8 examples), so the
+  fallback is sound.
+- Tests: corpus `tests/programs/187_closure_handlers.wf` (W0301, W0503, W0602 of
+  handlers in closure bodies; the clean cases with `old:` markers: O3-8 and a `Fail`
+  handler inside the closure) and `188_captured_pass_on.wf` (the pass-on shapes, W0301
+  and W0602 with `old:` where the old pipeline misses them; a capability captured
+  again), with their IR goldens; probes `tests/gate/probes/fixes/r0d/` (20 programs:
+  bad and clean forms of D2, C5 and the pass-on shapes); `ir_handlers.rs`
+  `the_rows_of_clauses_stay_with_the_old_pipeline` (was
+  `the_rows_of_clauses_and_closure_handlers_stay_with_the_old_pipeline`).
+- The fallbacks, before (157ff56) and after, tier 1 / tier 2, by the note of `weft
+  check` (scratchpad `r0d/t1-final.tsv`, `t2-final.tsv`): D2 33/2538 to 0/0, C5 4/125 to 0/0, D4 19/117 to
+  15/46 (the C5 rule puts the capability that a closure of a closure captures again in
+  scope). The programs whose first failing body was a handler in a closure body and that
+  still fall back show their own reason: E1 53/3669 to 57/3958, A2 0/1 to 1/41 (a run of
+  a clause at the run of a closure that left its handler: the region of the `resume`
+  has no node for it; corpus `62_cap_escape.wf` was D4), C6 3/4 to 6/15, C1 39/106 to
+  39/107, C7 2/2 to 2/3, D5 15/113 to 15/114; C8 and D5 stay (design note). Total
+  312/7372 to 279/4981. 33 programs of tier 1 and 2391 of tier 2 come into scope (with
+  the 2 corpus files and the 30 probes of `fixes/r0d`: 65 of tier 1); no program goes out
+  of scope. Of the programs that were in scope, 0 of tier 1 and 4 of tier 2 change their
+  codes (the sparing at `Post`: one W0602 fewer, each still rejected but
+  `r2/oracle/runs/g7/p43563.wf`, which is clean).
+- Gates: tier 1 0 blockers (4237 of 4569 in scope; 3612 same, 9 open, 251
+  fixed, 1 new-fp, 108 lost-clean, 128 moved, 460 changed; `fixed` +3: `188` and the
+  probes `ph1`, `ph7`; `lost-clean` +7, `moved` +3, `changed` +10, each ledgered; the old
+  records of the 32 new entries are new in `tests/gate/baseline-tier1.jsonl`). Tier 2
+  (2 workers) 0 blockers (49747 of 57393 in scope; 42437 same, 10 open, 88 fixed, 12
+  new-fp: 12 of 12549, 0.096 %, the rows of C1 with `p23249.wf` in place of `p43563.wf`,
+  0 lost-fault, 2853 lost-clean, 1707 moved, 10286 changed; the old records of tier 2 do
+  not change; ledger entries for 371 `lost-clean` rows in six classes, 44 generated
+  programs of class D-GEN, 4 `moved` and 1 `changed`). Fact oracle tier 1 0 failures.
+  Sigdiff tier 1 0 rows with no entry (one `sig` entry of R0d). `ereview/ev.sh` on each
+  program that comes into scope and that the `ir` pipeline accepts, on the 4 programs
+  whose codes change, on the corpus files and the probes (669 programs): 0 HOLE (640
+  no fault, 24 held, 3 oldmiss: the pass-on probes, 2 both reject with no fault). On the
+  review sets of group D and of the once-after-multi family (`f17`, `f172`, `dreview`,
+  `dreview2`, `dreview3`, `c1sign`, `r67/v`, `r67b/att`, `r67b/v`, `c15review`,
+  `c16/att4`: 1936 programs): the same verdicts as the R0c binary (0 HOLE; the 2
+  `HOLE(AST-only)` of the AST engine are older). Cost: tier 1 `check` CPU time old /
+  `ir` 31.6 s / 51.5 s (1.63 times, 4267 programs in scope; R0c 1.55 on fewer
+  programs); `scale.rs` passes. The lost-clean rows of R0d say `signed_by =
+  "UNSIGNED: ..."`: the review of R0d signs them or rejects them.
+- Open: D5 and C8 (above). The tier-2 `new-fp` row `r2/oracle/runs/g5/p23249.wf` is a
+  precision loss that function bodies have at R0c too (issue #56): a copied frame of a
+  closure run holds a wildcard place of a reference parameter (`p2..`) that a later
+  change invalidates (W0301). A run of a capture in a clause of the closure is `many` even when one perform
+  runs the clause (D-CLAUSE-RUNS, as for a parameter of a function).
+
 #### R1 Standalone `typeck`, part 1
 
 - Depends on: C3 and one review round.
@@ -2206,7 +2371,7 @@ gate and the exit of its parent, limited to its group of differences.
 | F13.1 | F13 | the review of stage F13 part 1 (scratchpad `f13/review.md`): the default-AB release blockers AB-RC1, AB-RC2 (a regression), AB-RC3 (W0204 and W0301 with `rc` handles and heap slots), the ABC holes H-S1, H-RC1, K3-Made, H-LIN, the summary oracle over `puts` and `put_fns`, and the false positives FP-AB-RC, FP-S2, FP-K4 and `both(f, g)` (docs/ir.md 6.6, 6.9; probes `tests/gate/probes/fixes/f13b/`). The final check of group C then found H-ORD (a regression of the order flag of `both(f, g)`) and the old hole AB-RC1-join; both are fixed before group C goes on (probes `tests/gate/probes/fixes/f13c/`, claims F13C-ORD and F13C-JOIN). Old holes left (ledger `open-old`, issue #41): AB-RC1 through a handle in an `rc` object (`a13`), AB-RC3 `e17`, H-W9 (a closure stores its reference parameter into the object of a captured handle) | done (F13.1) |
 | F13.2 | F13 | lost-fault W0301 / none in group C, found by the signature diff of stage F13 part 2 (no gate probe has the shape). An unknown function value that runs in a body (the capture of a made closure that holds a function parameter of the maker, `let f = mk_call(push1, world); f()`; a function-value local that a closure gives a new value, `let set = \|\| { g = grow }; set(); g(world)`) is code of a caller. Its `lends_mut` of the reference parameter and of `a place of a caller` do not reach the summary of the body, so a caller of the body misses the change (`verify/p/v06_ret_paths.wf` `ret_passthrough`, the tier-2 mutant `m01258_43_loops.wf` `item_later_pub`; the summary oracle fails on a caller). Fix (docs/ir.md 6.8 "As built (follow-up F13.2)"): a made closure runs the values that it holds with the places of the run, a rebound local gets the values that the closure puts there, and the summary of a function body has the part `lends` for code that no caller gives; a value that a closure runs through a capture changes its environment (no W0312). Probes `tests/gate/probes/fixes/f13d/` (class UR, claim F13D-UR); the sigdiff rows of `mk2` (v06_ret_paths.wf) join the `sig` entry of a maker of a maker | done (F13.2) |
 | F16.1 | F16 | fallback (old pipeline) / group D: a continuation that a closure captures (`CaptureMode::Kont`, a `resume` in a closure that a clause makes; 40 tier-1 programs fall back), and the continuation summary of `ir` 6.7 (`analysis/cont.rs`). Claims R3RT4, V121, J2 and RT8 hold only through the fallback today. Do: a run of such a closure in its clause is a resume point at the run node; a closure that holds the continuation and leaves the clause is W0313 (stage F17) | open |
-| F16.2 | F16 | fallback / group D: a handler in a closure body (11 tier-1 programs; claim O3-8), a closure that a clause gives to the handled body (`resume(\|\| ..)`, 4), a `multi` resume point in a clause or a closure inside the handled body (2). Do: the clause runs of the closure body in its own facts; the states of the clause where the given closure runs | open |
+| F16.2 | F16 | fallback / group D: a handler in a closure body (11 tier-1 programs; claim O3-8), a closure that a clause gives to the handled body (`resume(\|\| ..)`, 4), a `multi` resume point in a clause or a closure inside the handled body (2). Do: the clause runs of the closure body in its own facts; the states of the clause where the given closure runs | open (a handler in a closure body: done at R0d) |
 | F16.3 | F16 | fallback / group D: `GIVES_BACK`, a call that runs a clause of an operation with a function value, a type parameter or a reference result and a clause that resumes (18 tier-1 programs; σ(Caller) at the call is the resumed values, and only code of a caller lends places of `Caller`), and a `multi` operation of a handler of a caller in a clause (14). Type parameters: done at stage F20 (an effect has no type parameter, so the test goes) | open (function values, references) |
 | F17.1 | F17 | lost-clean / group D: group D on, after the second independent review of group D (scratchpad `dreview2/review.md`). Fixed first: ORACLE-GAP-2 (A4 of copied callee and closure frames), D-MULTI-MID (a `multi` clause changes a place between two `resume`s while a copied callee or closure frame holds a reference into it; the copy of the frame is used at the `Copy` node), D-COPY-WAIT-CALL (the caller changes the place after the call, an old hole), FP-W0313-RUN (`clause::performs_cap`). The reviewer signed the 12 `lost-clean` rows; the `new-fp` `h6_option_closure.wf` is a precision loss of the groups A and C (issue to file). Then the default groups are A to D (`DEFAULT_GROUPS`), `done` gets F14 to F17.1, the 15 `open-old` entries of the old holes that group D closes go, the signature differences of the new bodies have `sig` entries, and the tests of the default groups change | done (F17.1) |
 | F17.2 | F17 | lost-fault W0312, W0301, W0302 / group D, after the third independent review of group D (scratchpad `dreview3/review.md`). ORACLE-GAP-3: the clause cover A5 of the fact oracle. D-FNVAL-ROW: a function item or a function parameter that runs in the handled body of a local handler of its row runs the clauses of the handler (`frames::value_effects`); a call in a closure body through a captured capability runs the clauses of its handler (`handlers::captured_calls`, also FP-W0805-FNVAL). D-ROW-MID (an old hole): a known callee of a `multi` re-entry through the row gets the copy of its frame. Probes `fixes/f17/fnval_row`, `fixes/f17/row_mid` | done (F17.2) |
@@ -2232,6 +2397,7 @@ gate and the exit of its parent, limited to its group of differences.
 | C3 | C2 | the switch of the defaults (`--facts=ir` with all groups, `--engine=ir`): no difference of the gate; the corpus markers give the `ir` result (`old:` for the old pipeline); the core IR targets O3-5, O3-6, R3RT2 and R3RT3 move to the corpus; the baselines `tests/gate/baseline-c3.jsonl` and `target/gate/baseline-c3-tier2.jsonl` (`tests/gate/baseline-c3-tier2.sha256`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %); fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `weft agree` on 220 programs; `sweep --n 2000 --seed-base 3000000` 0 accepted faults | done (C3) |
 | R0b | C3 | the fallbacks of a callee with no IR (C3, E6, P1, C1 with a type error), N1 and I1 (Phase R, R0b): a worst-case summary from the declaration, W0121, a handler with no clause passes the operation on. Fallbacks 331/7770 to 318/7382 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (R0b) |
 | R0c | R0b | the fallbacks A1, A2 and B1 (Phase R, R0c): W0204 for a reference through a local `rc` handle that is not sure to be a copy of the handle parameter of the store (`templates::same_object`), the region of a `resume` skips the runs of a clause in a task that W0314 rejects, rule 5 of the widening (a summary part below depth 8). Fallbacks 318/7382 to 312/7372 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 19 programs that come into scope | done (R0c) |
+| R0d | R0c | handlers in closure bodies (Phase R, R0d; D2, C5, and the two pass-on shapes of R0b): a handled body splices into the closure body and the clauses are parts of the facts of the closure (`closure_units`), the closure summary carries the code of the handlers in the terms of its interface, `clause::serving` for a handler with no clause for an operation (it closes three holes of the pipeline of R0c, `fixes/r0d/ph1`, `ph3`, `ph5`), a capability that a closure of a closure captures again, the sparing at `Post` when the rest of the handled body cannot abort (issue #57). D5 and C8 stay (design note in R0d). Fallbacks 312/7372 to 279/4981. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 669 programs that come into scope or change and on the review sets of group D and of the once-after-multi family. The lost-clean rows wait for the signature of the review | done (R0d) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -2304,6 +2470,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0b (tier 2, the defaults) | 47345 of 57393 | 43735 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1605 | 9467 | 10 (as C3) |
 | R0c (tier 1, the defaults) | 4172 of 4537 | 3603 (+1: the new corpus files 185 and 186; `t03_items.wf` leaves) | 248 (+2: `184_rc_handle_copy.wf`, `a13_nested_rc_rc_b.wf`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 101 (signed) | 125 | 450 (+1: `t03_items.wf`, ledgered) | 9 (the `edge` entry of issue #41 is gone) |
 | R0c (tier 2, the defaults) | 47355 of 57393 | 43731 | 88 | 12 (0.096 %, the rows of C1) | 2476 (each signed) | 1605 | 9471 (+4, ledgered) | 10 (as C3) |
+| R0d (tier 1, the defaults) | 4237 of 4569 | 3612 | 251 (+3: `188_captured_pass_on.wf`, `fixes/r0d/ph1`, `ph7`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 108 (+7, ledgered; `signed_by` UNSIGNED, the review signs) | 128 (+3, ledgered) | 460 (+10, ledgered) | 9 |
+| R0d (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %; `p43563.wf` leaves, `p23249.wf` comes, issue #56) | 2853 (+377; 371 in six classes of R0d, `signed_by` UNSIGNED) | 1707 | 10286 (ledgered) | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

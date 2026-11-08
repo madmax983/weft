@@ -1,0 +1,17 @@
+// Stage R0d (a capability captured again, review holes of a05_nested_closure.wf and a29_nested_closure_in_closure_rowfn.wf): three levels of closures capture the capability again (W0301).
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Ask { fn ask() { v.push(3); resume(4) } } in {
+        let f = || {
+            let g = || {
+                let h = || ask()
+                h()
+            }
+            g()
+        }
+        print(f())
+    }
+    print(r)
+}

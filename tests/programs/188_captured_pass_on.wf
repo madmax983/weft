@@ -1,0 +1,150 @@
+// A captured capability and a handler that passes an operation on (plan
+// stage R0d). A handler with no clause for an operation passes it on to the
+// handler of the effect around its `handle` (stage R0b); the facts run the
+// clause of the handler that serves it: through a captured capability, and
+// through a handler with no clause nested in another one. A closure that a
+// closure makes captures the capability again: a perform through it is a
+// perform through the capture of the outer closure.
+
+effect Log2 {
+    fn info(m: String)
+    fn warn(m: String)
+}
+effect Ask {
+    fn ask() -> u64
+    fn other() -> u64
+}
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn note() / Log2 { warn("x") }
+
+// The bad cases. A closure in the handled body of a handler with no clause
+// for `warn` performs it: the outer clause pushes to `v` while `r` is live.
+// The old pipeline misses it.
+// R0d: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: a read of a freed cell), stage R0d
+fn closure_pass_on() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { v.push(3); resume(()) }
+    } in {
+        handle Log2 { fn info(m) { print("inner"); resume(()) } } in {
+            let f = || warn("w")
+            f()
+        }
+    }
+    print(r)   //~ W0301 old:
+}
+
+// The same through a callee that the closure calls.
+// R0d: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: a read of a freed cell), stage R0d
+fn callee_pass_on() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { v.push(3); resume(()) }
+    } in {
+        handle Log2 { fn info(m) { print("inner"); resume(()) } } in {
+            let f = || note()
+            f()
+        }
+    }
+    print(r)   //~ W0301 old:
+}
+
+// The handler that serves `ask` ends with no `resume`: the frames of the
+// handled bodies unwind, and `l` is live.
+fn landing_pass_on() {
+    let n = handle Ask {
+        fn ask() { 7 }
+        fn other() { resume(1) }
+    } in {
+        handle Ask { fn other() { resume(2) } } in {
+            let l = Lk { id: 1 }
+            let x = ask()   //~ W0602
+            unlock(l)
+            x
+        }
+    }
+    print(n)
+}
+
+// A handler with no clause for `warn` inside another one: the operation
+// passes on to a caller, which can end it with no `resume`. The old
+// pipeline misses it.
+// R0d: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: a linear value that is not consumed), stage R0d
+fn nested_pass_on() / Log2 {
+    let l = Lk { id: 1 }
+    handle Log2 { fn info(m) { resume(()) } } in {
+        handle Log2 { fn info(m) { resume(()) } } in {
+            warn("x")   //~ W0602 old:
+        }
+    }
+    unlock(l)
+}
+
+// A closure that a closure makes performs through the capability again.
+fn capture_again() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Ask {
+        fn ask() { v.push(3); resume(4) }
+        fn other() { resume(0) }
+    } in {
+        let f = || {
+            let h = || ask()
+            h() + 1
+        }
+        print(f())
+    }
+    print(r)   //~ W0301
+}
+
+// The clean cases.
+fn nested_pass_on_ok() {
+    handle Log2 {
+        fn info(m) { print(m); resume(()) }
+        fn warn(m) { print(m); resume(()) }
+    } in {
+        handle Log2 { fn info(m) { print("a"); resume(()) } } in {
+            handle Log2 { fn info(m) { print("b"); resume(()) } } in {
+                warn("w")
+            }
+        }
+    }
+}
+
+fn capture_again_ok() {
+    handle Ask {
+        fn ask() { resume(4) }
+        fn other() { resume(0) }
+    } in {
+        let f = || {
+            let h = || ask()
+            h() + 1
+        }
+        print(f())
+    }
+}
+
+fn closure_pass_on_ok() {
+    let v = [1, 2]
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { v.push(3); resume(()) }
+    } in {
+        handle Log2 { fn info(m) { print("inner"); resume(()) } } in {
+            let f = || warn("w")
+            f()
+        }
+    }
+    print(v.len())
+}
+
+fn main() {
+    nested_pass_on_ok()
+    capture_again_ok()
+    closure_pass_on_ok()
+}

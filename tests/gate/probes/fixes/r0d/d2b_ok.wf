@@ -1,0 +1,9 @@
+// The same with no live reference: no error.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let v = [1, 2]
+    let f = || handle Ask { fn ask() { v.push(3); resume(0) } } in ask()
+    print(f())
+    let r = &v[0]
+    print(r)
+}

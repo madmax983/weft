@@ -1,0 +1,16 @@
+// Stage R0d (a capability captured again, review holes of a05_nested_closure.wf and a29_nested_closure_in_closure_rowfn.wf): a closure in a struct field that a callee runs (W0301).
+effect Log { fn log(m: i64) }
+struct H { f: fn() }
+fn call_h(h: &H) { let g = h.f; g() }
+fn main() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let f = || {
+            let h = H { f: || log(1) }
+            call_h(&h)
+        }
+        f()
+    }
+    print(r)
+}

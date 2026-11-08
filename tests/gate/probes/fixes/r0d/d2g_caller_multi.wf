@@ -1,0 +1,13 @@
+// A closure with an inner handler performs a `multi` operation of an outer handler; a `once` value is live across the run.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        let g = || take(v)
+        let h = || handle Ask { fn ask() { resume(1) } } in { if pick() { print(ask()) } }
+        h()
+        g()
+    }
+}

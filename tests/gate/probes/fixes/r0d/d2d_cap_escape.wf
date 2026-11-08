@@ -1,0 +1,9 @@
+// A capability of a handler inside a closure leaves its handler (W0313).
+effect Log2 { fn log2(m: String) }
+fn main() {
+    let f = || {
+        let g = handle Log2 { fn log2(m) { print(m); resume(()) } } in { || log2("late") }
+        g()
+    }
+    f()
+}

@@ -397,9 +397,9 @@ fn the_committed_caches_cover_tier_1() {
 
 /// The fact oracle (stage F9, `docs/ir.md` 8.5): a program in scope that the
 /// `ir` pipeline accepts runs with it and passes; a program that the `ir`
-/// pipeline rejects, and a program out of scope (a handler in a closure body,
-/// a fallback of stage F16), do not run. The child processes get
-/// `--fact-oracle`.
+/// pipeline rejects, and a program out of scope (a `multi` operation of a
+/// handler of a caller in a clause, a fallback of stage F16), do not run.
+/// The child processes get `--fact-oracle`.
 #[test]
 fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
     let on_thread = Settings {

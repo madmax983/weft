@@ -78,10 +78,12 @@ pub fn move_path(
     body: BodyId,
     place: &Place,
 ) -> Result<Option<(Key, Vec<PathStep>)>, AlphaError> {
+    // A captured capability is a part of the environment too (stage R0d):
+    // its field holds the value that stands for it (`factgen::env_value`).
     if let Some((_, _, mode)) = alpha::env_capture(p, body, place) {
         if !matches!(
             mode,
-            weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::ByMove
+            weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::ByMove | weft_ir::CaptureMode::Cap
         ) {
             return Ok(None);
         }
@@ -113,7 +115,7 @@ pub fn kept_whole(
     st: &State,
     place: &Place,
 ) -> Result<Option<Key>, AlphaError> {
-    if place.proj.len() != 1 || !cx.roots.is_instantiated(body) {
+    if place.proj.len() != 1 || !cx.roots.is_instantiated(alpha::unit_root(cx.p, body)) {
         return Ok(None);
     }
     let Some((_, _, weft_ir::CaptureMode::Kept)) = alpha::env_capture(cx.p, body, place) else {
@@ -391,7 +393,7 @@ pub fn place_value(
     // maker: its value in the state (the closure body runs with the values
     // of the maker, `docs/ir.md` 6.5).
     if let Some((_, _, weft_ir::CaptureMode::Kept)) = alpha::env_capture(cx.p, body, place) {
-        if cx.roots.is_instantiated(body) && !place.has_deref() {
+        if cx.roots.is_instantiated(alpha::unit_root(cx.p, body)) && !place.has_deref() {
             let a = alpha(cx, body, st, place)?;
             let paths: Option<Vec<(Key, Vec<PathStep>)>> = a
                 .places
@@ -1263,7 +1265,13 @@ pub fn term(
             // operation of a handler outside the closure; the node that runs
             // the closure runs the clause (plan stage F16).
             Some((_, e)) => perform_row(cx, body, st, e, *op, args, dest),
-            None => super::clause::perform_local(cx, body, st, (cap, *op, args), dest),
+            None => match super::clause::passes_to_caller(cx.p, body, cap, *op) {
+                // A handler with no clause for the operation passes it on,
+                // and no local handler serves it: an operation of a handler
+                // of a caller (stage R0d).
+                Some(e) => perform_row(cx, body, st, e, *op, args, dest),
+                None => super::clause::perform_local(cx, body, st, (cap, *op, args), dest),
+            },
         },
         TermKind::Resume {
             kont, arg, dest, ..
@@ -1802,6 +1810,12 @@ fn check_cap_apps(
             };
             let hs = super::clause::call_handlers(cx, body, &t);
             for q in caps {
+                // A capture of a capture of the closure body of the node
+                // (stage R0d): the node that runs the closure body runs the
+                // clause (`apply::main`).
+                if super::clause::env_cap_of(cx.p, cx.facts, cx.roots, q).is_some() {
+                    continue;
+                }
                 let h = match cx.roots.role(cx.facts.place(q).root) {
                     Some(crate::factgen::alpha::Role::Local(key)) => {
                         match cx.p.body(key.0).map(|x| x.kind) {
@@ -2036,7 +2050,7 @@ pub struct ValueOut {
 /// True if body `body` is a closure body whose facts are in the terms of
 /// its interface: the summary of the closure (`super::summarize::closure`).
 pub fn in_interface(cx: &Cx<'_>, body: BodyId) -> bool {
-    cx.p.closure_of(body).is_some() && !cx.roots.is_instantiated(body)
+    alpha::unit_closure(cx.p, body).is_some_and(|cb| !cx.roots.is_instantiated(cb))
 }
 
 /// The function values that a value at fact place `at` can be (`docs/ir.md` 6.6).

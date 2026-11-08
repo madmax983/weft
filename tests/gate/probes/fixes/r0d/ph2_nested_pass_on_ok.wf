@@ -1,0 +1,15 @@
+// Stage R0d: a handler with no clause for `warn` inside another one: the outermost handler serves it. No error (R0c: a fallback).
+effect Log2 {
+    fn info(m: String)
+    fn warn(m: String)
+}
+fn main() {
+    handle Log2 { fn info(m) { print(m); resume(()) }
+ fn warn(m) { print(m); resume(()) } } in {
+        handle Log2 { fn info(m) { print("a"); resume(()) } } in {
+            handle Log2 { fn info(m) { print("b"); resume(()) } } in {
+                warn("w")
+            }
+        }
+    }
+}

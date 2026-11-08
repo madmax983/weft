@@ -1,0 +1,15 @@
+// Stage R0d: a closure that a closure makes captures the capability again; the clause changes `v` while `r` is live (W0301).
+effect Ask { fn ask() -> u64 }
+fn cap_again() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Ask { fn ask() { v.push(3); resume(4) } } in {
+        let f = || {
+            let h = || ask()
+            h() + 1
+        }
+        print(f())
+    }
+    print(r)
+}
+fn main() { cap_again() }

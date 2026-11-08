@@ -1,0 +1,32 @@
+// Stage R0d (issue #57): a later `resume` of a `multi` clause runs the rest of the handled body again at `Post`. In `a1` and `a2` it can abort past the function (W0602 at the `handle`); in `a3` it cannot.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn maybe(n: u64) { if n > 1 { fail("x") } }
+fn a1() / fail {
+    let l = Lk { id: 1 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { maybe(2) }
+    }
+    unlock(l)
+}
+fn a2() / fail {
+    let l = Lk { id: 2 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { handle Ask { fn ask() { maybe(2); resume(1) } } in { print(ask()) } }
+    }
+    unlock(l)
+}
+fn a3() {
+    let l = Lk { id: 3 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { print(1) }
+    }
+    unlock(l)
+}
+fn main() {
+    handle Fail { fn fail(m) { print(m) } } in { a1() }
+    handle Fail { fn fail(m) { print(m) } } in { a2() }
+    a3()
+}

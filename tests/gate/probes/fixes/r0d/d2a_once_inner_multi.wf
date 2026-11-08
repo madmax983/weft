@@ -1,0 +1,14 @@
+// A closure with its own `multi` handler runs a `once` capture after the perform.
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = [1]
+    let g = || take(v)
+    let h = || {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+            g()
+        }
+    }
+    h()
+}

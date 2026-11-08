@@ -373,9 +373,10 @@ impl Em<'_> {
     /// environment; a `Kept` capture is the variable of the maker,
     /// [`Em::vars_in`]).
     fn base_var(&self, body: BodyId, place: &Place) -> Result<Option<VarId>, AlphaError> {
-        if let Some((_, k, mode)) = super::alpha::env_capture(self.p, body, place) {
+        if let Some((c, k, mode)) = super::alpha::env_capture(self.p, body, place) {
+            let cb = self.p.closures.get(c.index()).map_or(body, |d| d.body);
             return Ok(match mode {
-                weft_ir::CaptureMode::ByMove => self.vars.get(&VarKey::E(body, k)),
+                weft_ir::CaptureMode::ByMove => self.vars.get(&VarKey::E(cb, k)),
                 _ => None,
             });
         }
@@ -987,6 +988,13 @@ fn moved(em: &mut Em<'_>, n: NodeId, st: &State, q: &Place, al: &Alpha) -> R {
         em.facts
             .moved_part
             .extend(al.places.iter().map(|&m| (m, n)));
+        // A handled body or a clause inside the closure body takes the value
+        // out of the environment of the closure, a place of the frame below
+        // it (stage R0d): the node changes that place too (A3 of the summary
+        // oracle; the code of a clause gives it to the nodes that run it).
+        if em.p.closure_of(em.body).is_none() {
+            em.facts.lends_mut.extend(al.places.iter().map(|&m| (n, m)));
+        }
         if q.proj.len() > 1 {
             // Another part of the capture can still hold a linear value.
             let t = super::alpha::env_capture(em.p, em.body, q)
@@ -1169,6 +1177,15 @@ pub fn assign(
         // with no task keeps the read.
         if shares && !em.p.spawns.is_empty() {
             em.facts.reads_at.truncate(reads);
+            // A `Kept` source through a reference (`*env.k` of a `ByRef`
+            // capture, stage R0d): the literal reads the reference to find
+            // the cell.
+            if let Operand::Copy(q) | Operand::Move(q) = op {
+                if q.has_deref() {
+                    let al = em.alpha(st, q)?;
+                    em.facts.reads_at.extend(al.ptrs.iter().map(|&x| (n, x)));
+                }
+            }
         }
         if let Operand::Const(weft_ir::Const::Fn(f, _)) = op {
             let sim =
@@ -1421,11 +1438,12 @@ fn part(
 ) -> R {
     // A new value of a whole `ByMove` capture of a closure body: its `E`
     // variable gets a new value.
-    if let Some((_, ck, weft_ir::CaptureMode::ByMove)) =
+    if let Some((c, ck, weft_ir::CaptureMode::ByMove)) =
         super::alpha::env_capture(em.p, em.body, place)
     {
+        let cb = em.p.closures.get(c.index()).map_or(em.body, |d| d.body);
         if path.len() == 1 {
-            if let Some(e) = em.vars.get(&VarKey::E(em.body, ck)) {
+            if let Some(e) = em.vars.get(&VarKey::E(cb, ck)) {
                 let flat = v.flat();
                 em.facts.rebound_at.push((e, n));
                 if flat.empty {
@@ -5151,19 +5169,37 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     let (e, captured): (weft_ir::EffectId, Option<u32>) = match cap {
         weft_ir::CapOperand::Row(e) => (*e, None),
         weft_ir::CapOperand::Local(c) => {
-            let Some((k, e)) = crate::analysis::clause::captured_cap(em.p, em.tys, body, c) else {
-                return Err(AlphaError::Later(
-                    "a perform through a capability of a handler (stage F14)",
-                ));
-            };
-            let id = em
-                .tys
-                .effects()
-                .get(e.index())
-                .map(|d| d.identity.clone())
-                .unwrap_or_default();
-            em.hx.cap_performs.push((nodes.main, k, id));
-            (e, Some(k))
+            // A handler with no clause for the operation passes it on to a
+            // caller (stage R0d): a perform through the row.
+            if let Some(e) = crate::analysis::clause::passes_to_caller(em.p, body, c, *op) {
+                (e, None)
+            } else {
+                let Some((k, e)) = crate::analysis::clause::captured_cap(em.p, em.tys, body, c)
+                else {
+                    return Err(AlphaError::Later(
+                        "a perform through a capability of a handler (stage F14)",
+                    ));
+                };
+                // The handler of the capture passes the operation on, and no
+                // local handler serves it: the effect leaves the function
+                // through the row too.
+                let served = super::alpha::unit_closure(em.p, body)
+                    .and_then(|cb| em.p.closure_of(cb))
+                    .and_then(|(cl, _)| crate::analysis::clause::capture_handler(em.p, cl, k))
+                    .and_then(|h| crate::analysis::clause::serving(em.p, h, *op));
+                if served.is_none() {
+                    (e, None)
+                } else {
+                    let id = em
+                        .tys
+                        .effects()
+                        .get(e.index())
+                        .map(|d| d.identity.clone())
+                        .unwrap_or_default();
+                    em.hx.cap_performs.push((nodes.main, k, id));
+                    (e, Some(k))
+                }
+            }
         }
     };
     // A handler can run a function value of an argument, drop it or run it
@@ -5177,6 +5213,11 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     }
     let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, e, *op, args)?;
     let n = nodes.main;
+    // The perform reads the capability: a field of the environment for a
+    // captured capability (stage R0d), or a capability local.
+    if let weft_ir::CapOperand::Local(c) = cap {
+        operand_moves(em, n, st, &Operand::Copy(c.clone()), false, false)?;
+    }
     for op in args {
         operand_moves(em, n, st, op, false, true)?;
         // The handler can read through the argument (hole N1).
@@ -5723,10 +5764,16 @@ fn clause_run_in_closure(
     (op, args): (weft_ir::OpIdx, &[Operand]),
 ) -> R {
     let body = em.body;
-    let Some((c, _)) = em.p.closure_of(body) else {
+    // A perform in a handled body or a clause inside the closure body names
+    // the environment of the closure too (stage R0d).
+    let Some((c, _)) = super::alpha::unit_closure(em.p, body).and_then(|cb| em.p.closure_of(cb))
+    else {
         return Ok(());
     };
-    let Some(h) = crate::analysis::clause::capture_handler(em.p, c, k) else {
+    // A handler with no clause for the operation passes it on (stage R0d).
+    let Some(h) = crate::analysis::clause::capture_handler(em.p, c, k)
+        .and_then(|h| crate::analysis::clause::serving(em.p, h, op))
+    else {
         return Ok(());
     };
     let Some(cb) = crate::analysis::clause::clause_of(em.p, h, op) else {

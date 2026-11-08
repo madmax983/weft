@@ -1,0 +1,19 @@
+// Stage R0d: a closure in the handled body of a handler with no clause for `warn` performs it. The outer clause changes `v` while `r` is live (W0301). The old pipeline and the ir pipeline of R0c miss it.
+effect Log2 {
+    fn info(m: String)
+    fn warn(m: String)
+}
+fn main() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { v.push(3); resume(()) }
+    } in {
+        handle Log2 { fn info(m) { print("inner"); resume(()) } } in {
+            let f = || warn("w")
+            f()
+        }
+    }
+    print(r)
+}

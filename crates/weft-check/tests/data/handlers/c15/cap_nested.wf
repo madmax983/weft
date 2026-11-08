@@ -1,4 +1,4 @@
-// Stage C1.5: a handler in a closure body stays with the old pipeline (group D fallback).
+// Stage C1.5: a handler in a closure body is in scope from stage R0d: the run of the closure is a `multi` point.
 effect Pick { multi fn pick() -> bool }
 effect Ask { fn ask() -> bool }
 fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
@@ -7,7 +7,7 @@ fn main() {
     handle Pick { fn pick() { resume(true); resume(false) } } in {
         let t = mk_v()
         let g = || print(take_v(t))
-        let h = || { handle Ask { fn ask() { resume(true) } } in { if pick() { print(1) } }; g() }   //~ W0503
-        h()
+        let h = || { handle Ask { fn ask() { resume(true) } } in { if pick() { print(1) } }; g() }
+        h()   //~ W0502 W0503
     }
 }

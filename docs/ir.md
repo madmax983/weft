@@ -1710,6 +1710,23 @@ Two parts of the analysis do not find the rows of a body. They are safe only bec
 A test pins each of these fallbacks (`ir_handlers.rs`), so a change of a fallback breaks
 the test. If a fallback goes away, the rows of the body must be found first.
 
+As built (plan stage R0d): the second fallback is gone. The rows of a closure body are
+the rows of each body that splices into it (6.5, "Handlers in closure bodies"):
+`captured_multi_nodes` reads a handled body and a clause inside the closure body too
+(their performs through a captured capability name the environment of the closure
+through an upvar local), `Cycles::of`, `add_handlers`, `add_rows` and `add_captured` get
+the bodies of the closure (`closure_units`), and the walk of G2 goes through the spliced
+graph of the closure. A `multi` handler inside the closure body re-runs the rest of its
+handled body there: the runs of the values of the interface after such a node are in a
+cycle (E2), so they are `many`. A clause of a handler inside the closure body is a body
+of the closure: its runs of the values of the interface are `many`, as in a function
+(D-CLAUSE-RUNS). Part `multi` of the closure summary (E4) has each `multi_at` row of the
+facts of the closure, also of its clauses; a perform of an operation of a local handler
+of the closure is no such row (`clause_multi`), so a run of the closure does not resume
+more than once for it (O3-8). The first fallback (a row in a clause, also through a
+`multi` local handler: "a `multi` resume of a node in a clause or a closure inside the
+handled body") stays: see the design note of R0d in the plan.
+
 As built (stage C1.6, issue #71: holes C1-HA, C1-HB and C1-HC of the review of C1.5).
 The three holes are older than C1. In each hole, a `once` closure runs a second time
 after a `multi` operation resumes two times, and the `ir` pipeline accepted the program.
@@ -2105,7 +2122,17 @@ Other bodies with no IR (plan stage B12), each with its reason:
   the capability of the site, or `Row(E)` if no handler of the function is around the
   `handle`. V11 accepts that `Row` operand in such a handled body. A closure in the
   handled body and a handler with no clause inside another one with no clause keep the
-  old capability (the old pipeline checks such a program).
+  old capability. As built (plan stage R0d): the fact generator finds the handler that
+  serves the operation (`clause::serving`): the handler of the capability if it has a
+  clause for the operation, else the handler of the effect around its `handle` (the
+  first environment of that chain that adds the effect; for a closure environment, the
+  handler of the capture), and so on. If no local handler serves it, the operation
+  passes on to a caller: a perform through the row (`clause::passes_to_caller`). The
+  analysis, the templates and the abort destinations (`frames::reach`) use that
+  handler. Before R0d the destinations took the innermost handler of the effect: a
+  clause of the outer handler that ends with no `resume` gave no abort edge (a hole of
+  R0b, `fixes/r0d/ph3_landing_pass_on.wf`), and a closure that performs the operation
+  ran no clause (a hole that the old pipeline has too, `ph1_closure_pass_on.wf`).
 - An assignment whose left side is not a place is W0112 of `typeck` (a type error). A
   constructor as a value is W0101 or W0104 (5.23). The builder never sees these bodies.
 
@@ -3056,6 +3083,71 @@ puts it in the default set):
   gives `body_multi` if a node of the handled body has `multi_at`. As built (plan
   stage R0c): a run of the clause in the body of a task that W0314 rejects runs on
   another task, so it starts no part of the region (6.9, W0314).
+- Handlers in closure bodies (plan stage R0d). The bodies of a closure are the closure
+  body and each handled body, clause and scope body whose root is the closure body
+  (`alpha::unit_root`: the parent chain up to a function, a test or a closure body;
+  `factgen::closure_units`). A handled body splices into the closure body as into a
+  function body: the facts of the summary of the closure (`closure_summary`) and the
+  instantiated facts in the component of the function (`emit_closure`) add the nodes of
+  each body that splices into the closure body and the splice edges, with the abort
+  destinations of `Frames::of_bodies` of the bodies of the closure. The analysis of the
+  closure body runs each `handle` as in a function body (`clause::handle_run`), with the
+  re-entry edges of the rows of each spliced body and the cycles of the handlers of the
+  closure (`Cycles::add_handlers`). Then the facts of each clause of the closure come
+  (`emit_clause`, from the states that the analysis of the closure body found), and the
+  passes over the clauses run on them: `project`, the owners of the roots,
+  `continuations` and `late_uses` in the facts of the summary; in the component of the
+  function the tables of the handlers of the closure go into the tables of the function
+  (`merge_handlers`: runs, resumes, ids, `Exit` and `Post` nodes, landings, wait tasks,
+  W0314 bodies), so the passes of the function cover them. A closure that a clause of
+  the closure makes starts from the states of that clause. A nested body names the
+  environment of the closure through an upvar local: `alpha::env_capture` follows the
+  upvar chain to the environment local, and the tests of the instantiation
+  (`kept_whole`, `place_value`, `in_interface`) read the root of the body. The function
+  facts do not frame or emit a body of a closure (`framed` and the clauses of the
+  function skip them). A run of a clause of an inner handler in a closure body maps to
+  the node that runs the closure (`Region::starts`).
+- What the summary of such a closure carries, in the terms of its interface: the
+  changes, reads and lends of the code of each clause at the nodes that run it (the
+  `pre` part at the perform, the `post` part at `Post`), with σ of each perform; the
+  effects that leave the closure (`escapes_at` of the facts, also of the clauses); a
+  perform through a captured capability (part `performs`, `Cap(k)`), also from a
+  handled body or a clause of the closure; the aborts of the nested bodies
+  (`summarize::nested_aborts`: an `assert`, and a failure of a callee unless the `Fail`
+  handler of the call is a handler of the closure, whose clause cannot resume, W0504);
+  part `multi` from the `multi_at` rows (5.20); the runs of the values of the interface
+  in a clause, each `many`; a reference into a local of a nested body as a place of the
+  frame (`closure_place`). W0313 of a handler in the closure body comes from the
+  instantiated facts, as in a function body (`clause::Escape`).
+- A captured capability in a closure that a closure makes (plan stage R0d, the reason
+  "a capability or a continuation in a closure"). α of a `Cap` field of an environment
+  is the place of the field (a part of the environment root, as for a `ByMove`
+  capture), and its value holds that place as a capability value (`factgen::env_value`).
+  A run node in the closure body that applies a summary with `Cap(k)` whose σ is such a
+  field (`clause::env_cap_of`) is a perform through the capture of the closure body
+  itself: the summary of the closure body gets `Cap(j)` (`apply::main`), and the node
+  that runs it runs the clause; in the instantiated facts the run node runs the clauses
+  of the handler of the capture (`captured_calls`, also for a late run at `Ret`). A run
+  of a function value in a closure body is a row of `add_captured` (E2) when a closure
+  that the body makes captures a capability of a `multi` handler again
+  (`frames::recaptures_multi`). A perform through a captured capability reads its field.
+  A `Kont` capture stays with the old pipeline (stage R0g).
+- Covers and a sparing rule of plan stage R0d. (1) A handled body or a clause that moves
+  a value out of the environment of its closure lends that place at the node: the
+  machine takes the value out of a frame below (A3 of the summary oracle). (2) A `Kept`
+  source of a closure literal through a reference (`*env.k`) reads the reference, also
+  in a program with tasks. (3) The timeout of `with_timeout` unwinds the frame of the
+  block first, then the clause of the local `Fail` handler runs: the reads and the
+  changes of the clause are at the `UnwindExit` nodes of the block too
+  (`handlers::timeout_unwind_nodes`). (4) `Post` of a `multi` handler runs the rest of
+  the handled body again; if no node of the handled body (or of a body that splices into
+  it, before the projection of the clauses: a node that runs a clause of another handler
+  counts) can abort in the facts, the values outside the handled body are spared at
+  `Post`, as at a perform of the handler (ADR 0005; `handlers::quiet_reruns`, issue
+  #57). The static destinations count each run of a function value as an abort past
+  the function; the facts have the summary of the value. The `resume` itself still can
+  abort (ADR 0005), so a value inside the handled body that is live across it stays
+  W0602.
 - The frames of the clauses end at `Post` and at `Landing`: `releases_at` of the
   roots of the locals of the clauses (`K(h)` of 6.3 in this form).
 - Parts of stage F15 in a first form: the value of the `handle` binds at the

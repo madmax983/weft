@@ -7742,16 +7742,6 @@ stage = "F20.1"
 
 [[entry]]
 class = "new-fp"
-reason_class = "precision"
-issue = 57
-files = [
-    "r2/oracle/runs/g7/p43563.wf",
-]
-reason = "group N2 of the second review of group F, the row that stays after stage C1: the code of the clause after `resume(true)` runs at the `Post` node, and its second `resume` can abort (each `resume` can abort, ADR 0005), so the linear `lk2` with no `on abort` is live across the `handle` (W0602). The continuation (the rest of the handled body) cannot abort; a precise rule needs the aborts of the continuation (issue #57, D2). The run is clean"
-stage = "F20"
-
-[[entry]]
-class = "new-fp"
 reason_class = "stricter"
 issue = 57
 files = [
@@ -8174,3 +8164,596 @@ files = ["r3/oracle/sweep3/callee__task_result.wf"]
 codes = ["W0313", "W0805"]
 reason = "stage R0c (reason A2 of the scope report): a task in a scope runs `mk_asker()`, whose closure performs `Ask`, inside a local `handle Ask`; the task gives the closure back through `join`, and `main` runs it after the `handle`. Before R0c the program went to the old pipeline. Both pipelines give W0314 at the task (15). The old pipeline gives W0313 (the closure escapes its handler, 15); the `ir` pipeline gives W0805 at the run of the closure (16: `main` performs `Ask` and no handler handles it), the place where the run faults with no handler. Rejected in both"
 stage = "R0c"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/187_closure_handlers.wf"]
+codes = ["W0503", "W0602"]
+reason = "stage R0d (reason D2 of the scope report): the corpus file of handlers in closure bodies. The `ir` pipeline gives the markers of the bad cases, as the old pipeline does. It accepts the clean cases where the old pipeline gives W0602 (`fail_inside`: the `Fail` handler is inside the closure, so a run of the closure cannot abort) and W0503 W0602 (`inner_multi`: a `multi` operation of a handler in the closure does not leave it, O3-8). The interpreter runs `main` (the clean cases) with no fault. Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/188_captured_pass_on.wf"]
+codes = ["W0301", "W0602"]
+reason = "stage R0d (the partial handlers of R0b, reason C5): the corpus file of a handler with no clause for an operation (the handler that serves it, `clause::serving`) and of a captured capability that a closure captures again. The `ir` pipeline gives W0301 in `closure_pass_on` and `callee_pass_on` and W0602 in `nested_pass_on`, which the old pipeline misses: the clause of the outer handler changes `v` while `r` is live, and a caller ends the operation with no `resume` while `l` is live (`fixes/r0d/ph1`, `ph5`, `ph7` fault at run time). The other markers are the same. Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0d/d2a_once_inner_multi.wf"]
+codes = ["W0302"]
+reason = "stage R0d (reason D2): a closure with its own `multi` handler runs a `once` capture after the perform. The `ir` pipeline gives W0302 at the run of `g` in the handled body (the re-entry of the `multi` handler moves `g` again) and W0502 at the run of the closure `h` (its summary runs the capture `g` more than once); the old pipeline gives W0502 at the run of `g`. The interpreter faults (a value used after it was moved). Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/verify/s5/R2c/p/o4.wf", "tests/gate/probes/verify/s5/R2c/p/o6.wf"]
+codes = ["W0601", "W0602"]
+reason = "stage R0d (reason D2): handlers in closure bodies come into scope. The `ir` pipeline gives W0601 at the end of the frame where the linear value goes away (the closure body, or the function after a clause that ends with no `resume`), the old pipeline at the statement that moves it into the closure; and W0602 at the perform or the call whose clause aborts. The same codes and counts. Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/verify/s5/R2c/repro/V1_spared_by_value_capture.wf"]
+codes = ["W0601"]
+reason = "stage R0d (reason D2): a clause of an inner handler performs an operation of an outer local handler whose clause ends with no `resume`. The `ir` pipeline gives W0602 at the perform of the inner operation (the abort of the outer clause goes past it) and W0601 at the end of the function (on the path of that abort `l` is never consumed); the old pipeline gives W0602 at the perform of `ask`. The interpreter faults (a linear value with no `on abort`). Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/oracle/repro/O3-8_fp_closure_inner_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/f1_closure_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/f3_apply_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/f5.wf",
+    "tests/gate/probes/r2/oracle/fp/W0503_p2145.wf",
+]
+finding = "O3-8"
+reason = "stage R0d (reason D2): a closure with its own handler of a `multi` operation. The operation cannot leave the closure, so a run of the closure is no `multi` point and no abort point of the caller: the summary of the closure has no `multi` and no abort for a perform of a local handler of the closure (`clause_multi`, docs/ir.md 5.20, R0d). The old pipeline gives W0503 and W0602 at the run of the closure (O3-8, a false positive of the old pipeline); in `W0503_p2145.wf` the clause does not even resume. Each body with a handler that can resume more than once and a live linear value inside the handled body is still W0503 (`fixes/r0d/d2e_once_local_multi.wf`)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0d/d2c_fail_inside.wf"]
+reason = "stage R0d (reason D2): the `Fail` handler is inside the closure, its clause cannot resume (W0504), so it ends the `handle` with its value and a run of the closure cannot abort (`summarize::nested_aborts`). The old pipeline gives W0602 for the linear value that is live across the run. With the `Fail` handler outside the closure the run can abort, and both pipelines give W0602 (`d2c_fail_outside.wf`)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/verify/s5/p/j1_shared_closure_cells.wf"]
+reason = "stage R0d (reason C5): the block of `with_timeout` captures the capability of `Fail`, and the closures that it makes capture it again. A task of the outer scope takes a closure that owns the linear `tx` (two `ByMove` captures on the way). When the timeout aborts the block, nothing of the block frame holds `tx`: the task owns it, and the scope waits for the task before its end. The old pipeline gives W0405 (the block frees `tx` while a task reads it); the interpreter runs it with no fault on each seed"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "sig"
+parts = ["raises", "task_effects", "multi", "reaches", "reach_repeats", "muts", "pins"]
+files = [
+    "crates/weft-interp/tests/programs/abort_block_cells.wf",
+    "tests/gate/probes/r2/redteam/p/r_jumps.wf",
+    "tests/gate/probes/r3/oracle/probes/f1_closure_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/f3_apply_internal_multi.wf",
+    "tests/gate/probes/r3/oracle/probes/i5_kept_clause.wf",
+    "tests/gate/probes/verify/partb/S3/p/r12d.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/ip5_a.wf",
+    "tests/gate/probes/verify/s5/p/j1_shared_closure_cells.wf",
+]
+reason = "stage R0d: programs with a handler in a closure body come into scope; the differences are of classes that earlier entries give for programs in scope. raises: the timeout of `with_timeout` is the effect `Fail` of the row (`[Clock, Fail]`), not a failure of the runtime, and a local `Fail` handler stops it (`ip5_a` `nested`); a `scope` with no task does not raise (stage C1.5, `r_jumps` `scope_cond_break`). task_effects (class F19-SIG-TASKEFF): a task that W0314 rejects gives no effect (`r12d`), and a standard effect of a task goes to the root handlers of the task (`abort_block_cells` `in_task`, `j1`); pins: the old inference pins a task whose closure a closure made, the `ir` pipeline follows the closure (`j1`). multi, reaches, reach_repeats (stage C1.5, G5): a run of a function value of a parameter is code of a caller, so the summary of `call_all` and `call_h` has no `multi` part of its own; muts (stage F19): a `join` changes the place of the handle (`join_it`, C5 of the fact oracle)"
+stage = "R0d"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/r0d/ra1_resume_aborts.wf"]
+codes = ["W0602"]
+reason = "stage R0d (issue #57): a later `resume` of a `multi` clause runs the rest of the handled body again, and that rest can fail past the function. The `ir` pipeline gives W0602 at the `handle` (its `Post` node runs the code after the first `resume`); the old pipeline at the call that can fail. The same codes and counts. Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g3/p5393.wf",
+    "r2/oracle/runs/g3/p7035.wf",
+    "r3/oracle/runs/g3a/p1206.wf",
+    "r3/oracle/runs/g3a/p1648.wf",
+    "r3/oracle/runs/g3a/p2263.wf",
+    "r3/oracle/runs/g3a/p2332.wf",
+    "r3/oracle/runs/g3a/p2880.wf",
+    "r3/oracle/runs/g3a/p3098.wf",
+    "r3/oracle/runs/g3a/p3181.wf",
+    "r3/oracle/runs/g3a/p3531.wf",
+    "r3/oracle/runs/g3a/p3887.wf",
+    "r3/oracle/runs/g3a/p3950.wf",
+    "r3/oracle/runs/g3a/p4160.wf",
+    "r3/oracle/runs/g3a/p4710.wf",
+    "r3/oracle/runs/g3a/p5326.wf",
+    "r3/oracle/runs/g3a/p5598.wf",
+    "r3/oracle/runs/g3a/p6175.wf",
+    "r3/oracle/runs/g3a/p6594.wf",
+    "r3/oracle/runs/g3b/p10328.wf",
+    "r3/oracle/runs/g3b/p10775.wf",
+    "r3/oracle/runs/g3b/p10874.wf",
+    "r3/oracle/runs/g3b/p10928.wf",
+    "r3/oracle/runs/g3b/p11092.wf",
+    "r3/oracle/runs/g3b/p11427.wf",
+    "r3/oracle/runs/g3b/p11719.wf",
+    "r3/oracle/runs/g3b/p12064.wf",
+    "r3/oracle/runs/g3b/p12144.wf",
+    "r3/oracle/runs/g3b/p12295.wf",
+    "r3/oracle/runs/g3b/p12371.wf",
+    "r3/oracle/runs/g3b/p12468.wf",
+    "r3/oracle/runs/g3b/p12847.wf",
+    "r3/oracle/runs/g3b/p13313.wf",
+    "r3/oracle/runs/g3b/p13944.wf",
+    "r3/oracle/runs/g3b/p14358.wf",
+    "r3/oracle/runs/g3b/p14360.wf",
+    "r3/oracle/runs/g3b/p14769.wf",
+    "r3/oracle/runs/g3b/p14835.wf",
+    "r3/oracle/runs/g3b/p14935.wf",
+    "r3/oracle/runs/g3b/p15192.wf",
+    "r3/oracle/runs/g3b/p16124.wf",
+    "r3/oracle/runs/g3b/p16474.wf",
+    "r3/oracle/runs/g3b/p17890.wf",
+    "r3/oracle/runs/g3b/p17935.wf",
+    "r3/oracle/runs/g3b/p17960.wf",
+    "r3/oracle/runs/g3b/p18014.wf",
+    "r3/oracle/runs/g3b/p18640.wf",
+    "r3/oracle/runs/g3b/p18860.wf",
+    "r3/oracle/runs/g3b/p19516.wf",
+    "r3/oracle/runs/g3b/p19637.wf",
+    "r3/oracle/runs/g3b/p19769.wf",
+    "r3/oracle/runs/g3b/p20653.wf",
+    "r3/oracle/runs/g3b/p21216.wf",
+    "r3/oracle/runs/g3b/p21501.wf",
+    "r3/oracle/runs/g3b/p22516.wf",
+    "r3/oracle/runs/g3b/p23122.wf",
+    "r3/oracle/runs/g3b/p23179.wf",
+    "r3/oracle/runs/g3b/p23445.wf",
+    "r3/oracle/runs/g3b/p23751.wf",
+    "r3/oracle/runs/g3b/p24251.wf",
+    "r3/oracle/runs/g3p/p40754.wf",
+    "r3/oracle/runs/g3p/p40930.wf",
+    "r3/oracle/runs/g3p/p41469.wf",
+    "r3/oracle/runs/g3p/p42476.wf",
+    "r3/oracle/runs/g3p/p42624.wf",
+    "r3/oracle/runs/g3p/p42976.wf",
+    "r3/oracle/runs/g3p/p43269.wf",
+    "r3/oracle/runs/g3p/p43296.wf",
+    "r3/oracle/runs/g3p/p43358.wf",
+    "r3/oracle/runs/g3p/p44040.wf",
+    "r3/oracle/runs/g3p/p44113.wf",
+    "r3/oracle/runs/g3p/p44300.wf",
+    "r3/oracle/runs/g3p/p44478.wf",
+    "r3/oracle/runs/g3p/p44549.wf",
+    "r3/oracle/runs/g3p/p44590.wf",
+    "r3/oracle/runs/g3p/p45969.wf",
+    "r3/oracle/runs/g3p/p46589.wf",
+    "r3/oracle/runs/g3p/p46824.wf",
+    "r3/oracle/runs/g3p/p48267.wf",
+    "r3/oracle/runs/g3p/p48344.wf",
+    "r3/oracle/runs/g3p/p48363.wf",
+    "r3/oracle/runs/g3p/p48887.wf",
+    "r3/oracle/runs/g3p/p48970.wf",
+    "r3/oracle/runs/g3p/p49217.wf",
+    "r3/oracle/runs/g3p/p49376.wf",
+    "r3/oracle/runs/g3p/p49744.wf",
+    "r3/oracle/runs/g3p/p49765.wf",
+    "r3/oracle/runs/g3p/p49872.wf",
+    "r3/oracle/runs/t3/p288.wf",
+    "verify/s5/R3a/h_gen3/p70090.wf",
+    "verify/s5/R3a/h_gen3/p70241.wf",
+    "verify/s5/R3a/h_gen3/p70592.wf",
+]
+reason = "stage R0d, tier 2 (91 programs): class R0D-T2-MULTI (O3-8, issue #12): a closure with its own handler of a `multi` operation, or a run of it. The operation does not leave the closure, so a run of the closure is no `multi` point and no abort point of the caller; the old pipeline gives W0503 and W0602 at the run (and the W0301, W0601 or W0405 of the same programs are of the classes below). Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g1/p359.wf",
+    "r2/oracle/runs/g2/p2861.wf",
+    "r2/oracle/runs/g3/p5434.wf",
+    "r2/oracle/runs/g3/p6471.wf",
+    "r2/oracle/runs/g5/p22441.wf",
+    "r2/oracle/runs/g7/p41115.wf",
+    "r2/oracle/runs/g7/p42976.wf",
+    "r3/oracle/runs/g3a/p1178.wf",
+    "r3/oracle/runs/g3a/p1474.wf",
+    "r3/oracle/runs/g3a/p1573.wf",
+    "r3/oracle/runs/g3a/p2043.wf",
+    "r3/oracle/runs/g3a/p3113.wf",
+    "r3/oracle/runs/g3a/p3465.wf",
+    "r3/oracle/runs/g3a/p3611.wf",
+    "r3/oracle/runs/g3a/p4476.wf",
+    "r3/oracle/runs/g3a/p4727.wf",
+    "r3/oracle/runs/g3a/p5542.wf",
+    "r3/oracle/runs/g3a/p5649.wf",
+    "r3/oracle/runs/g3a/p5883.wf",
+    "r3/oracle/runs/g3b/p11414.wf",
+    "r3/oracle/runs/g3b/p12560.wf",
+    "r3/oracle/runs/g3b/p12591.wf",
+    "r3/oracle/runs/g3b/p12611.wf",
+    "r3/oracle/runs/g3b/p13220.wf",
+    "r3/oracle/runs/g3b/p13376.wf",
+    "r3/oracle/runs/g3b/p13725.wf",
+    "r3/oracle/runs/g3b/p14965.wf",
+    "r3/oracle/runs/g3b/p15743.wf",
+    "r3/oracle/runs/g3b/p15928.wf",
+    "r3/oracle/runs/g3b/p16142.wf",
+    "r3/oracle/runs/g3b/p16637.wf",
+    "r3/oracle/runs/g3b/p16931.wf",
+    "r3/oracle/runs/g3b/p18216.wf",
+    "r3/oracle/runs/g3b/p19870.wf",
+    "r3/oracle/runs/g3b/p20624.wf",
+    "r3/oracle/runs/g3b/p20854.wf",
+    "r3/oracle/runs/g3b/p21473.wf",
+    "r3/oracle/runs/g3b/p22006.wf",
+    "r3/oracle/runs/g3b/p22048.wf",
+    "r3/oracle/runs/g3b/p22240.wf",
+    "r3/oracle/runs/g3b/p22461.wf",
+    "r3/oracle/runs/g3b/p23339.wf",
+    "r3/oracle/runs/g3b/p23690.wf",
+    "r3/oracle/runs/g3b/p23990.wf",
+    "r3/oracle/runs/g3b/p24578.wf",
+    "r3/oracle/runs/g3p/p40567.wf",
+    "r3/oracle/runs/g3p/p40641.wf",
+    "r3/oracle/runs/g3p/p41966.wf",
+    "r3/oracle/runs/g3p/p42928.wf",
+    "r3/oracle/runs/g3p/p43941.wf",
+    "r3/oracle/runs/g3p/p44834.wf",
+    "r3/oracle/runs/g3p/p45029.wf",
+    "r3/oracle/runs/g3p/p45485.wf",
+    "r3/oracle/runs/g3p/p45829.wf",
+    "r3/oracle/runs/g3p/p47638.wf",
+    "r3/oracle/runs/g3p/p48114.wf",
+    "r3/oracle/runs/g3p/p49206.wf",
+    "r3/oracle/runs/t3/p16.wf",
+    "r3/oracle/runs/t3/p21.wf",
+    "verify/s5/R3a/h_gen3/p70164.wf",
+]
+reason = "stage R0d, tier 2 (60 programs): class R0D-T2-ABORT: a closure whose handler is inside it (a `Fail` handler, or a clause of a user effect that resumes, or one that ends the `handle` with a value): a run of the closure does not abort past it (`summarize::nested_aborts`, the clause-run code of `emit_closure`); the old pipeline gives W0602 for a linear value that is live across the run. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g5/p22276.wf",
+    "r2/oracle/runs/g7/p42056.wf",
+    "r3/oracle/runs/g3a/p1332.wf",
+    "r3/oracle/runs/g3a/p1481.wf",
+    "r3/oracle/runs/g3a/p1523.wf",
+    "r3/oracle/runs/g3a/p2583.wf",
+    "r3/oracle/runs/g3a/p2993.wf",
+    "r3/oracle/runs/g3a/p3525.wf",
+    "r3/oracle/runs/g3a/p3617.wf",
+    "r3/oracle/runs/g3a/p3729.wf",
+    "r3/oracle/runs/g3a/p5257.wf",
+    "r3/oracle/runs/g3a/p5505.wf",
+    "r3/oracle/runs/g3a/p5904.wf",
+    "r3/oracle/runs/g3b/p11180.wf",
+    "r3/oracle/runs/g3b/p13637.wf",
+    "r3/oracle/runs/g3b/p13711.wf",
+    "r3/oracle/runs/g3b/p13859.wf",
+    "r3/oracle/runs/g3b/p15849.wf",
+    "r3/oracle/runs/g3b/p16321.wf",
+    "r3/oracle/runs/g3b/p17091.wf",
+    "r3/oracle/runs/g3b/p18346.wf",
+    "r3/oracle/runs/g3b/p19427.wf",
+    "r3/oracle/runs/g3b/p20280.wf",
+    "r3/oracle/runs/g3b/p21012.wf",
+    "r3/oracle/runs/g3b/p21957.wf",
+    "r3/oracle/runs/g3b/p23423.wf",
+    "r3/oracle/runs/g3p/p41049.wf",
+    "r3/oracle/runs/g3p/p41109.wf",
+    "r3/oracle/runs/g3p/p41675.wf",
+    "r3/oracle/runs/g3p/p43007.wf",
+    "r3/oracle/runs/g3p/p43603.wf",
+    "r3/oracle/runs/g3p/p43790.wf",
+    "r3/oracle/runs/g3p/p43943.wf",
+    "r3/oracle/runs/g3p/p45647.wf",
+    "r3/oracle/runs/g4p/p27529.wf",
+    "r3/oracle/runs/t3/p138.wf",
+    "r3/oracle/runs/t3/p193.wf",
+    "verify/quality/gen/p/g01194.wf",
+]
+reason = "stage R0d, tier 2 (38 programs): class R0D-T2-ONCE: a closure that moves a linear value and that a callee runs on each path (`apply`, a `loop` with `break`): the summary of the callee runs it once; the old pipeline gives W0601 (a closure that can go out of scope with no call). Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g5/p20704.wf",
+    "r2/oracle/runs/g6/p30911.wf",
+    "r2/oracle/runs/g6/p33246.wf",
+    "r2/oracle/runs/g7/p40844.wf",
+    "r3/oracle/runs/g1/p101263.wf",
+    "r3/oracle/runs/g3a/p1336.wf",
+    "r3/oracle/runs/g3a/p4145.wf",
+    "r3/oracle/runs/g3b/p12039.wf",
+    "r3/oracle/runs/g3b/p12122.wf",
+    "r3/oracle/runs/g3b/p13882.wf",
+    "r3/oracle/runs/g3b/p14029.wf",
+    "r3/oracle/runs/g3b/p15450.wf",
+    "r3/oracle/runs/g3b/p15526.wf",
+    "r3/oracle/runs/g3b/p16125.wf",
+    "r3/oracle/runs/g3b/p17013.wf",
+    "r3/oracle/runs/g3b/p18766.wf",
+    "r3/oracle/runs/g3b/p19554.wf",
+    "r3/oracle/runs/g3b/p21262.wf",
+    "r3/oracle/runs/g3p/p42867.wf",
+    "r3/oracle/runs/g3p/p44484.wf",
+    "r3/oracle/runs/g3p/p47760.wf",
+    "r3/oracle/runs/g4a/p5505.wf",
+    "r3/oracle/runs/g4p/p22894.wf",
+    "r3/oracle/runs/g4p/p23342.wf",
+    "r3/oracle/runs/t3/p185.wf",
+]
+reason = "stage R0d, tier 2 (25 programs): class R0D-T2-ARGS: a callee gets a reference and a closure that changes the same place; its summary does not run the closure while it holds the reference (or the clause does not), so W0312 of the old pipeline does not hold. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r3/oracle/runs/g3b/p18063.wf",
+    "r3/oracle/runs/g3b/p20130.wf",
+    "r3/oracle/runs/g3p/p48327.wf",
+    "r3/oracle/runs/g3p/p49213.wf",
+    "r3/oracle/runs/g3p/p49832.wf",
+    "r3/oracle/runs/g4a/p1225.wf",
+    "r3/oracle/runs/g4a/p4856.wf",
+    "r3/oracle/runs/g4a/p5966.wf",
+    "r3/oracle/runs/g4p/p21451.wf",
+    "r3/oracle/runs/g4p/p21887.wf",
+    "r3/oracle/runs/g4p/p26841.wf",
+]
+reason = "stage R0d, tier 2 (11 programs): class R0D-T2-TASK (O3-9 and the j1 shape of R0d): the task is joined (also through a tuple or a callee) before the code that the old pipeline flags, or it owns the value that the block frees. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g2/p2241.wf",
+    "r2/oracle/runs/g2/p2889.wf",
+    "r2/oracle/runs/g2/p2890.wf",
+    "r2/oracle/runs/g2/p3260.wf",
+    "r2/oracle/runs/g2/p3604.wf",
+    "r2/oracle/runs/g3/p5051.wf",
+    "r2/oracle/runs/g3/p5217.wf",
+    "r2/oracle/runs/g3/p6117.wf",
+    "r2/oracle/runs/g3/p6278.wf",
+    "r2/oracle/runs/g3/p6907.wf",
+    "r2/oracle/runs/g3/p7753.wf",
+    "r2/oracle/runs/g4/p10481.wf",
+    "r2/oracle/runs/g5/p20379.wf",
+    "r2/oracle/runs/g5/p20424.wf",
+    "r2/oracle/runs/g5/p20508.wf",
+    "r2/oracle/runs/g5/p20510.wf",
+    "r2/oracle/runs/g5/p20692.wf",
+    "r2/oracle/runs/g5/p20759.wf",
+    "r2/oracle/runs/g5/p21200.wf",
+    "r2/oracle/runs/g5/p21430.wf",
+    "r2/oracle/runs/g5/p22633.wf",
+    "r2/oracle/runs/g5/p22972.wf",
+    "r2/oracle/runs/g5/p23083.wf",
+    "r2/oracle/runs/g6/p30587.wf",
+    "r2/oracle/runs/g6/p30658.wf",
+    "r2/oracle/runs/g6/p31115.wf",
+    "r2/oracle/runs/g6/p31528.wf",
+    "r2/oracle/runs/g6/p33430.wf",
+    "r2/oracle/runs/g6/p33808.wf",
+    "r2/oracle/runs/g6/p33826.wf",
+    "r2/oracle/runs/g7/p41214.wf",
+    "r2/oracle/runs/g7/p41691.wf",
+    "r2/oracle/runs/g7/p41863.wf",
+    "r2/oracle/runs/g7/p42509.wf",
+    "r2/oracle/runs/g7/p43957.wf",
+    "r2/oracle/runs/g7/p44787.wf",
+    "r3/oracle/runs/g1/p100763.wf",
+    "r3/oracle/runs/g1/p100785.wf",
+    "r3/oracle/runs/g1/p100947.wf",
+    "r3/oracle/runs/g1/p101361.wf",
+    "r3/oracle/runs/g1/p102179.wf",
+    "r3/oracle/runs/g3a/p3283.wf",
+    "r3/oracle/runs/g3a/p6542.wf",
+    "r3/oracle/runs/g3a/p6578.wf",
+    "r3/oracle/runs/g3b/p10028.wf",
+    "r3/oracle/runs/g3b/p13932.wf",
+    "r3/oracle/runs/g3b/p14833.wf",
+    "r3/oracle/runs/g3b/p17769.wf",
+    "r3/oracle/runs/g3b/p22010.wf",
+    "r3/oracle/runs/g3b/p23144.wf",
+    "r3/oracle/runs/g3b/p23580.wf",
+    "r3/oracle/runs/g3b/p24185.wf",
+    "r3/oracle/runs/g3p/p46926.wf",
+    "r3/oracle/runs/g3p/p47316.wf",
+    "r3/oracle/runs/g3p/p48045.wf",
+    "r3/oracle/runs/g4a/p1029.wf",
+    "r3/oracle/runs/g4a/p1558.wf",
+    "r3/oracle/runs/g4a/p1560.wf",
+    "r3/oracle/runs/g4a/p167.wf",
+    "r3/oracle/runs/g4a/p1998.wf",
+    "r3/oracle/runs/g4a/p2.wf",
+    "r3/oracle/runs/g4a/p2074.wf",
+    "r3/oracle/runs/g4a/p2202.wf",
+    "r3/oracle/runs/g4a/p2204.wf",
+    "r3/oracle/runs/g4a/p2493.wf",
+    "r3/oracle/runs/g4a/p2659.wf",
+    "r3/oracle/runs/g4a/p3082.wf",
+    "r3/oracle/runs/g4a/p3118.wf",
+    "r3/oracle/runs/g4a/p3206.wf",
+    "r3/oracle/runs/g4a/p3269.wf",
+    "r3/oracle/runs/g4a/p3341.wf",
+    "r3/oracle/runs/g4a/p3393.wf",
+    "r3/oracle/runs/g4a/p3495.wf",
+    "r3/oracle/runs/g4a/p3504.wf",
+    "r3/oracle/runs/g4a/p3661.wf",
+    "r3/oracle/runs/g4a/p3685.wf",
+    "r3/oracle/runs/g4a/p3848.wf",
+    "r3/oracle/runs/g4a/p3943.wf",
+    "r3/oracle/runs/g4a/p412.wf",
+    "r3/oracle/runs/g4a/p4263.wf",
+    "r3/oracle/runs/g4a/p4440.wf",
+    "r3/oracle/runs/g4a/p4535.wf",
+    "r3/oracle/runs/g4a/p4595.wf",
+    "r3/oracle/runs/g4a/p4798.wf",
+    "r3/oracle/runs/g4a/p5176.wf",
+    "r3/oracle/runs/g4a/p5272.wf",
+    "r3/oracle/runs/g4a/p5306.wf",
+    "r3/oracle/runs/g4a/p538.wf",
+    "r3/oracle/runs/g4a/p5502.wf",
+    "r3/oracle/runs/g4a/p5503.wf",
+    "r3/oracle/runs/g4a/p5810.wf",
+    "r3/oracle/runs/g4a/p624.wf",
+    "r3/oracle/runs/g4a/p6919.wf",
+    "r3/oracle/runs/g4a/p7050.wf",
+    "r3/oracle/runs/g4a/p7144.wf",
+    "r3/oracle/runs/g4a/p7161.wf",
+    "r3/oracle/runs/g4a/p7411.wf",
+    "r3/oracle/runs/g4a/p7426.wf",
+    "r3/oracle/runs/g4a/p7442.wf",
+    "r3/oracle/runs/g4a/p7627.wf",
+    "r3/oracle/runs/g4a/p7765.wf",
+    "r3/oracle/runs/g4a/p78.wf",
+    "r3/oracle/runs/g4a/p849.wf",
+    "r3/oracle/runs/g4a/p918.wf",
+    "r3/oracle/runs/g4a/p988.wf",
+    "r3/oracle/runs/g4p/p20057.wf",
+    "r3/oracle/runs/g4p/p20134.wf",
+    "r3/oracle/runs/g4p/p20235.wf",
+    "r3/oracle/runs/g4p/p20438.wf",
+    "r3/oracle/runs/g4p/p20547.wf",
+    "r3/oracle/runs/g4p/p20860.wf",
+    "r3/oracle/runs/g4p/p21167.wf",
+    "r3/oracle/runs/g4p/p21258.wf",
+    "r3/oracle/runs/g4p/p21425.wf",
+    "r3/oracle/runs/g4p/p21456.wf",
+    "r3/oracle/runs/g4p/p21629.wf",
+    "r3/oracle/runs/g4p/p21632.wf",
+    "r3/oracle/runs/g4p/p21636.wf",
+    "r3/oracle/runs/g4p/p21667.wf",
+    "r3/oracle/runs/g4p/p21753.wf",
+    "r3/oracle/runs/g4p/p22440.wf",
+    "r3/oracle/runs/g4p/p23246.wf",
+    "r3/oracle/runs/g4p/p23335.wf",
+    "r3/oracle/runs/g4p/p23607.wf",
+    "r3/oracle/runs/g4p/p24041.wf",
+    "r3/oracle/runs/g4p/p24672.wf",
+    "r3/oracle/runs/g4p/p24924.wf",
+    "r3/oracle/runs/g4p/p25623.wf",
+    "r3/oracle/runs/g4p/p25706.wf",
+    "r3/oracle/runs/g4p/p25772.wf",
+    "r3/oracle/runs/g4p/p25853.wf",
+    "r3/oracle/runs/g4p/p25986.wf",
+    "r3/oracle/runs/g4p/p26058.wf",
+    "r3/oracle/runs/g4p/p26173.wf",
+    "r3/oracle/runs/g4p/p26250.wf",
+    "r3/oracle/runs/g4p/p26532.wf",
+    "r3/oracle/runs/g4p/p26649.wf",
+    "r3/oracle/runs/g4p/p27439.wf",
+    "r3/oracle/runs/g4p/p27776.wf",
+    "r3/oracle/runs/g4p/p27792.wf",
+    "r3/oracle/tmp/g4_2.wf",
+    "verify/s5/R3a/h_gen4/p70098.wf",
+    "verify/s5/R3a/h_gen4/p70101.wf",
+    "verify/s5/R3a/h_gen4/p70205.wf",
+    "verify/s5/R3a/h_gen4/p70360.wf",
+    "verify/s5/R3a/h_gen4/p70382.wf",
+]
+reason = "stage R0d, tier 2 (146 programs): class R0D-T2-W0301 (as F20.2-T2-SIGNED): old false positives of the groups A to D in programs that a handler in a closure body kept out of scope before: a block value or a closure that a block returns points into a local of the block and nothing uses it, a late capture reads the new value of its variable (O3-11), a reference into another field than the one that changes (the wildcard place of the old pipeline), a W0204 or W0701 of a declaration that the `ir` pipeline does not need. Each program runs with no fault on the oracle of the `ir` engine (the gate) and on `ereview/ev.sh` (three seeds, both engines)"
+signed_by = "UNSIGNED: the author of stage R0d; the independent review of R0d must sign this row or reject it"
+stage = "R0d"
+
+[[entry]]
+class = "new-fp"
+reason_class = "precision"
+issue = 56
+files = ["r2/oracle/runs/g5/p23249.wf"]
+reason = "stage R0d (the program came into scope: a handler in a closure body elsewhere in it): a precision loss of the `ir` pipeline that function bodies have at R0c too (issue #56). `h0` runs `g1`, a closure that runs the function parameter `p0`; code of a caller can resume more than once in a program with a `multi` operation, so the run node copies the frame of `g1`, which holds the reference parameter `p2` as the wildcard place `p2..`. The change of `p2.es` in `g1` overlaps that place, and the next run uses the copy (W0301 at lines 71 and 72). The reference is to the whole of `*p2`, which the change does not end. The run is clean"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/quality/gen/p/g00024.wf",
+    "verify/quality/gen/p/g00028.wf",
+    "verify/quality/gen/p/g00119.wf",
+    "verify/quality/gen/p/g00127.wf",
+    "verify/quality/gen/p/g00135.wf",
+    "verify/quality/gen/p/g00191.wf",
+    "verify/quality/gen/p/g00247.wf",
+    "verify/quality/gen/p/g00252.wf",
+    "verify/quality/gen/p/g00262.wf",
+    "verify/quality/gen/p/g00328.wf",
+    "verify/quality/gen/p/g00398.wf",
+    "verify/quality/gen/p/g00402.wf",
+    "verify/quality/gen/p/g00436.wf",
+    "verify/quality/gen/p/g00440.wf",
+    "verify/quality/gen/p/g00446.wf",
+    "verify/quality/gen/p/g00458.wf",
+    "verify/quality/gen/p/g00467.wf",
+    "verify/quality/gen/p/g00473.wf",
+    "verify/quality/gen/p/g00496.wf",
+    "verify/quality/gen/p/g00524.wf",
+    "verify/quality/gen/p/g00559.wf",
+    "verify/quality/gen/p/g00681.wf",
+    "verify/quality/gen/p/g00716.wf",
+    "verify/quality/gen/p/g00756.wf",
+    "verify/quality/gen/p/g00773.wf",
+    "verify/quality/gen/p/g00848.wf",
+    "verify/quality/gen/p/g00884.wf",
+    "verify/quality/gen/p/g00890.wf",
+    "verify/quality/gen/p/g00898.wf",
+    "verify/quality/gen/p/g00951.wf",
+    "verify/quality/gen/p/g00957.wf",
+    "verify/quality/gen/p/g01027.wf",
+    "verify/quality/gen/p/g01046.wf",
+    "verify/quality/gen/p/g01075.wf",
+    "verify/quality/gen/p/g01079.wf",
+    "verify/quality/gen/p/g01105.wf",
+    "verify/quality/gen/p/g01116.wf",
+    "verify/quality/gen/p/g01152.wf",
+    "verify/quality/gen/p/g01198.wf",
+    "verify/quality/gen/p/g01215.wf",
+    "verify/quality/gen/p/g01244.wf",
+    "verify/quality/gen/p/g01371.wf",
+    "verify/quality/gen/p/g01429.wf",
+    "verify/quality/gen/p/g01433.wf",
+]
+codes = ["W0301", "W0302", "W0312", "W0314", "W0315", "W0503", "W0601", "W0602", "W0702", "W0703"]
+reason = "class D-GEN of group D (as stage F17), stage R0d: generated programs with many declaration, type and row errors (W0201, W0702, W0703) and a handler in a closure body, which kept them out of scope before. The `ir` pipeline gives W0601 for a linear value that a loop body gives a new value before the old one is consumed (at each node), and W0602 at the run of a closure or at `Post` of a handle, where the old pipeline gives one W0601 or W0602 at the end of the frame or at the `scope`; the multiset of the W0301/W0503/W0601/W0702/W0703 duplicates differs at the same lines. Rejected by both pipelines"
+stage = "R0d"
+
+[[entry]]
+class = "moved"
+files = ["r2/oracle/t0/p42.wf", "r2/oracle/t0/q266.wf"]
+codes = ["W0301", "W0601", "W0602"]
+reason = "stage R0d: the block value `r4` points into the local `v5` of the block (`id(&v5[1])`). The old pipeline gives W0301 at the block; the `ir` pipeline at the use of `r4` (W0301 is an error at a use, ir 5.9); in `q266.wf` W0601 and W0602 move the same way to the end of the frame of `lk1` and to the run of the closure that holds it. The same codes and counts. Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "moved"
+files = ["r3/oracle/runs/m3b/p24920.wf", "r3/oracle/runs/m3c/p42980.wf"]
+codes = ["W0204", "W0803"]
+reason = "stage R0d: a handler in a closure body comes into scope. W0803 (no runtime: `main` must handle `Async`) at the node of the closure that performs it, not at the end of `main`; W0204 at the closure literal that the inner closure returns, not at its `Return`. The same codes and counts. Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = ["r3/oracle/sweep3/callee__closure_capture.wf"]
+codes = ["W0313", "W0805"]
+reason = "stage R0d (as `callee__task_result.wf` of stage R0c): the closure `set` has a `handle Ask` and stores `mk_asker()` into the `Kept` capture `g`; `main` runs `g` after `set` returns. The old pipeline gives W0313 (the closure escapes its handler); the `ir` pipeline gives W0805 at the run of `g` in `main` (the closure performs `Ask` where it was made, so the effect leaves `main`), the place where the run faults with no handler. With a handler of `Ask` around the run the program stays rejected (W0805: the closure runs with the handlers where it was made; probe of the review `r0d/t/esc.wf`). Rejected in both"
+stage = "R0d"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0d/c5_rc1.wf", "tests/gate/probes/fixes/r0d/c5_rc5.wf"]
+codes = ["W0502"]
+reason = "stage R0d (a capability captured again): the `once` closure `g` runs after a run of a closure that performs a `multi` operation through a capture of a capture. The `ir` pipeline gives W0503 and W0502 at the run of `h` (its summary runs the capture `g` more than once, as for `cap_nested.wf` of stage C1.5); the old pipeline gives W0503 inside `h`. The interpreter faults (a value used after it was moved). Rejected in both"
+stage = "R0d"

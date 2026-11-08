@@ -1,0 +1,14 @@
+// A linear local of the handled body inside a closure is live across a `multi` perform.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn main() {
+    let g = || {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            let k = Tx { id: 3 }
+            let b = pick()
+            commit(k)
+        }
+    }
+    g()
+}
