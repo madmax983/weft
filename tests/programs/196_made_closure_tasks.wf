@@ -1,0 +1,109 @@
+// Review of stage R0g (B1): a closure whose value holds its environment runs
+// in a scope body or on a task of a scope. The closure is a closure that a
+// clause gives to the handled body, or a closure that a closure makes. The
+// run changes the variables of the environment: a reference into them is
+// invalid after the run.
+effect Get { fn get() -> fn() }
+effect Put { fn put() -> u64 }
+
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+// The clause holds `r` into its vector across the resume. The handled body
+// spawns the closure of the resume argument, and the closure clears the vector.
+fn clause_closure_task() / async {
+    handle Get {
+        fn get() {
+            let v = mk_v()
+            let r = &v[0]
+            resume(|| v.clear())
+            print(r + 1)   //~ W0301 old:
+        }
+    } in {
+        let f = get(); scope { s => s.spawn(f); () }   //~ old: W0301
+    }
+}
+fn clause_closure_task_ok() / async {
+    handle Get {
+        fn get() {
+            let v = mk_v()
+            let r = &v[0]
+            resume(|| print(v.len()))
+            print(r + 1)
+        }
+    } in {
+        let f = get(); scope { s => s.spawn(f); () }   //~ old: W0301
+    }
+}
+
+// The clause puts its closure into a local of the site before the resume.
+fn clause_site_local_task() / async {
+    let keep = || print(0)
+    handle Put {
+        fn put() {
+            let v = mk_v()
+            let r = &v[0]
+            keep = || v.clear()
+            resume(1)
+            print(r + 1)   //~ W0301 old:
+        }
+    } in {
+        let n = put(); scope { s => s.spawn(keep); () }   //~ old: W0301
+    }
+}
+fn clause_site_local_task_ok() / async {
+    let keep = || print(0)
+    handle Put {
+        fn put() {
+            let v = mk_v()
+            let r = &v[0]
+            print(r + 1)
+            keep = || v.clear()
+            resume(1)
+            print(v.len())
+        }
+    } in {
+        let n = put(); scope { s => s.spawn(keep); () }   //~ old: W0301
+    }
+}
+
+// A closure that a closure makes clears a vector of the function.
+fn made_closure_task() / async {
+    let v = mk_v()
+    let r = &v[0]
+    let mk = || (|| v.clear())
+    let f = mk()
+    scope { s => s.spawn(f); () }
+    print(r + 1)   //~ W0301
+}
+fn made_closure_task_ok() / async {
+    let v = mk_v()
+    let r = &v[0]
+    let mk = || (|| print(v.len()))
+    let f = mk()
+    scope { s => s.spawn(f); () }
+    print(r + 1)
+}
+fn made_closure_scope_body() / async {
+    let v = mk_v()
+    let r = &v[0]
+    let mk = || (|| v.clear())
+    let f = mk()
+    scope { s => f(); () }
+    print(r + 1)   //~ W0301
+}
+fn made_closure_scope_body_ok() / async {
+    let v = mk_v()
+    let r = &v[0]
+    print(r + 1)
+    let mk = || (|| v.clear())
+    let f = mk()
+    scope { s => f(); () }
+    print(v.len())
+}
+
+fn main() / async {
+    clause_closure_task_ok()
+    clause_site_local_task_ok()
+    made_closure_task_ok()
+    made_closure_scope_body_ok()
+}

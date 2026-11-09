@@ -587,10 +587,13 @@ pub fn made_sigma(
         // body (through the `Kept` and `ByRef` captures of the makers) is
         // that variable, as for a closure of the component: the closure
         // changes it and reads it, and no other capture (hole H7 and false
-        // positive FP4 of the third review of the ABC preview).
-        if let Some(src) = made_capture_source(p, c, k, body) {
-            let a = transfer::alpha(cx, body, st, &src)?;
-            let v = transfer::place_value(cx, body, st, &src)?.flat();
+        // positive FP4 of the third review of the ABC preview). A scope
+        // body, a handled body and a clause run in the frame of their site:
+        // a variable of the site is a variable there too (hole B1 of the
+        // review of stage R0g: a run in a scope body, or as a task).
+        if let Some((sb, src)) = frame_capture_source(p, c, k, body) {
+            let a = transfer::alpha(cx, sb, st, &src)?;
+            let v = transfer::place_value(cx, sb, st, &src)?.flat();
             let refs: Vec<PlaceId> = v.refs.into_iter().collect();
             let mut deeps = Vec::new();
             for &q in &refs {
@@ -661,12 +664,14 @@ fn live_cap(cx: &Cx<'_>, st: &State, c: weft_ir::ClosureId, k: usize) -> Vec<Pla
 }
 
 /// True if the function body that makes `maker` (the body itself, or the
-/// function of a closure body, of a handled body or of a clause) is not the
-/// function of body `body`: a closure
+/// function of a closure body, of a handled body, of a clause or of a scope
+/// body) is not the function of body `body`: a closure
 /// that `maker` makes leaves a frame that is gone when `body` runs it.
 fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
-    // A handled body and a clause run in the frame of their site (plan
-    // stage F14): the function of the site.
+    // A handled body, a clause and a scope body run in the frame of their
+    // site (plan stages F14 and R0d): the function of the site. A run in a
+    // scope body is a run in the frame of the maker (hole B1 of the review
+    // of stage R0g).
     let root = |mut b: BodyId| {
         for _ in 0..=p.bodies.len() {
             if let Some((_, d)) = p.closure_of(b) {
@@ -677,7 +682,9 @@ fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
                 Some(x)
                     if matches!(
                         x.kind,
-                        weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Clause(..)
+                        weft_ir::BodyKind::Handled(_)
+                            | weft_ir::BodyKind::Clause(..)
+                            | weft_ir::BodyKind::Scope(_)
                     ) =>
                 {
                     b = x.parent?;
@@ -691,6 +698,36 @@ fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
         (Some(a), Some(b)) => a != b,
         _ => false,
     }
+}
+
+/// The body and the place that capture `k` of closure `c` names
+/// ([`made_capture_source`]) for a run in body `body`: the place in `body`,
+/// or in a body whose frame `body` runs in through scope bodies, handled
+/// bodies and clauses ([`crate::factgen::alpha::unit_root`]). The states of
+/// `body` have the values of the locals of those bodies.
+fn frame_capture_source(
+    p: &weft_ir::Program,
+    c: weft_ir::ClosureId,
+    k: usize,
+    body: BodyId,
+) -> Option<(BodyId, weft_ir::Place)> {
+    let mut at = body;
+    for _ in 0..=p.bodies.len() {
+        if let Some(src) = made_capture_source(p, c, k, at) {
+            return Some((at, src));
+        }
+        let x = p.bodies.get(at.index())?;
+        match (x.kind, x.parent) {
+            (
+                weft_ir::BodyKind::Handled(_)
+                | weft_ir::BodyKind::Clause(..)
+                | weft_ir::BodyKind::Scope(_),
+                Some(up),
+            ) => at = up,
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// The place in body `body` that capture `k` of closure `c` names, if the

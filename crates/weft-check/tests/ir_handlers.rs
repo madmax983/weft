@@ -1081,3 +1081,28 @@ fn a_construct_with_no_full_facts_is_in_scope_only_if_the_ir_pipeline_rejects_it
         assert!(got.is_empty(), "{name}: {got:?}");
     }
 }
+
+/// Review of stage R0g (B1): a closure whose value holds its environment (a
+/// closure that a clause gives to the handled body, or a closure that a
+/// closure makes) runs in a scope body or on a task of a scope. The run
+/// changes the variables of the environment: W0301 for a reference into them
+/// that is used after the run. A scope body runs in the frame of its site, as
+/// a handled body and a clause (`apply::made_sigma`).
+#[test]
+fn a_task_of_a_closure_whose_value_holds_its_environment_changes_the_environment() {
+    for (name, want) in [
+        ("rv1_c4_task_unit.wf", vec![("W0301".to_string(), 12)]),
+        (
+            "rv1_c4_site_local_spawn.wf",
+            vec![("W0301".to_string(), 13)],
+        ),
+        ("rv1_made_spawn.wf", vec![("W0301".to_string(), 10)]),
+        ("rv1_made_scope_direct.wf", vec![("W0301".to_string(), 10)]),
+        ("rv1_c4_task_unit_ok.wf", Vec::new()),
+        ("rv1_made_spawn_ok.wf", Vec::new()),
+    ] {
+        let (got, fallback) = r0g_codes(name);
+        assert!(fallback.is_none(), "{name}: {fallback:?}");
+        assert_eq!(got, want, "{name}");
+    }
+}

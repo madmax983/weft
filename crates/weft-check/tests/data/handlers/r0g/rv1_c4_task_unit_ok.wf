@@ -1,0 +1,17 @@
+// The clause reads its vector v through r after a resume whose argument is a
+// closure that reads v; the handled body runs the closure on a task of a
+// scope (review of stage R0g, B1).
+effect Get { fn get() -> fn() }
+fn main() / async {
+    handle Get {
+        fn get() {
+            let v = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            resume(|| print(v.len()))
+            print(r + 1)
+        }
+    } in {
+        let f = get(); scope { s => s.spawn(f); () }
+    }
+}

@@ -2926,8 +2926,66 @@ R0g as built:
   and the split of the clause at the run node), of D5 and C8 (copied clause frames), and
   of the D4 forms above, for stage R0z. The facts with a weak form give fewer errors than
   the old pipeline in some rejected programs (`123_resume_scope_ends.wf`: four W0301 of
-  the old pipeline after a `resume` in a scope body of the clause); such a program is
-  rejected for its other errors, and with no error it falls back.
+  the old pipeline after the run of a closure that resumes, in `resume_in_closure`,
+  `resume_in_callee`, `moved_in_closure` and `cleared_in_closure`; the text of the
+  ledger entry is correct from the R0g fix); such a program is rejected for its other
+  errors, and with no error it falls back.
+
+R0g fix as built (the review of R0g, round 1: blocker B1):
+
+- B1. A closure that a clause gives to the handled body (C4, in scope from R0g) runs
+  on a task of a scope, and the `ir` pipeline lost its changes: `weft check` gave no
+  error and the run read a freed cell (`r0grev/p/c4_14c_task_unit.wf` and six more;
+  the old pipeline gave W0301). The same hole is older for a closure that a closure
+  makes (`let mk = || (|| v.clear()); let f = mk()`, spawned or run in a scope body:
+  `t_06`, `t_11`, `t_13`, `t_14`, a HOLE at R0f fix too).
+- The root cause is not in the task path. A spawn is always in a scope body, and a
+  scope body is a body of its own that names the locals of its site through upvar
+  locals. `apply::made_sigma` took the variable of a `Kept` or `ByRef` capture only when
+  the walk through the makers reached the body of the run (`made_capture_source`,
+  `maker == body`), and `apply::other_maker` walked up from a handled body and a clause,
+  but not from a scope body. So in a scope body σ of the capture named only the place
+  of the closure value. For a task that place is the task's own (`task_start`, the
+  `own` filter), so `task_writes` and the change at the spawn node had nothing; for a
+  run in the scope body the change was of the place of `f`.
+- The fix (`crates/weft-sema/src/analysis/apply.rs`): `frame_capture_source` tries
+  `made_capture_source` for the body of the run and for each body whose frame it runs
+  in (a scope body, a handled body, a clause: as `alpha::unit_root`), and α reads the
+  source in the body that it found; `other_maker` walks up from a scope body too. The
+  states of a body have the values of the locals of those bodies, so the run changes
+  the variable itself (`mutates_at`/`reads_at` at the node, `task_writes`/`task_reads`
+  of the task, through the code of `task_start` that exists). This closes B1 and the
+  older `t_06` family; no fallback is added. A handled body and a clause that run a
+  closure that a closure of the site made now name the variable too (more exact facts
+  for `fixes/f14/made/k1`, `k2`, `k6`, with the same diagnostics).
+- Tests: corpus `tests/programs/196_made_closure_tasks.wf` (W0301 of C4 on a task, of a
+  clause closure in a local of the site on a task, of a made closure on a task and in a
+  scope body; the clean twins) with its IR golden; probes
+  `tests/gate/probes/fixes/r0g/rv1_*.wf` (11: the bad forms and their clean twins;
+  `rv1_c4_scope_direct.wf` falls back with an older F16 reason); `weft-check`
+  `ir_handlers.rs`
+  (`a_task_of_a_closure_whose_value_holds_its_environment_changes_the_environment`, data
+  `tests/data/handlers/r0g/rv1_*`).
+- The ledger text of `123_resume_scope_ends.wf` (R0g) now names the functions with the
+  four `old:` W0301 (`resume_in_closure`, `resume_in_callee`, `moved_in_closure`,
+  `cleared_in_closure`, lines 86, 97, 113 and 126): a `resume` in a closure, not in a
+  scope body.
+- Gates (binary `r0gfix/bin/weft-final`, `weft-gate`): see the rows "R0g fix" of the
+  table of the gates. Tier 1 0 blockers: only the 12 new files change (the snapshot of
+  the `ir` records against R0g: 7 programs with other diagnostics, all new; 17 other
+  digests, the 12 new files and `fixes/f14/made/k1`, `k1_c`, `k2`, `k2_c`, `k6`, `k6_c`).
+  The 12 old records are new in `tests/gate/baseline-tier1.jsonl`. Two new lost-clean
+  rows (`rv1_c4_task_unit_ok.wf`, `rv1_c4_site_local_spawn_ok.wf`: the old pipeline
+  gives W0301 at the spawn line, the interpreter runs them with no fault) are UNSIGNED.
+  Tier 2 (2 workers): each class count as R0g, and the rows that are not `same` are
+  as R0g. Fact oracle tier 1 0 failures. Sigdiff tier 1 0 rows with no entry (two `sig`
+  entries of the fix: `pins` for a task of such a closure, which is `opaque` as at R0g;
+  no `raises` for a scope body with no task). `ereview/ev.sh` on the 105 probes of the
+  review and the 35 probes of `fixes/r0g`: 0 HOLE but the old `c4_07` (`r0gfix/ev-final.tsv`);
+  the 11 HOLE rows of B1 and of the `t_06` family are `held`. The `weft check` result of
+  the 1448 programs of the R0g review sets and of R0g's `into.paths` does not change.
+- Open: `c4_07` (a clause stores a closure over a clause local into a field of a
+  parameter: old W0204, `ir` 0; R0f fix the same), issue #78.
 
 #### R1 Standalone `typeck`, part 1
 
@@ -3066,6 +3124,7 @@ gate and the exit of its parent, limited to its group of differences.
 | R0f | R0e fix 4 | task runs (Phase R, R0f; C1, C7, E7): a value of a caller that a foreign function, `http.serve`, code of a caller or a function value runs as a task applies at the task nodes of the call (the worst way, or the way of the code of a caller that the node knows: `via_plain`, `via_code_twice`); a call of a function value has task nodes for its arguments; a closure that spawns a value of its interface on a scope of its maker gives the value to that task (`TaskHow::tasks`; closes `c29d`, `c29f`, older holes). Fallbacks C1 40/126 to 0/0, C7 12/79 to 7/11, E7 3/19 to 2/5. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE. The 6 new lost-clean rows wait for the review | done (R0f) |
 | R0f fix | R0f | the review of R0f, round 1: B1 (a reader that code of a caller runs as a task while the code changes a place it gets: the values become tasks of the call with the places of the code; E7 stays for an `Unknown` value whose task runs with changes or other values) and B2 (a slot of a value that runs as plain code kept no plain places for `with`; a value in a task of the call gives its places to a maker task). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE on the 127 review probes. The reviewer signed the lost-clean rows of R0f; 1 new row waits for round 2 | done (R0f fix) |
 | R0g | R0f fix | continuations and capabilities in closures (Phase R, R0g; D1, D4, C4, C6, D5, C8): σ of a closure that a clause gives takes the environment from the value; a captured capability of a made closure maps to its live handler; W0313 through an abort past the handler; W0313 for a continuation; a `resume` in a closure, a row in a clause, a nested `multi` resume and a run outside a handler with no W0313 are in scope only if the `ir` pipeline rejects the program (`Scope::pending`). Fallbacks D1 60/309 to 15/49, D4 15/46 to 1/2, C4 7/22 to 0/0, C6 6/15 to 0/0, D5 15/116 to 5/5, C8 2/2 to 0/0. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE. No new lost-clean row | done (R0g) |
+| R0g fix | R0g | the review of R0g, round 1: B1 (a closure that a clause gives to the handled body runs on a task of a scope and its changes were lost; the same hole is older for a closure that a closure makes, `t_06`). A scope body runs in the frame of its site: `made_sigma` finds the variable of a capture through the makers in the bodies of that frame (`apply::frame_capture_source`), and `other_maker` walks up from a scope body. No fallback is added. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, each count as R0g (new-fp 12, 0.096 %; lost-fault 0); fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE but the old `c4_07`. 2 new lost-clean rows wait for the review | done (R0g fix) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -3160,6 +3219,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0f fix (tier 2, the defaults) | 53847 of 57393 | 40371 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0f; signed) | 1824 (+1, ledgered) | 11645 | 10 (as C3) |
 | R0g (tier 1, the defaults) | 4672 of 4859 | 3731 | 274 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 135 (as R0f fix) | 139 (+11, ledgered) | 570 (+30, ledgered) | 9 |
 | R0g (tier 2, the defaults) | 54243 of 57393 | 40149 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0f fix) | 1837 (+13, ledgered) | 11854 (+209, ledgered) | 10 (as C3) |
+| R0g fix (tier 1, the defaults) | 4683 of 4871 | 3737 | 274 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 137 (+2, `rv1_c4_task_unit_ok.wf`, `rv1_c4_site_local_spawn_ok.wf`, UNSIGNED) | 142 (+3, ledgered) | 571 (+1, `196_made_closure_tasks.wf`, ledgered) | 9 |
+| R0g fix (tier 2, the defaults) | 54243 of 57393 | 40149 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0g) | 1837 (as R0g) | 11854 (as R0g) | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

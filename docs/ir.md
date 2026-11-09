@@ -3007,6 +3007,15 @@ As built (plan stage R0g: continuations and capabilities in closures):
   closure value, as for a closure that a callee made (`apply::closure_sigma` calls
   `made_sigma`; C4). A `ByRef` capture of a local of the clause points into the cell of
   that local, so a run after the end of the clause is W0301.
+- The fix of R0g (review round 1, B1): a scope body runs in the frame of its site, as a
+  handled body and a clause do. `made_sigma` finds the variable of a `Kept` or `ByRef`
+  capture through the makers in the body of the run or in a body whose frame that body
+  runs in (`apply::frame_capture_source`: a scope body, a handled body, a clause), and
+  `apply::other_maker` walks up from a scope body too. So a closure whose value holds
+  its environment (a closure that a clause gives, a closure that a closure made) changes
+  the variables of that environment when it runs in a scope body or as a task of the
+  scope: the task gets them in `task_writes` and `task_reads`. Before the fix, σ there
+  named only the place of the closure value, which is the task's own.
 - A captured capability of a closure that a callee or a closure made (`made_sigma`, C6):
   σ maps the capture to the capability of the handler that the capture names through the
   makers (`clause::capture_handler`), if the handled body of the handler runs at the node

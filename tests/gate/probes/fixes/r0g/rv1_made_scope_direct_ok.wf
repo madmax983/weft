@@ -1,0 +1,12 @@
+// A closure that a closure makes clears a vector of the site; the scope body
+// runs it directly, and nothing uses r after the run (review of stage R0g, t_06).
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    print(r + 1)
+    let mk = || (|| v.clear())
+    let f = mk()
+    scope { s => f(); () }
+    print(v.len())
+}

@@ -9993,7 +9993,7 @@ stage = "R0f fix"
 class = "changed"
 files = ["tests/programs/123_resume_scope_ends.wf"]
 codes = ["W0301"]
-reason = "stage R0g: the program is in scope (a `resume` in a body inside the clause; the `ir` pipeline rejects it). The facts of the `ir` pipeline have no resume point in a scope body of the clause, so the reads of `e` and `r` after the `resume` in `scope_body_resume` and `nested_handle_resume` are not W0301 there (`old:` markers); the other W0301 of both pipelines stay. Rejected in both"
+reason = "stage R0g: the program is in scope (a `resume` in a closure; the `ir` pipeline rejects it). The facts of the `ir` pipeline have no resume point in a closure that resumes, so the reads of `e` and `r` after the run of that closure in `resume_in_closure`, `resume_in_callee`, `moved_in_closure` and `cleared_in_closure` (lines 86, 97, 113 and 126) are not W0301 there (`old:` markers); the other W0301 of both pipelines stay. Rejected in both"
 stage = "R0g"
 
 [[entry]]
@@ -10130,3 +10130,60 @@ files = [
 codes = ["W0304", "W0601"]
 reason = "stage R0g (tier 2): each program comes into scope and the `ir` pipeline rejects it with the codes of the old pipeline at other lines (W0601 at the end of the function, W0304 at the node of the facts). Rejected in both"
 stage = "R0g"
+
+# The fix of stage R0g (review round 1, B1): a closure whose value holds its
+# environment (a closure that a clause gives to the handled body, a closure
+# that a closure makes) runs in a scope body or on a task of a scope. A scope
+# body runs in the frame of its site: the run changes the variables of the
+# environment (`apply::made_sigma`, `apply::other_maker`).
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/196_made_closure_tasks.wf"]
+codes = ["W0301"]
+reason = "stage R0g fix: the corpus file of B1. The `ir` pipeline gives W0301 at the read of `r` after the resume in the clause (the closure of the clause clears its vector on a task); the old pipeline gives W0301 at the spawn line (`v` goes out of scope, or `keep` is invalid), also in the clean twins `_ok` (`old:` markers). Both give W0301 for the closure that a closure made (`made_closure_task`, `made_closure_scope_body`). Rejected in both"
+stage = "R0g fix"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/r0g/rv1_c4_site_local_spawn.wf",
+    "tests/gate/probes/fixes/r0g/rv1_c4_task_join.wf",
+    "tests/gate/probes/fixes/r0g/rv1_c4_task_unit.wf",
+]
+codes = ["W0301"]
+reason = "stage R0g fix (B1): a closure that a clause gives to the handled body runs on a task of a scope and changes the vector of the clause. The `ir` pipeline gives W0301 at the read of `r` after the resume, where the fault is; the old pipeline gives W0301 at the spawn line (`v` goes out of scope, or `keep` is invalid). Rejected in both"
+stage = "R0g fix"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0g/rv1_c4_site_local_spawn_ok.wf",
+    "tests/gate/probes/fixes/r0g/rv1_c4_task_unit_ok.wf",
+]
+reason = "stage R0g fix (the clean twins of B1): a closure that a clause gives to the handled body runs on a task of a scope; it only reads the vector of the clause, or the clause does not use `r` after the resume. The `ir` pipeline gives no error. The old pipeline gives W0301 at the spawn line (`v` goes out of scope before the use, or `keep` is invalid): the task ends in the scope, before the clause continues. The interpreter runs both with no fault"
+signed_by = "UNSIGNED: the author of the R0g fix; the independent review must sign this row or reject it"
+stage = "R0g fix"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "tests/gate/probes/fixes/r0g/rv1_c4_site_local_spawn.wf",
+    "tests/gate/probes/fixes/r0g/rv1_c4_site_local_spawn_ok.wf",
+    "tests/gate/probes/fixes/r0g/rv1_made_spawn_ok.wf",
+    "tests/programs/196_made_closure_tasks.wf",
+]
+reason = "stage R0g fix (class F19-SIG-PINS): the task runs a closure whose value holds its environment (a closure that a clause puts into a local of the site, a closure that a closure made). Such a task is `opaque` (its captures are not named, as at R0g), so the part `pins` of the IR is set (`summarize::task_pins`). The old inference does not pin it"
+stage = "R0g fix"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/fixes/r0g/rv1_made_scope_direct.wf",
+    "tests/gate/probes/fixes/r0g/rv1_made_scope_direct_ok.wf",
+    "tests/programs/196_made_closure_tasks.wf",
+]
+reason = "stage R0g fix: a scope body that starts no task and runs a closure that a closure made. The row of the IR has no `raises`: no child task can fail (as for a closure of the site in the same scope body). The old inference gives `raises` for each scope"
+stage = "R0g fix"

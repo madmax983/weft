@@ -1,0 +1,16 @@
+// The handled body runs the closure of the resume argument in a scope body,
+// not on a task (review of stage R0g, B1).
+effect Get { fn get() -> fn() }
+fn main() / async {
+    handle Get {
+        fn get() {
+            let v = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            resume(|| v.clear())
+            print(r + 1)
+        }
+    } in {
+        let f = get(); scope { s => f(); () }
+    }
+}
