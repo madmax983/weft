@@ -56,14 +56,14 @@ fn spawn_into_outer_scope(st: &Stats) / mut(st), async {
 // A function item that performs a user effect cannot run as a task.
 fn spawn_item() / async {
     handle Note { fn note(x) { resume(()) } } in {
-        scope { s => s.spawn(noter) }   //~ W0314
+        scope { s => s.spawn(noter) }   //~ W0314 W0702 old: W0314
     }
 }
 fn fork_items() / par {
-    handle Note { fn note(x) { resume(()) } } in fork(noter, noter)   //~ W0314 W0314
+    handle Note { fn note(x) { resume(()) } } in fork(noter, noter)   //~ W0314 W0314 W0702 old: W0314 W0314
 }
 fn spawn_item_out() / async, Note {
-    scope { s => s.spawn(noter) }   //~ W0314
+    scope { s => s.spawn(noter) }   //~ old: W0314
 }
 fn spawn_items_ok() / async, clock, par {
     scope { s =>
@@ -88,7 +88,7 @@ fn spawn_param_callers() / async, clock {
     handle Note { fn note(x) { resume(()) } } in spawn_param(|| note(1))   //~ W0314
     handle Note { fn note(x) { resume(()) } } in spawn_param_direct(|| note(1))   //~ W0314
     handle Note { fn note(x) { resume(()) } } in spawn_param_twice(|| note(1))   //~ W0314
-    handle Note { fn note(x) { resume(()) } } in spawn_param(noter)   //~ W0314
+    handle Note { fn note(x) { resume(()) } } in spawn_param(noter)   //~ W0314 W0702 old: W0314
     spawn_param(|| print(1))
     spawn_param(sleeper)
 }
@@ -128,7 +128,7 @@ fn spawn_in_clause(st: &Stats) / mut(st), async {
         handle Note {
             fn note(x) {
                 s.spawn(|| st.count += 1)
-                resume(())   //~ W0405
+                resume(())   //~ old: W0405
             }
         } in {
             print(st.count)
@@ -152,6 +152,6 @@ fn spawn_in_clause_joined(st: &Stats) / mut(st), async {
 
 // A function value that the body does not know can run its argument as a task.
 fn unknown_spawner(k: fn(fn())) / async {
-    handle Note { fn note(x) { resume(()) } } in k(|| note(1))   //~ W0313 W0314
+    handle Note { fn note(x) { resume(()) } } in k(|| note(1))   //~ W0314 old: W0313 W0314
     k(|| print(1))
 }

@@ -1,0 +1,5 @@
+// http.serve pins its request tasks: an Rc capture is not an error.
+fn main(env: Env) / io {
+    let hits = Rc.new(0)
+    http.serve(env.net.listen(":8080"), |req| { let h = hits.clone(); Response.text("hit") })
+}

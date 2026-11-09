@@ -1,0 +1,12 @@
+// A callee stores the value; a later callee runs it in two tasks.
+struct Box1 { f: fn() }
+fn keep(b: &Box1, f: fn()) / mut(b) { b.f = f }
+fn fire(b: &Box1) / async { let h = b.f
+    scope { s => s.spawn(h); s.spawn(h); () } }
+fn main() / async {
+    let n = 0
+    let b = Box1 { f: || print(0) }
+    keep(&b, || n += 1)
+    fire(&b)
+    print(n)
+}

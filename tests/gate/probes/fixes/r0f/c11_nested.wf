@@ -1,0 +1,8 @@
+// A value of a value: the code of the caller gives f to a callee that spawns it two times.
+fn twice(f: fn()) / async { scope { s => s.spawn(f); s.spawn(f); () } }
+fn mid(g: fn(fn()), f: fn()) / async { g(f) }
+fn main() / async {
+    let n = 0
+    mid(|x| twice(x), || n += 1)
+    print(n)
+}

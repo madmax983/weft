@@ -1,0 +1,7 @@
+// A foreign function can run the value two times at one time: a write races.
+extern fn ext(f: fn())
+fn main() {
+    let n = 0
+    ext(|| n += 1)
+    print(n)
+}

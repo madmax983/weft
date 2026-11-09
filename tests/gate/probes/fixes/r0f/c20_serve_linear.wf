@@ -1,0 +1,7 @@
+// The handler of http.serve captures a linear value: the server can run it more than once, or not at all.
+linear struct Lock { id: u64 }
+fn release(l: Lock) { let Lock(i) = l }
+fn main(env: Env) / io {
+    let l = Lock { id: 1 }
+    http.serve(env.net.listen(":8080"), |req| { release(l); Response.text("ok") })
+}

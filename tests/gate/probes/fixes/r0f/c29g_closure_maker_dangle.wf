@@ -1,0 +1,10 @@
+// A closure spawns its parameter on a scope of main; the parameter reads a local that ends first.
+fn main() / async {
+    scope { s =>
+        let g = |x: fn()| { s.spawn(x); () }
+        let v = [1, 2]
+        let r = &v[0]
+        g(|| print(r + 1))
+        v.clear()
+    }
+}

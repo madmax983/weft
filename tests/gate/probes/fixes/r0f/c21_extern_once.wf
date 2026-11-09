@@ -1,0 +1,7 @@
+// A foreign function can run a once value more than once (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+extern fn ext(f: fn())
+fn main() {
+    let v = [1]
+    ext(|| take(v))
+}

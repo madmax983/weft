@@ -1,0 +1,7 @@
+// The callee gives f to code of the caller; that code spawns it two times: a race on n.
+fn mid(g: fn(fn()), f: fn()) / async { g(f) }
+fn main() / async {
+    let n = 0
+    mid(|x| { scope { s => s.spawn(x); s.spawn(x); () } }, || n += 1)
+    print(n)
+}

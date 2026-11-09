@@ -363,6 +363,11 @@ fn apply_hows(
     hows: &[crate::analysis::tasks::RawHow],
     iface: &dyn Fn(&PlaceId) -> Option<IPlace>,
 ) {
+    let all: std::collections::BTreeSet<u32> = runs
+        .iter()
+        .filter(|r| !r.result && !r.capture)
+        .map(|r| r.param)
+        .collect();
     for r in runs.iter_mut() {
         if r.task
             && !hows
@@ -370,6 +375,16 @@ fn apply_hows(
                 .any(|h| h.param == r.param && h.capture == r.capture)
         {
             r.how.foreign = true;
+            // The worst way of code of a caller (as the old lowering, stage
+            // R0f): on another thread (W0401, W0403), at the same time as
+            // the other values of the interface. Two tasks of one value and
+            // the changes of the code itself are not in the facts: a value
+            // that changes a place is W0403 there, and two readers do not
+            // race.
+            r.how.thread = true;
+            r.how
+                .with
+                .extend(all.iter().copied().filter(|&j| r.capture || j != r.param));
         }
     }
     for h in hows {

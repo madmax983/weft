@@ -1927,11 +1927,36 @@ pub struct RunOf {
     pub via: Vec<super::summary::Via>,
 }
 
+/// How a callee runs a value as a task (`Applied::task_how`, stage R0f):
+/// `TaskHow` and `Run::many` of the entry of the part `runs`, with the places
+/// of σ of the callee.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskOf {
+    /// `TaskHow::thread`.
+    pub thread: bool,
+    /// `TaskHow::twice`.
+    pub twice: bool,
+    /// `Run::many`.
+    pub many: bool,
+    /// `TaskHow::foreign`.
+    pub foreign: bool,
+    /// `TaskHow::with`.
+    pub with: BTreeSet<u32>,
+    /// The places of `TaskHow::writes`.
+    pub writes: Vec<PlaceId>,
+    /// The places of `TaskHow::reads`.
+    pub reads: Vec<PlaceId>,
+}
+
 /// One summary that a run node of a function value applies (`docs/ir.md`
 /// 6.7): of a value that the callee can be, or of a value that such a
 /// value runs (part `runs`).
 #[derive(Clone, Debug)]
 pub struct Applied {
+    /// For a value that the callee runs as a task (`task_run`): how the
+    /// callee runs it, with the places of σ of the callee (stage R0f: a
+    /// call of a function value has no summary of one callee).
+    pub task_how: Option<TaskOf>,
     /// The kind of the run node.
     pub kind: super::apply::RunKind,
     /// The name of the callee, for the diagnostics.
@@ -2023,6 +2048,10 @@ pub struct Applied {
     /// and that code can run it more than once (stage R0e fix 3, H19): the
     /// worst way unless the run node knows the code (`transfer::via_twice`).
     pub via_twice: bool,
+    /// The spawn sites of the tasks of a scope of a maker that run the
+    /// value (`TaskHow::tasks`, stage R0f): the run node gives the places
+    /// of the value to these tasks too.
+    pub maker_tasks: Vec<u32>,
 }
 
 /// The places that the references of the captures of closure `decl` point
@@ -2766,7 +2795,9 @@ pub fn cell_values<'r>(
 const NESTED_TASK_RUN: &str =
     "a function value that a function value of a callee runs as a task (stage R0e fix 2)";
 
-/// The reason for a function value that code of a caller can run as a task.
+/// The reason for a function value that can race and that a task of a callee
+/// with no `TaskHow` runs (a task in a clause of the callee), or that code of
+/// a caller gets at depth > 0 (stage R0f: else it is a task of the call).
 const TASK_RUN: &str =
     "a function value that changes places or holds a nonportable value, and that code of a caller can run on another thread (stage F18)";
 
@@ -2888,6 +2919,188 @@ fn via_twice(
     Ok(total > 1)
 }
 
+/// True if a value that a callee only gives to code of a caller (`run`,
+/// `Run::via_only`, a task in the worst way) runs as plain code there (stage
+/// R0f): the run node knows each value of that code (`Run::via`, from `of`),
+/// the code is no task of the callee, and no value of it runs the argument
+/// that gets the value as a task, gives it back or puts it into a place.
+/// Then the value runs where the code runs it, on the task of the call, and
+/// the result is the places of the tasks of the callee that run while it
+/// runs that code (the join of `Run::during` of each entry); else `None`.
+///
+/// # Errors
+///
+/// The errors of `of`.
+fn via_plain(
+    cx: &mut Cx<'_>,
+    run: &super::summary::Run,
+    runs: &[super::summary::Run],
+    of: &mut RunValues<'_>,
+) -> Result<Option<super::summary::Wait>, AlphaError> {
+    use super::summary::RetFn;
+    if run.via.is_empty() || !run.after.is_empty() {
+        return Ok(None);
+    }
+    let mut during = super::summary::Wait::default();
+    for v in &run.via {
+        let Some(code) = runs
+            .iter()
+            .find(|x| (x.param, x.capture, x.result) == (v.value, v.capture, false))
+        else {
+            return Ok(None);
+        };
+        if code.task || !code.after.is_empty() {
+            return Ok(None);
+        }
+        during.writes.extend(code.during.writes.iter().cloned());
+        during.reads.extend(code.during.reads.iter().cloned());
+        let Some((fns, _, _)) = of(cx, code)? else {
+            return Ok(None);
+        };
+        if fns.is_empty() {
+            return Ok(None);
+        }
+        for f in &fns {
+            let sum = match f {
+                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
+                FnVal::Item(g, _) => cx.sums.get(*g).ok(),
+                FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => {
+                    None
+                }
+            };
+            let Some(sum) = sum else {
+                return Ok(None);
+            };
+            let given = |fs: &[RetFn]| fs.contains(&RetFn::Param(v.arg));
+            if given(&sum.ret.fns) || sum.put_fns.iter().any(|(_, fs)| given(fs)) {
+                return Ok(None);
+            }
+            // The code starts a task that can run after the call, or runs the
+            // argument while a task of it runs (`Run::during` in the terms of
+            // that code).
+            if !sum.tasks.is_empty()
+                || sum.runs.iter().any(|r| {
+                    !r.capture
+                        && r.param == v.arg
+                        && (!r.during.writes.is_empty() || !r.during.reads.is_empty())
+                })
+            {
+                return Ok(None);
+            }
+            if sum
+                .runs
+                .iter()
+                .any(|r| !r.capture && r.param == v.arg && r.task)
+            {
+                return Ok(None);
+            }
+        }
+    }
+    during.writes.sort();
+    during.writes.dedup();
+    during.reads.sort();
+    during.reads.dedup();
+    Ok(Some(during))
+}
+
+/// True if a value of the code of a caller that gets the value of `run`
+/// (`Run::via`, as [`via_tasks`]) runs the argument as two tasks at one time
+/// (`TaskHow::twice`), or if the run node does not know that code (stage
+/// R0f).
+///
+/// # Errors
+///
+/// The errors of `of`.
+fn via_code_twice(
+    cx: &mut Cx<'_>,
+    run: &super::summary::Run,
+    runs: &[super::summary::Run],
+    of: &mut RunValues<'_>,
+) -> Result<bool, AlphaError> {
+    if run.via.is_empty() {
+        return Ok(false);
+    }
+    for v in &run.via {
+        let Some(code) = runs
+            .iter()
+            .find(|x| (x.param, x.capture, x.result) == (v.value, v.capture, false))
+        else {
+            continue;
+        };
+        if code.how.twice {
+            return Ok(true);
+        }
+        let Some((fns, _, _)) = of(cx, code)? else {
+            continue;
+        };
+        for f in &fns {
+            let sum = match f {
+                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
+                FnVal::Item(g, _) => cx.sums.get(*g).ok(),
+                FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => {
+                    None
+                }
+            };
+            if sum.is_some_and(|s| {
+                s.runs
+                    .iter()
+                    .any(|r| !r.capture && r.param == v.arg && r.task && r.how.twice)
+            }) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// The spawn sites of the tasks of a scope of a maker that run a value that
+/// a callee only gives to code of a caller (`run`, `Run::via_only`): the part
+/// `TaskHow::tasks` of the run of the argument in the summary of each value
+/// of that code that the run node knows (stage R0f). They go into `out`.
+///
+/// # Errors
+///
+/// The errors of `of`.
+fn via_tasks(
+    cx: &mut Cx<'_>,
+    run: &super::summary::Run,
+    runs: &[super::summary::Run],
+    of: &mut RunValues<'_>,
+    out: &mut Vec<u32>,
+) -> Result<(), AlphaError> {
+    for v in &run.via {
+        let Some(code) = runs
+            .iter()
+            .find(|x| (x.param, x.capture, x.result) == (v.value, v.capture, false))
+        else {
+            continue;
+        };
+        let Some((fns, _, _)) = of(cx, code)? else {
+            continue;
+        };
+        for f in &fns {
+            let sum = match f {
+                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
+                FnVal::Item(g, _) => cx.sums.get(*g).ok(),
+                FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => {
+                    None
+                }
+            };
+            for r in sum.iter().flat_map(|s| &s.runs) {
+                if !r.capture && r.param == v.arg {
+                    for &t in &r.how.tasks {
+                        if !out.contains(&t) {
+                            out.push(t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    Ok(())
+}
+
 /// The number of runs of parameter `arg` in a run of a body with summary
 /// `sum`, up to 2 (two or more): a run that can happen again (`Run::many`,
 /// `Run::after`, two tasks at a time, the worst way of code of a caller)
@@ -2971,18 +3184,44 @@ fn apply_runs(
     let mut per_run: Vec<(usize, Vec<FnVal>, (BodyId, Operand))> = Vec::new();
     for (index, run) in runs.iter().enumerate() {
         let first = apps.reached.len();
-        let many = run.many || two;
         let key = (run.param, run.capture, run.result);
         let Some((fns, src, src_body)) = of(cx, run)? else {
             open.insert(key);
             continue;
         };
+        // A value that the callee only gives to code of a caller (the worst
+        // way: a task, `TaskHow::foreign`), where the run node knows each
+        // value of that code and no one of them runs the argument as a task,
+        // keeps it, or gives it back: the value runs as plain code, as many
+        // times as that code runs it (stage R0f, [`via_plain`]).
+        let via_during = if run.task && run.how.foreign && run.via_only {
+            via_plain(cx, run, runs, of)?
+        } else {
+            None
+        };
+        let plain_via = via_during.is_some();
+        // The tasks of a scope of a maker that run the value: of the callee,
+        // and of each value of the code of a caller that gets it (stage R0f).
+        let mut maker_tasks = run.how.tasks.clone();
+        if run.via_only {
+            via_tasks(cx, run, runs, of, &mut maker_tasks)?;
+        }
+        let task = run.task && !plain_via;
+        // A value that the callee only gives to code of a caller: can that
+        // code run it more than once (stage R0e fix 3, H19)?
+        let twice_via = run.via_only && via_twice(cx, run, runs, of)?;
+        let run_many = if plain_via { twice_via } else { run.many };
+        let many = run_many || two;
         // A function value that a value of the callee runs as a task (a
         // closure with a scope that spawns a value of its maker, and a callee
         // or `sim.run` runs the closure): the run node has no task nodes for
         // it, and a plain run of it loses the second run of a `once` value
         // (W0502). The old pipeline checks the program (stage R0e fix 2).
-        if run.task && depth > 0 && !fns.is_empty() {
+        // A run as a task of a value of a parameter of the value (`Unknown`
+        // here, from `Given::Opaque`) is no new run: the callee gives that
+        // value to code of a caller, so its own run of the value is the
+        // worst way, a task at the task nodes of the call (stage R0f).
+        if task && depth > 0 && fns.iter().any(|f| !matches!(f, FnVal::Unknown)) {
             return Err(AlphaError::Later(NESTED_TASK_RUN));
         }
         if fns.is_empty() {
@@ -3011,13 +3250,30 @@ fn apply_runs(
         }
         others.sort();
         others.dedup();
-        // A value that the callee only gives to code of a caller: can that
-        // code run it more than once (stage R0e fix 3, H19)?
-        let twice_via = run.via_only && via_twice(cx, run, runs, of)?;
         // The places of the tasks of the callee that run while it runs the
         // value (`Run::during`, stage R0e fix, OR7).
-        let during_writes = all_iplaces(cx, sigma, &run.during.writes)?;
-        let during_reads = all_iplaces(cx, sigma, &run.during.reads)?;
+        // A value that runs as plain code where code of a caller runs it runs
+        // while the tasks of the callee run that code (`Run::during` of it).
+        let during = via_during.as_ref().unwrap_or(&run.during);
+        let during_writes = all_iplaces(cx, sigma, &during.writes)?;
+        let during_reads = all_iplaces(cx, sigma, &during.reads)?;
+        // A value that the callee only gives to code of a caller that the
+        // run node knows runs as that code runs it: two tasks at one time if
+        // a value of the code runs the argument so (stage R0f).
+        let code_twice = run.via_only && run.how.foreign && via_code_twice(cx, run, runs, of)?;
+        let task_how = if task && depth == 0 {
+            Some(TaskOf {
+                thread: run.how.thread,
+                twice: run.how.twice || code_twice,
+                many: run.many,
+                foreign: run.how.foreign,
+                with: run.how.with.clone(),
+                writes: all_iplaces(cx, sigma, &run.how.writes)?,
+                reads: all_iplaces(cx, sigma, &run.how.reads)?,
+            })
+        } else {
+            None
+        };
         let env: Vec<PlaceId> = sigma
             .cap_helds
             .iter()
@@ -3027,9 +3283,16 @@ fn apply_runs(
             .copied()
             .collect();
         for g in &fns {
-            // A foreign function that runs a value on another thread: the
-            // old pipeline checks it (the class of stage F18 stays).
-            if run.task && run.how.foreign && task_unsafe(cx, g) {
+            // A foreign function, or code of a caller that gets the value
+            // (`Run::via_only`), that runs a value on another thread: the
+            // value applies at the task nodes of the call, in the worst way
+            // (`TaskHow::foreign`, stage R0f), also a value that changes
+            // places or holds a nonportable value. A task of the callee that
+            // its facts do not describe (a task in a clause) stays with the
+            // old pipeline for such a value: the worst way of code of a
+            // caller does not have the places of the other tasks of the
+            // callee.
+            if task && run.how.foreign && !run.how.no_body && !run.via_only && task_unsafe(cx, g) {
                 return Err(AlphaError::Later(TASK_RUN));
             }
             let start = apps.out.len();
@@ -3060,6 +3323,11 @@ fn apply_runs(
                 a.late = true;
                 a.then |= run.then;
                 a.via_twice |= twice_via;
+                for &t in &maker_tasks {
+                    if !a.maker_tasks.contains(&t) {
+                        a.maker_tasks.push(t);
+                    }
+                }
                 for (have, more) in [
                     (&mut a.during_writes, &during_writes),
                     (&mut a.during_reads, &during_reads),
@@ -3070,8 +3338,13 @@ fn apply_runs(
                 }
                 // The callee runs the value as a task: the run node applies
                 // it at its task nodes (plan stage F19).
-                if run.task {
+                if task && depth == 0 {
                     a.task_run = Some(index);
+                    a.task_how.clone_from(&task_how);
+                } else if task {
+                    if let Some(x) = a.run.as_mut() {
+                        x.task = true;
+                    }
                 }
                 if !run.capture {
                     a.callee_param = Some(run.param);
@@ -3106,7 +3379,7 @@ fn apply_runs(
             // run of the node applied (a capture of another made closure that
             // runs it one time) gets the move too: this run is a second run
             // of it (`wrap(wrap1(|| eat(b)))`, follow-up F19.2).
-            let moves = !run.capture || (in_value(run) && run.many);
+            let moves = !run.capture || (in_value(run) && run_many);
             if moves && once_value(cx.p, g) {
                 let at = if fresh {
                     Some(start)
@@ -3134,7 +3407,7 @@ fn apply_runs(
                         for a in apps.out.iter_mut().skip(start) {
                             if !a.again {
                                 a.again = true;
-                                a.order = !run.many;
+                                a.order = !run_many;
                             }
                         }
                     }
@@ -3528,6 +3801,8 @@ fn apply_value(
                 during_writes: Vec::new(),
                 during_reads: Vec::new(),
                 via_twice: false,
+                maker_tasks: Vec::new(),
+                task_how: None,
             });
             let places = match given {
                 Given::Args(args) => {
@@ -3538,15 +3813,41 @@ fn apply_value(
                 }
                 Given::Opaque(ps, _) => ps.to_vec(),
             };
+            // Code of a caller can run each value on another thread, two
+            // times at once, at the same time as the others (ADR 0006). A
+            // value that can race (`task_unsafe`) makes each value of the
+            // arguments a task of the call: the call of a function value
+            // applies them at its task nodes, in the worst way, one task for
+            // each argument (stage R0f, `factgen::templates::value_slots`).
+            // Else they run as plain code more than once.
+            let mut as_tasks = false;
+            for g in &reach {
+                if !matches!(g, FnVal::Unknown) && task_unsafe(cx, g) {
+                    as_tasks = true;
+                }
+            }
+            if as_tasks && depth > 0 {
+                return Err(AlphaError::Later(TASK_RUN));
+            }
+            // The argument of each value, and the places of the arguments.
+            let mut arg_of: BTreeMap<FnVal, u32> = BTreeMap::new();
+            let mut fn_args: BTreeSet<u32> = BTreeSet::new();
+            let mut all_places: Vec<PlaceId> = Vec::new();
+            if let (true, Given::Args(args)) = (as_tasks, given) {
+                for (k, a) in args.iter().enumerate() {
+                    let k = u32::try_from(k).unwrap_or(u32::MAX);
+                    for f in reach_fns(cx, body, st, a)? {
+                        fn_args.insert(k);
+                        arg_of.entry(f).or_insert(k);
+                    }
+                }
+                all_places = given_places(cx, body, st, args)?;
+                all_places.sort();
+                all_places.dedup();
+            }
             for g in &reach {
                 if matches!(g, FnVal::Unknown) {
                     continue;
-                }
-                // Code of a caller can run the value on another thread at
-                // the same time (ADR 0006): the facts of a task are stage
-                // F18.
-                if task_unsafe(cx, g) {
-                    return Err(AlphaError::Later(TASK_RUN));
                 }
                 let start = apps.out.len();
                 apply_value(
@@ -3575,7 +3876,26 @@ fn apply_value(
                         }
                     }
                 }
+                let worst = arg_of.get(g).map(|&k| {
+                    (
+                        k,
+                        TaskOf {
+                            thread: true,
+                            twice: true,
+                            many: true,
+                            foreign: true,
+                            with: fn_args.iter().copied().filter(|&j| j != k).collect(),
+                            writes: all_places.clone(),
+                            reads: all_places.clone(),
+                        },
+                    )
+                });
                 for (k, a) in apps.out.iter_mut().enumerate().skip(start) {
+                    if let Some((arg, how)) = &worst {
+                        a.task_run = Some(usize::MAX);
+                        a.callee_param = Some(*arg);
+                        a.task_how = Some(how.clone());
+                    }
                     a.again = true;
                     a.kind = super::apply::RunKind::Run;
                     // Code of a caller can drop the value with no run.
@@ -3676,6 +3996,8 @@ fn apply_value(
                 during_writes: Vec::new(),
                 during_reads: Vec::new(),
                 via_twice: false,
+                maker_tasks: Vec::new(),
+                task_how: None,
             });
             apply_runs(
                 cx,
@@ -3886,6 +4208,8 @@ fn apply_value(
                 during_writes: Vec::new(),
                 during_reads: Vec::new(),
                 via_twice: false,
+                maker_tasks: Vec::new(),
+                task_how: None,
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: a run of a capture runs each value of the callee

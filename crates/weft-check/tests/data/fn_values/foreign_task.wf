@@ -1,9 +1,10 @@
-// A function with no body can run a function argument on another thread
-// (ADR 0006): a closure that changes a place or holds a nonportable value
-// stays with the old pipeline until the facts of tasks (stage F18).
+// A function with no body can run a function argument on another thread,
+// two times at one time (ADR 0006). From plan stage R0f the value applies at
+// the task nodes of the call: a closure that changes a captured place is W0403
+// (a `fork` branch) and W0405 (two tasks).
 extern fn ext(f: fn())
 fn write_to_foreign() {
     let n = 0
-    ext(|| n += 1)
+    ext(|| n += 1)   //~ W0403 W0405
     print(n)
 }

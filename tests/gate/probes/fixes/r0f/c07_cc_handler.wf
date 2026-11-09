@@ -1,0 +1,8 @@
+// A value that performs through a local handler runs in a task of code of the caller (W0314).
+effect Ask { fn ask() -> u64 }
+fn mid(g: fn(fn()), f: fn()) / async { g(f) }
+fn main() / async {
+    handle Ask { fn ask() { resume(1) } } in {
+        mid(|x| { scope { s => s.spawn(x); () } }, || print(ask()))
+    }
+}

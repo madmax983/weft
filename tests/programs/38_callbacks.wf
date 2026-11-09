@@ -58,12 +58,12 @@ fn clear_then(f: fn(), w: &World) / mut(w.entities) {
 }
 fn captured(world: &World) / mut(world.entities) {
     let r = &world.entities[0]
-    clear_then(|| print(r.hp), world)   //~ W0312
+    clear_then(|| print(r.hp), world)   //~ W0301 W0312 old: W0312
 }
 fn captured_named(world: &World) / mut(world.entities) {
     let r = &world.entities[0]
     let c = || print(r.hp)
-    clear_then(c, world)   //~ W0312
+    clear_then(c, world)   //~ W0301 W0312 old: W0312
 }
 
 // A direct call of a closure that mutates what an argument points into.

@@ -1,0 +1,7 @@
+// A foreign function can run the value on another thread: an Rc capture is W0401.
+struct E { hp: u64 }
+extern fn ext(f: fn())
+fn main() {
+    let a = Rc.new(E { hp: 1 })
+    ext(|| print(a.hp))
+}

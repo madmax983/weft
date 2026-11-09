@@ -9758,3 +9758,197 @@ files = [
 reason = "stage R0e fix 4 (the clean twins of the older holes a15, a31, a35): the task of the callee only reads `v`, and the value only reads `w`, so no access of the value conflicts with the task. The old pipeline gives W0312 (a callee that can change the place of the reference argument while the value points into it). The interpreter runs each with no fault (seeds 1 to 3, both engines)"
 signed_by = "reviewer R0e round 3: the task only reads v and the value only reads w; fault variants d01-d10, e01-e14, h02, h04, k03, k04 held; clean twins e02, e03, e06, e11, e13, e15, k01, k02 accepted; no fault seeds 1-12, both engines"
 stage = "R0e fix 4"
+
+# Stage R0f: task runs. A value of a caller that a foreign function, code of a
+# caller or a function value runs as a task applies at the task nodes of the
+# call (the worst way, or the way of the code that the node knows); a closure
+# that spawns a value of its interface on a scope of its maker gives the value
+# to that task. The lost-clean rows wait for the independent review of R0f.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/194_task_runs.wf"]
+codes = ["W0312", "W0314", "W0403", "W0405"]
+reason = "stage R0f: the corpus file of task runs. Both pipelines give W0403, W0405, W0401, W0502 and W0314 for a foreign function, `http.serve` and code of a caller that run a value as a task. The `ir` pipeline runs a value as code of a caller runs it when it knows that code: no W0403 for a closure that spawns its parameter (no `fork`), W0312 in place of W0405 for a value that the callee runs while its task runs, W0405 at the call of `mid_job` (the old pipeline gives W0314 two times at the scope line), no error for a code that runs the value one time (the old pipeline gives W0403, W0405), and W0405 for a closure that spawns its parameter on a scope of its maker while main changes the place after the call (the old pipeline misses it). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/133_task_params.wf"]
+codes = ["W0403", "W0405"]
+reason = "stage R0f: the closure value and the returned closure that spawn their parameter two times are known at the call (a task of the call of the function value, not the worst way): W0405 and no W0403 (no `fork`); the old pipeline gives W0403 too. In `via_pass_on` the `ir` pipeline gives W0403 for the `fork` of `par` and the old pipeline also W0405. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/38_callbacks.wf"]
+codes = ["W0301"]
+reason = "stage R0f: the program is in scope (the closure that the foreign `foreign_apply` runs as a task). In `captured` and `captured_named` the callee clears the vector and then runs the closure that reads `r`: the `ir` pipeline gives W0301 (the run uses `r` after the clear) next to the W0312 of both pipelines. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/61_task_paths.wf"]
+codes = ["W0313", "W0314", "W0405", "W0702"]
+reason = "stage R0f: the program is in scope (the closure that the parameter `k` can run on another thread). The `ir` pipeline gives W0702 next to W0314 for a task that performs `Note` through a local handler (as `redteam/t03_items.wf` at R0c); no W0314 for `spawn_item_out`, whose task performs through the row (part `task_effects`: a caller with a local handler gets W0314); one W0405 for the clause task in place of two; W0314 without W0313 for `k(|| note(1))` (the value is a task of the call: W0314 rejects it). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/82_stored_spawns.wf"]
+codes = ["W0405"]
+reason = "stage R0f: the program is in scope (the stored closure that code of a caller runs). `stored_either_branch` gets W0405: two runs of the stored value on the two branches of an `if` are `many` in the `ir` pipeline (the precision of plain runs on two branches, as `d27_ok` of the review of R0e). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0f/c12_struct.wf",
+    "tests/gate/probes/fixes/r0f/c15_serve_handler.wf",
+    "tests/gate/probes/fixes/r0f/c16_cc_during_plain.wf",
+    "tests/gate/probes/fixes/r0f/c18_cc_store_handler.wf",
+    "tests/gate/probes/fixes/r0f/c20_serve_linear.wf",
+    "tests/gate/probes/fixes/r0f/c22_cc_two_values.wf",
+    "tests/gate/probes/fixes/r0f/c25_cc_returned.wf",
+    "tests/gate/probes/fixes/r0f/c26_cc_maker_scope.wf",
+    "tests/gate/probes/fixes/r0f/c26_cc_maker_scope_ok.wf",
+    "tests/gate/probes/fixes/r0f/c29d_closure_maker_write.wf",
+    "tests/gate/probes/fixes/r0f/v1_via_hof.wf",
+]
+codes = ["W0301", "W0312", "W0313", "W0314", "W0403", "W0405", "W0602", "W0705"]
+reason = "stage R0f probes: a value of a caller that a foreign function, `http.serve` or code of a caller runs as a task. The `ir` pipeline runs the value as the code that the node knows runs it: W0405 at the call for two spawns of a field value (`c12`, the old pipeline gives W0314 two times), W0312 for a value that the callee runs while its task changes the place (`c16`, the old pipeline gives W0405), W0405 and no W0403 where no `fork` runs the value (`c22`, `c25`, `c29d`), W0403 only for the worst way of code of a caller that spawns on a scope of main (`c26`, `c26_ok`; the old pipeline also gives W0405, and both reject the clean `c26_ok`), W0314 without W0313 where code of a caller keeps a closure of a local handler (`c18`, `v1_via_hof`: the task of the call is W0314), W0705 for the handler of `http.serve` that performs a user effect (`c15`), one more W0602 for a linear capture (`c20`). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/interp/probe/k1_http_user_effect.wf",
+    "tests/gate/probes/r3/interp/probe/k2_http_user_effect_closure.wf",
+]
+codes = ["W0702", "W0705", "W0805"]
+reason = "stage R0f: the handler of `http.serve` performs a user effect that a local handler handles. Both pipelines give W0314 (the request task cannot perform through a handler of the task of `main`). The `ir` pipeline also gives W0705 (the function type of the parameter of `serve` has no row) and, for the item handler, W0702 and W0805 (the effect of the task goes to the row of `main`, part `task_effects`). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/s5/p/hof2.wf",
+    "tests/gate/probes/verify/partb/p/e3_apply.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/f4_alias.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_variants.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_more.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_apply.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_cb.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_local_closure_copy.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b3_param_value_first.wf",
+]
+codes = ["W0204", "W0301", "W0312", "W0313", "W0403", "W0405", "W0601", "W0602"]
+reason = "stage R0f: these programs come into scope (a value that code of a caller or a foreign function can run as a task). The `ir` pipeline runs a value as plain code where it knows the code of the caller (`or3_variants` `via_hof_unknown`: W0301 and W0312 of the second run of `twice` in place of the W0403 and W0405 of the worst way), gives W0314 without W0313 for a closure of a local handler that code of a caller can keep (`e3_apply`, `b1*`: the task of the call is W0314; `b1*` also get W0601 and W0602 for the linear capture of a closure that the unknown value in `keep` can drop), W0204 in place of W0312 for `hof_bad` (`hof2`), and W0405 in place of W0312 in `b3_param_value_first`. `f4_alias` loses the W0312 of an item callee that runs a value that changes what an argument points into (an older hole of the `ir` pipeline, in scope at R0e fix 4 in the form without the foreign call; the program is rejected by W0312 and W0405 at other lines). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0f/c05_cc_plain_ok.wf",
+    "tests/gate/probes/fixes/r0f/c06_cc_once_ok.wf",
+    "tests/gate/probes/fixes/r0f/c22_cc_two_values_ok.wf",
+    "tests/gate/probes/verify/s5/diff/p/fp1.wf",
+    "tests/gate/probes/verify/s5/diff/p/fp2.wf",
+]
+reason = "stage R0f: the callee gives the value to code of the caller that the node knows (`transfer::via_plain`): it runs the value one time as plain code (`c05_ok`, `c22_ok`, `fp1`, `fp2`), or spawns it one time (`c06_ok`: the `once` value runs one time). The old pipeline gives the worst way of code of a caller (W0403, W0405, W0502, or W0314 for a closure of a local handler that the code runs on the task of the call). The interpreter runs each with no fault"
+signed_by = "UNSIGNED: the author of stage R0f; the independent review of R0f must sign this row or reject it"
+stage = "R0f"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0e/rv1_b2_ok.wf"]
+reason = "stage R0f: the run as a task of an unknown value of a value of a callee (E7 of R0e fix 2) is no fallback: the callee gives that value to code of a caller, and the worst way at the task nodes of the call counts the runs of the code (`via_twice`). Here the code spawns the `once` value one time: no second run. The old pipeline gives W0502 (as at R0e fix 2, where the program fell back). The interpreter runs it with no fault"
+signed_by = "UNSIGNED: the author of stage R0f; the independent review of R0f must sign this row or reject it"
+stage = "R0f"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "named", "passthrough", "pins", "raises", "reach_repeats", "reaches", "ret", "ret_refs", "task_effects", "tasks"]
+files = [
+    "tests/gate/probes/fixes/r0e/h19_multi.wf",
+    "tests/gate/probes/fixes/r0e/h19_multi_ok.wf",
+    "tests/gate/probes/fixes/r0f/c05_cc_plain_ok.wf",
+    "tests/gate/probes/fixes/r0f/c22_cc_two_values_ok.wf",
+    "tests/gate/probes/fixes/r0f/c29_closure_maker_capture.wf",
+    "tests/gate/probes/r3/interp/probe/k3_http_cancel.wf",
+    "tests/gate/probes/r3/interp/probe/k6_http_once.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_variants.wf",
+    "tests/gate/probes/verify/s5/R2d/p/i1_foreign.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/ip7_e.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_more.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_apply.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_cb.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_local_closure_copy.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2a_cb.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2a_variants.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b3_param_value_first.wf",
+    "tests/gate/probes/verify/s5/S5c/p/r10_param_value.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_generic_copy.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_generic_take.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_self_copy.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_swapped.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_via_callee.wf",
+    "tests/gate/probes/verify/s5/diff/p/v2a.wf",
+    "tests/programs/06_http.wf",
+    "tests/programs/133_task_params.wf",
+    "tests/programs/61_task_paths.wf",
+    "tests/programs/82_stored_spawns.wf",
+]
+reason = "stage R0f: these programs come into scope (a value that a foreign function, `http.serve`, code of a caller or a function value runs as a task). The parts of the `ir` signatures: `pins` and `tasks` of a task of a call (the old inference says that a body that gives a value to code of a caller can pin, and the `ir` summary pins only for a task of the body that pins); `task_effects` of a task that performs through the row (the `ir` summary has them in its row, as for each task of a callee); `reaches`, `reach_repeats` and `passthrough` are parts of the old inference that the `ir` summary has in part `runs`; `multi`, `raises` and `named` of a callee with no IR (a body with W0303, the worst case of its declaration, stage R0b) or of a value of a caller that can resume more than once; `ret` and `ret_refs` of a returned function value (part `ret`)"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/133_task_params.wf",
+    "verify/s5/S5c/mut/progs/m00203_133_task_params.wf",
+    "verify/s5/S5c/mut/progs/m00281_133_task_params.wf",
+    "verify/s5/S5c/mut/progs/m01838_133_task_params.wf",
+]
+codes = ["W0403", "W0405"]
+reason = "stage R0f: copies and mutants of `tests/programs/133_task_params.wf` (its entry of R0f): the closure value and the returned closure that spawn their parameter are known at the call, so W0405 and no W0403; `via_pass_on` gets the W0403 of the `fork` and no W0405. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00876_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01649_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01694_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01826_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01925_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02068_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02270_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02512_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02844_61_task_paths.wf",
+]
+codes = ["W0313", "W0314", "W0405", "W0702"]
+reason = "stage R0f: mutants of `tests/programs/61_task_paths.wf` (its entry of R0f): W0702 next to W0314 for a task that performs through a local handler, no W0314 for a task that performs through the row, one W0405 for the clause task, W0314 without W0313 for a value that unknown code can run as a task; `m01925` also gets W0405 at the read after the call of the closure that spawns (the mutant drops the line of the old marker). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/S5c/mut/progs/m00463_67_task_starts.wf"]
+codes = ["W0314", "W0405"]
+reason = "stage R0f: a mutant of `tests/programs/67_task_starts.wf` comes into scope. The `ir` pipeline gives W0405 at the read after `run_maker` (the task of the returned closure, the marker line of the corpus file) and W0314 at the perform of the handled body, not at the spawn of the operation argument in the clause. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["r3/quality/fuzzcorp/82_stored_spawns.wf"]
+codes = ["W0405"]
+reason = "stage R0f: a copy of `tests/programs/82_stored_spawns.wf` (its entry of R0f): W0405 for the two branches of `run_either`. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/S5c/mut/progs/m01966_82_stored_spawns.wf"]
+codes = ["W0405"]
+reason = "stage R0f: a mutant of `tests/programs/82_stored_spawns.wf` moves the closure of `stored_run_by_two` into a closure that no one runs and gives `stored_either_branch` the spawn: the `ir` pipeline gives W0405 at `run_either` (two runs on two branches are `many`), the old pipeline at the call of `stored_run_by_two`. Rejected in both"
+stage = "R0f"

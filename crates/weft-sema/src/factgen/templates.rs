@@ -120,6 +120,14 @@ pub struct Em<'a> {
     /// (code of a caller, plan stage F19): the task, the parameter (or
     /// capture) and if it is a capture, and if the task is a `fork` branch.
     pub task_runs: Vec<(weft_facts::TaskId, u32, bool, bool)>,
+    /// While the template of a spawn applies its task: the spawn site, if
+    /// the facts have no task for it (a task of a scope of the maker of a
+    /// closure, in the facts of the closure summary; stage R0f).
+    pub maker_site: Option<u32>,
+    /// The runs of a value of the interface in a task of [`Em::maker_site`]:
+    /// the site, the parameter (or capture), and if it is a capture (part
+    /// `TaskHow::tasks` of the closure summary, stage R0f).
+    pub maker_runs: Vec<(u32, u32, bool)>,
     /// The nodes where the body runs a function value of the interface (a
     /// parameter, or a capture with `true`) as code that is not a task.
     pub run_at: Vec<(u32, bool, NodeId)>,
@@ -3120,12 +3128,13 @@ pub fn call(
         emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?
     };
     if tasks {
+        let slots = item_slots(em, sum, &out.sigma, &out.apps)?;
         call_tasks(
             em,
             nodes,
             st,
             block,
-            (sum, &out.sigma, &out.apps),
+            slots,
             args,
             &plain,
             (&spans, at, origin, &callee),
@@ -3730,6 +3739,73 @@ fn places_since(
     (writes, reads)
 }
 
+/// The places of a value that a task of a scope of a maker runs
+/// (`Applied::maker_tasks`, stage R0f): the run node `n` applied it with the
+/// facts after `marks`; its changes and reads at `n` are the footprint of
+/// these tasks too (`task_writes`, `task_reads`), and an operation of a
+/// handler of this task is W0314. A place of a caller and a frame of a
+/// callee are no places that the task shares, as at a spawn.
+fn maker_task_runs(
+    em: &mut Em<'_>,
+    n: NodeId,
+    app: &transfer::Applied,
+    marks: (usize, usize, usize),
+) {
+    let tasks: Vec<weft_facts::TaskId> = app
+        .maker_tasks
+        .iter()
+        .filter_map(|&s| em.hx.task_ids.get(&weft_ir::SpawnId(s)).copied())
+        .collect();
+    if tasks.is_empty() {
+        return;
+    }
+    let roots = &*em.roots;
+    let facts = &*em.facts;
+    let shared = |q: PlaceId| {
+        facts.places.get(q.index()).is_none_or(|i| {
+            !matches!(
+                roots.role(i.root),
+                Some(super::alpha::Role::Caller | super::alpha::Role::Frame(_))
+            )
+        })
+    };
+    let at_n = |m: &NodeId| *m == n;
+    let mut writes: Vec<PlaceId> = facts.mutates_at[marks.0..]
+        .iter()
+        .chain(&facts.lends_mut[marks.1..])
+        .filter(|(m, q)| at_n(m) && shared(*q))
+        .map(|(_, q)| *q)
+        .collect();
+    writes.sort();
+    writes.dedup();
+    let mut reads: Vec<PlaceId> = facts.reads_at[marks.2..]
+        .iter()
+        .filter(|(m, q)| at_n(m) && shared(*q))
+        .map(|(_, q)| *q)
+        .collect();
+    reads.sort();
+    reads.dedup();
+    for &t in &tasks {
+        for &q in &writes {
+            if !em.facts.task_writes.contains(&(t, q)) {
+                em.facts.task_writes.push((t, q));
+            }
+        }
+        for &q in &reads {
+            if !em.facts.task_reads.contains(&(t, q)) {
+                em.facts.task_reads.push((t, q));
+            }
+        }
+    }
+    let origin =
+        em.p.body(em.body)
+            .and_then(|b| b.blocks.get(em.at.0.index()))
+            .map(|blk| blk.term.origin.span);
+    if let Some(origin) = origin {
+        task_w0314(em, std::slice::from_ref(app), origin, None);
+    }
+}
+
 /// The check of a value that a callee runs while tasks of the callee run
 /// (`Applied::during_writes`, `Applied::during_reads`; stage R0e fix, OR7).
 ///
@@ -3980,11 +4056,137 @@ fn preds(em: &Em<'_>, n: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
+/// One value that a call runs as a task at four task nodes ([`call_tasks`]).
+///
+/// It has the parameter of the callee, how the callee runs it (`TaskHow`,
+/// `Run::many`), the places that the callee changes and reads while the
+/// task runs, and the values that apply there.
+struct TaskSlot {
+    /// The index of the slot: the task nodes `4 k` to `4 k + 3` of the call.
+    pub k: usize,
+    /// The parameter of the callee that the task runs.
+    pub param: u32,
+    /// The task is on another thread (a `fork` branch).
+    pub thread: bool,
+    /// Two tasks of the value can run at the same time.
+    pub twice: bool,
+    /// The callee can run the value more than once (`Run::many`).
+    pub many: bool,
+    /// The callee is code of a caller (`TaskHow::foreign`).
+    pub foreign: bool,
+    /// The parameters whose values the callee runs while the task runs.
+    pub with: std::collections::BTreeSet<u32>,
+    /// The places that the callee changes while the task runs.
+    pub writes: Vec<PlaceId>,
+    /// The places that the callee reads while the task runs.
+    pub reads: Vec<PlaceId>,
+    /// The values that the task runs.
+    pub mine: Vec<transfer::Applied>,
+}
+
+/// The slots of a call of function item with summary `sum` and σ `sigma`:
+/// one for each entry of the part `runs` that the callee runs as a task
+/// (`frames::task_runs`), with the values `apps` of that entry.
+///
+/// # Errors
+///
+/// The errors of σ.
+fn item_slots(
+    em: &mut Em<'_>,
+    sum: &crate::analysis::Summary,
+    sigma: &crate::analysis::apply::Sigma,
+    apps: &[transfer::Applied],
+) -> Result<Vec<TaskSlot>, AlphaError> {
+    let mut out = Vec::new();
+    for (k, (idx, run)) in super::frames::task_runs(sum).enumerate() {
+        let mut writes = Vec::new();
+        let mut reads = Vec::new();
+        for ip in &run.how.writes {
+            writes.extend(crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)?);
+        }
+        for ip in &run.how.reads {
+            reads.extend(crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)?);
+        }
+        let mine: Vec<transfer::Applied> = apps
+            .iter()
+            .filter(|a| a.task_run == Some(idx))
+            .cloned()
+            .collect();
+        // How the code of a caller that gets the value runs it (stage R0f).
+        let code_twice = mine
+            .iter()
+            .any(|a| a.task_how.as_ref().is_some_and(|h| h.twice));
+        out.push(TaskSlot {
+            k,
+            param: run.param,
+            thread: run.how.thread,
+            twice: run.how.twice || code_twice,
+            many: run.many,
+            foreign: run.how.foreign,
+            with: run.how.with.clone(),
+            writes,
+            reads,
+            mine,
+        });
+    }
+    Ok(out)
+}
+
+/// The slots of a call of a function value (stage R0f): the values `apps`
+/// that a value of the callee runs as a task (`Applied::task_run`), by the
+/// argument that gives them (`Applied::callee_param`), with the join of how
+/// each value of the callee runs it (`Applied::task_how`). The slot of an
+/// argument is its place in `frames::value_task_args` (`slots`). `None` if
+/// a value has no such argument.
+fn value_slots(apps: &[transfer::Applied], slots: &[u32]) -> Option<Vec<TaskSlot>> {
+    let mut out: Vec<TaskSlot> = Vec::new();
+    for a in apps.iter().filter(|a| a.task_run.is_some()) {
+        let param = a.callee_param?;
+        let how = a.task_how.as_ref()?;
+        let k = slots.iter().position(|&j| j == param)?;
+        let i = if let Some(i) = out.iter().position(|x| x.param == param) {
+            i
+        } else {
+            out.push(TaskSlot {
+                k,
+                param,
+                thread: false,
+                twice: false,
+                many: false,
+                foreign: false,
+                with: std::collections::BTreeSet::new(),
+                writes: Vec::new(),
+                reads: Vec::new(),
+                mine: Vec::new(),
+            });
+            out.len() - 1
+        };
+        let x = out.get_mut(i)?;
+        x.thread |= how.thread;
+        x.twice |= how.twice;
+        x.many |= how.many;
+        x.foreign |= how.foreign;
+        x.with.extend(how.with.iter().copied());
+        x.writes.extend(how.writes.iter().copied());
+        x.reads.extend(how.reads.iter().copied());
+        x.mine.push(a.clone());
+    }
+    for x in &mut out {
+        x.writes.sort();
+        x.writes.dedup();
+        x.reads.sort();
+        x.reads.dedup();
+    }
+    out.sort_by_key(|x| x.k);
+    Some(out)
+}
+
 /// The function values that a callee runs as tasks, at the task nodes
 /// of a call (`docs/ir.md` 6.7, plan stage F19; OR7, V126, V127, V132).
 ///
-/// For each entry of the part `runs` of the summary `sum` that runs as a
-/// task, four [`super::nodes::Phase::Task`] nodes (`Em::task_nodes`):
+/// For each slot of `slots` (an entry of the part `runs` of the summary of
+/// an item that runs as a task, or a value that a function value runs as a
+/// task, stage R0f), four [`super::nodes::Phase::Task`] nodes (`Em::task_nodes`):
 ///
 /// - the start: a task of the call (`fork_task` for a `fork` branch of the
 ///   callee) starts there (`spawned_at`), and the values of the argument
@@ -4011,11 +4213,7 @@ fn call_tasks(
     nodes: &CallNodes,
     st: &State,
     block: weft_ir::BlockId,
-    (sum, sigma, apps): (
-        &crate::analysis::Summary,
-        &crate::analysis::apply::Sigma,
-        &[transfer::Applied],
-    ),
+    slots: Vec<TaskSlot>,
     args: &[Operand],
     plain: &std::collections::BTreeMap<u32, (Vec<PlaceId>, Vec<PlaceId>)>,
     (spans, at, origin, callee): (&[Span], Span, weft_ir::Span, &str),
@@ -4024,8 +4222,8 @@ fn call_tasks(
     let body = em.body;
     let mut places = plain.clone();
     let mut started = Vec::new();
-    for (k, (idx, run)) in super::frames::task_runs(sum).enumerate() {
-        let base = k.saturating_mul(super::frames::TASK_NODES);
+    for slot in slots {
+        let base = slot.k.saturating_mul(super::frames::TASK_NODES);
         let get = |o: usize| task_nodes.get(base.saturating_add(o)).copied();
         let (Some(s), Some(d), Some(x), Some(e)) = (get(0), get(1), get(2), get(3)) else {
             continue;
@@ -4033,12 +4231,12 @@ fn call_tasks(
         for n in [s, d, x, e] {
             em.holders.before(n, st, em.facts);
         }
-        let kind = if run.how.thread {
+        let kind = if slot.thread {
             weft_facts::TaskKind::Fork
         } else {
             weft_facts::TaskKind::Spawn
         };
-        let span_of = spans.get(run.param as usize).copied().unwrap_or(at);
+        let span_of = spans.get(slot.param as usize).copied().unwrap_or(at);
         let t = em.facts.add_task(kind, span_of);
         em.facts.spawned_at.push((t, s));
         // The task can run while the call waits at an operation (follow-up
@@ -4057,12 +4255,8 @@ fn call_tasks(
                 }
             }
         }
-        let mine: Vec<transfer::Applied> = apps
-            .iter()
-            .filter(|a| a.task_run == Some(idx))
-            .cloned()
-            .collect();
-        let bad = task_w0314(em, &mine, origin, Some(callee));
+        let mine = &slot.mine;
+        let bad = task_w0314(em, mine, origin, Some(callee));
         let marks = (
             em.facts.mutates_at.len(),
             em.facts.lends_mut.len(),
@@ -4077,8 +4271,8 @@ fn call_tasks(
             values: Vec::new(),
             local_code: true,
         };
-        em.in_task = Some((t, run.how.thread));
-        let frames = emit_apps(em, &at_s, st, block, &[], &mine, at, &[], &[]);
+        em.in_task = Some((t, slot.thread));
+        let frames = emit_apps(em, &at_s, st, block, &[], mine, at, &[], &[]);
         em.in_task = None;
         let frames = frames?;
         end_frames(em, &at_s, &frames);
@@ -4093,9 +4287,9 @@ fn call_tasks(
         // H19): the worst way, or the count of the code that the node knows.
         // Only the value of the parameter itself: a value that it runs gets
         // its runs from the summary of the value.
-        let own = args.get(run.param as usize);
-        for app in &mine {
-            if run.how.twice || (run.many && !run.how.foreign) || app.via_twice {
+        let own = args.get(slot.param as usize);
+        for app in mine {
+            if slot.twice || (slot.many && !slot.foreign) || app.via_twice {
                 for (mb, op) in app
                     .once_args
                     .iter()
@@ -4120,7 +4314,7 @@ fn call_tasks(
         let (writes, reads) = places_since(em.facts, marks, shared);
         em.facts.task_writes.extend(writes.iter().map(|&q| (t, q)));
         em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
-        let fns = match args.get(run.param as usize) {
+        let fns = match args.get(slot.param as usize) {
             Some(op @ (Operand::Copy(_) | Operand::Move(_))) => {
                 transfer::operand(&mut em.cx(), body, st, op)?.flat().fns
             }
@@ -4139,33 +4333,35 @@ fn call_tasks(
         if code && !pins {
             em.code_opaque.push(t);
         }
-        places.insert(run.param, (writes.clone(), reads.clone()));
-        started.push((run.clone(), t, (d, x, e), writes, reads));
+        places.insert(slot.param, (writes.clone(), reads.clone()));
+        started.push((
+            (slot.twice, slot.with, slot.writes, slot.reads),
+            t,
+            (d, x, e),
+            writes,
+            reads,
+        ));
     }
-    for (run, t, (d, x, e), writes, reads) in started {
-        if run.how.twice {
+    for ((twice, with, how_writes, how_reads), t, (d, x, e), writes, reads) in started {
+        if twice {
             em.facts.spawned_at.push((t, d));
             em.facts.lends_mut.extend(writes.iter().map(|&q| (d, q)));
             em.facts
                 .reads_at
                 .extend(writes.iter().chain(&reads).map(|&q| (d, q)));
         }
-        for j in &run.how.with {
+        for j in &with {
             if let Some((w, r)) = places.get(j) {
                 em.facts.lends_mut.extend(w.iter().map(|&q| (x, q)));
                 em.facts.reads_at.extend(w.iter().chain(r).map(|&q| (x, q)));
             }
         }
-        for ip in &run.how.writes {
-            for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
-                em.facts.lends_mut.push((x, q));
-                em.facts.reads_at.push((x, q));
-            }
+        for &q in &how_writes {
+            em.facts.lends_mut.push((x, q));
+            em.facts.reads_at.push((x, q));
         }
-        for ip in &run.how.reads {
-            for q in crate::analysis::apply::iplaces(&mut em.cx(), sigma, ip)? {
-                em.facts.reads_at.push((x, q));
-            }
+        for &q in &how_reads {
+            em.facts.reads_at.push((x, q));
         }
         em.facts.joined_at.push((t, e));
     }
@@ -4226,10 +4422,21 @@ fn call_value(
     let body = em.body;
     let out = transfer::value_out(&mut em.cx(), body, block, st, callee, args, dest)?;
     // A function value whose code runs a value of its arguments as a task:
-    // the node has no task nodes (plan stage F19).
-    if out.apps.iter().any(|a| a.task_run.is_some()) {
-        return Err(AlphaError::Later(VALUE_TASKS));
-    }
+    // the values apply at the task nodes of the call, one slot for each
+    // argument that can hold a function value (stage R0f). With no task
+    // nodes, or a value of no such argument, the old pipeline checks the
+    // program (plan stage F19).
+    let slots = if out.apps.iter().any(|a| a.task_run.is_some()) {
+        let ks = super::frames::value_task_args(em.p, &*em.tys, body, args);
+        match value_slots(&out.apps, &ks) {
+            Some(s) if !em.task_nodes.is_empty() => Some(s),
+            _ => return Err(AlphaError::Later(VALUE_TASKS)),
+        }
+    } else {
+        // No value runs as a task: the call is a call with no task nodes.
+        em.task_nodes.clear();
+        None
+    };
     let main = nodes.main;
     let at = span(origin);
     operand_moves(em, main, st, callee, false, true)?;
@@ -4252,7 +4459,48 @@ fn call_value(
             Operand::Const(_) => Vec::new(),
         });
     }
-    let frames = emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?;
+    let frames = match slots {
+        Some(slots) => {
+            let mut frames = Vec::new();
+            let mut plain = std::collections::BTreeMap::new();
+            for app in out.apps.iter().filter(|a| a.task_run.is_none()) {
+                let marks = (
+                    em.facts.mutates_at.len(),
+                    em.facts.lends_mut.len(),
+                    em.facts.reads_at.len(),
+                );
+                let one = std::slice::from_ref(app);
+                frames.extend(emit_apps(
+                    em, nodes, st, block, args, one, at, &spans, &bases,
+                )?);
+                if let Some(j) = app.callee_param {
+                    let e: &mut (Vec<PlaceId>, Vec<PlaceId>) = plain.entry(j).or_default();
+                    let (w, rd) = places_since(em.facts, marks, |_| true);
+                    e.0.extend(w);
+                    e.1.extend(rd);
+                }
+            }
+            let label = em
+                .facts
+                .nodes
+                .get(main.index())
+                .map(|n| n.label.clone())
+                .filter(|l| !l.is_empty())
+                .unwrap_or_else(|| "the function value".to_string());
+            call_tasks(
+                em,
+                nodes,
+                st,
+                block,
+                slots,
+                args,
+                &plain,
+                (&spans, at, origin, &label),
+            )?;
+            frames
+        }
+        None => emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?,
+    };
     // The parameter types of the function type of the callee (W0705).
     let fn_params = match callee {
         Operand::Copy(q) | Operand::Move(q) => em
@@ -4661,6 +4909,7 @@ fn emit_apps(
             // (`Run::during`, stage R0e fix, OR7).
             if first && em.in_task.is_none() {
                 during_check(em, main, app, (mutated, lent, read));
+                maker_task_runs(em, n, app, (mutated, lent, read));
             }
             // The caller of the body does not apply this value again (no
             // entry of `runs`): its lends go into the summary of the body
@@ -4718,6 +4967,10 @@ fn emit_apps(
                 r.task = true;
                 em.task_runs.push((t, r.param, r.capture, thread));
             } else {
+                // A run in a task of a scope of the maker (stage R0f).
+                if let Some(site) = em.maker_site {
+                    em.maker_runs.push((site, r.param, r.capture));
+                }
                 let at = if app.again {
                     vec![Some(main), nodes.ret]
                 } else if app.late {
@@ -6430,8 +6683,10 @@ fn task_start(
     };
     let thread = em.p.spawns.get(site.index()).is_some_and(|d| d.fork);
     em.in_task = em.hx.task_ids.get(&site).map(|&t| (t, thread));
+    em.maker_site = em.in_task.is_none().then_some(site.0);
     let frames = emit_apps(em, &nodes, st, block, &[], &out.apps, at, &[], &[]);
     em.in_task = None;
+    em.maker_site = None;
     let frames = frames?;
     apps_at_ret(em, n, st, &out.apps, at)?;
     end_frames(em, &nodes, &frames);

@@ -1,0 +1,13 @@
+// The callee runs code of the caller in its task, and reads w while that code runs f, which writes it.
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn(), w: &C) / async {
+    scope { s =>
+        s.spawn(|| g(f))
+        print(w.k)
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|x| x(), || c.k += 1, &c)
+    print(c.k)
+}

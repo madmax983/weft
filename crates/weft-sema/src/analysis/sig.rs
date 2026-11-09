@@ -231,6 +231,8 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                 writes: access.clone(),
                 reads: access.clone(),
                 foreign: true,
+                tasks: Vec::new(),
+                no_body: true,
             };
             join_run(
                 &mut inf.runs,
@@ -848,8 +850,15 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
     x.then |= r.then;
     x.how.thread |= r.how.thread;
     x.how.foreign |= r.how.foreign;
+    x.how.no_body |= r.how.no_body;
     x.how.twice |= r.how.twice;
     x.how.with.extend(r.how.with.iter().copied());
+    for &t in &r.how.tasks {
+        if !x.how.tasks.contains(&t) {
+            x.how.tasks.push(t);
+        }
+    }
+    x.how.tasks.sort_unstable();
     for w in &r.how.writes {
         if !x.how.writes.contains(w) {
             x.how.writes.push(w.clone());
@@ -958,6 +967,14 @@ pub fn from_signature(
     let mut inf = Inferred::of_signature(sig, decl, tys);
     if !body {
         foreign_fn_parts(decl, tys, &mut inf);
+        // A foreign function can run a function value on another thread
+        // (the old lowering, `Lower::callee_task_runs`, stage R0f); a
+        // function of the prelude (`http.serve`) pins its tasks.
+        if foreign {
+            for r in &mut inf.runs {
+                r.how.thread = true;
+            }
+        }
         // A function with no body that performs can give a place of its
         // frame to an operation (plan stage F15).
         inf.gives_frame = !inf.named.is_empty();

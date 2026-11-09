@@ -982,6 +982,33 @@ pub fn task_runs(
         .filter(|(_, r)| r.task && !r.capture)
 }
 
+/// The arguments of a call of a function value that can hold a function
+/// value (stage R0f): each one has [`TASK_NODES`] task nodes, in order. A
+/// place with a projection counts.
+pub fn value_task_args(
+    p: &Program,
+    tys: &TyTable,
+    body: BodyId,
+    args: &[weft_ir::Operand],
+) -> Vec<u32> {
+    let decl = |q: &weft_ir::Place| {
+        p.bodies
+            .get(body.index())
+            .and_then(|b| b.locals.get(q.local.index()))
+            .map(|d| d.ty)
+    };
+    args.iter()
+        .enumerate()
+        .filter(|(_, op)| match op {
+            weft_ir::Operand::Const(_) => false,
+            weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) => {
+                !q.proj.is_empty() || decl(q).is_none_or(|t| crate::props::ir_has_fns(tys, t))
+            }
+        })
+        .map(|(i, _)| u32::try_from(i).unwrap_or(u32::MAX))
+        .collect()
+}
+
 /// The destinations of each terminator of some bodies.
 #[derive(Clone, Debug, Default)]
 pub struct Frames {
@@ -1091,14 +1118,14 @@ impl Frames {
                         self.waits.insert((body, block), hs);
                     }
                 }
-                let TermKind::Call {
-                    callee: Callee::Fn(f, _),
-                    ..
-                } = &blk.term.kind
-                else {
-                    continue;
+                let k = match &blk.term.kind {
+                    TermKind::Call {
+                        callee: Callee::Fn(f, _),
+                        ..
+                    } => sums.get(*f).map_or(0, |s| task_runs(s).count()),
+                    TermKind::Call { args, .. } => value_task_args(p, tys, body, args).len(),
+                    _ => continue,
                 };
-                let k = sums.get(*f).map_or(0, |s| task_runs(s).count());
                 if k > 0 {
                     let n = u32::try_from(k.saturating_mul(TASK_NODES)).unwrap_or(u32::MAX);
                     self.tasks.insert((body, block), n);

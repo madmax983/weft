@@ -1,0 +1,7 @@
+// The handler of http.serve performs through a local handler of main (W0314).
+effect Ask { fn ask() -> u64 }
+fn main(env: Env) / io {
+    handle Ask { fn ask() { resume(1) } } in {
+        http.serve(env.net.listen(":8080"), |req| { print(ask()); Response.text("ok") })
+    }
+}

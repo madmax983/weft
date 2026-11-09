@@ -1,0 +1,13 @@
+// The callee writes w after the task ends.
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) {
+    scope { s =>
+        s.spawn(|| g(f))
+    }
+    w.k += 1
+}
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|x| x(), || print(c.k), &c)
+    print(c.k)
+}

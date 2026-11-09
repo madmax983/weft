@@ -791,6 +791,8 @@ pub fn emit_parts(
             run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
+            maker_site: None,
+            maker_runs: Vec::new(),
             run_at: Vec::new(),
             then_runs: Vec::new(),
             run_during: Vec::new(),
@@ -1689,6 +1691,7 @@ fn closure_summary(
     let closure_waits: crate::analysis::tasks::WaitRaw;
     let run_multi: Vec<weft_facts::NodeId>;
     let closure_hows: Vec<crate::analysis::tasks::RawHow>;
+    let closure_maker_runs: Vec<(u32, u32, bool)>;
     let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
     let closure_inherited: Vec<(u32, bool, PlaceId, bool)>;
     let closure_opaque: Vec<weft_facts::TaskId>;
@@ -1717,6 +1720,8 @@ fn closure_summary(
             run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
+            maker_site: None,
+            maker_runs: Vec::new(),
             run_at: Vec::new(),
             then_runs: Vec::new(),
             run_during: Vec::new(),
@@ -1743,6 +1748,7 @@ fn closure_summary(
             templates::task_ends(&mut em);
         }
         closure_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        closure_maker_runs = std::mem::take(&mut em.maker_runs);
         closure_run_at = em.run_at.clone();
         closure_inherited = std::mem::take(&mut em.run_during);
         closure_opaque = std::mem::take(&mut em.code_opaque);
@@ -1941,6 +1947,24 @@ fn closure_summary(
     started.sort_unstable();
     started.dedup();
     sum.ret.tasks = ret_tasks(&returns, (cb, body.ret), &started);
+    // The values of the interface that a task of the part `tasks` runs
+    // (`TaskHow::tasks`, stage R0f): the task can run them after the node
+    // that runs the closure.
+    for &(site, param, capture) in &closure_maker_runs {
+        if !started.contains(&site) {
+            continue;
+        }
+        if let Some(r) = sum
+            .runs
+            .iter_mut()
+            .find(|r| r.param == param && r.capture == capture && !r.result)
+        {
+            if !r.how.tasks.contains(&site) {
+                r.how.tasks.push(site);
+                r.how.tasks.sort_unstable();
+            }
+        }
+    }
     sum.tasks = started;
     Ok(sum)
 }
@@ -2147,6 +2171,8 @@ fn emit_closure(
         run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
+        maker_site: None,
+        maker_runs: Vec::new(),
         run_at: Vec::new(),
         then_runs: Vec::new(),
         run_during: Vec::new(),
@@ -2453,6 +2479,8 @@ fn emit_clause(
         run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
+        maker_site: None,
+        maker_runs: Vec::new(),
         run_at: Vec::new(),
         then_runs: Vec::new(),
         run_during: Vec::new(),

@@ -1,0 +1,6 @@
+// http.serve can run the handler more than once: a once capture is W0502.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main(env: Env) / io {
+    let v = [1]
+    http.serve(env.net.listen(":8080"), |req| { take(v); Response.text("ok") })
+}

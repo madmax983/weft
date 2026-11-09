@@ -264,6 +264,15 @@ pub struct TaskHow {
     /// The body is code of a caller with no body (a foreign function): it
     /// runs the value in the worst way.
     pub foreign: bool,
+    /// The spawn sites of the part `tasks` (a task of a scope of the maker
+    /// of a closure) whose task runs the value (stage R0f). The run is a
+    /// run at the node that runs the closure too, but the task can run it
+    /// after the node: the caller gives the places of the value to these
+    /// tasks.
+    pub tasks: Vec<u32>,
+    /// The body is a function with no body (`sig::foreign_fn_parts`): the
+    /// worst way of `foreign` is the whole run (stage R0f).
+    pub no_body: bool,
 }
 
 /// The places of the tasks that can run while a body waits at an operation

@@ -1,0 +1,7 @@
+// A once value given to code of the caller that spawns it one time.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn mid(g: fn(fn()), f: fn()) / async { g(f) }
+fn main() / async {
+    let v = [1, 2]
+    mid(|x| { scope { s => s.spawn(x); () } }, || take(v))
+}

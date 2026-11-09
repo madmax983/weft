@@ -893,9 +893,9 @@ fn the_review_programs_of_stage_c15_keep_their_errors() {
 /// the closure summary has the rows of its handled bodies, and the run of
 /// the closure is a `multi` point (W0502 and W0503 at the run, as for a
 /// closure with no handler). From stage R0e a scope in a closure body is in
-/// scope too (`h4_scope.wf`, the same markers). Two more review programs stop
-/// at other fallbacks (a capability that leaves its handler, a value that
-/// code of a caller can run on another thread). In
+/// scope too (`h4_scope.wf`, the same markers). One more review program stops
+/// at another fallback (a capability that leaves its handler); `gen_k.wf` is
+/// in scope from stage R0f. In
 /// `g_row_struct.wf` the callee `run_both` has a type error (W0105): from
 /// plan stage R0b its callers get the worst case of its declaration, so the
 /// program is in scope, and the type error rejects it.
@@ -909,7 +909,15 @@ fn the_rows_of_clauses_stay_with_the_old_pipeline() {
     c15_check("h4_nested.wf");
     c15_check("h4_scope.wf");
     c15_fallback("dedup_key.wf", "a capability that leaves its handler");
-    c15_fallback("gen_k.wf", "code of a caller can run on another thread");
+    // From plan stage R0f the value that code of a caller can run on
+    // another thread is a task of the call: `gen_k.wf` is in scope. The
+    // `ir` pipeline also gives W0405 there (the move of the `once` value at
+    // the task node while the clause of the `multi` handler can run).
+    let (got, fallback, src) = c15_codes("gen_k.wf");
+    assert!(fallback.is_none(), "gen_k.wf: {fallback:?}");
+    for m in markers(&src) {
+        assert!(got.contains(&m), "gen_k.wf: {m:?} in {got:?}");
+    }
     let (got, fallback, src) = c15_codes("g_row_struct.wf");
     assert!(fallback.is_none(), "g_row_struct.wf: {fallback:?}");
     for m in markers(&src) {
