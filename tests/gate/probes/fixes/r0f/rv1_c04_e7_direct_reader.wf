@@ -1,0 +1,10 @@
+// outer gives a reader of c and &c to code of main; the code spawns the reader and writes c.
+struct C { k: u64 }
+fn outer(g: fn(fn(), &C)) / async {
+    let c = C { k: 0 }
+    g(|| print(c.k), &c)
+    print(c.k)
+}
+fn main() / async {
+    outer(|x, d| { scope { s => s.spawn(x); d.k += 1; () } })
+}

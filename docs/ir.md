@@ -2935,7 +2935,17 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   parameter of a value of a callee) is no fallback (E7 of R0e fix 2 stays for a known
   value): the callee gives that value to code of a caller, so its own run of the value is
   the worst way at the task nodes of the call. The run is a task in the part `runs` of the
-  body (`RunOf::task`), not a `task_run` of an index of another summary.
+  body (`RunOf::task`), not a `task_run` of an index of another summary. As built (stage
+  R0f fix, B1 of the review of R0f): E7 stays also for an `Unknown` value whose task runs
+  while the value changes places or runs other values (`TaskHow::writes`, `with`): the
+  worst way of the callee has no changes of the code of the caller
+  (`outer(g) { g(|| print(c.k), &c) }` with a `g` that spawns the reader and writes
+  `d.k`). And code of a caller that gets a place in an argument with no function value
+  makes each value of the arguments a task of the call also when a value of the body
+  only reads a place (`transfer::local_reads`), with these places as the changes of the
+  code (`TaskOf::writes`): W0405 in the body that gives the reader
+  (`fixes/r0f/rv1_c15_unknown_extern_value.wf`, an older hole of the `ir` pipeline at
+  depth 0). A place that only the environment of a value reaches is no such place.
 - A call of a function value has task nodes (stage R0f): four for each argument that can
   hold a function value (`frames::value_task_args`), as a call of an item has for each
   entry of `runs` that runs as a task. A value of the callee that runs a value of an
@@ -2957,7 +2967,12 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   applies the value gives the changes and the reads of the value at the node to that
   task too (`task_writes`, `task_reads`, W0314: `templates::maker_task_runs`). A value
   that a callee gives to code of a caller that is such a closure gets the sites of the
-  code (`transfer::via_tasks`).
+  code (`transfer::via_tasks`), also where the value runs in a task of the call (stage
+  R0f fix: `maker_task_runs` runs for a value at a task node too).
+- A slot of `call_tasks` for a value that the node runs as plain code
+  (`transfer::via_plain`) has no values: the call starts no task for it, and the plain
+  places of the value stay for the `with` of the other slots (stage R0f fix, B2 of the
+  review of R0f: `mid(g, f, h) { g(f, h) }` with a `g` that spawns `x` and runs `y`).
 - Open: a value that code of a caller keeps in a place (`copy(src, dst)` as the code of
   `apply(k, a, b) { k(a, b) }`) has no values at the run node of the summary of the code
   (`Given::Opaque`): a later run of the place runs `Unknown` (`r0f/p/c17_cc_store_ref.wf`,

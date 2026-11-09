@@ -2759,6 +2759,54 @@ R0f as built:
   closure of a local handler that code of a caller can keep gets W0314, not W0313
   (rejected for the other reason). (5) E2, E4, E5 and the rest of C7 and E7 stay.
 
+R0f fix as built (the review of R0f, round 1: blockers B1 and B2; `docs/ir.md` 6.4, "As
+built (plan stage R0f)"):
+
+- B1 (the E7 relaxation of R0f). R0f took the fallback E7 off a task run of an `Unknown`
+  value at depth > 0, because the callee runs that value in the worst way. But in the
+  body that gives a reader to code of a caller (`transfer::apply_value` with
+  `Given::Args`), the values became tasks only when they can race, and the worst way has
+  no changes of the code itself: `outer(g) { let c = ..; g(|| print(c.k), &c) }` with a
+  `g` of `main` that spawns the reader and writes `d.k` was accepted (`r0frev/p/c04_e7_*`,
+  `c09`, `c12`, `c16`, `c22`, `c24`, `c25`; held at R0e fix 4 by E7). Fix, both options
+  of the review: (b) code of a caller that gets a place in an argument with no function
+  value makes each value of the arguments a task of the call also when a value of the
+  body reads a place (`transfer::local_reads`), with these places as the changes of the
+  code (`TaskOf::writes`); this closes `rv1_c15_unknown_extern_value.wf` (code from a
+  foreign function, an older hole); a place that only the environment of a value
+  reaches does not count (`r0frev/p/c26_e7_caller_place_ok.wf` stays clean). (a) E7
+  stays for an `Unknown` value whose task runs while the value changes places or runs
+  other values (`TaskHow::writes`, `with`): one program of tier 2 goes out of scope
+  again; `rv1_b2_ok.wf` stays clean.
+- B2. `templates::item_slots` made a slot for each entry of `runs` that runs as a task,
+  also for a value that `via_plain` runs as plain code (no values in the slot), and
+  `call_tasks` then put the empty task places of that parameter in place of its plain
+  places, so the `with` of the other slot found nothing (`h03`, `h03d`, `h07`, `h08`,
+  `h10` of the review; held at R0e fix 4). Fix: a slot with no values starts no task and
+  keeps the plain places. `maker_task_runs` runs for a value at a task node too, so a
+  value that goes to a task of a scope of a maker through the code of a caller
+  (`via_tasks`) and runs in a task of the call gives its places to that task (`h10`).
+- Probes `tests/gate/probes/fixes/r0f/rv1_*` (8: `c04` and its twin, `h03` and its twin,
+  `h07` and its twin, `h10`, `c15`); `48_lend_alias.wf` gets the W0405 of the old pipeline
+  at `give_closure`. The reviewer signed the lost-clean rows of R0f; the new lost-clean
+  row `rv1_h07_callee_task_and_via_plain_ok.wf` waits for round 2.
+- `ereview/ev.sh` on the 127 programs of the review (`r0frev/p`) against the R0e fix 4
+  binary: 0 new HOLE (the 12 HOLE rows of R0f are held; the 3 HOLE rows that remain are
+  older: `g03`, `b13`, and `b08` = `c26b`). Precision: `h01_cc_code_writes_capture_ok`
+  (W0405: the code writes `c` after the scope, the worst way of the task of the call)
+  and `f07_vc_fork_rc` (W0401 for an `Rc` in a `fork` branch, the rule of ADR 0006) stay
+  rejected by the `ir` pipeline only.
+- Gates: tier 1 0 blockers (4574 of 4834 in scope; 3747 same, 9 open, 274 fixed, 1
+  new-fp, 135 lost-clean (+1, UNSIGNED), 128 moved, 540 changed (+1); the old records of
+  the 8 new probes and of `48_lend_alias.wf` are new in `tests/gate/baseline-tier1.jsonl`).
+  Tier 2 (2 workers) 0 blockers (53847 of 57393 in scope; 40371 same, 10 open, 88 fixed,
+  12 new-fp (0.096 %), 0 lost-fault, 3443 lost-clean, 1824 moved (+1, a mutant of corpus
+  48, ledgered), 11645 changed; 4 mutants of corpus 48 and `rt5_variants.wf` get the
+  W0405 of the old pipeline). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, as
+  R0f). Sigdiff tier 1 0 rows with no entry. On the review sets of R0e, `fixes/r0e` and
+  `fixes/r0d` (756 programs) each verdict is as at R0f. The fallbacks: E7 2/5 to 2/6 (the
+  program that goes out of scope); the other counts of R0f do not change.
+
 #### R1 Standalone `typeck`, part 1
 
 - Depends on: C3 and one review round.
@@ -2894,6 +2942,7 @@ gate and the exit of its parent, limited to its group of differences.
 | R0e fix 3 | R0e fix 2 | H19, the plain form of B2: a callee gives a `once` closure to a function value of its interface two times (a hole since C3 that the old pipeline catches). `Run::via_only`, `Run::via`, `transfer::via_twice`: a caller that knows the value counts the runs of the argument in its summary (W0502 at two runs or more), else the worst way. 10 forms close. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, each row as R0e fix 2; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 5 new lost-clean rows wait for the review | done (R0e fix 3) |
 | R0e fix 4 | R0e fix 3 | the review of R0e, round 2: R2-B1 (the lift filter of fix 2 dropped a clause task that is joined on one path only: now only a task of a scope of the clause, a `fork` there, or a task that the clause joins on each path is skipped), and the older holes a15, a35 (a run of the value in a clause, `clause_run_at`) and a31 (a value that runs in a task next to another task of the callee, `task_hows`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 6 new lost-clean rows wait for the review | done (R0e fix 4) |
 | R0f | R0e fix 4 | task runs (Phase R, R0f; C1, C7, E7): a value of a caller that a foreign function, `http.serve`, code of a caller or a function value runs as a task applies at the task nodes of the call (the worst way, or the way of the code of a caller that the node knows: `via_plain`, `via_code_twice`); a call of a function value has task nodes for its arguments; a closure that spawns a value of its interface on a scope of its maker gives the value to that task (`TaskHow::tasks`; closes `c29d`, `c29f`, older holes). Fallbacks C1 40/126 to 0/0, C7 12/79 to 7/11, E7 3/19 to 2/5. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE. The 6 new lost-clean rows wait for the review | done (R0f) |
+| R0f fix | R0f | the review of R0f, round 1: B1 (a reader that code of a caller runs as a task while the code changes a place it gets: the values become tasks of the call with the places of the code; E7 stays for an `Unknown` value whose task runs with changes or other values) and B2 (a slot of a value that runs as plain code kept no plain places for `with`; a value in a task of the call gives its places to a maker task). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE on the 127 review probes. The reviewer signed the lost-clean rows of R0f; 1 new row waits for round 2 | done (R0f fix) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -2984,6 +3033,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0e fix 4 (tier 2, the defaults) | 53644 of 57393 | 40476 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1822 | 11544 | 10 (as C3) |
 | R0f (tier 1, the defaults) | 4570 of 4826 | 3741 | 274 (+5: `fixes/r0f/c10_generic`, `c26c`, `c29`, `c29e`, `c29g`, which the old pipeline misses) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 134 (+6, UNSIGNED) | 128 | 539 (+36, ledgered) | 9 |
 | R0f (tier 2, the defaults) | 53848 of 57393 | 40368 | 88 | 12 (0.096 %, as R0e) | 3443 (+2, UNSIGNED) | 1823 | 11649 (+105, ledgered) | 10 (as C3) |
+| R0f fix (tier 1, the defaults) | 4574 of 4834 | 3747 | 274 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 135 (+1, UNSIGNED; the rows of R0f signed) | 128 | 540 (+1, ledgered) | 9 |
+| R0f fix (tier 2, the defaults) | 53847 of 57393 | 40371 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0f; signed) | 1824 (+1, ledgered) | 11645 | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

@@ -4084,7 +4084,7 @@ struct TaskSlot {
     pub mine: Vec<transfer::Applied>,
 }
 
-/// The slots of a call of function item with summary `sum` and σ `sigma`:
+/// The slots of a call of a function item with summary `sum` and σ `sigma`:
 /// one for each entry of the part `runs` that the callee runs as a task
 /// (`frames::task_runs`), with the values `apps` of that entry.
 ///
@@ -4223,6 +4223,12 @@ fn call_tasks(
     let mut places = plain.clone();
     let mut started = Vec::new();
     for slot in slots {
+        // A value that the run node runs as plain code (`transfer::via_plain`)
+        // has no values in the slot: no task, and its plain places stay in
+        // `places` for the `with` of the other slots (stage R0f fix, B2).
+        if slot.mine.is_empty() {
+            continue;
+        }
         let base = slot.k.saturating_mul(super::frames::TASK_NODES);
         let get = |o: usize| task_nodes.get(base.saturating_add(o)).copied();
         let (Some(s), Some(d), Some(x), Some(e)) = (get(0), get(1), get(2), get(3)) else {
@@ -4907,9 +4913,14 @@ fn emit_apps(
             }
             // The tasks of the callee that run while it runs the value
             // (`Run::during`, stage R0e fix, OR7).
+            // A value that runs in a task of the call can also run in a task
+            // of a scope of a maker (`Applied::maker_tasks` through the code
+            // of a caller, stage R0f fix).
+            if first {
+                maker_task_runs(em, n, app, (mutated, lent, read));
+            }
             if first && em.in_task.is_none() {
                 during_check(em, main, app, (mutated, lent, read));
-                maker_task_runs(em, n, app, (mutated, lent, read));
             }
             // The caller of the body does not apply this value again (no
             // entry of `runs`): its lends go into the summary of the body

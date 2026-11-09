@@ -2840,6 +2840,23 @@ fn task_unsafe(cx: &mut Cx<'_>, fv: &FnVal) -> bool {
     sum.is_none_or(|s| !s.muts.is_empty() || !s.lends.is_empty() || !s.puts.is_empty())
 }
 
+/// True if the function value `fv` of the body reads a place when it runs:
+/// a closure with a capture or with a read in its summary, an item with a
+/// read in its summary (stage R0f fix). A value of the interface is the
+/// value of a caller: the caller checks it.
+fn local_reads(cx: &Cx<'_>, fv: &FnVal) -> bool {
+    match fv {
+        FnVal::Closure(c) | FnVal::Made(c) => {
+            cx.p.closures
+                .get(c.index())
+                .is_none_or(|d| !d.captures.is_empty())
+                || cx.sums.closure(*c).is_ok_and(|s| !s.reads.is_empty())
+        }
+        FnVal::Item(f, _) => cx.sums.get(*f).is_ok_and(|s| !s.reads.is_empty()),
+        FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => false,
+    }
+}
+
 /// The function values of a capture of a closure ([`ret_fns`]).
 /// They are the function values and the places that their environments
 /// point into.
@@ -2919,14 +2936,17 @@ fn via_twice(
     Ok(total > 1)
 }
 
-/// True if a value that a callee only gives to code of a caller (`run`,
-/// `Run::via_only`, a task in the worst way) runs as plain code there (stage
-/// R0f): the run node knows each value of that code (`Run::via`, from `of`),
-/// the code is no task of the callee, and no value of it runs the argument
-/// that gets the value as a task, gives it back or puts it into a place.
-/// Then the value runs where the code runs it, on the task of the call, and
-/// the result is the places of the tasks of the callee that run while it
-/// runs that code (the join of `Run::during` of each entry); else `None`.
+/// The places of the tasks of the callee while it runs the code of a caller
+/// that gets a value (`run`, `Run::via_only`, a task in the worst way), if the
+/// value runs there as plain code (stage R0f); else `None`.
+///
+/// The value runs as plain code if the run node knows each value of that
+/// code (`Run::via`, from `of`), the code is no task of the callee, and no
+/// value of it runs the argument that gets the value as a task, gives it
+/// back, puts it into a place, starts a task of a scope of its maker or runs
+/// the argument while a task of its own runs. Then the value runs where the
+/// code runs it, on the task of the call, and the result is the join of
+/// `Run::during` of each entry.
 ///
 /// # Errors
 ///
@@ -3221,7 +3241,13 @@ fn apply_runs(
         // here, from `Given::Opaque`) is no new run: the callee gives that
         // value to code of a caller, so its own run of the value is the
         // worst way, a task at the task nodes of the call (stage R0f).
-        if task && depth > 0 && fns.iter().any(|f| !matches!(f, FnVal::Unknown)) {
+        //
+        // A run whose task runs while the value changes or runs other code
+        // (`TaskHow::writes`, `with`) stays with the old pipeline: the worst
+        // way of the callee has no changes of that code (B1 of the review of
+        // R0f).
+        let busy = !run.how.writes.is_empty() || !run.how.with.is_empty();
+        if task && depth > 0 && fns.iter().any(|f| !matches!(f, FnVal::Unknown) || busy) {
             return Err(AlphaError::Later(NESTED_TASK_RUN));
         }
         if fns.is_empty() {
@@ -3820,9 +3846,31 @@ fn apply_value(
             // applies them at its task nodes, in the worst way, one task for
             // each argument (stage R0f, `factgen::templates::value_slots`).
             // Else they run as plain code more than once.
+            // A value of this body that reads a place runs as a task too
+            // when the code gets places: the code can change them while the
+            // task reads them (stage R0f fix, B1 of the review of R0f).
+            // The places that the code gets in the arguments with no
+            // function value: a place that only the environment of a value
+            // reaches is no place that the code can change by itself.
+            let mut data_places: Vec<PlaceId> = Vec::new();
+            if let Given::Args(args) = given {
+                let mut data = Vec::new();
+                for a in args {
+                    if reach_fns(cx, body, st, a)?.is_empty() {
+                        data.push(a.clone());
+                    }
+                }
+                data_places = given_places(cx, body, st, &data)?;
+                data_places.sort();
+                data_places.dedup();
+            }
+            let gets_places = !data_places.is_empty();
             let mut as_tasks = false;
             for g in &reach {
-                if !matches!(g, FnVal::Unknown) && task_unsafe(cx, g) {
+                if matches!(g, FnVal::Unknown) {
+                    continue;
+                }
+                if task_unsafe(cx, g) || (gets_places && local_reads(cx, g)) {
                     as_tasks = true;
                 }
             }
@@ -3841,9 +3889,7 @@ fn apply_value(
                         arg_of.entry(f).or_insert(k);
                     }
                 }
-                all_places = given_places(cx, body, st, args)?;
-                all_places.sort();
-                all_places.dedup();
+                all_places.clone_from(&data_places);
             }
             for g in &reach {
                 if matches!(g, FnVal::Unknown) {

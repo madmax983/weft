@@ -1,0 +1,9 @@
+// main gets code from a foreign function and gives it a reader of c and &c.
+struct C { k: u64 }
+extern fn get() -> fn(fn(), &C)
+fn main() {
+    let c = C { k: 0 }
+    let g = get()
+    g(|| print(c.k), &c)
+    print(c.k)
+}

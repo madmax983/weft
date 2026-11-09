@@ -9856,14 +9856,14 @@ files = [
     "tests/gate/probes/verify/s5/diff/p/fp2.wf",
 ]
 reason = "stage R0f: the callee gives the value to code of the caller that the node knows (`transfer::via_plain`): it runs the value one time as plain code (`c05_ok`, `c22_ok`, `fp1`, `fp2`), or spawns it one time (`c06_ok`: the `once` value runs one time). The old pipeline gives the worst way of code of a caller (W0403, W0405, W0502, or W0314 for a closure of a local handler that the code runs on the task of the call). The interpreter runs each with no fault"
-signed_by = "UNSIGNED: the author of stage R0f; the independent review of R0f must sign this row or reject it"
+signed_by = "reviewer R0f round 1: the five programs are clean (one plain run, one spawn of the once value in a joined scope, sequential runs, closures of a live local handler on the task of the call); the interpreter and the oracle find no fault; the old pipeline gives the worst way"
 stage = "R0f"
 
 [[entry]]
 class = "lost-clean"
 files = ["tests/gate/probes/fixes/r0e/rv1_b2_ok.wf"]
 reason = "stage R0f: the run as a task of an unknown value of a value of a callee (E7 of R0e fix 2) is no fallback: the callee gives that value to code of a caller, and the worst way at the task nodes of the call counts the runs of the code (`via_twice`). Here the code spawns the `once` value one time: no second run. The old pipeline gives W0502 (as at R0e fix 2, where the program fell back). The interpreter runs it with no fault"
-signed_by = "UNSIGNED: the author of stage R0f; the independent review of R0f must sign this row or reject it"
+signed_by = "reviewer R0f round 1: the code spawns the once value one time in a joined scope; no second run, no fault; the old W0502 is a false positive"
 stage = "R0f"
 
 [[entry]]
@@ -9952,3 +9952,30 @@ files = ["verify/s5/S5c/mut/progs/m01966_82_stored_spawns.wf"]
 codes = ["W0405"]
 reason = "stage R0f: a mutant of `tests/programs/82_stored_spawns.wf` moves the closure of `stored_run_by_two` into a closure that no one runs and gives `stored_either_branch` the spawn: the `ir` pipeline gives W0405 at `run_either` (two runs on two branches are `many`), the old pipeline at the call of `stored_run_by_two`. Rejected in both"
 stage = "R0f"
+
+# Stage R0f fix (the review of R0f, round 1: B1 and B2).
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0f/rv1_h03_cc_two_args_one_code_ok.wf",
+    "tests/gate/probes/fixes/r0f/rv1_h07_callee_task_and_via_plain.wf",
+    "tests/gate/probes/fixes/r0f/rv1_h10_mid_gives_two_codes_same_task.wf",
+]
+codes = ["W0403", "W0405"]
+reason = "stage R0f fix (B2 of the review of R0f): a value that the node runs as plain code where the code of the caller runs it keeps its plain places for the `with` of the task of the other value (`call_tasks` skips a slot with no value), and a value in a task of the call gives its places to a task of a scope of a maker (`maker_task_runs`). Both pipelines give W0405; the old pipeline also gives W0403 (the worst way: a `fork` branch), the `ir` pipeline knows the code (no `fork`). `rv1_h10` gets two W0405 (the plain writer while the maker task reads, and the task of the call). `rv1_h03_ok` is clean at run time; both pipelines reject it (the `ir` pipeline: the worst way of the task with the plain value). Rejected in both"
+stage = "R0f fix"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0f/rv1_h07_callee_task_and_via_plain_ok.wf"]
+reason = "stage R0f fix (the clean twin of B2 `h07`): the callee joins its task before it gives `h` to the code of the caller, which runs it as plain code (`via_plain`): no task runs while `h` writes. The old pipeline gives W0403 and W0405 (the worst way of code of a caller). The interpreter runs it with no fault"
+signed_by = "UNSIGNED: the author of stage R0f; the independent review of R0f must sign this row or reject it"
+stage = "R0f fix"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/S5c/mut/progs/m00897_48_lend_alias.wf"]
+codes = ["W0301"]
+reason = "stage R0f fix: a mutant of `tests/programs/48_lend_alias.wf`. The `ir` pipeline now gives the W0405 of the old pipeline at `g(|| print(r.hp), world)` (code of a caller that gets `world` can change it while it runs the reader as a task, B1 of the review of R0f); the W0301 at the closure of `lend_and_read` is on the line of the call in the `ir` pipeline (as at C3). Rejected in both"
+stage = "R0f fix"
