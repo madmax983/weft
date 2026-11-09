@@ -1,0 +1,7 @@
+// H19: the callee gives `g` a closure that runs `f`; `g` runs it one time (no fault).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run1(g: fn(fn()), f: fn()) { g(|| f()) }
+fn main() {
+    let v = [1]
+    run1(|x| x(), || take(v))
+}

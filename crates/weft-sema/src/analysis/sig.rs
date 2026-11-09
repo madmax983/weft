@@ -247,6 +247,8 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     then: true,
                     after: std::collections::BTreeSet::new(),
                     during: super::summary::Wait::default(),
+                    via_only: false,
+                    via: Vec::new(),
                 },
             );
             inf.ret_fns.insert(RetFn::Param(u(i)));
@@ -443,6 +445,8 @@ pub fn intrinsic(decl: &FnDecl, tys: &TyTable, i: weft_ir::Intrinsic) -> Summary
                 then: i == weft_ir::Intrinsic::WithTimeout,
                 after: std::collections::BTreeSet::new(),
                 during: super::summary::Wait::default(),
+                via_only: false,
+                via: Vec::new(),
             });
         }
     }
@@ -836,8 +840,10 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         x.how.clone(),
         x.after.len(),
         x.during.clone(),
+        (x.via_only, x.via.clone()),
     );
     x.many |= r.many;
+    join_via(x, r);
     x.task |= r.task;
     x.then |= r.then;
     x.how.thread |= r.how.thread;
@@ -887,7 +893,26 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
             x.how.clone(),
             x.after.len(),
             x.during.clone(),
+            (x.via_only, x.via.clone()),
         )
+}
+
+/// Joins the parts `via_only` and `via` of run `r` into run `x` (stage R0e
+/// fix 3): a run that is not only a value for code of a caller makes the
+/// join a run of its own, and one argument that two runs give is `again`.
+fn join_via(x: &mut Run, r: &Run) {
+    x.via_only &= r.via_only;
+    for v in &r.via {
+        match x
+            .via
+            .iter_mut()
+            .find(|w| (w.value, w.capture, w.arg) == (v.value, v.capture, v.arg))
+        {
+            Some(w) => w.again |= v.again,
+            None => x.via.push(v.clone()),
+        }
+    }
+    x.via.sort();
 }
 
 /// True if code of a caller of the function values of type `t` can resume

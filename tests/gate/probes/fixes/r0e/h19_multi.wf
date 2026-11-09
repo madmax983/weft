@@ -1,0 +1,9 @@
+// H19: a `multi` handler resumes two times around one call `g(f)` (W0502 or W0503).
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run1(g: fn(fn()), f: fn()) / Pick { let b = pick()
+ g(f) }
+fn main() {
+    let v = [1]
+    handle Pick { fn pick() { resume(true); resume(false) } } in { run1(|x| x(), || take(v)) }
+}

@@ -599,6 +599,30 @@ fn runs_of(
         let mut args: Vec<IPlace> = r.places.iter().filter_map(|&q| place(q)).collect();
         args.sort();
         args.dedup();
+        // A value that the body gives to code of a caller (stage R0e fix 3):
+        // one argument that two blocks give is a second run of the value.
+        let via: Vec<super::summary::Via> = r
+            .via
+            .iter()
+            .map(|v| {
+                let blocks: std::collections::BTreeSet<weft_ir::BlockId> = runs
+                    .iter()
+                    .filter(|(x, _)| {
+                        x.param == r.param
+                            && x.capture == r.capture
+                            && x.result == r.result
+                            && x.via
+                                .iter()
+                                .any(|w| (w.value, w.capture, w.arg) == (v.value, v.capture, v.arg))
+                    })
+                    .map(|(x, _)| x.block)
+                    .collect();
+                super::summary::Via {
+                    again: v.again || blocks.len() > 1,
+                    ..v.clone()
+                }
+            })
+            .collect();
         let run = super::summary::Run {
             param: r.param,
             capture: r.capture,
@@ -612,6 +636,8 @@ fn runs_of(
             then: false,
             after: r.after.clone(),
             during: super::summary::Wait::default(),
+            via_only: r.via_only,
+            via,
         };
         // A second run node of the value runs it again.
         if let Some(x) = out

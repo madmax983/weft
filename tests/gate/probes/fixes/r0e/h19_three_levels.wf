@@ -1,0 +1,8 @@
+// H19: three levels: a callee gives `g` and `f` to another callee that runs `g(f)` two times (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }
+fn mid(g: fn(fn()), f: fn()) { run2(g, f) }
+fn main() {
+    let v = [1]
+    mid(|x| x(), || take(v))
+}

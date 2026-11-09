@@ -1,0 +1,8 @@
+// H19: the `multi` operation comes after the call (clean of W0502).
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run1(g: fn(fn()), f: fn()) { g(f) }
+fn main() {
+    let v = [1]
+    handle Pick { fn pick() { resume(true); resume(false) } } in { run1(|x| x(), || take(v)); let b = pick() }
+}

@@ -1,0 +1,7 @@
+// H19: the callee runs `g(f)` in a loop (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run_n(g: fn(fn()), f: fn()) { for i in 0..2 { g(f) } }
+fn main() {
+    let v = [1]
+    run_n(|x| x(), || take(v))
+}

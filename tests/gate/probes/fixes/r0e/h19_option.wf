@@ -1,0 +1,11 @@
+// H19: `g` comes from an Option (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(o: Option<fn(fn())>, f: fn()) {
+    match o { Some(g) => { g(f)
+ g(f) }, None => {} }
+}
+fn main() {
+    let v = [1]
+    let g = |x: fn()| x()
+    run2(Some(g), || take(v))
+}

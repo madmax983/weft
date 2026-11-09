@@ -1,0 +1,7 @@
+// H19: `g` runs only its first argument; `f` is the second one, given two times (no fault).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(g: fn(fn(), fn()), f: fn()) { g(|| print(1), f); g(|| print(2), f) }
+fn main() {
+    let v = [1]
+    run2(|x, y| x(), || take(v))
+}

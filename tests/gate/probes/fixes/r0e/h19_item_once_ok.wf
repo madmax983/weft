@@ -1,0 +1,8 @@
+// H19: `g` is a function item that runs its argument; the callee runs `g` one time (clean).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn call(x: fn()) { x() }
+fn run1(g: fn(fn()), f: fn()) { g(f) }
+fn main() {
+    let v = [1]
+    run1(call, || take(v))
+}

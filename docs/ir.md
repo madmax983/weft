@@ -2800,7 +2800,26 @@ scope):
   time, `TaskHow::twice`, or one after the other, `Run::many` of a callee with a body):
   the first task node moves the argument and the second one uses it (W0502; O2 of the
   review of R0e, `fixes/r0e/rv1_o2_*`). A foreign run (the worst way of code of a
-  caller) is not a second run.
+  caller) is not a second run by its `many` alone.
+- A `once` value that a callee gives to code of a caller, a function value of its
+  interface (stage R0e fix 3, H19: `fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }` with
+  `run2(|x| x(), || take(v))`, a hole since C3 that the old pipeline catches). The run
+  of `f` is the worst way of the code of `g` (`task`, `TaskHow::foreign`), and its
+  `many` is true for each such value, so the rule above did not count it, and the run
+  of `g` at the caller does not know that its argument is `f`. The new fields
+  `Run::via_only` and `Run::via` of the part `runs` (6.7) say that the body only gives
+  the value to code of a caller, and to which values of the interface and arguments
+  (`transfer::apply_value`, the code that gets the values that the arguments reach;
+  `Via::again` for two blocks or a loop). A call that knows each value of such code
+  (`transfer::via_twice`) counts how many times their summaries run the argument
+  (`arg_runs`: a run that is `many`, two tasks, the worst way, `after`, or a value that
+  the summary gives back or puts into a place counts two), added over the entries of
+  `via`; with an unknown value the count is two (the worst way). Two runs or more:
+  the task nodes move the argument and use it again (`Applied::via_twice`, W0502). So
+  `g(f)` with a `g` that runs its argument one time, or not at all, stays clean
+  (`h19_once_ok.wf`, `h19_g_ignores_ok.wf`); a value that the given value runs in turn
+  (`g(|| f())`) has no `via` (the worst way: `h19_nested_ok.wf` is rejected, as in the
+  old pipeline).
 - A scope body in a clause (stage R0e fix 2, B1 of the review of R0e): its code and its
   spawns run at the nodes that run the clause, as the code of a handled body in the
   clause (`handlers::clause_nodes`: the scope body maps to the block of its `scope`).
@@ -3878,7 +3897,7 @@ the body that leaves it), `Caller` (a place of a caller), `Group(adt)`.
 | `performs` | the operations and their capability interface, with their arguments | `performs`, `op_args`, `cap_runs`, `callee_ops` |
 | `aborts` | the abort destinations (by capability interface), `assert`, failures (`raises`) | `abortive`, `abortive_local`, `raises` |
 | `multi` | the capability interfaces through which the body can resume more than once | `multi`, `reach_repeats` |
-| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), if the body can perform or abort after the run (`then`, follow-up F19.4), and the places that the tasks of the body write and read while it runs the value as plain code (`during`, stage R0e fix) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
+| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), if the body can perform or abort after the run (`then`, follow-up F19.4), and the places that the tasks of the body write and read while it runs the value as plain code (`during`, stage R0e fix); for a value that the body only gives to code of a caller, the values and arguments of that code (`via_only`, `via`, stage R0e fix 3) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
 | `waits` | for each effect: the places that the tasks that can run while the body waits at an operation of the effect for a handler of a caller change and read (follow-up F19.5, 6.4). A key with no places: such a task runs, but it touches no place of the interface | none (the old pipeline misses R3-1 and R3-2) |
 | `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9), and those of them that it joins on each path of an abort too (`abort_joins`, a must part, follow-up F19.3: else `joined_at` at `Ret` of the run node) | `spawns`, `tasks`, `task_effects`, `pins` |
 | `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks (`ret.tasks`, follow-up F19.3: the spawn sites of the part `tasks` whose handle `_0` holds at each `Return`, and no other value), results of code of a caller | `ret`, `RetFn`, `ret_refs` |

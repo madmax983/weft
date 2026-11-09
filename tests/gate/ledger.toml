@@ -9678,3 +9678,37 @@ files = [
 ]
 reason = "stage R0e fix 2: a scope with no task in a clause does not raise (stage C1.5: as a scope with no task in a function body); the old inference says `raises` for each scope"
 stage = "R0e fix 2"
+
+# Stage R0e fix 3 (H19): a callee gives a `once` value to code of a caller, a
+# function value of the interface (Run::via_only, Run::via). The lost-clean
+# rows wait for the independent review of R0e fix 3.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/193_value_runs_once_value.wf"]
+codes = ["W0502"]
+reason = "stage R0e fix 3 (H19): the corpus file of a `once` closure that a callee gives to a function value `g`. Both pipelines give W0502 where `g` runs the closure two times (two runs of `g`, two runs inside `g`, an item `g`, a loop, a struct field). The old pipeline also gives W0502 where `g` runs it one time or not at all, or gets it in one of its two runs (`once_through_g`, `once_through_item`, `g_does_not_run`, `once_of_two_runs`): no second run, the `ir` pipeline accepts them (it counts the runs of the argument in the summary of `g`). Rejected in both"
+stage = "R0e fix 3"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/h19_g_stores.wf",
+    "tests/gate/probes/fixes/r0e/h19_linear.wf",
+]
+codes = ["W0302", "W0602"]
+reason = "stage R0e fix 3 (H19): both pipelines give W0502 at the call. The `ir` pipeline also gives W0302 at the later run of the stored copy (`h19_g_stores`: `g` puts its argument into a vector, the worst way of a second run) and W0602 for the linear capture that a run of code of a caller can drop (`h19_linear`, as at R0e fix 2). `h19_linear` faults at run time; `h19_g_stores` has no fault. Rejected in both"
+stage = "R0e fix 3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0e/h19_once_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_g_ignores_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_item_once_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_second_arg_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_two_values_ok.wf",
+]
+reason = "stage R0e fix 3 (H19): the clean twins of the probes of the fix. The old pipeline gives W0502: a callee gives the `once` closure to code of a caller. The `ir` pipeline accepts them, as at R0e fix 2: the caller knows `g` and counts the runs of the argument in its summary. `g` runs it one time (`h19_once_ok`, `h19_item_once_ok`), does not run it (`h19_g_ignores_ok`), runs only its other argument (`h19_second_arg_ok`), or gets the closure in one of its two runs (`h19_two_values_ok`). The interpreter runs each program with no fault (seeds 1 to 3, both engines, `ereview/ev.sh`)"
+signed_by = "UNSIGNED: the author of R0e fix 3; the independent review must sign this row or reject it"
+stage = "R0e fix 3"

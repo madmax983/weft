@@ -1,0 +1,8 @@
+// H19: the callee gives `g` to another callee that runs it with `f`, two times (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn apply(g: fn(fn()), f: fn()) { g(f) }
+fn run2(g: fn(fn()), f: fn()) { apply(g, f); apply(g, f) }
+fn main() {
+    let v = [1]
+    run2(|x| x(), || take(v))
+}

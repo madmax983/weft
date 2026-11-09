@@ -1,0 +1,85 @@
+// Stage R0e fix 3 (H19): a callee gives a `once` closure `f` to code of a
+// caller, a function value `g`. The callee only knows that `g` can run `f`
+// (the worst way). A caller that knows `g` counts how many times the summary
+// of `g` runs its argument, and how many times the callee gives `f` to it: a
+// second run of `f` is W0502. A `g` that runs `f` one time, that does not run
+// it, or that gets `f` in only one of its runs, is clean in the ir pipeline
+// (the old pipeline rejects each of them).
+struct G { g: fn(fn()) }
+
+fn take(v: Vec<u64>) { print(v.len()) }
+fn call(x: fn()) { x() }
+
+// The callee runs `g` with `f` two times.
+fn run2(g: fn(fn()), f: fn()) {
+    g(f)
+    g(f)
+}
+
+// The callee runs `g` with `f` one time.
+fn run1(g: fn(fn()), f: fn()) {
+    g(f)
+}
+
+// The callee gives `f` to one run of `g` and another value to the other.
+fn run_other(g: fn(fn()), f: fn(), h: fn()) {
+    g(f)
+    g(h)
+}
+
+// The callee runs `g` with `f` in a loop.
+fn run_loop(g: fn(fn()), f: fn()) {
+    for i in 0..2 { g(f) }
+}
+
+// `g` is a field of a struct.
+fn run2_field(s: G, f: fn()) {
+    let g = s.g
+    g(f)
+    g(f)
+}
+
+fn twice_through_g() {
+    let v = [1]
+    run2(|x| x(), || take(v))   //~ W0502
+}
+
+fn twice_in_g() {
+    let v = [1]
+    run1(|x| { x(); x() }, || take(v))   //~ W0502
+}
+
+fn twice_through_item() {
+    let v = [1]
+    run2(call, || take(v))   //~ W0502
+}
+
+fn twice_in_loop() {
+    let v = [1]
+    run_loop(|x| x(), || take(v))   //~ W0502
+}
+
+fn twice_through_field() {
+    let v = [1]
+    run2_field(G { g: |x| x() }, || take(v))   //~ W0502
+}
+
+fn once_through_g() {
+    let v = [1]
+    run1(|x| x(), || take(v))   //~ old: W0502
+}
+
+fn once_through_item() {
+    let v = [1]
+    run1(call, || take(v))   //~ old: W0502
+}
+
+fn g_does_not_run() {
+    let v = [1]
+    run2(|x| print(1), || take(v))   //~ old: W0502
+}
+
+fn once_of_two_runs() {
+    let v = [1]
+    run_other(|x| x(), || take(v), || print(2))   //~ old: W0502
+}

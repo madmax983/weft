@@ -4085,14 +4085,17 @@ fn call_tasks(
         // A `once` value that the callee runs as a task more than once: two
         // tasks at the same time (two spawns, a spawn in a loop,
         // `TaskHow::twice`), or one task after the other (`Run::many` of a
-        // body that the callee has; a foreign run is the worst way of code
-        // of a caller, not a second run). The first start moves it, and the
-        // second start uses it (W0502; hole O2 of the review of R0e).
+        // body that the callee has; a foreign run is `many` in the worst
+        // way, so its `many` does not count here). The first start moves it, and the
+        // second start uses it (W0502; hole O2 of the review of R0e). A
+        // value that the callee only gives to code of a caller runs as many
+        // times as that code runs it (`Applied::via_twice`, stage R0e fix 3,
+        // H19): the worst way, or the count of the code that the node knows.
         // Only the value of the parameter itself: a value that it runs gets
         // its runs from the summary of the value.
         let own = args.get(run.param as usize);
         for app in &mine {
-            if run.how.twice || (run.many && !run.how.foreign) {
+            if run.how.twice || (run.many && !run.how.foreign) || app.via_twice {
                 for (mb, op) in app
                     .once_args
                     .iter()

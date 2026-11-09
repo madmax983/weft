@@ -1919,6 +1919,12 @@ pub struct RunOf {
     /// code of a caller can resume more than once (`Run::after`; filled by
     /// the fact generator, `crate::factgen` `runs_after`).
     pub after: BTreeSet<super::summary::RunKey>,
+    /// The run node only gives the value to code of a caller as an argument
+    /// (`Run::via_only`, stage R0e fix 3).
+    pub via_only: bool,
+    /// The values of the interface whose code gets the value
+    /// (`Run::via`).
+    pub via: Vec<super::summary::Via>,
 }
 
 /// One summary that a run node of a function value applies (`docs/ir.md`
@@ -2013,6 +2019,10 @@ pub struct Applied {
     pub during_writes: Vec<PlaceId>,
     /// The places that the tasks of the callee read while it runs the value.
     pub during_reads: Vec<PlaceId>,
+    /// The callee only gives the value to code of a caller (`Run::via_only`),
+    /// and that code can run it more than once (stage R0e fix 3, H19): the
+    /// worst way unless the run node knows the code (`transfer::via_twice`).
+    pub via_twice: bool,
 }
 
 /// The places that the references of the captures of closure `decl` point
@@ -2812,6 +2822,97 @@ type RunSource = (BTreeSet<FnVal>, Operand, BodyId);
 type RunValues<'a> =
     dyn FnMut(&mut Cx<'_>, &super::summary::Run) -> Result<Option<RunSource>, AlphaError> + 'a;
 
+/// True if a value that a callee only gives to code of a caller (`run`,
+/// `Run::via_only`) can run more than once there (stage R0e fix 3, H19).
+///
+/// The code is the values of the runs `runs` of the callee that `Run::via`
+/// names. If the run node knows each of these values (a closure or an item
+/// with a summary, from `of`), the value runs as many times as their
+/// summaries run the argument that gets it ([`arg_runs`]), added over the
+/// entries of `via`, and the most over the values of one entry; an entry
+/// that the callee gives more than once (`Via::again`) counts two runs if the
+/// code runs the argument. Else, or after code of a caller that can resume
+/// more than once (`Run::after`), the code can run it more than once (the
+/// worst way).
+///
+/// # Errors
+///
+/// The errors of `of`.
+fn via_twice(
+    cx: &mut Cx<'_>,
+    run: &super::summary::Run,
+    runs: &[super::summary::Run],
+    of: &mut RunValues<'_>,
+) -> Result<bool, AlphaError> {
+    if run.via.is_empty() || !run.after.is_empty() {
+        return Ok(true);
+    }
+    let mut total = 0u32;
+    for v in &run.via {
+        let Some(code) = runs
+            .iter()
+            .find(|x| (x.param, x.capture, x.result) == (v.value, v.capture, false))
+        else {
+            return Ok(true);
+        };
+        if !code.after.is_empty() {
+            return Ok(true);
+        }
+        let Some((fns, _, _)) = of(cx, code)? else {
+            return Ok(true);
+        };
+        if fns.is_empty() {
+            return Ok(true);
+        }
+        let mut most = 0u32;
+        for f in &fns {
+            let sum = match f {
+                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
+                FnVal::Item(g, _) => cx.sums.get(*g).ok(),
+                FnVal::Param(_) | FnVal::ParamResult(_) | FnVal::Capture(_) | FnVal::Unknown => {
+                    None
+                }
+            };
+            let Some(sum) = sum else {
+                return Ok(true);
+            };
+            most = most.max(arg_runs(sum, v.arg));
+        }
+        // The callee gives the value there more than once: each run of the
+        // code can run it.
+        if v.again && most > 0 {
+            most = 2;
+        }
+        total = total.saturating_add(most);
+    }
+    Ok(total > 1)
+}
+
+/// The number of runs of parameter `arg` in a run of a body with summary
+/// `sum`, up to 2 (two or more): a run that can happen again (`Run::many`,
+/// `Run::after`, two tasks at a time, the worst way of code of a caller)
+/// counts 2, and so does a value of the parameter that the body gives back or
+/// puts into a place (a caller can run it again).
+fn arg_runs(sum: &super::summary::Summary, arg: u32) -> u32 {
+    use super::summary::RetFn;
+    let given = |fs: &[RetFn]| fs.contains(&RetFn::Param(arg));
+    if given(&sum.ret.fns) || sum.put_fns.iter().any(|(_, fs)| given(fs)) {
+        return 2;
+    }
+    let mut n = 0u32;
+    for r in sum
+        .runs
+        .iter()
+        .filter(|r| !r.capture && !r.result && r.param == arg)
+    {
+        if r.many || r.how.twice || r.how.foreign || !r.after.is_empty() {
+            return 2;
+        }
+        n = n.saturating_add(1);
+    }
+    n.min(2)
+}
+
 /// The places that σ `sigma` gives to the interface places `ips`, sorted.
 ///
 /// # Errors
@@ -2910,6 +3011,9 @@ fn apply_runs(
         }
         others.sort();
         others.dedup();
+        // A value that the callee only gives to code of a caller: can that
+        // code run it more than once (stage R0e fix 3, H19)?
+        let twice_via = run.via_only && via_twice(cx, run, runs, of)?;
         // The places of the tasks of the callee that run while it runs the
         // value (`Run::during`, stage R0e fix, OR7).
         let during_writes = all_iplaces(cx, sigma, &run.during.writes)?;
@@ -2955,6 +3059,7 @@ fn apply_runs(
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
                 a.then |= run.then;
+                a.via_twice |= twice_via;
                 for (have, more) in [
                     (&mut a.during_writes, &during_writes),
                     (&mut a.during_reads, &during_reads),
@@ -3335,6 +3440,8 @@ fn apply_value(
                     maybe: false,
                     body: r.body,
                     after: BTreeSet::new(),
+                    via_only: false,
+                    via: Vec::new(),
                 }),
                 (
                     FnVal::Param(i) | FnVal::ParamResult(i) | FnVal::Capture(i),
@@ -3350,6 +3457,8 @@ fn apply_value(
                     maybe: false,
                     body: r.body,
                     after: BTreeSet::new(),
+                    via_only: false,
+                    via: Vec::new(),
                 }),
                 _ => None,
             };
@@ -3418,6 +3527,7 @@ fn apply_value(
                 closure: None,
                 during_writes: Vec::new(),
                 during_reads: Vec::new(),
+                via_twice: false,
             });
             let places = match given {
                 Given::Args(args) => {
@@ -3449,13 +3559,36 @@ fn apply_value(
                     depth + 1,
                     apps,
                 )?;
-                for a in apps.out.iter_mut().skip(start) {
+                // The code that gets the value (stage R0e fix 3, H19): a value
+                // of the interface, and the arguments that give the value. A
+                // caller that knows the code counts its runs of them.
+                let mut via = Vec::new();
+                if let (FnVal::Param(i) | FnVal::Capture(i), Given::Args(args)) = (fv, given) {
+                    for (k, a) in args.iter().enumerate() {
+                        if reach_fns(cx, body, st, a)?.contains(g) {
+                            via.push(super::summary::Via {
+                                value: *i,
+                                capture: matches!(fv, FnVal::Capture(_)),
+                                arg: u32::try_from(k).unwrap_or(u32::MAX),
+                                again: cx.cycles.has(body, r.block),
+                            });
+                        }
+                    }
+                }
+                for (k, a) in apps.out.iter_mut().enumerate().skip(start) {
                     a.again = true;
                     a.kind = super::apply::RunKind::Run;
                     // Code of a caller can drop the value with no run.
                     if let Some(r) = a.run.as_mut() {
                         r.task = true;
                         r.maybe = true;
+                        r.via_only = true;
+                        // A value that the given value runs in turn can
+                        // run more than once in each run of it: no `via`
+                        // (the worst way).
+                        if k == start {
+                            r.via.clone_from(&via);
+                        }
                     }
                 }
             }
@@ -3542,6 +3675,7 @@ fn apply_value(
                 closure: None,
                 during_writes: Vec::new(),
                 during_reads: Vec::new(),
+                via_twice: false,
             });
             apply_runs(
                 cx,
@@ -3751,6 +3885,7 @@ fn apply_value(
                 closure: Some(*c),
                 during_writes: Vec::new(),
                 during_reads: Vec::new(),
+                via_twice: false,
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: a run of a capture runs each value of the callee

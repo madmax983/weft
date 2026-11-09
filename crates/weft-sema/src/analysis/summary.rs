@@ -215,6 +215,30 @@ pub struct Run {
     /// that the value it gives accesses: a task of the callee that changes a
     /// place while the value reads it is a race (W0312).
     pub during: Wait,
+    /// True if the body only gives the value to code of a caller as an
+    /// argument (stage R0e fix 3, H19): the run is the worst way of that
+    /// code (`task`, `TaskHow::foreign`). Then `via` names that code, if it
+    /// is a value of the interface each time.
+    pub via_only: bool,
+    /// The values of the interface whose runs get this value as an argument
+    /// (with `via_only`): a caller that knows these values counts how many
+    /// times their summaries run the argument (W0502 for a `once` value).
+    pub via: Vec<Via>,
+}
+
+/// A run of a value of the interface that gets another value of the
+/// interface as an argument (`Run::via`, stage R0e fix 3, H19).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Via {
+    /// The parameter (or capture) whose value the body runs.
+    pub value: u32,
+    /// True if `value` is a capture of the closure.
+    pub capture: bool,
+    /// The index of the argument of that run that gets the value.
+    pub arg: u32,
+    /// The body can give the value there more than once (two run nodes, or
+    /// a run node in a loop).
+    pub again: bool,
 }
 
 /// How a body runs a function value of its interface as a task.

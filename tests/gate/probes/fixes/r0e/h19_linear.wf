@@ -1,0 +1,8 @@
+// H19: `f` captures a linear value; two runs consume it two times (W0502 or W0601 or W0602).
+linear struct Lock { id: u64 }
+fn release(l: Lock) { let Lock(i) = l }
+fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }
+fn main() {
+    let l = Lock { id: 1 }
+    run2(|x| x(), || release(l))
+}

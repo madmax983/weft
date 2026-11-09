@@ -1,0 +1,11 @@
+// H19: the callee wraps `g` in a closure and runs the closure two times (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(g: fn(fn()), f: fn()) {
+    let h = || g(f)
+    h()
+    h()
+}
+fn main() {
+    let v = [1]
+    run2(|x| x(), || take(v))
+}
