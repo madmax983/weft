@@ -1,0 +1,23 @@
+// The clause gives back a function parameter; the callee keeps it in a
+// field in a loop; main runs it after it took a reference.
+struct H { f: fn() }
+fn noop() {}
+effect Get { fn get() -> fn() }
+fn keep(h: &H) / Get, mut(h) {
+    let i = 0
+    while i < 2 { h.f = get(); i += 1 }
+}
+fn s(k: fn()) -> H {
+    let h = H { f: noop }
+    handle Get { fn get() { resume(k) } } in { keep(&h) }
+    h
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = s(|| v.clear())
+    let r = &v[0]
+    let x = h.f
+    x()
+    print(r)
+}

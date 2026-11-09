@@ -1332,6 +1332,10 @@ pub fn main(
     if sum.caller_muts {
         if let Some(back) = cx.hx.back.get(&s.inst) {
             cx.facts.mutates_at.extend(back.iter().map(|&q| (n, q)));
+        } else if kind == RunKind::Item {
+            // The body passes the change on to its own caller (stage R0h
+            // fix: `outer() { clear_picked() }`).
+            cx.hx.caller_muts_at.insert(n);
         }
     }
     for &(p, idx) in &changed {

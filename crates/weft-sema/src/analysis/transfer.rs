@@ -2513,15 +2513,81 @@ fn note_back(
     }
     let inst = run_inst(body, block);
     match super::clause::back_places(cx, (body, block), st, &t)? {
-        Some(v) if v.is_empty() => {
+        Some(b) if b.places.is_empty() => {
             cx.hx.back.remove(&inst);
         }
-        Some(v) => {
-            cx.hx.back.insert(inst, v);
+        Some(b) => {
+            // A callee that changes a place of a caller and that gets a
+            // place in an argument too can hold a reference into that place
+            // while it changes it through the reference of the clause: the
+            // two places can be one, and its own facts do not see it (stage
+            // R0h fix, the review of R0h: `r39_two_level_param`).
+            if callee_caller_muts(cx, body, st, &t)? {
+                cx.hx.back_busy = true;
+                let gv = super::clause::given(cx, body, block, st, &t);
+                cx.hx.back_busy = false;
+                let alias = gv?.roots.iter().any(|&(q, _)| {
+                    cx.facts
+                        .places
+                        .get(q.index())
+                        .is_some_and(|i| b.named.contains(&i.root))
+                });
+                if alias {
+                    return Err(AlphaError::Later(super::clause::GIVES_BACK));
+                }
+            }
+            cx.hx.back.insert(inst, b.places);
         }
         None => return Err(AlphaError::Later(super::clause::GIVES_BACK)),
     }
     Ok(())
+}
+
+/// True if the callee of call `t` can change a place of a caller (part
+/// `caller_muts`, or a change of a `Caller` place in the summary of a
+/// closure), in state `st` of body `body` (stage R0h fix). A value that the
+/// analysis does not know can.
+///
+/// # Errors
+///
+/// The errors of α.
+fn callee_caller_muts(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    t: &TermKind,
+) -> Result<bool, AlphaError> {
+    use super::summary::IRoot;
+    let does = |s: &super::summary::Summary| {
+        s.caller_muts || s.muts.iter().any(|(ip, _)| ip.root == IRoot::Caller)
+    };
+    match t {
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, _),
+            ..
+        } => Ok(cx.sums.get(*f).map_or(true, does)),
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(v),
+            ..
+        } => {
+            let fns = reach_fns(cx, body, st, v)?;
+            if fns.is_empty() {
+                return Ok(true);
+            }
+            for g in &fns {
+                let sum = match g {
+                    FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
+                    FnVal::Item(f, _) => cx.sums.get(*f).ok(),
+                    _ => None,
+                };
+                if sum.is_none_or(does) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// True if code of a caller that runs the function value `fv` can race
@@ -2732,8 +2798,14 @@ pub fn op_fn_args(
         // A value that the clause can keep and run after a change that the
         // facts would miss stays with the old pipeline ([`kept_value_risk`]);
         // a value that can race is a task in the worst way, which rejects it.
+        // A value of the interface (a parameter, its result, a capture) or a
+        // value that the analysis does not know is code of a caller of the
+        // body: the clause can keep it too, and no summary says what it does
+        // when it runs later (stage R0h fix, the review of R0h:
+        // `c13_param_fn_vec`).
         for g in &fns {
-            if !task_unsafe(cx, g) && kept_value_risk(cx, g) {
+            let known = matches!(g, FnVal::Closure(_) | FnVal::Made(_) | FnVal::Item(..));
+            if !known || (!task_unsafe(cx, g) && kept_value_risk(cx, g)) {
                 return Err(AlphaError::Later(OP_KEPT));
             }
         }

@@ -199,6 +199,7 @@ pub fn summarize(
         place(*q).filter(|ip| matches!(ip.root, IRoot::Param(_) | IRoot::Held(_) | IRoot::Group(_)))
     });
     changed.multi |= fv.code_multi;
+    changed.caller_muts |= fv.caller_muts;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
     }
@@ -530,6 +531,9 @@ fn gives_frame(
 /// `Return` nodes.
 #[derive(Clone, Copy, Debug)]
 pub struct FnParts<'a> {
+    /// A call of the body passes on the part `caller_muts` of its callee
+    /// (stage R0h fix).
+    pub caller_muts: bool,
     /// The runs of the function values of the interface.
     pub runs: &'a [(crate::analysis::transfer::RunOf, bool)],
     /// The state at each `Return`.

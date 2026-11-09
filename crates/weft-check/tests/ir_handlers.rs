@@ -1150,3 +1150,33 @@ fn function_values_and_references_across_operations_have_full_facts() {
         assert!(fallback.contains(why), "{name}: {fallback}");
     }
 }
+
+/// The fix of stage R0h (review round 1). A value of the interface of the
+/// site that a clause gives back to the callee (`f32`: a parameter that the
+/// callee keeps in a field of the site), or that an operation of a caller
+/// gets (`c13`: a parameter of a helper that the clause keeps), is code of a
+/// caller that no summary follows when it runs later: the old pipeline checks
+/// the program. A change through a reference that a clause gives back, in a
+/// callee of the callee, is a change at the call (`r01`: part `caller_muts`
+/// of the body that passes it on).
+#[test]
+fn a_given_back_value_of_the_interface_keeps_the_old_pipeline() {
+    for (name, why) in [
+        (
+            "rv1_f32_param_back_keep.wf",
+            "gives a function value or a reference back",
+        ),
+        (
+            "rv1_f47_param_back_keep_ok.wf",
+            "gives a function value or a reference back",
+        ),
+        ("rv1_c13_param_fn_vec.wf", "an operation gives to a handler"),
+    ] {
+        let (_, fallback, _) = stage_codes("r0h", name);
+        let fallback = fallback.unwrap_or_default();
+        assert!(fallback.contains(why), "{name}: {fallback}");
+    }
+    let (got, fallback, _) = stage_codes("r0h", "rv1_r01_two_level_mut.wf");
+    assert!(fallback.is_none(), "{fallback:?}");
+    assert_eq!(got, vec![("W0301".to_string(), 15)]);
+}

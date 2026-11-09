@@ -579,6 +579,10 @@ pub struct Emitted {
     /// The `lends_mut` of the summaries that the entry body applies and that
     /// a caller does not apply again (`templates::Em::own_lends`).
     pub own_lends: Vec<(weft_facts::NodeId, PlaceId)>,
+    /// A call of the entry body applies a summary with the part
+    /// `caller_muts` and passes it on (stage R0h fix,
+    /// `Handlers::caller_muts_at`).
+    pub caller_muts: bool,
     /// The join of the states of the entry body before each terminator and
     /// each closure literal (with closures in the component).
     pub made: Option<crate::analysis::State>,
@@ -1171,6 +1175,7 @@ pub fn emit_parts(
         returns,
         code_multi,
         own_lends,
+        caller_muts: hx.caller_muts_at.iter().any(|n| n.index() < entry_nodes),
         made: unions.remove(&entry).map(|mut u| {
             if let Some(l) = &last {
                 u.join(l);
@@ -1949,6 +1954,7 @@ fn closure_summary(
             runs: &runs,
             returns: &returns,
             code_multi: false,
+            caller_muts: false,
             run_nodes: &run_nodes,
             run_multi: &run_multi,
             lends: &own_lends,

@@ -986,7 +986,15 @@ pub fn from_signature(
         // A function with no body that performs can give a place of its
         // frame to an operation (plan stage F15).
         inf.gives_frame = !inf.named.is_empty();
-        inf.caller_muts = !inf.named.is_empty();
+        // It can change a place that the result of an operation of a caller
+        // points into (stage R0h): only an operation whose result holds a
+        // reference gives one.
+        inf.caller_muts = tys.effects().iter().any(|e| {
+            inf.named.contains(&e.identity)
+                && e.ops
+                    .iter()
+                    .any(|o| crate::props::ir_props(tys, o.ret).holds_refs)
+        });
     }
     // A foreign function that changes an `rc` object can put each argument
     // there (stage F13, as `Lower::group_stores_of`).

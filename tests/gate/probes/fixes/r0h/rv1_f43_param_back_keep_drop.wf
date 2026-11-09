@@ -1,0 +1,20 @@
+// The clause gives back a function parameter that reads a vector of main;
+// the callee keeps it; main moves the vector, then runs it.
+struct H { f: fn() }
+fn noop() {}
+fn eat(v: Vec<u64>) { print(v.len()) }
+effect Get { fn get() -> fn() }
+fn keep(h: &H) / Get, mut(h) { h.f = get() }
+fn s(k: fn()) -> H {
+    let h = H { f: noop }
+    handle Get { fn get() { resume(k) } } in { keep(&h) }
+    h
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = s(|| print(v.len()))
+    eat(v)
+    let x = h.f
+    x()
+}

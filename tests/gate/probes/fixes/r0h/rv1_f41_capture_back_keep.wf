@@ -1,0 +1,24 @@
+// A closure of the site holds the handle; its clause gives back a value
+// that the closure captures; the callee keeps it in a field that the
+// closure gives back.
+struct H { f: fn() }
+fn noop() {}
+effect Get { fn get() -> fn() }
+fn keep(h: &H) / Get, mut(h) { h.f = get() }
+fn s(k: fn()) -> H {
+    let m = || {
+        let h = H { f: noop }
+        handle Get { fn get() { resume(k) } } in { keep(&h) }
+        h
+    }
+    m()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = s(|| v.clear())
+    let r = &v[0]
+    let x = h.f
+    x()
+    print(r)
+}

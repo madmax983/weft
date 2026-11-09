@@ -513,6 +513,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 runs: &e.runs,
                                 returns: &e.returns,
                                 code_multi: e.code_multi,
+                                caller_muts: e.caller_muts,
                                 made: e.made.as_ref(),
                                 run_nodes: &[],
                                 run_multi: &[],

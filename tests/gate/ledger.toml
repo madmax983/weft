@@ -10205,14 +10205,9 @@ files = [
     "tests/gate/probes/r3/redteam/p/w3_opfn.wf",
     "tests/gate/probes/verify/partb/S4/p/c8_once.wf",
     "tests/gate/probes/verify/s5/S5c/p/r13_perform_cb.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_in_closure.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_second_arg.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee_perform.wf",
 ]
 codes = ["W0204", "W0301", "W0302", "W0312", "W0313", "W0314", "W0403", "W0405", "W0502", "W0503", "W0703"]
-reason = "stage R0h: each program comes into scope (a function value of an operation of a caller, or a clause that gives a reference or a function value back) and the `ir` pipeline rejects it, as the old pipeline does. The differences are of classes that earlier entries give for programs in scope: W0301 at the read of the value in place of the `match` line (86 `picks_opt`, `picks_through_callee`); W0301 at the clause and at the read of a reference into a local of the clause in place of W0204 at the `handle` (86 `picks_clause_local`); one W0703 for the change through the reference of the clause (86 `mutates_undeclared`); W0312 and W0204 where the old pipeline gives W0301 (143 `stored_callback_and_keep`, `hof_runs_other`, w3_opfn); W0314 in place of W0313 for a closure of a handler that code of a caller gets (h_escape, the v1c files, open item 4 of R0f); W0302 and W0502 at other lines for a `once` closure that code of a caller gets (c8_once); W0312 and W0405 next to the errors of both pipelines for a closure of an operation of a caller that a local clause spawns (r13_perform_cb); the facts with no resume point of a closure and no re-entry of a clause (`Scope::pending`, R0g) give fewer W0301, W0313, W0314, W0502 and W0503 (122, 63, w3_opfn); one W0405 for a task of a local clause where the old pipeline gives two (137 `clause_after_resume`). Rejected in both"
+reason = "stage R0h: each program comes into scope (a function value of an operation of a caller, or a clause that gives a reference or a function value back) and the `ir` pipeline rejects it, as the old pipeline does. The differences are of classes that earlier entries give for programs in scope: W0301 at the read of the value in place of the `match` line (86 `picks_opt`, `picks_through_callee`); W0301 at the clause and at the read of a reference into a local of the clause in place of W0204 at the `handle` (86 `picks_clause_local`); one W0703 for the change through the reference of the clause (86 `mutates_undeclared`); W0312 and W0204 where the old pipeline gives W0301 (143 `stored_callback_and_keep`, `hof_runs_other`, w3_opfn); W0314 in place of W0313 for a closure of a handler that code of a caller gets (h_escape, open item 4 of R0f); W0302 and W0502 at other lines for a `once` closure that code of a caller gets (c8_once); W0312 and W0405 next to the errors of both pipelines for a closure of an operation of a caller that a local clause spawns (r13_perform_cb); the facts with no resume point of a closure and no re-entry of a clause (`Scope::pending`, R0g) give fewer W0301, W0313, W0314, W0502 and W0503 (122, 63, w3_opfn); one W0405 for a task of a local clause where the old pipeline gives two (137 `clause_after_resume`). Rejected in both"
 stage = "R0h"
 
 [[entry]]
@@ -10240,7 +10235,7 @@ files = [
     "tests/gate/probes/partb/s3fix/p/dbg2.wf",
 ]
 reason = "stage R0h: the program comes into scope. `c4_resume_arg_ok`: the clause gives the handled body a closure that reads a vector of the clause; the clause frame lives while the handled body runs, so the old W0301 (`v` goes out of scope when `get` returns) is a false positive. `dbg2`: the clause gives back a closure that performs nothing; the old W0313 at the `handle` of `a` is a false positive (the old pipeline does not give it for `b`, the same closure with a direct perform). The `ir` pipeline gives no error; the interpreter runs both with no fault"
-signed_by = "UNSIGNED: the author of stage R0h; the independent review of R0h must sign this row or reject it"
+signed_by = "reviewer R0h: both programs are clean (c4_resume_arg_ok: the closure reads the clause local v only while resume runs, and the clause frame is live; dbg2: the given-back closure performs nothing, so the old W0313 at the handle of a is a false positive); ev.sh nofault, fact oracle ok, seeds 1-8 clean with the ir and ast engines (dbg2 with a main added); the tier-2 copy of dbg2 is the same file; the old diagnostics are false positives of the old pipeline"
 stage = "R0h"
 
 [[entry]]
@@ -10255,19 +10250,6 @@ files = [
 ]
 finding = "R0h-STAYS"
 reason = "stage R0h: the forms that keep the old pipeline, and the old pipeline misses each fault. A value with a reference in it that code of a caller (the clause of an operation) can keep and run after a change (`c2_result`, `c2_stored_ref`; the facts of code of a caller have no part for a value that it keeps, R0f open item 1), a closure of an operation that a callee spawns (`c2_task`, reason E5 of the callee), and a value that a clause gives back to the callee and that holds a reference, can race or is `once` (`d3f_dangling`, `d3f_mut_race`, `d3f_once`)"
-stage = "R0h"
-
-[[entry]]
-class = "sig"
-files = [
-    "tests/gate/probes/verify/s5/diff/p/v1c.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_in_closure.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_second_arg.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee.wf",
-    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee_perform.wf",
-]
-parts = ["task_runs", "op_fns", "repeats"]
-reason = "stage R0h (C2): the function gives a closure to an operation of a handler of a caller. The old inference keeps it in the part `op_fns`; the `ir` pipeline applies it at the perform as code of a caller runs it (more than once, as a task in the worst way, `transfer::op_value_out`), so the parts `task_runs` and `repeats` have it and `op_fns` does not"
 stage = "R0h"
 
 [[entry]]

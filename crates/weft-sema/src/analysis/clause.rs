@@ -220,6 +220,11 @@ pub struct Handlers {
     /// [`back_places`] runs: the run nodes that it reads ([`given`]) do not
     /// look for their own back places again.
     pub back_busy: bool,
+    /// The run nodes that apply the summary of a function with the part
+    /// `caller_muts` and that have no back places (stage R0h fix): the body
+    /// itself can change a place that a clause of a caller gives back, so
+    /// its summary gets `caller_muts` too (`Emitted::caller_muts`).
+    pub caller_muts_at: BTreeSet<weft_facts::NodeId>,
     /// What the values that the clauses of the local handlers of a call give
     /// to `resume` point into, for an operation with a reference result, by
     /// the body and the block of the call (stage R0h, D3 form R): a join
@@ -2734,8 +2739,20 @@ pub fn call_clauses(
         // The callee can also keep a value in a place that it gets, and the
         // facts have no part for that (`transfer::kept_value_risk`); and a
         // `once` value has no operand at the call that a second run uses.
+        // A value of the interface of the site (a parameter, its result, a
+        // capture) is code of a caller of the site: the callee can keep it
+        // in a place that the call gives, and the summary of the callee says
+        // that the place holds code of a caller (`put_values`), not this
+        // value (stage R0h fix, the review of R0h: `f32_param_back_keep`).
+        let known = |g: &super::FnVal| {
+            matches!(
+                g,
+                super::FnVal::Closure(_) | super::FnVal::Made(_) | super::FnVal::Item(..)
+            )
+        };
         for g in &fns {
-            if transfer::can_race(cx, g)
+            if !known(g)
+                || transfer::can_race(cx, g)
                 || transfer::kept_value_risk(cx, g)
                 || transfer::once_value(p, g)
             {
@@ -2876,19 +2893,22 @@ pub fn back_places(
     (body, block): (BodyId, BlockId),
     st: &State,
     t: &TermKind,
-) -> Result<Option<Vec<weft_facts::PlaceId>>, AlphaError> {
+) -> Result<Option<BackPlaces>, AlphaError> {
     let p = cx.p;
     let hs: Vec<HandlerId> = call_handlers(cx, body, t)
         .into_iter()
         .filter(|&h| gives_refs_back(p, cx.tys, h))
         .collect();
     if hs.is_empty() {
-        return Ok(Some(Vec::new()));
+        return Ok(Some(BackPlaces::default()));
     }
     cx.hx.back_busy = true;
     let gv = given(cx, body, block, st, t);
     cx.hx.back_busy = false;
     let mut out: Vec<weft_facts::PlaceId> = gv?.places;
+    // The places after this index are the places that the clauses name
+    // themselves (not the places that the call gives).
+    let given_len = out.len();
     let unit = crate::factgen::alpha::unit_root(p, body);
     let mut keys: BTreeSet<super::Key> = BTreeSet::new();
     for h in hs {
@@ -2964,9 +2984,26 @@ pub fn back_places(
     for q in recorded {
         out.push(cx.facts.wildcard(q));
     }
+    let named: BTreeSet<weft_facts::RootId> = out
+        .get(given_len..)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|q| cx.facts.places.get(q.index()).map(|i| i.root))
+        .collect();
     out.sort();
     out.dedup();
-    Ok(Some(out))
+    Ok(Some(BackPlaces { places: out, named }))
+}
+
+/// What [`back_places`] gives: the places that the clauses can give back,
+/// and the roots of the places that the clauses name themselves (not the
+/// places that the call gives).
+#[derive(Clone, Debug, Default)]
+pub struct BackPlaces {
+    /// The wildcard places.
+    pub places: Vec<weft_facts::PlaceId>,
+    /// The roots of the places that a clause names itself.
+    pub named: BTreeSet<weft_facts::RootId>,
 }
 
 /// Why the facts do not model a `resume` in a closure or in a body inside

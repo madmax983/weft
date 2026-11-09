@@ -3088,6 +3088,22 @@ As built (plan stage R0h: function values and references across operations):
     not perform the effect and runs no value gives the clause nothing).
 - The stub of the fallback tests (`scope.rs`, `cli.rs`) is now a clause that gives the
   callee a closure that can race.
+- The fix of R0h (review round 1). A value of the interface of the body (a parameter, its
+  result, a capture) or a value that the analysis does not know, in an argument of an
+  operation of a caller (C2) or given back by a clause (D3 form F), is code of a caller:
+  the code that gets it can keep it in a place, and the summaries say that the place
+  holds code of a caller (`put_values` gives `FnVal::Unknown`), so a later run of the
+  place does not apply the value (`f32_param_back_keep`: the callee keeps the parameter
+  `k` of the site in a field that the site gives back). Such a program keeps the old
+  pipeline (`transfer::op_fn_args`, `clause::call_clauses`: only a closure or an item
+  goes on). A call whose callee changes a place of a caller (`caller_muts`) and gets a
+  place in an argument keeps the old pipeline too (`transfer::callee_caller_muts`): the
+  callee can hold a reference into the argument while it changes the same place through
+  the reference of the clause, and its own facts do not see that the two places are one
+  (`r39_two_level_param`). A body passes `caller_muts` of a callee on to its own summary
+  (`Handlers::caller_muts_at`, `Emitted::caller_muts`), so a change in a callee of the
+  callee is a change at the call (`r01_two_level_mut`). A function with no body has
+  `caller_muts` only for an effect with an operation whose result holds a reference.
 
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
