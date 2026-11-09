@@ -75,7 +75,32 @@ fn once_once() / async {
     once(|| take(v))
 }
 
+// Stage R0e fix 4 (R2-B1 of the review): the clause joins the task of the
+// outer scope on one path only; the detach path lets it run past the clause.
+fn clause_join_or_detach() / async {
+    let c = C { k: 0 }
+    let b = false
+    scope { s =>
+        let x = handle Ask { fn ask() { let t = s.spawn(|| c.k += 1); if b { t.join() } else { t.detach() }; resume(0) } } in { ask() }   //~ old: W0405
+        c.k += 2   //~ W0405
+    }
+    print(c.k)
+}
+
+// Clean: the clause joins the task on each path before the `resume` (the old
+// pipeline gives W0405).
+fn clause_join_both() / async {
+    let c = C { k: 0 }
+    let b = false
+    scope { s =>
+        let x = handle Ask { fn ask() { let t = s.spawn(|| c.k += 1); if b { t.join() } else { t.join() }; resume(0) } } in { ask() }
+        c.k += 2   //~ old: W0405
+    }
+    print(c.k)
+}
+
 fn main() / async {
+    clause_join_both()
     clause_scope_after()
     closure_clause_after()
     once_once()

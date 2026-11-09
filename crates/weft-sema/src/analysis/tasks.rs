@@ -834,17 +834,16 @@ pub fn task_hows(
             .map(|(_, n)| *n)
             .collect()
     };
-    let mut out: BTreeMap<(u32, bool), RawHow> = BTreeMap::new();
-    for &(t, param, capture, thread) in task_runs {
+    // The nodes after the start of task `t` where it still runs.
+    let active_of = |t: weft_facts::TaskId| -> BTreeSet<NodeId> {
         let ends: BTreeSet<NodeId> = facts
             .joined_at
             .iter()
             .filter(|(u, _)| *u == t)
             .map(|(_, n)| *n)
             .collect();
-        let starts = spawns_of(t);
         let mut active: BTreeSet<NodeId> = BTreeSet::new();
-        let mut work: Vec<NodeId> = starts
+        let mut work: Vec<NodeId> = spawns_of(t)
             .iter()
             .flat_map(|n| succ.get(n).into_iter().flatten().copied())
             .collect();
@@ -854,6 +853,13 @@ pub fn task_hows(
             }
             work.extend(succ.get(&q).into_iter().flatten().copied());
         }
+        active
+    };
+    let others: BTreeSet<weft_facts::TaskId> = facts.spawned_at.iter().map(|(t, _)| *t).collect();
+    let mut out: BTreeMap<(u32, bool), RawHow> = BTreeMap::new();
+    for &(t, param, capture, thread) in task_runs {
+        let starts = spawns_of(t);
+        let active = active_of(t);
         let how = out.entry((param, capture)).or_insert_with(|| RawHow {
             param,
             capture,
@@ -889,6 +895,34 @@ pub fn task_hows(
             if active.contains(&n) {
                 how.reads.insert(q);
             }
+        }
+        // Another task of the body that runs at the same time as the task of
+        // the value (stage R0e fix 4: `s.spawn(|| v.clear()); s.spawn(|| f())`):
+        // its changes and reads are changes and reads while the value runs.
+        for &u in others.iter().filter(|&&u| u != t) {
+            let ss = spawns_of(u);
+            let overlap = ss.iter().any(|n| active.contains(n))
+                || (!starts.is_empty() && {
+                    let au = active_of(u);
+                    starts.iter().any(|n| au.contains(n))
+                });
+            if !overlap {
+                continue;
+            }
+            how.writes.extend(
+                facts
+                    .task_writes
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|(_, q)| *q),
+            );
+            how.reads.extend(
+                facts
+                    .task_reads
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|(_, q)| *q),
+            );
         }
     }
     // Two tasks that run at the same time conflict both ways: the second

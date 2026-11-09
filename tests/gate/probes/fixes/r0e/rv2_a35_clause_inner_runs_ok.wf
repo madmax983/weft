@@ -1,0 +1,22 @@
+// Stage R0e fix 4 (the clean twin of rv2_a35_clause_inner_runs: the task only reads v).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+effect Ask { fn ask() -> u64 }
+fn inner(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| print(v.len()))
+        f()
+    }
+}
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    let x = handle Ask { fn ask() { inner(f, v); resume(0) } } in { ask() }
+    print(x)
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}

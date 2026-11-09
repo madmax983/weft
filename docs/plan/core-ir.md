@@ -2579,6 +2579,43 @@ stage R0e)"):
   Sigdiff tier 1 0 rows with no entry. `ereview/ev.sh` on `r0erev/p` and
   `fixes/r0e` (342 programs): 0 HOLE; only the `h19_*` rows change.
 
+R0e fix 4 as built (the review of R0e, round 2: blocker R2-B1 and three older holes;
+`docs/ir.md` 6.4, "As built (plan stage R0e)"):
+
+- R2-B1 (a regression of fix 2). Cause: the lift filter of `handlers::project` skipped
+  the start of a task at the node that runs a clause when any `joined_at` of the task
+  was in the clause. A join on one path (also in a loop that does not run) and a detach
+  on the other let the task run past the clause, and the race after the perform was
+  lost (`b16`, `b17` to `b19`, `b21`, `b24`, `b25` of the review; `b17` was a B1 form
+  of round 1). Fix: the start is skipped only for a task that starts and ends in the run
+  of the clause: a spawn on a scope whose scope body is in the clause, or a branch of a
+  `fork` there (`owned_by_clause`; the `t/cs1.wf` false positive of fix 2), or a task of
+  an outer scope that the clause joins on each path from the spawn before a `resume`,
+  an edge out of the clause or the end of the clause (`joined_in_clause`). So `b01_ok`
+  and `b27_ok` (a join on each path) stay clean; the old pipeline rejects them.
+- Older holes (old W0312, the `ir` pipeline 0 since the R0e fix or before; fixed in
+  proportion): `a15` and `a35`: the callee runs the value in a clause of its own handler
+  (or a clause gives it to a callee) while its task runs. `Run::during` read the
+  `run_at` and `run_during` of the main `Em` only. Now `emit_clause` gives back its own,
+  and `handlers::clause_run_at` maps a run node of a clause to the nodes that run the
+  clause (function and closure summaries). `a31`: the callee runs the value in a second
+  task while the first one clears `v`. `tasks::task_hows` did not count the changes of
+  another task that runs at the same time as the task of the value; now `TaskHow::writes`
+  and `reads` have them (W0405 at the call).
+- Tests: corpus `192_clause_scope_tasks.wf` gets `clause_join_or_detach` (W0405) and the
+  clean `clause_join_both` (`old:` W0405); probes `tests/gate/probes/fixes/r0e/rv2_*`
+  (17: the R2-B1 forms, the three older holes, and their clean twins).
+- Gates: tier 1 0 blockers (4477 of 4782 in scope; 3744 same, 9 open, 269 fixed, 1
+  new-fp, 128 lost-clean (+6: the clean twins, UNSIGNED), 128 moved, 503 changed (+7);
+  no row of fix 3 changes class). Tier 2 (2 workers) 0 blockers (53644 of 57393 in scope;
+  40476 same, 10 open, 88 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3441 lost-clean,
+  1822 moved, 11544 changed; one changed row, `r3/oracle/runs/m3b/p24092.wf`, gets the
+  W0405 at line 76 that the old pipeline gives). Fact oracle tier 1 0 failures (the 8
+  faults and 16 timeouts); sigdiff tier 1 0 rows with no entry. `ereview/ev.sh` on
+  `r0erev/p`, `r0erev2/p` and `fixes/r0e` (517 programs) against the fix 3 binary: the
+  20 HOLE rows are held; no other row changes; the one `HOLE+oldmiss` is `a04` (both
+  pipelines miss it). The reviewer signed the rows of the R0e fix and of fix 2.
+
 #### R1 Standalone `typeck`, part 1
 
 - Depends on: C3 and one review round.
@@ -2712,6 +2749,7 @@ gate and the exit of its parent, limited to its group of differences.
 | R0e fix | R0e | OR7: a task of a callee runs while the callee runs a function value that captures a local of the caller (`r0e/t/or7a.wf`, a hole since C3 that the old pipeline catches). `Run::during` (the places of the tasks that run while the body runs the value), `templates::during_check` (W0312 at the call; the places go to the `WaitTask` of a local handler of an effect of the value, W0405). 20 forms close (3 that both pipelines missed). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 4 new lost-clean rows wait for the review | done (R0e fix) |
 | R0e fix 2 | R0e fix | the review of R0e, round 1: B1 (a scope body in a clause: its code and its spawns reach the node that runs the clause; also a hole since C3, `rv1_cs2_*`), O1 (the spawns of a clause in a closure are in the part `tasks`), O2 (the task nodes move a `once` argument that runs as a task two times), B2 (fallback E7: a value that a value of a callee runs as a task). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12, lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. Open: the plain form of B2 (`run2(\|x\| x(), \|\| take(v))`, since C3) | done (R0e fix 2) |
 | R0e fix 3 | R0e fix 2 | H19, the plain form of B2: a callee gives a `once` closure to a function value of its interface two times (a hole since C3 that the old pipeline catches). `Run::via_only`, `Run::via`, `transfer::via_twice`: a caller that knows the value counts the runs of the argument in its summary (W0502 at two runs or more), else the worst way. 10 forms close. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, each row as R0e fix 2; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 5 new lost-clean rows wait for the review | done (R0e fix 3) |
+| R0e fix 4 | R0e fix 3 | the review of R0e, round 2: R2-B1 (the lift filter of fix 2 dropped a clause task that is joined on one path only: now only a task of a scope of the clause, a `fork` there, or a task that the clause joins on each path is skipped), and the older holes a15, a35 (a run of the value in a clause, `clause_run_at`) and a31 (a value that runs in a task next to another task of the callee, `task_hows`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 6 new lost-clean rows wait for the review | done (R0e fix 4) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -2798,6 +2836,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0e fix 2 (tier 2, the defaults) | 53644 of 57393 | 40476 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1822 | 11544 | 10 (as C3) |
 | R0e fix 3 (tier 1, the defaults) | 4460 of 4765 | 3740 | 269 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 122 (+5, the `h19_*` clean twins, UNSIGNED) | 128 | 496 (+3, ledgered) | 9 |
 | R0e fix 3 (tier 2, the defaults) | 53644 of 57393 | 40476 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1822 | 11544 | 10 (as C3) |
+| R0e fix 4 (tier 1, the defaults) | 4477 of 4782 | 3744 | 269 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 128 (+6, UNSIGNED; the rows of the R0e fix and of fix 2 signed) | 128 | 503 (+7, ledgered) | 9 |
+| R0e fix 4 (tier 2, the defaults) | 53644 of 57393 | 40476 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1822 | 11544 | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

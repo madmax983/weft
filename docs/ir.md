@@ -2825,8 +2825,22 @@ scope):
   clause (`handlers::clause_nodes`: the scope body maps to the block of its `scope`).
   Before, `project` did not map the nodes of such a scope body: a write there (a hole
   since C3, `fixes/r0e/rv1_cs2_*`) and a spawn on an outer scope (`rv1_b1_*`) did not
-  reach the node that runs the clause. A task that the clause also ends (a task of a
-  scope inside the clause) does not start at that node.
+  reach the node that runs the clause. As built (stage R0e fix 4, R2-B1 of the second
+  review): a task does not start at that node only if it starts and ends in the run of
+  the clause: a spawn on a scope whose scope body is in the clause, or a branch of a
+  `fork` there (`handlers::owned_by_clause`), or a task of an outer scope that the
+  clause joins on each path before a `resume` or the end of the clause
+  (`handlers::joined_in_clause`). Fix 2 skipped the start when any `joined_at` of the
+  task was in the clause, so a join on one path and a detach on the other lost the race
+  (`fixes/r0e/rv2_b*`).
+- `Run::during` and `TaskHow` (stage R0e fix 4, older holes of the second review). A
+  run of a value of the interface in a clause of a local handler runs at the nodes that
+  run the clause (`handlers::clause_run_at`: the perform for the part before the first
+  resume point, `Post` for the part after it), with the places that the clause inherits
+  from its callees (`emit_clause` gives back its `run_at` and `run_during`), in the
+  summary of a function body and of a closure body (`rv2_a15`, `rv2_a35`). A task of the
+  body that runs at the same time as the task of a value of the interface gives its
+  changes and reads to `TaskHow::writes` and `reads` (`tasks::task_hows`; `rv2_a31`).
 - A clause of a handler in a closure body that spawns on a scope of the maker (O1 of
   the review of R0e, since R0d): the task is in the part `tasks` of the closure
   (`emit_clause` gives its spawn sites to `closure_summary`), so the node that runs the

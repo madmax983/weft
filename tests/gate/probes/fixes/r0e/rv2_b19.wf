@@ -1,0 +1,14 @@
+// Stage R0e fix 4 (R2-B1: the same in a function with a reference parameter (W0405)).
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+fn work(c: &C, b: bool) / async, mut(c) {
+    scope { s =>
+        let x = handle Ask { fn ask() { let t = s.spawn(|| c.k += 1); if b { t.join() } else { t.detach() }; resume(0) } } in { ask() }
+        c.k += 2
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    work(&c, false)
+    print(c.k)
+}

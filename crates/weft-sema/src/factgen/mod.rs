@@ -892,6 +892,8 @@ pub fn emit_parts(
         })
         .collect();
     clause_bodies.sort();
+    let mut fn_clause_at: Vec<(weft_ir::BodyId, (u32, bool, weft_facts::NodeId))> = Vec::new();
+    let mut fn_clause_inherited: Vec<(u32, bool, PlaceId, bool)> = Vec::new();
     for &cb in &clause_bodies {
         let n = emit_clause(
             &ClosureCx {
@@ -925,6 +927,8 @@ pub fn emit_parts(
         clause_entries.push((cb, n.0));
         clause_stored.extend(n.1.into_iter().map(|x| (cb, x)));
         runs.extend(n.3);
+        fn_clause_at.extend((n.4).1 .0.into_iter().map(|x| (cb, x)));
+        fn_clause_inherited.extend((n.4).1 .1);
         // A closure that the clause makes starts from the states of the
         // clause (plan stage F16).
         unions.insert(cb, n.2);
@@ -985,6 +989,17 @@ pub fn emit_parts(
     facts.task_writes.dedup();
     // The tasks that run while the entry body runs a value of its interface
     // (`Run::during`, stage R0e fix): the places of each task are whole now.
+    // A run of a value in a clause runs at the nodes that run the clause
+    // (stage R0e fix 4: the callee runs the value in a clause of its own
+    // handler while its task runs).
+    let fn_run_at: Vec<(u32, bool, weft_facts::NodeId)> = fn_run_at
+        .into_iter()
+        .chain(handlers::clause_run_at(p, &table, &hx, &fn_clause_at))
+        .collect();
+    let fn_inherited: Vec<(u32, bool, PlaceId, bool)> = fn_inherited
+        .into_iter()
+        .chain(fn_clause_inherited)
+        .collect();
     let fn_during = crate::analysis::tasks::run_during(
         facts,
         &fn_run_at,
@@ -1754,6 +1769,8 @@ fn closure_summary(
     };
     let mut runs = runs;
     let mut clause_started: Vec<u32> = Vec::new();
+    let mut clause_at: Vec<(weft_ir::BodyId, (u32, bool, weft_facts::NodeId))> = Vec::new();
+    let mut clause_inherited: Vec<(u32, bool, PlaceId, bool)> = Vec::new();
     // The clauses inside the closure body (stage R0d): their facts, then the
     // code of each clause at the nodes that run it, as in [`emit_parts`].
     if nested {
@@ -1770,7 +1787,7 @@ fn closure_summary(
         let (mut stored, mut cruns, mut escs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut w0314, mut ends, mut frames_of) = (Vec::new(), Vec::new(), Vec::new());
         for c in clauses {
-            let (_, _, _, r, st) = emit_clause(
+            let (_, _, _, r, (st, (c_at, c_during))) = emit_clause(
                 &ClosureCx {
                     a,
                     p,
@@ -1803,6 +1820,8 @@ fn closure_summary(
             // clause runs at each perform of its operation.
             runs.extend(r);
             clause_started.extend(st);
+            clause_at.extend(c_at.into_iter().map(|x| (c, x)));
+            clause_inherited.extend(c_during);
         }
         // The clauses of the handlers outside the closure run at the node
         // that runs the closure: not in these facts.
@@ -1860,6 +1879,16 @@ fn closure_summary(
     );
     // The tasks that run while the closure body runs a value of its
     // interface (`Run::during`, stage R0e fix).
+    // A run of a value in a clause of the closure runs at the nodes that run
+    // the clause (stage R0e fix 4).
+    let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)> = closure_run_at
+        .into_iter()
+        .chain(handlers::clause_run_at(p, &table, &hx, &clause_at))
+        .collect();
+    let closure_inherited: Vec<(u32, bool, PlaceId, bool)> = closure_inherited
+        .into_iter()
+        .chain(clause_inherited)
+        .collect();
     let closure_during = crate::analysis::tasks::run_during(
         &facts,
         &closure_run_at,
@@ -2284,7 +2313,15 @@ type ClauseOut = (
     Vec<templates::Stored>,
     crate::analysis::State,
     Vec<(crate::analysis::transfer::RunOf, bool)>,
-    Vec<u32>,
+    (Vec<u32>, ClauseDuring),
+);
+
+/// The runs of values of the interface in a clause (`Em::run_at`, by its
+/// nodes) and the places of the tasks of callees that run while the clause
+/// runs a value (`Em::run_during`), stage R0e fix 4.
+type ClauseDuring = (
+    Vec<(u32, bool, weft_facts::NodeId)>,
+    Vec<(u32, bool, PlaceId, bool)>,
 );
 
 /// The facts of clause body `cb` (plan stage F14): its nodes (with the
@@ -2457,7 +2494,11 @@ fn emit_clause(
     // in a closure body, a task of a scope of the maker is a task of the part
     // `tasks` of the closure.
     let started = std::mem::take(&mut em.started);
-    Ok((en, stored, union, runs, started))
+    let during = (
+        std::mem::take(&mut em.run_at),
+        std::mem::take(&mut em.run_during),
+    );
+    Ok((en, stored, union, runs, (started, during)))
 }
 
 /// The facts of one component and the tables that map its IR to them
