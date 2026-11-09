@@ -10162,7 +10162,7 @@ files = [
     "tests/gate/probes/fixes/r0g/rv1_c4_task_unit_ok.wf",
 ]
 reason = "stage R0g fix (the clean twins of B1): a closure that a clause gives to the handled body runs on a task of a scope; it only reads the vector of the clause, or the clause does not use `r` after the resume. The `ir` pipeline gives no error. The old pipeline gives W0301 at the spawn line (`v` goes out of scope before the use, or `keep` is invalid): the task ends in the scope, before the clause continues. The interpreter runs both with no fault"
-signed_by = "UNSIGNED: the author of the R0g fix; the independent review must sign this row or reject it"
+signed_by = "reviewer R0g round 2: both programs are clean (the task ends in the scope, before the resume returns, while v is live; only reads of v overlap r, or r is not used after the closure is made); ev.sh nofault with seeds 1-8, fact oracle ok; the old W0301 at the spawn line is a false positive of the old pipeline; the ir facts keep the task writes"
 stage = "R0g fix"
 
 [[entry]]
@@ -10174,7 +10174,7 @@ files = [
     "tests/gate/probes/fixes/r0g/rv1_made_spawn_ok.wf",
     "tests/programs/196_made_closure_tasks.wf",
 ]
-reason = "stage R0g fix (class F19-SIG-PINS): the task runs a closure whose value holds its environment (a closure that a clause puts into a local of the site, a closure that a closure made). Such a task is `opaque` (its captures are not named, as at R0g), so the part `pins` of the IR is set (`summarize::task_pins`). The old inference does not pin it"
+reason = "stage R0g fix (class F19-SIG-PINS): the task runs a closure whose value holds its environment (a closure that a clause puts into a local of the site, a closure that a closure made). The part `pins` of the IR is set (`summarize::task_pins`). For a closure that a closure made (rv1_made_spawn_ok, 196 `made_closure_task_ok`) the task is `opaque`, as at R0g. For a clause closure in a local of the site (rv1_c4_site_local_spawn, 196 `clause_site_local_task`) the fix gives the task `mut_through` and `task_writes` for a capture that is not unique, and `task_pins` is true through `mut_through`. The pin is conservative. The old inference does not pin it"
 stage = "R0g fix"
 
 [[entry]]
