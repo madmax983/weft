@@ -1,0 +1,13 @@
+// The callee starts a task that writes c.k, then gives f to code of the caller while the task runs.
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) {
+    scope { s =>
+        s.spawn(|| w.k += 1)
+        g(f)
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|x| x(), || print(c.k), &c)
+    print(c.k)
+}

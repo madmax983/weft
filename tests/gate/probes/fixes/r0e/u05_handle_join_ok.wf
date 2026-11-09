@@ -1,0 +1,8 @@
+// Stage R0e (E3): a spawn on a copy of the scope capability gives a handle; the body joins it (clean).
+fn main() / async {
+    scope { s =>
+        let s2 = s
+        let h = s2.spawn(|| 1)
+        print(h.join())
+    }
+}

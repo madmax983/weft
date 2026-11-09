@@ -1,0 +1,10 @@
+// H19: `g` stores its argument in a vector; the caller runs both copies (W0502 or W0302).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }
+fn main() {
+    let v = [1]
+    let fs: Vec<fn()> = Vec.new()
+    run2(|x| fs.push(x), || take(v))
+    let a = fs[0]
+    a()
+}

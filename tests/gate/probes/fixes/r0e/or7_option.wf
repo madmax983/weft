@@ -1,0 +1,17 @@
+// OR7 fix: the value is in an Option (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn call_with(o: Option<fn()>, v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        match o { Some(g) => g(), None => {} }
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(Some(|| print(w[0])), &w)
+}

@@ -1,0 +1,7 @@
+// H19: `g` gets `f` as both arguments and runs each (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run1(g: fn(fn(), fn()), f: fn()) { g(f, f) }
+fn main() {
+    let v = [1]
+    run1(|x, y| { x(); y() }, || take(v))
+}

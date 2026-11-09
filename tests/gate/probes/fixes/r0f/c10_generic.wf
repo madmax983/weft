@@ -1,0 +1,7 @@
+// A generic callee gives the value to code of the caller that spawns it two times.
+fn mid<T>(g: fn(T), t: T) / async { g(t) }
+fn main() / async {
+    let n = 0
+    mid(|x: fn()| { scope { s => s.spawn(x); s.spawn(x); () } }, || n += 1)
+    print(n)
+}

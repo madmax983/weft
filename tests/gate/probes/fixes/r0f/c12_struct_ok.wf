@@ -1,0 +1,10 @@
+// The value goes to code of the caller in a struct field; the code runs it one time.
+struct Job { f: fn() }
+fn mid(g: fn(&Job), j: &Job) { g(j) }
+fn main() {
+    let n = 0
+    let j = Job { f: || n += 1 }
+    mid(|jj| { let h = jj.f
+        h() }, &j)
+    print(n)
+}

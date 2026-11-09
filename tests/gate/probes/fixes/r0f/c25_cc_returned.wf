@@ -1,0 +1,8 @@
+// The code of the caller gives f back; the callee spawns the result two times.
+fn mid(g: fn(fn()) -> fn(), f: fn()) / async { let h = g(f)
+    scope { s => s.spawn(h); s.spawn(h); () } }
+fn main() / async {
+    let n = 0
+    mid(|x| x, || n += 1)
+    print(n)
+}

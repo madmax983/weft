@@ -1,0 +1,7 @@
+// A nonportable value that code of the caller runs in a fork branch.
+struct E { hp: u64 }
+fn mid(g: fn(fn()), f: fn()) / par { g(f) }
+fn main() / par {
+    let a = Rc.new(E { hp: 1 })
+    mid(|x| fork(x, || print(2)), || print(a.hp))
+}

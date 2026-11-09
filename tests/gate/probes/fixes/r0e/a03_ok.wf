@@ -1,0 +1,10 @@
+// Stage R0e: the clean twin of a03.
+struct Job { f: fn() }
+fn main() / async {
+    let v = [1, 2]
+    let j = Job { f: || scope { s => s.spawn(|| v.push(3)); () } }
+    let g = j.f
+    g()
+    let r = &v[0]
+    print(r)
+}

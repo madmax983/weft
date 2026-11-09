@@ -1,0 +1,8 @@
+// Stage R0e: a callee gets a closure with a scope that spawns its argument two times.
+struct C { k: u64 }
+fn run2(f: fn(fn())) { f(|| print(1)) }
+fn main() / async {
+    let c = C { k: 0 }
+    run2(|h| scope { s => s.spawn(h); s.spawn(|| c.k += 1); c.k += 2 })
+    print(c.k)
+}

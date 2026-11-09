@@ -1,0 +1,9 @@
+// Stage R0e: the clean twin of a04: the clause writes after the scope.
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || handle Ask { fn ask() { scope { s => s.spawn(|| c.k += 1) }; c.k += 5; resume(1) } } in { ask() }
+    print(f())
+    print(c.k)
+}

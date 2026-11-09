@@ -1,0 +1,7 @@
+// Stage R0e fix 2 (O2): a callee spawns its parameter, joins it, and spawns it again; the value of the caller moves a capture (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn seq(f: fn()) / async { scope { s => let h = s.spawn(f); h.join(); let h2 = s.spawn(f); h2.join() } }
+fn main() / async {
+    let w = [1]
+    seq(|| take(w))
+}

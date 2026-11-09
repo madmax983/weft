@@ -1,0 +1,5 @@
+// Stage R0e: a closure gives back the handle of a task of its own scope (a spawn as the tail of the scope body: an ended task). The handle is linear: W0601 if no one joins it.
+fn main() / async {
+    let f = || scope { s => s.spawn(|| 1) }
+    let h = f()
+}

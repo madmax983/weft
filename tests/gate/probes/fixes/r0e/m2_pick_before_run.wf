@@ -1,0 +1,11 @@
+// Stage R0e (multi re-entry): a `multi` operation before the run of a closure that moves `v` into a task: the closure runs twice (W0503).
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        let f = || scope { s => s.spawn(|| take(v)); () }
+        let b = pick()
+        f()
+    }
+}

@@ -1,0 +1,12 @@
+// Stage R0e fix 2 (O1 of the review: a clause of a handler in a closure spawns on the scope of the maker; the task runs after the run of the closure (W0405)).
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let f = || handle Ask { fn ask() { s.spawn(|| c.k += 1); resume(1) } } in { let n = ask(); () }
+        f()
+        c.k += 2
+    }
+    print(c.k)
+}

@@ -1,0 +1,7 @@
+// A foreign function runs a value that only reads.
+extern fn ext(f: fn())
+fn main() {
+    let n = 3
+    ext(|| print(n))
+    print(n)
+}

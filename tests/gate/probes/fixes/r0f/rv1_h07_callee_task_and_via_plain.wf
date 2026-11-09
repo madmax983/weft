@@ -1,0 +1,7 @@
+// mid spawns f and gives h to code of the caller while the task runs; the code runs h as plain code.
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn(), h: fn()) / async { scope { s => s.spawn(f); g(h); () } }
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|y| y(), || print(c.k), || c.k += 1)
+}

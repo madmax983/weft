@@ -1,0 +1,12 @@
+// Stage R0e: `sim.run` with two tasks that write the same outer place (W0405).
+struct C { k: u64 }
+test "sim" {
+    let c = C { k: 0 }
+    sim.run(seed: 1) {
+        scope { s =>
+            s.spawn(|| c.k += 1)
+            s.spawn(|| c.k += 2)
+        }
+    }
+    print(c.k)
+}

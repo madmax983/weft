@@ -1,0 +1,17 @@
+// Stage R0e: the clean twin of a05b.
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || {
+        scope { s =>
+            let g = || scope { t =>
+                let h = || { s.spawn(|| c.k += 1); () }
+                h()
+            }
+            g()
+        }
+        c.k += 1
+    }
+    f()
+    print(c.k)
+}

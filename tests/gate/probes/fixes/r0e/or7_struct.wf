@@ -1,0 +1,19 @@
+// OR7 fix: the value is in a struct field (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+struct J { f: fn() }
+fn call_with(j: J, v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        let g = j.f
+        g()
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(J { f: || print(w[0]) }, &w)
+}

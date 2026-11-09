@@ -1,0 +1,10 @@
+// A closure spawns its parameter on a scope of main; the task writes, main reads.
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let g = |x: fn()| { s.spawn(x); () }
+        g(|| c.k += 1)
+        print(c.k)
+    }
+}

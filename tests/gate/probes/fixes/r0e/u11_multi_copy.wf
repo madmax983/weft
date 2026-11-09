@@ -1,0 +1,13 @@
+// Stage R0e (E3): a `multi` operation after a spawn on a copy of the scope capability: the rest runs twice and moves `v` into a second task.
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = [1]
+        scope { s =>
+            let s2 = s
+            let b = pick()
+            s2.spawn(|| take(v))
+        }
+    }
+}

@@ -1,0 +1,7 @@
+// Code of the caller runs an Rc value in a fork branch.
+struct E { hp: u64 }
+fn mid(g: fn(fn()), f: fn()) / par { g(f) }
+fn main() / par {
+    let a = Rc.new(E { hp: 1 })
+    mid(|x| { let _ = fork(x, || print(2)) }, || print(a.hp))
+}

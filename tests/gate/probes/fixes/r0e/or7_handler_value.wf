@@ -1,0 +1,18 @@
+// OR7 fix: the analog for a handler: the value performs, and the clause reads `w` while the callee task clears `v` (W0405).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+effect Note { fn note() }
+fn call_with(f: fn(), v: &Vec<u64>) / Note, async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        f()
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    handle Note { fn note() { print(w[0]); resume(()) } } in { call_with(|| note(), &w) }
+}

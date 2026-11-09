@@ -1,0 +1,13 @@
+// Stage R0e: a closure with a scope spawns a captured closure two times: the two tasks write `c.k` at the same time (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let g = || c.k += 1
+    let f = || scope { s =>
+        s.spawn(g)
+        s.spawn(g)
+        ()
+    }
+    f()
+    print(c.k)
+}

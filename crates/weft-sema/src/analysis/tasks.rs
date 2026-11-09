@@ -253,18 +253,23 @@ pub fn scope_run(cx: &mut Cx<'_>, st: &State, k: ScopeId) -> Result<ScopeOut, Al
         .body(sb)
         .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", sb.0)))?;
     let mut init = st.clone();
-    // The scope capability `_1`: plain data.
+    // The scope capability `_1`: plain data (and, in a program with a spawn
+    // on a scope that the spawn does not name, a reference into itself:
+    // [`scope_cap_value`]).
     if let Some(cap) = sbody
         .locals
         .iter()
         .position(|d| d.kind == LocalKind::ScopeCap)
         .and_then(|i| u32::try_from(i).ok())
     {
-        init.write(
+        let v = scope_cap_value(
+            cx.p,
+            cx.tys,
+            cx.facts,
+            cx.roots,
             (sb, weft_ir::LocalId(cap)),
-            &[],
-            Tree::leaf(AbsVal::plain()),
-        );
+        )?;
+        init.write((sb, weft_ir::LocalId(cap)), &[], v);
     }
     // The re-entry states of a `multi` handler outside the scope at the
     // nodes of the scope body (`Handlers::extra`, plan stage F19).
@@ -473,6 +478,127 @@ pub fn lose_operands<'o>(
     Ok(())
 }
 
+/// True if a spawn of program `p` does not name its scope (stage R0e).
+///
+/// `SpawnDecl::scope` is `None` and the site is not a `fork`: a copy of the
+/// scope capability, a capability in a tuple or an `Option`, a capability
+/// that a callee gives back.
+pub fn unowned(p: &weft_ir::Program) -> bool {
+    p.spawns.iter().any(|d| !d.fork && d.scope.is_none())
+}
+
+/// The value of the scope capability local `cap` (stage R0e).
+///
+/// In a program with a spawn on a scope that the spawn does not name
+/// ([`unowned`]), the value points into the root of the local: the analysis
+/// finds the scope of such a spawn from the references of its scope operand
+/// ([`SiteScope`]), and a copy of the capability is invalid after the end of
+/// the scope body (as a closure that captures the capability, RR4). In
+/// another program it is plain data.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_cap_value(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    facts: &mut weft_facts::FnFacts,
+    roots: &mut crate::factgen::alpha::Roots,
+    cap: Key,
+) -> Result<Tree, AlphaError> {
+    let mut v = AbsVal::plain();
+    if unowned(p) {
+        v.refs.insert(roots.local(p, tys, facts, cap.0, cap.1)?);
+    }
+    Ok(Tree::leaf(v))
+}
+
+/// The scopes that the scope operand of a spawn site can be (stage R0e).
+///
+/// `scopes`: the scope of each scope capability local whose root a
+/// reference of the operand points into. `other`: the operand has no such
+/// reference, or a reference to another place (a place of the interface of
+/// a closure body, a place that the analysis does not follow).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SiteScope {
+    /// The scopes of the scope capability locals.
+    pub scopes: BTreeSet<ScopeId>,
+    /// The operand can be another value.
+    pub other: bool,
+}
+
+impl SiteScope {
+    /// The one scope that the operand can be, if it can be no other value.
+    pub fn one(&self) -> Option<ScopeId> {
+        match (self.scopes.len(), self.other) {
+            (1, false) => self.scopes.iter().next().copied(),
+            _ => None,
+        }
+    }
+}
+
+/// The scope of the scope capability local whose root is fact place `q`.
+fn scope_of_root(
+    p: &weft_ir::Program,
+    facts: &weft_facts::FnFacts,
+    roots: &crate::factgen::alpha::Roots,
+    q: weft_facts::PlaceId,
+) -> Option<ScopeId> {
+    let info = facts.places.get(q.index())?;
+    if info.parent.is_some() {
+        return None;
+    }
+    let Some(crate::factgen::alpha::Role::Local((b, l))) = roots.role(info.root) else {
+        return None;
+    };
+    let body = p.body(b)?;
+    match (body.kind, body.local(l).map(|d| d.kind)) {
+        (weft_ir::BodyKind::Scope(k), Some(LocalKind::ScopeCap)) => Some(k),
+        _ => None,
+    }
+}
+
+/// Records the scopes that the scope operand `scope` of the spawn of site
+/// `site` can be in state `st` (`Handlers::site_scopes`, stage R0e), if the
+/// spawn does not name its scope.
+///
+/// # Errors
+///
+/// The errors of the transfer functions.
+fn note_site_scope(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    site: SpawnId,
+    scope: &Operand,
+) -> Result<(), AlphaError> {
+    let p = cx.p;
+    if !p
+        .spawns
+        .get(site.index())
+        .is_some_and(|d| !d.fork && d.scope.is_none())
+    {
+        return Ok(());
+    }
+    let v = transfer::operand(cx, body, st, scope)?.flat();
+    let mut res = SiteScope {
+        other: v.refs.is_empty(),
+        ..SiteScope::default()
+    };
+    for &q in &v.refs {
+        match scope_of_root(p, cx.facts, cx.roots, q) {
+            Some(k) => {
+                res.scopes.insert(k);
+            }
+            None => res.other = true,
+        }
+    }
+    let have = cx.hx.site_scopes.entry(site).or_default();
+    have.scopes.extend(res.scopes);
+    have.other |= res.other;
+    Ok(())
+}
+
 /// The value of a handle of type `handle_ty` of the task of site `site`
 /// whose result has the value `result`: the site, and what the result
 /// points into and holds.
@@ -511,11 +637,12 @@ pub fn spawn(
     cx: &mut Cx<'_>,
     (body, block): (BodyId, weft_ir::BlockId),
     st: &mut State,
-    site: SpawnId,
+    (site, scope): (SpawnId, &Operand),
     task: &Operand,
     dest: Option<&Place>,
 ) -> Result<(), AlphaError> {
     let p = cx.p;
+    note_site_scope(cx, body, st, site, scope)?;
     let ret_ty = task_ret(cx, body, task)?;
     let out = transfer::value_out_ty(cx, (body, block), st, task, &[], ret_ty)?;
     transfer::apply_apps(cx, st, &out.apps, true);
@@ -707,17 +834,16 @@ pub fn task_hows(
             .map(|(_, n)| *n)
             .collect()
     };
-    let mut out: BTreeMap<(u32, bool), RawHow> = BTreeMap::new();
-    for &(t, param, capture, thread) in task_runs {
+    // The nodes after the start of task `t` where it still runs.
+    let active_of = |t: weft_facts::TaskId| -> BTreeSet<NodeId> {
         let ends: BTreeSet<NodeId> = facts
             .joined_at
             .iter()
             .filter(|(u, _)| *u == t)
             .map(|(_, n)| *n)
             .collect();
-        let starts = spawns_of(t);
         let mut active: BTreeSet<NodeId> = BTreeSet::new();
-        let mut work: Vec<NodeId> = starts
+        let mut work: Vec<NodeId> = spawns_of(t)
             .iter()
             .flat_map(|n| succ.get(n).into_iter().flatten().copied())
             .collect();
@@ -727,6 +853,13 @@ pub fn task_hows(
             }
             work.extend(succ.get(&q).into_iter().flatten().copied());
         }
+        active
+    };
+    let others: BTreeSet<weft_facts::TaskId> = facts.spawned_at.iter().map(|(t, _)| *t).collect();
+    let mut out: BTreeMap<(u32, bool), RawHow> = BTreeMap::new();
+    for &(t, param, capture, thread) in task_runs {
+        let starts = spawns_of(t);
+        let active = active_of(t);
         let how = out.entry((param, capture)).or_insert_with(|| RawHow {
             param,
             capture,
@@ -763,6 +896,34 @@ pub fn task_hows(
                 how.reads.insert(q);
             }
         }
+        // Another task of the body that runs at the same time as the task of
+        // the value (stage R0e fix 4: `s.spawn(|| v.clear()); s.spawn(|| f())`):
+        // its changes and reads are changes and reads while the value runs.
+        for &u in others.iter().filter(|&&u| u != t) {
+            let ss = spawns_of(u);
+            let overlap = ss.iter().any(|n| active.contains(n))
+                || (!starts.is_empty() && {
+                    let au = active_of(u);
+                    starts.iter().any(|n| au.contains(n))
+                });
+            if !overlap {
+                continue;
+            }
+            how.writes.extend(
+                facts
+                    .task_writes
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|(_, q)| *q),
+            );
+            how.reads.extend(
+                facts
+                    .task_reads
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|(_, q)| *q),
+            );
+        }
     }
     // Two tasks that run at the same time conflict both ways: the second
     // one runs while the first one runs, and the other way.
@@ -776,6 +937,126 @@ pub fn task_hows(
         }
     }
     out.into_values().collect()
+}
+
+/// The places of the tasks that run while a body runs one function value of
+/// its interface as code that is not a task.
+///
+/// The places are places of the facts of the body: the part
+/// `super::summary::Run::during` before the interface map (stage R0e fix,
+/// OR7).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RawDuring {
+    /// The parameter, or the capture of a closure body.
+    pub param: u32,
+    /// True for a capture.
+    pub capture: bool,
+    /// The places that the tasks change.
+    pub writes: BTreeSet<weft_facts::PlaceId>,
+    /// The places that the tasks read.
+    pub reads: BTreeSet<weft_facts::PlaceId>,
+}
+
+/// The entry of the value `param` (a capture with `capture`) of `out`.
+fn during_entry(
+    out: &mut std::collections::BTreeMap<(u32, bool), RawDuring>,
+    param: u32,
+    capture: bool,
+) -> &mut RawDuring {
+    out.entry((param, capture)).or_insert_with(|| RawDuring {
+        param,
+        capture,
+        ..RawDuring::default()
+    })
+}
+
+/// The places of the tasks that run while the body of the facts `facts`
+/// runs each function value of its interface as code that is not a task
+/// (part `runs`, `Run::during`; stage R0e fix, OR7).
+///
+/// `run_at` has each node that runs such a value (the parameter or
+/// capture, true for a capture, the node). A task is active at a node from
+/// the nodes after its `spawned_at` node to its `joined_at` nodes (the rule
+/// `active` of the spec). The changes and reads of each task that is active
+/// at a run node of a value (`task_writes`, `task_reads`) are the places of
+/// the value. The tasks of `skip` do not count (the tasks that stand for
+/// the code of a clause, `factgen::templates::WaitTask`). `inherited` has
+/// the places that a callee gives for a value that it runs while its own
+/// tasks run (the value, true for a capture, the place, true for a
+/// change).
+pub fn run_during(
+    facts: &weft_facts::FnFacts,
+    run_at: &[(u32, bool, weft_facts::NodeId)],
+    inherited: &[(u32, bool, weft_facts::PlaceId, bool)],
+    skip: &BTreeSet<weft_facts::TaskId>,
+) -> Vec<RawDuring> {
+    use std::collections::{BTreeMap, HashMap};
+    use weft_facts::{NodeId, TaskId};
+    let mut out: BTreeMap<(u32, bool), RawDuring> = BTreeMap::new();
+    for &(param, capture, q, write) in inherited {
+        let d = during_entry(&mut out, param, capture);
+        if write {
+            d.writes.insert(q);
+        } else {
+            d.reads.insert(q);
+        }
+    }
+    if !run_at.is_empty() && !facts.spawned_at.is_empty() {
+        let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        for &(a, b) in &facts.cfg_edge {
+            succ.entry(a).or_default().push(b);
+        }
+        let mut ends: HashMap<TaskId, BTreeSet<NodeId>> = HashMap::new();
+        for &(t, n) in &facts.joined_at {
+            ends.entry(t).or_default().insert(n);
+        }
+        let mut starts: BTreeMap<TaskId, Vec<NodeId>> = BTreeMap::new();
+        for &(t, n) in &facts.spawned_at {
+            if !skip.contains(&t) {
+                starts.entry(t).or_default().push(n);
+            }
+        }
+        let runs: BTreeSet<NodeId> = run_at.iter().map(|&(_, _, n)| n).collect();
+        // The tasks that are active at each run node.
+        let mut on: HashMap<NodeId, Vec<TaskId>> = HashMap::new();
+        for (&t, ss) in &starts {
+            let none = BTreeSet::new();
+            let end = ends.get(&t).unwrap_or(&none);
+            let mut seen: BTreeSet<NodeId> = BTreeSet::new();
+            let mut work: Vec<NodeId> = ss
+                .iter()
+                .flat_map(|n| succ.get(n).into_iter().flatten().copied())
+                .collect();
+            while let Some(q) = work.pop() {
+                if !seen.insert(q) || end.contains(&q) {
+                    continue;
+                }
+                if runs.contains(&q) {
+                    on.entry(q).or_default().push(t);
+                }
+                work.extend(succ.get(&q).into_iter().flatten().copied());
+            }
+        }
+        for &(param, capture, n) in run_at {
+            let Some(ts) = on.get(&n) else {
+                continue;
+            };
+            let d = during_entry(&mut out, param, capture);
+            for &(t, q) in &facts.task_writes {
+                if ts.contains(&t) {
+                    d.writes.insert(q);
+                }
+            }
+            for &(t, q) in &facts.task_reads {
+                if ts.contains(&t) {
+                    d.reads.insert(q);
+                }
+            }
+        }
+    }
+    out.into_values()
+        .filter(|d| !d.writes.is_empty() || !d.reads.is_empty())
+        .collect()
 }
 
 /// The facts of the part `waits` that the fact generator records at the

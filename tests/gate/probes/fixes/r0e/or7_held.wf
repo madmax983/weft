@@ -1,0 +1,12 @@
+// OR7 fix: a callee task clears a vector behind a reference in a vector argument while the value reads the vector (W0312).
+fn call_with(f: fn(), h: &Vec<&Vec<u64>>) / async, mut(h..) {
+    scope { s =>
+        s.spawn(|| h[0].clear())
+        f()
+    }
+}
+fn main() / async {
+    let w = [1, 2]
+    let h = [&w]
+    call_with(|| print(w[0]), &h)
+}

@@ -1,0 +1,6 @@
+// http.serve runs a handler that only reads a captured local.
+fn main(env: Env) / io {
+    let count = 7
+    http.serve(env.net.listen(":8080"), |req| { print(count); Response.text("ok") })
+    print(count)
+}

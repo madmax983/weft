@@ -1,0 +1,7 @@
+// H19: a callee runs a function value `g` two times with `f`; `g` runs its argument, so the `once` closure `f` runs two times (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }
+fn main() {
+    let v = [1]
+    run2(|x| x(), || take(v))
+}

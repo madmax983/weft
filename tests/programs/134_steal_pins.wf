@@ -62,9 +62,12 @@ fn shares_through_callee() / async {
 }
 
 // The callee runs the closure as a task, but it captures nothing.
+// Stage R0e: the `ir` pipeline checks this program; it pins the task (the
+// value that `bg_one` runs as a task is code of a caller there, `opaque`).
+// Pinned is the safe side. Ledger `changed`, stage R0e.
 fn plain_callee() / async {
     scope { s =>
-        s.spawn(|| bg_one(|| print(1)))   //~ stealable
+        s.spawn(|| bg_one(|| print(1)))   //~ pinned old: stealable
     }
 }
 

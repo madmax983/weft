@@ -1,0 +1,17 @@
+// OR7 fix: the caller gives both closures to the runner (W0405).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn cw(f: fn(), g: fn()) / async {
+    scope { s =>
+        s.spawn(g)
+        f()
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    cw(|| print(w[0]), || w.clear())
+}

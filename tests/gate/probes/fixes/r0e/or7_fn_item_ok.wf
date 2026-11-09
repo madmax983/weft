@@ -1,0 +1,18 @@
+// OR7 fix: the value is a function item with no capture (clean).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn hello() { print(7) }
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        f()
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(hello, &w)
+}

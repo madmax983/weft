@@ -1,0 +1,11 @@
+// Stage R0e (E3): a spawn through a reference to the scope capability; the task races with the scope body (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let r = &s
+        r.spawn(|| c.k += 1)
+        c.k += 2
+    }
+    print(c.k)
+}

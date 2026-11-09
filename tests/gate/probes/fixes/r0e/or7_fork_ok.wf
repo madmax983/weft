@@ -1,0 +1,15 @@
+// OR7 fix: the fork ends before the callee runs the value (clean).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn call_with(f: fn(), v: &Vec<u64>) / async, par, mut(v) {
+    fork(|| v.clear(), || print(1))
+    f()
+}
+fn main() / async, par {
+    let w = mk_v()
+    call_with(|| print(w.len()), &w)
+}

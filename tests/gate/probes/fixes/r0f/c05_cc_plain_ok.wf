@@ -1,0 +1,7 @@
+// The code of the caller runs f one time, as plain code.
+fn mid(g: fn(fn()), f: fn()) { g(f) }
+fn main() {
+    let n = 0
+    mid(|x| x(), || n += 1)
+    print(n)
+}

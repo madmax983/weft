@@ -1,0 +1,107 @@
+// Stage R0e fix 2: the code and the tasks of a scope body in a clause run at
+// the node that runs the clause (B1 of the review of R0e); a task that a
+// clause of a handler in a closure starts on a scope of the maker runs after
+// the run of the closure (O1); a `once` value that a callee spawns two times
+// (O2). A value that a value of a callee runs as a task stays with the old
+// pipeline (B2: `fixes/r0e/rv1_b2_*`). The old pipeline also gives W0405 at
+// the line of the clause in a closure (`old:`), in the clean case too: the
+// handled body does not access `c`, and the run of the clean case has no race.
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+
+fn take(v: Vec<u64>) { print(v.len()) }
+fn twice(f: fn()) / async { scope { s => s.spawn(f); s.spawn(f); () } }
+fn once(f: fn()) / async { scope { s => s.spawn(f); () } }
+
+// The task of the outer scope that the clause starts races with the write.
+fn clause_scope_race() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let x = handle Ask { fn ask() { scope { t => s.spawn(|| c.k += 1); () }; 0 } } in { ask() }
+        c.k += 2   //~ W0405
+    }
+    print(c.k)
+}
+
+// Clean: the write comes after the outer scope.
+fn clause_scope_after() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let x = handle Ask { fn ask() { scope { t => s.spawn(|| c.k += 1); () }; 0 } } in { ask() }
+    }
+    c.k += 2
+    print(c.k)
+}
+
+// A write in a scope body in a clause changes `v` while `r` is live.
+fn clause_scope_write() / async {
+    let v = [1, 2]
+    let r = &v[0]
+    let x = handle Ask { fn ask() { scope { t => v.push(3); () }; resume(0) } } in { let y = ask(); print(r); y }   //~ W0301
+    print(x)
+}
+
+// A clause of a handler in a closure starts a task of the scope of the maker.
+fn closure_clause_task() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let f = || handle Ask { fn ask() { s.spawn(|| c.k += 1); resume(1) } } in { let n = ask(); () }   //~ old: W0405
+        f()
+        c.k += 2   //~ W0405
+    }
+    print(c.k)
+}
+
+// Clean: the write comes after the scope.
+fn closure_clause_after() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let f = || handle Ask { fn ask() { s.spawn(|| c.k += 1); resume(1) } } in { let n = ask(); () }   //~ old: W0405
+        f()
+    }
+    c.k += 2
+    print(c.k)
+}
+
+// The callee spawns the `once` closure two times.
+fn once_twice() / async {
+    let v = [1]
+    twice(|| take(v))   //~ W0502
+}
+
+// Clean: the callee spawns it one time.
+fn once_once() / async {
+    let v = [1]
+    once(|| take(v))
+}
+
+// Stage R0e fix 4 (R2-B1 of the review): the clause joins the task of the
+// outer scope on one path only; the detach path lets it run past the clause.
+fn clause_join_or_detach() / async {
+    let c = C { k: 0 }
+    let b = false
+    scope { s =>
+        let x = handle Ask { fn ask() { let t = s.spawn(|| c.k += 1); if b { t.join() } else { t.detach() }; resume(0) } } in { ask() }   //~ old: W0405
+        c.k += 2   //~ W0405
+    }
+    print(c.k)
+}
+
+// Clean: the clause joins the task on each path before the `resume` (the old
+// pipeline gives W0405).
+fn clause_join_both() / async {
+    let c = C { k: 0 }
+    let b = false
+    scope { s =>
+        let x = handle Ask { fn ask() { let t = s.spawn(|| c.k += 1); if b { t.join() } else { t.join() }; resume(0) } } in { ask() }
+        c.k += 2   //~ old: W0405
+    }
+    print(c.k)
+}
+
+fn main() / async {
+    clause_join_both()
+    clause_scope_after()
+    closure_clause_after()
+    once_once()
+}

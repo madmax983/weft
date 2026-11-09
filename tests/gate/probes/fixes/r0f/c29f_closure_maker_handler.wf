@@ -1,0 +1,10 @@
+// A closure spawns its parameter on a scope of main; the parameter performs through a local handler.
+effect Ask { fn ask() -> u64 }
+fn main() / async {
+    scope { s =>
+        handle Ask { fn ask() { resume(1) } } in {
+            let g = |x: fn()| { s.spawn(x); () }
+            g(|| print(ask()))
+        }
+    }
+}

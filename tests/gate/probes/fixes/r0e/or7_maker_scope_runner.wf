@@ -1,0 +1,17 @@
+// OR7 fix: a runner runs a closure of the callee that spawns on the scope of the callee, then runs the value (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn run(g: fn()) { g() }
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        run(|| { s.spawn(|| v.clear()); f() })
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}

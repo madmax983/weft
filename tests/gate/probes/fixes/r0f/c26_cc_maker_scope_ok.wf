@@ -1,0 +1,11 @@
+// The code of the caller spawns f on a scope of main; main writes after the scope.
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn()) { g(f) }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        mid(|x| { s.spawn(x); () }, || c.k += 1)
+    }
+    c.k += 2
+    print(c.k)
+}

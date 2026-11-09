@@ -1,0 +1,8 @@
+// Stage R0e: the clean twin of a08: the linear value has an `on abort` function.
+linear struct Lock { id: u64 }
+    on abort = release
+fn release(l: Lock) { let Lock(i) = l }
+fn main() / async, fail, par {
+    let l = Lock { id: 1 }
+    with_timeout(1.s) { fork(|| release(l), || print(2)) }
+}

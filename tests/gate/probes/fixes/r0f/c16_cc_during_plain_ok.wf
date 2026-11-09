@@ -1,0 +1,14 @@
+// The callee joins its task before it gives f to code of the caller.
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) {
+    scope { s =>
+        let t = s.spawn(|| w.k += 1)
+        t.join()
+        g(f)
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|x| x(), || print(c.k), &c)
+    print(c.k)
+}

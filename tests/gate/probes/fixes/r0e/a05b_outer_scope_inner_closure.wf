@@ -1,0 +1,15 @@
+// Stage R0e: an inner closure spawns on the scope of an outer closure; the task races with the scope body (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || scope { s =>
+        let g = || scope { t =>
+            let h = || { s.spawn(|| c.k += 1); () }
+            h()
+        }
+        g()
+        c.k += 1
+    }
+    f()
+    print(c.k)
+}

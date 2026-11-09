@@ -1,0 +1,11 @@
+// Stage R0e: as a14, with a callee that runs the closure (W0301).
+fn boom() { assert(false) }
+fn later(g: fn()) { g() }
+fn main() / async {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Fail { fn fail(m) { v.push(9) } } in {
+        later(|| scope { s => s.spawn(|| boom()); () })
+    }
+    print(r)
+}

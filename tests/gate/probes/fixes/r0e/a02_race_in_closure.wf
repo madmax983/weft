@@ -1,0 +1,11 @@
+// Stage R0e: a task of a scope in a closure writes a capture while the closure body writes it (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || scope { s =>
+        s.spawn(|| c.k += 1)
+        c.k += 2
+    }
+    f()
+    print(c.k)
+}

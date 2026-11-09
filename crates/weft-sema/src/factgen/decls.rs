@@ -417,6 +417,18 @@ pub fn ret_places(
 /// a `fork`, in the order of the sites (the order of the source). Returns the
 /// task of each site.
 pub fn tasks(p: &Program, comp: &[BodyId], facts: &mut FnFacts) -> BTreeMap<SpawnId, TaskId> {
+    tasks_where(p, comp, facts, |_| true)
+}
+
+/// [`tasks`] for the sites that `keep` accepts (stage R0e: the summary of a
+/// closure body has a task for each task that starts and ends in a run of
+/// the closure).
+pub fn tasks_where(
+    p: &Program,
+    comp: &[BodyId],
+    facts: &mut FnFacts,
+    keep: impl Fn(SpawnId) -> bool,
+) -> BTreeMap<SpawnId, TaskId> {
     let mut sites: BTreeSet<SpawnId> = BTreeSet::new();
     for &bid in comp {
         let Some(b) = p.bodies.get(bid.index()) else {
@@ -432,8 +444,21 @@ pub fn tasks(p: &Program, comp: &[BodyId], facts: &mut FnFacts) -> BTreeMap<Spaw
             }
         }
     }
+    // The order of the source (the start of the task expression), as the old
+    // lowering: a spawn inside the task of another spawn has a lower site id
+    // (the builder makes the task closure first), but it comes later in the
+    // source (stage R0e).
+    let mut order: Vec<SpawnId> = sites.into_iter().filter(|&s| keep(s)).collect();
+    order.sort_by_key(|s| {
+        (
+            p.spawns
+                .get(s.index())
+                .map_or(u32::MAX, |d| d.origin.span.lo),
+            *s,
+        )
+    });
     let mut out = BTreeMap::new();
-    for s in sites {
+    for s in order {
         let Some(d) = p.spawns.get(s.index()) else {
             continue;
         };

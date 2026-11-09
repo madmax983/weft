@@ -1,0 +1,19 @@
+// OR7 fix: the analog for a handler: the task ends before the perform (clean).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+effect Note { fn note() }
+fn call_with(v: &Vec<u64>) / Note, async, mut(v) {
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        t.join()
+    }
+    note()
+}
+fn main() / async {
+    let w = mk_v()
+    handle Note { fn note() { print(w.len()); resume(()) } } in { call_with(&w) }
+}

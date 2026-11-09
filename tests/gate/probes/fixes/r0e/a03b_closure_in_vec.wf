@@ -1,0 +1,10 @@
+// Stage R0e: a closure with a scope in a vector; its task pushes to `v` while `r` points into it (W0301).
+fn main() / async {
+    let v = [1, 2]
+    let fs = Vec.new()
+    fs.push(|| scope { s => s.spawn(|| v.push(3)); () })
+    let r = &v[0]
+    let g = fs[0]
+    g()
+    print(r)
+}

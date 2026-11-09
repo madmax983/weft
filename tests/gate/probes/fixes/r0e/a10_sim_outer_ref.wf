@@ -1,0 +1,9 @@
+// Stage R0e: `sim.run` with a scope; a task pushes to `v` while `r` points into it (W0301).
+test "sim" {
+    let v = [1, 2]
+    let r = &v[0]
+    sim.run(seed: 1) {
+        scope { s => s.spawn(|| v.push(3)) }
+    }
+    print(r)
+}

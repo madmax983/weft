@@ -209,6 +209,36 @@ pub struct Run {
     /// hole C1-H1 of stage C1.1). If the caller gives such a value that can
     /// resume more than once, this run happens again (`many`).
     pub after: std::collections::BTreeSet<RunKey>,
+    /// The interface places that the tasks of the body (and of its callees)
+    /// change and read while the body runs the value as code that is not a
+    /// task (stage R0e fix, OR7). A caller compares them with the places
+    /// that the value it gives accesses: a task of the callee that changes a
+    /// place while the value reads it is a race (W0312).
+    pub during: Wait,
+    /// True if the body only gives the value to code of a caller as an
+    /// argument (stage R0e fix 3, H19): the run is the worst way of that
+    /// code (`task`, `TaskHow::foreign`). Then `via` names that code, if it
+    /// is a value of the interface each time.
+    pub via_only: bool,
+    /// The values of the interface whose runs get this value as an argument
+    /// (with `via_only`): a caller that knows these values counts how many
+    /// times their summaries run the argument (W0502 for a `once` value).
+    pub via: Vec<Via>,
+}
+
+/// A run of a value of the interface that gets another value of the
+/// interface as an argument (`Run::via`, stage R0e fix 3, H19).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Via {
+    /// The parameter (or capture) whose value the body runs.
+    pub value: u32,
+    /// True if `value` is a capture of the closure.
+    pub capture: bool,
+    /// The index of the argument of that run that gets the value.
+    pub arg: u32,
+    /// The body can give the value there more than once (two run nodes, or
+    /// a run node in a loop).
+    pub again: bool,
 }
 
 /// How a body runs a function value of its interface as a task.
@@ -234,11 +264,21 @@ pub struct TaskHow {
     /// The body is code of a caller with no body (a foreign function): it
     /// runs the value in the worst way.
     pub foreign: bool,
+    /// The spawn sites of the part `tasks` (a task of a scope of the maker
+    /// of a closure) whose task runs the value (stage R0f). The run is a
+    /// run at the node that runs the closure too, but the task can run it
+    /// after the node: the caller gives the places of the value to these
+    /// tasks.
+    pub tasks: Vec<u32>,
+    /// The body is a function with no body (`sig::foreign_fn_parts`): the
+    /// worst way of `foreign` is the whole run (stage R0f).
+    pub no_body: bool,
 }
 
 /// The places of the tasks that can run while a body waits at an operation
-/// of one effect (part `waits`, follow-up F19.5).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// of one effect (part `waits`, follow-up F19.5), or while it runs a
+/// function value of its interface (`Run::during`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Wait {
     /// The interface places that the tasks change.
     pub writes: Vec<IPlace>,

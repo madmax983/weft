@@ -1,0 +1,11 @@
+// Stage R0e fix 2 (B1: the clean twin of rv1_b1_d16: the write is after the outer scope).
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let x = handle Ask { fn ask() { scope { t => s.spawn(|| c.k += 1); () }; 0 } } in { ask() }
+    }
+    c.k += 2
+    print(c.k)
+}

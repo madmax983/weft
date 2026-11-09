@@ -1,0 +1,11 @@
+// Stage R0e: a task captures a capture of a capture (a reference); it writes through it while the closure body reads it (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let r = &c
+    let f = || {
+        let g = || scope { s => s.spawn(|| r.k += 1); print(r.k) }
+        g()
+    }
+    f()
+}

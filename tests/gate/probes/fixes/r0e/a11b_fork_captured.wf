@@ -1,0 +1,9 @@
+// Stage R0e: a closure forks a captured closure and a write of the same place (W0405).
+struct C { k: u64 }
+fn main() / async, par {
+    let c = C { k: 0 }
+    let g = || c.k += 1
+    let f = || fork(g, || c.k += 2)
+    f()
+    print(c.k)
+}

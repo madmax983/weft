@@ -868,6 +868,46 @@ impl Vars {
                 info.generic.linear = generic;
                 self.add(facts, VarKey::D(bid, block, super::nodes::TERM), info);
             }
+            // A spawn statement that does not name its scope has no
+            // `TaskResult` local: the scope keeps the result, and it goes
+            // away at the end of the scope (stage R0e). A drop pair at the
+            // terminator, as for `detach`.
+            if let TermKind::Spawn {
+                site,
+                task,
+                dest: None,
+                ..
+            } = &blk.term.kind
+            {
+                let unnamed = p
+                    .spawns
+                    .get(site.index())
+                    .is_some_and(|d| !d.fork && d.scope.is_none());
+                let ret = match task {
+                    Operand::Copy(q) | Operand::Move(q) => {
+                        place_ty(p, tys, bid, q).and_then(|t| match tys.try_get(t) {
+                            Some(Ty::Fn(f)) => Some(f.ret),
+                            _ => None,
+                        })
+                    }
+                    Operand::Const(weft_ir::Const::Fn(f, _)) => p.fns.get(f.index()).map(|d| d.ret),
+                    Operand::Const(_) => None,
+                };
+                if let (true, Some(t)) = (unnamed, ret) {
+                    let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+                    let mut info =
+                        Self::plain("spawn".to_string(), span(blk.term.origin.span), tys.show(t));
+                    info.kind = VarKind::Dropped;
+                    let (linear, generic) =
+                        generic_linear(tys, t, crate::props::ir_strict_linear(tys, t));
+                    info.linear = linear;
+                    // The pair ends at the node after the spawn: an abort or
+                    // a `multi` node later is no error of the pair.
+                    info.has_on_abort = linear;
+                    info.generic.linear = generic;
+                    self.add(facts, VarKey::D(bid, block, super::nodes::TERM), info);
+                }
+            }
         }
     }
 

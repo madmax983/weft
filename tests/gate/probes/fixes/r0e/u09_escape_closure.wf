@@ -1,0 +1,9 @@
+// Stage R0e (E3): a closure captures a copy of the scope capability and runs after the scope (W0301).
+fn main() / async {
+    let k = || print(0)
+    scope { s =>
+        let s2 = s
+        k = || { s2.spawn(|| print(1)); () }
+    }
+    k()
+}

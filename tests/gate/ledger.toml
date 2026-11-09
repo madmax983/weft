@@ -8771,3 +8771,1211 @@ files = ["tests/gate/probes/fixes/r0d/pi_pm2.wf", "tests/gate/probes/fixes/r0d/p
 codes = ["W0502"]
 reason = "stage R0d fix: a callee or an inner closure performs a `multi` operation that the handler of the closure passes on out of the closure (`frames::passes_out_multi`). The `ir` pipeline gives W0503 and W0502 at the run of `h` (its summary runs the `once` capture `g` more than once); the old pipeline gives W0503 inside `h`. The interpreter faults (a value used after it was moved). Rejected in both"
 stage = "R0d"
+
+# Stage R0e: tasks in closure bodies (E1) and spawns that do not name their
+# scope (E3). The lost-clean rows wait for the independent review of R0e.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/190_closure_tasks.wf"]
+codes = ["W0601"]
+reason = "stage R0e: the corpus file of tasks in closure bodies and of spawns on a scope that the spawn does not name. The `ir` pipeline gives the markers of the old pipeline and W0601 in `linear_result`: a spawn statement on a copy of the scope capability gives its linear result to no local, and the scope drops it (`fixes/r0e/u04_linear_result.wf` faults at run time: a linear leak). The old pipeline misses it. Rejected in both"
+stage = "R0e"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/132_scope_escape.wf", "tests/gate/probes/verify/s5/R2d/p/e3_rr4_tuple_option.wf"]
+codes = ["W0301", "W0405"]
+reason = "stage R0e (reason E3): a closure takes a capability in a tuple or an `Option` out of its scope, and a later run of the closure starts a task. Both pipelines give W0301 at the run. The `ir` pipeline also gives W0405 at the end of the function: the task that the late run starts never ends in the facts, so the end of `st` conflicts with it. In 132 it gives W0301 of `j.f` at the run of `g` (the old pipeline at the copy `let g = j.f`), and W0405 in `tuple_inside`: the task captures `b` of the closure body, whose end is a conflict, as for a named scope (`templates::task_captures`, HEAD gives the same for the named form). Rejected in both"
+stage = "R0e"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/ir_targets/f3_6_task_results.wf",
+    "tests/gate/probes/verify/partb/S3/p/rt22.wf",
+    "tests/gate/probes/r2/oracle/probes/o6_nested_scope_task.wf",
+    "tests/gate/probes/fixes/r0e/u11_multi_copy.wf",
+]
+codes = ["W0601", "W0602"]
+reason = "stage R0e (reason E1): a closure with a scope comes into scope. The `ir` pipeline gives W0601 for the result of a task that no one consumes (a `TaskResult` local and a discarded handle, F3-6 and O3-4 of the core IR targets), which the old pipeline misses in most forms; in `o6` the result of the outer task is the handle of an ended task (the function-body form `s.spawn(|| inner(&c))` gives the same W0601 at HEAD). The other codes are the same. Rejected in both"
+stage = "R0e"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/partb/s3fix/p/m1_maker.wf", "tests/gate/probes/fixes/r0e/a04b_clause_spawn_outer_scope.wf"]
+codes = ["W0405"]
+reason = "stage R0e (reason E1): a spawn in a closure body or a clause on a scope of the maker. Both pipelines give W0405 for the conflict of the task with the code after it; the count differs (`m1_maker`: one more at the line before; `a04b`: one row at the `resume` in place of two). Rejected in both"
+stage = "R0e"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0e/m4_local_multi.wf"]
+codes = ["W0503"]
+reason = "stage R0e: the scope capability is not a `once` value in the `ir` pipeline (I3-8, docs/ir.md 5.29, follow-up F19.1): no W0503 for `s` across a `multi` operation; the run of the scope body again has its own tasks. Both pipelines give W0302 at the second move of `v` (the fault at run time). Rejected in both"
+stage = "R0e"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0e/m1_ok.wf",
+    "tests/gate/probes/fixes/r0e/m1_pick_before_spawn.wf",
+    "tests/gate/probes/fixes/r0e/m5_ok.wf",
+]
+reason = "stage R0e: the old pipeline gives W0503 for the scope capability `s` that is live across a `multi` operation in the scope body of a closure. The `ir` pipeline does not make the scope capability a `once` value (I3-8, docs/ir.md 5.29, follow-up F19.1, as for a scope in a function body): a `multi` resume runs each copy of the scope body with its own children. The interpreter runs each program with no fault (seeds 1 to 3, both engines; `m1_pick_before_spawn` moves `v` into the task in each copy of the frame)"
+signed_by = "reviewer R0e: the scope capability is not once (I3-8); the variants m01, m03, m04 are held, m02, m06 and c02 run clean; no fault seeds 1-12, both engines"
+stage = "R0e"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/verify/partb/S3/p/rt22b.wf"]
+reason = "stage R0e: `let_plain` binds the value of a scope whose tail is a spawn: the handle of a task that ended at `ScopeWait`, with a result that is not linear. The `ir` pipeline makes such a handle a value that is not linear (docs/ir.md 6.4, F18), so it gives no W0601; the old pipeline gives W0601. The program was out of scope for `closure_plain` (a scope in a closure); the function-body form is the same at HEAD. No `main`; a run of the shapes with a `main` has no fault"
+signed_by = "reviewer R0e: the dropped handle of an ended task with a u64 result is not linear; l01 runs clean, l02 (a linear result) is W0601; no fault seeds 1-12, both engines"
+stage = "R0e"
+
+# Stage R0e, tier 2: the rows of the programs that R0e brings into scope.
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r3/oracle/runs/g3a/p1681.wf",
+    "r3/oracle/runs/g3a/p1857.wf",
+    "r3/oracle/runs/g3a/p2165.wf",
+    "r3/oracle/runs/g3a/p2331.wf",
+    "r3/oracle/runs/g3a/p2362.wf",
+    "r3/oracle/runs/g3a/p2697.wf",
+    "r3/oracle/runs/g3a/p3044.wf",
+    "r3/oracle/runs/g3a/p4468.wf",
+    "r3/oracle/runs/g3a/p4510.wf",
+    "r3/oracle/runs/g3a/p4528.wf",
+    "r3/oracle/runs/g3a/p4560.wf",
+    "r3/oracle/runs/g3a/p4616.wf",
+    "r3/oracle/runs/g3a/p4761.wf",
+    "r3/oracle/runs/g3a/p5048.wf",
+    "r3/oracle/runs/g3a/p5248.wf",
+    "r3/oracle/runs/g3a/p5301.wf",
+    "r3/oracle/runs/g3a/p5495.wf",
+    "r3/oracle/runs/g3a/p5898.wf",
+    "r3/oracle/runs/g3a/p6041.wf",
+    "r3/oracle/runs/g3a/p6154.wf",
+    "r3/oracle/runs/g3a/p6165.wf",
+    "r3/oracle/runs/g3a/p6293.wf",
+    "r3/oracle/runs/g3a/p6496.wf",
+    "r3/oracle/runs/g3a/p6541.wf",
+    "r3/oracle/runs/g3a/p6715.wf",
+    "r3/oracle/runs/g3a/p6776.wf",
+    "r3/oracle/runs/g3b/p10214.wf",
+    "r3/oracle/runs/g3b/p10654.wf",
+    "r3/oracle/runs/g3b/p10847.wf",
+    "r3/oracle/runs/g3b/p10877.wf",
+    "r3/oracle/runs/g3b/p11224.wf",
+    "r3/oracle/runs/g3b/p11297.wf",
+    "r3/oracle/runs/g3b/p11570.wf",
+    "r3/oracle/runs/g3b/p11591.wf",
+    "r3/oracle/runs/g3b/p11708.wf",
+    "r3/oracle/runs/g3b/p11933.wf",
+    "r3/oracle/runs/g3b/p11944.wf",
+    "r3/oracle/runs/g3b/p12283.wf",
+    "r3/oracle/runs/g3b/p12394.wf",
+    "r3/oracle/runs/g3b/p12491.wf",
+    "r3/oracle/runs/g3b/p12864.wf",
+    "r3/oracle/runs/g3b/p12880.wf",
+    "r3/oracle/runs/g3b/p13473.wf",
+    "r3/oracle/runs/g3b/p13946.wf",
+    "r3/oracle/runs/g3b/p13975.wf",
+    "r3/oracle/runs/g3b/p13990.wf",
+    "r3/oracle/runs/g3b/p14154.wf",
+    "r3/oracle/runs/g3b/p14323.wf",
+    "r3/oracle/runs/g3b/p14377.wf",
+    "r3/oracle/runs/g3b/p14417.wf",
+    "r3/oracle/runs/g3b/p14705.wf",
+    "r3/oracle/runs/g3b/p14743.wf",
+    "r3/oracle/runs/g3b/p14770.wf",
+    "r3/oracle/runs/g3b/p14786.wf",
+    "r3/oracle/runs/g3b/p15175.wf",
+    "r3/oracle/runs/g3b/p15250.wf",
+    "r3/oracle/runs/g3b/p15671.wf",
+    "r3/oracle/runs/g3b/p15675.wf",
+    "r3/oracle/runs/g3b/p15819.wf",
+    "r3/oracle/runs/g3b/p16050.wf",
+    "r3/oracle/runs/g3b/p16538.wf",
+    "r3/oracle/runs/g3b/p16568.wf",
+    "r3/oracle/runs/g3b/p16618.wf",
+    "r3/oracle/runs/g3b/p17020.wf",
+    "r3/oracle/runs/g3b/p17088.wf",
+    "r3/oracle/runs/g3b/p17505.wf",
+    "r3/oracle/runs/g3b/p17844.wf",
+    "r3/oracle/runs/g3b/p17945.wf",
+    "r3/oracle/runs/g3b/p18111.wf",
+    "r3/oracle/runs/g3b/p18358.wf",
+    "r3/oracle/runs/g3b/p18417.wf",
+    "r3/oracle/runs/g3b/p18543.wf",
+    "r3/oracle/runs/g3b/p18635.wf",
+    "r3/oracle/runs/g3b/p18877.wf",
+    "r3/oracle/runs/g3b/p18993.wf",
+    "r3/oracle/runs/g3b/p19236.wf",
+    "r3/oracle/runs/g3b/p19301.wf",
+    "r3/oracle/runs/g3b/p19508.wf",
+    "r3/oracle/runs/g3b/p19751.wf",
+    "r3/oracle/runs/g3b/p19759.wf",
+    "r3/oracle/runs/g3b/p20074.wf",
+    "r3/oracle/runs/g3b/p20246.wf",
+    "r3/oracle/runs/g3b/p20261.wf",
+    "r3/oracle/runs/g3b/p20294.wf",
+    "r3/oracle/runs/g3b/p20861.wf",
+    "r3/oracle/runs/g3b/p20943.wf",
+    "r3/oracle/runs/g3b/p21001.wf",
+    "r3/oracle/runs/g3b/p21190.wf",
+    "r3/oracle/runs/g3b/p21685.wf",
+    "r3/oracle/runs/g3b/p21710.wf",
+    "r3/oracle/runs/g3b/p22036.wf",
+    "r3/oracle/runs/g3b/p22060.wf",
+    "r3/oracle/runs/g3b/p22525.wf",
+    "r3/oracle/runs/g3b/p22568.wf",
+    "r3/oracle/runs/g3b/p23086.wf",
+    "r3/oracle/runs/g3b/p23330.wf",
+    "r3/oracle/runs/g3b/p23505.wf",
+    "r3/oracle/runs/g3b/p23523.wf",
+    "r3/oracle/runs/g3b/p23637.wf",
+    "r3/oracle/runs/g3b/p23771.wf",
+    "r3/oracle/runs/g3b/p24057.wf",
+    "r3/oracle/runs/g3b/p24532.wf",
+    "r3/oracle/runs/g3b/p24731.wf",
+    "r3/oracle/runs/g3b/p24843.wf",
+    "r3/oracle/runs/g3b/p24895.wf",
+    "r3/oracle/runs/g3p/p40196.wf",
+    "r3/oracle/runs/g3p/p40478.wf",
+    "r3/oracle/runs/g3p/p40809.wf",
+    "r3/oracle/runs/g3p/p41095.wf",
+    "r3/oracle/runs/g3p/p41244.wf",
+    "r3/oracle/runs/g3p/p42299.wf",
+    "r3/oracle/runs/g3p/p42612.wf",
+    "r3/oracle/runs/g3p/p42783.wf",
+    "r3/oracle/runs/g3p/p43058.wf",
+    "r3/oracle/runs/g3p/p43126.wf",
+    "r3/oracle/runs/g3p/p43215.wf",
+    "r3/oracle/runs/g3p/p43260.wf",
+    "r3/oracle/runs/g3p/p43312.wf",
+    "r3/oracle/runs/g3p/p43466.wf",
+    "r3/oracle/runs/g3p/p43963.wf",
+    "r3/oracle/runs/g3p/p44114.wf",
+    "r3/oracle/runs/g3p/p44450.wf",
+    "r3/oracle/runs/g3p/p44469.wf",
+    "r3/oracle/runs/g3p/p44720.wf",
+    "r3/oracle/runs/g3p/p44883.wf",
+    "r3/oracle/runs/g3p/p45526.wf",
+    "r3/oracle/runs/g3p/p45716.wf",
+    "r3/oracle/runs/g3p/p45817.wf",
+    "r3/oracle/runs/g3p/p45933.wf",
+    "r3/oracle/runs/g3p/p46262.wf",
+    "r3/oracle/runs/g3p/p46291.wf",
+    "r3/oracle/runs/g3p/p46316.wf",
+    "r3/oracle/runs/g3p/p46447.wf",
+    "r3/oracle/runs/g3p/p46647.wf",
+    "r3/oracle/runs/g3p/p46807.wf",
+    "r3/oracle/runs/g3p/p46884.wf",
+    "r3/oracle/runs/g3p/p47279.wf",
+    "r3/oracle/runs/g3p/p47746.wf",
+    "r3/oracle/runs/g3p/p48240.wf",
+    "r3/oracle/runs/g3p/p48282.wf",
+    "r3/oracle/runs/g3p/p48920.wf",
+    "r3/oracle/runs/g3p/p49009.wf",
+    "r3/oracle/runs/g3p/p49558.wf",
+    "r3/oracle/runs/g3p/p49653.wf",
+    "r3/oracle/runs/g3p/p49750.wf",
+    "r3/oracle/runs/g4a/p1045.wf",
+    "r3/oracle/runs/g4a/p1180.wf",
+    "r3/oracle/runs/g4a/p1205.wf",
+    "r3/oracle/runs/g4a/p1235.wf",
+    "r3/oracle/runs/g4a/p1259.wf",
+    "r3/oracle/runs/g4a/p1275.wf",
+    "r3/oracle/runs/g4a/p1331.wf",
+    "r3/oracle/runs/g4a/p1343.wf",
+    "r3/oracle/runs/g4a/p1398.wf",
+    "r3/oracle/runs/g4a/p1447.wf",
+    "r3/oracle/runs/g4a/p1568.wf",
+    "r3/oracle/runs/g4a/p1603.wf",
+    "r3/oracle/runs/g4a/p166.wf",
+    "r3/oracle/runs/g4a/p1770.wf",
+    "r3/oracle/runs/g4a/p1812.wf",
+    "r3/oracle/runs/g4a/p1865.wf",
+    "r3/oracle/runs/g4a/p2014.wf",
+    "r3/oracle/runs/g4a/p2131.wf",
+    "r3/oracle/runs/g4a/p2232.wf",
+    "r3/oracle/runs/g4a/p2399.wf",
+    "r3/oracle/runs/g4a/p2404.wf",
+    "r3/oracle/runs/g4a/p2433.wf",
+    "r3/oracle/runs/g4a/p2525.wf",
+    "r3/oracle/runs/g4a/p2563.wf",
+    "r3/oracle/runs/g4a/p2565.wf",
+    "r3/oracle/runs/g4a/p2682.wf",
+    "r3/oracle/runs/g4a/p2744.wf",
+    "r3/oracle/runs/g4a/p2811.wf",
+    "r3/oracle/runs/g4a/p285.wf",
+    "r3/oracle/runs/g4a/p3049.wf",
+    "r3/oracle/runs/g4a/p3078.wf",
+    "r3/oracle/runs/g4a/p3099.wf",
+    "r3/oracle/runs/g4a/p3279.wf",
+    "r3/oracle/runs/g4a/p328.wf",
+    "r3/oracle/runs/g4a/p3298.wf",
+    "r3/oracle/runs/g4a/p3323.wf",
+    "r3/oracle/runs/g4a/p3552.wf",
+    "r3/oracle/runs/g4a/p3557.wf",
+    "r3/oracle/runs/g4a/p3561.wf",
+    "r3/oracle/runs/g4a/p3677.wf",
+    "r3/oracle/runs/g4a/p3732.wf",
+    "r3/oracle/runs/g4a/p3749.wf",
+    "r3/oracle/runs/g4a/p3806.wf",
+    "r3/oracle/runs/g4a/p3897.wf",
+    "r3/oracle/runs/g4a/p3921.wf",
+    "r3/oracle/runs/g4a/p4114.wf",
+    "r3/oracle/runs/g4a/p4189.wf",
+    "r3/oracle/runs/g4a/p420.wf",
+    "r3/oracle/runs/g4a/p4254.wf",
+    "r3/oracle/runs/g4a/p4291.wf",
+    "r3/oracle/runs/g4a/p4299.wf",
+    "r3/oracle/runs/g4a/p4307.wf",
+    "r3/oracle/runs/g4a/p4318.wf",
+    "r3/oracle/runs/g4a/p4585.wf",
+    "r3/oracle/runs/g4a/p4586.wf",
+    "r3/oracle/runs/g4a/p4615.wf",
+    "r3/oracle/runs/g4a/p4618.wf",
+    "r3/oracle/runs/g4a/p4637.wf",
+    "r3/oracle/runs/g4a/p4740.wf",
+    "r3/oracle/runs/g4a/p498.wf",
+    "r3/oracle/runs/g4a/p5077.wf",
+    "r3/oracle/runs/g4a/p5214.wf",
+    "r3/oracle/runs/g4a/p5287.wf",
+    "r3/oracle/runs/g4a/p5328.wf",
+    "r3/oracle/runs/g4a/p5560.wf",
+    "r3/oracle/runs/g4a/p5585.wf",
+    "r3/oracle/runs/g4a/p5619.wf",
+    "r3/oracle/runs/g4a/p5700.wf",
+    "r3/oracle/runs/g4a/p5885.wf",
+    "r3/oracle/runs/g4a/p5898.wf",
+    "r3/oracle/runs/g4a/p5913.wf",
+    "r3/oracle/runs/g4a/p600.wf",
+    "r3/oracle/runs/g4a/p601.wf",
+    "r3/oracle/runs/g4a/p6155.wf",
+    "r3/oracle/runs/g4a/p6231.wf",
+    "r3/oracle/runs/g4a/p6270.wf",
+    "r3/oracle/runs/g4a/p6388.wf",
+    "r3/oracle/runs/g4a/p6465.wf",
+    "r3/oracle/runs/g4a/p6561.wf",
+    "r3/oracle/runs/g4a/p6604.wf",
+    "r3/oracle/runs/g4a/p6662.wf",
+    "r3/oracle/runs/g4a/p6820.wf",
+    "r3/oracle/runs/g4a/p706.wf",
+    "r3/oracle/runs/g4a/p7128.wf",
+    "r3/oracle/runs/g4a/p7200.wf",
+    "r3/oracle/runs/g4a/p7374.wf",
+    "r3/oracle/runs/g4a/p7501.wf",
+    "r3/oracle/runs/g4a/p7597.wf",
+    "r3/oracle/runs/g4a/p7623.wf",
+    "r3/oracle/runs/g4a/p7728.wf",
+    "r3/oracle/runs/g4a/p7778.wf",
+    "r3/oracle/runs/g4a/p7836.wf",
+    "r3/oracle/runs/g4a/p7883.wf",
+    "r3/oracle/runs/g4a/p7894.wf",
+    "r3/oracle/runs/g4a/p852.wf",
+    "r3/oracle/runs/g4a/p944.wf",
+    "r3/oracle/runs/g4p/p20205.wf",
+    "r3/oracle/runs/g4p/p20214.wf",
+    "r3/oracle/runs/g4p/p20257.wf",
+    "r3/oracle/runs/g4p/p20357.wf",
+    "r3/oracle/runs/g4p/p20432.wf",
+    "r3/oracle/runs/g4p/p20472.wf",
+    "r3/oracle/runs/g4p/p20493.wf",
+    "r3/oracle/runs/g4p/p20657.wf",
+    "r3/oracle/runs/g4p/p20663.wf",
+    "r3/oracle/runs/g4p/p20804.wf",
+    "r3/oracle/runs/g4p/p20948.wf",
+    "r3/oracle/runs/g4p/p20961.wf",
+    "r3/oracle/runs/g4p/p21128.wf",
+    "r3/oracle/runs/g4p/p21204.wf",
+    "r3/oracle/runs/g4p/p21311.wf",
+    "r3/oracle/runs/g4p/p21366.wf",
+    "r3/oracle/runs/g4p/p21685.wf",
+    "r3/oracle/runs/g4p/p21843.wf",
+    "r3/oracle/runs/g4p/p21908.wf",
+    "r3/oracle/runs/g4p/p22017.wf",
+    "r3/oracle/runs/g4p/p22051.wf",
+    "r3/oracle/runs/g4p/p22073.wf",
+    "r3/oracle/runs/g4p/p22146.wf",
+    "r3/oracle/runs/g4p/p22333.wf",
+    "r3/oracle/runs/g4p/p22534.wf",
+    "r3/oracle/runs/g4p/p22563.wf",
+    "r3/oracle/runs/g4p/p22568.wf",
+    "r3/oracle/runs/g4p/p22709.wf",
+    "r3/oracle/runs/g4p/p22734.wf",
+    "r3/oracle/runs/g4p/p22825.wf",
+    "r3/oracle/runs/g4p/p22925.wf",
+    "r3/oracle/runs/g4p/p23002.wf",
+    "r3/oracle/runs/g4p/p23086.wf",
+    "r3/oracle/runs/g4p/p23265.wf",
+    "r3/oracle/runs/g4p/p23456.wf",
+    "r3/oracle/runs/g4p/p23464.wf",
+    "r3/oracle/runs/g4p/p23477.wf",
+    "r3/oracle/runs/g4p/p23938.wf",
+    "r3/oracle/runs/g4p/p23975.wf",
+    "r3/oracle/runs/g4p/p23996.wf",
+    "r3/oracle/runs/g4p/p24053.wf",
+    "r3/oracle/runs/g4p/p24235.wf",
+    "r3/oracle/runs/g4p/p24275.wf",
+    "r3/oracle/runs/g4p/p24280.wf",
+    "r3/oracle/runs/g4p/p24433.wf",
+    "r3/oracle/runs/g4p/p24472.wf",
+    "r3/oracle/runs/g4p/p24486.wf",
+    "r3/oracle/runs/g4p/p24532.wf",
+    "r3/oracle/runs/g4p/p24584.wf",
+    "r3/oracle/runs/g4p/p24713.wf",
+    "r3/oracle/runs/g4p/p24757.wf",
+    "r3/oracle/runs/g4p/p24866.wf",
+    "r3/oracle/runs/g4p/p24895.wf",
+    "r3/oracle/runs/g4p/p24945.wf",
+    "r3/oracle/runs/g4p/p25319.wf",
+    "r3/oracle/runs/g4p/p25332.wf",
+    "r3/oracle/runs/g4p/p25381.wf",
+    "r3/oracle/runs/g4p/p25406.wf",
+    "r3/oracle/runs/g4p/p25540.wf",
+    "r3/oracle/runs/g4p/p25573.wf",
+    "r3/oracle/runs/g4p/p25693.wf",
+    "r3/oracle/runs/g4p/p25729.wf",
+    "r3/oracle/runs/g4p/p25737.wf",
+    "r3/oracle/runs/g4p/p25859.wf",
+    "r3/oracle/runs/g4p/p25975.wf",
+    "r3/oracle/runs/g4p/p26183.wf",
+    "r3/oracle/runs/g4p/p26226.wf",
+    "r3/oracle/runs/g4p/p26302.wf",
+    "r3/oracle/runs/g4p/p26390.wf",
+    "r3/oracle/runs/g4p/p26472.wf",
+    "r3/oracle/runs/g4p/p26522.wf",
+    "r3/oracle/runs/g4p/p26581.wf",
+    "r3/oracle/runs/g4p/p26629.wf",
+    "r3/oracle/runs/g4p/p26638.wf",
+    "r3/oracle/runs/g4p/p26713.wf",
+    "r3/oracle/runs/g4p/p26721.wf",
+    "r3/oracle/runs/g4p/p26751.wf",
+    "r3/oracle/runs/g4p/p27050.wf",
+    "r3/oracle/runs/g4p/p27078.wf",
+    "r3/oracle/runs/g4p/p27157.wf",
+    "r3/oracle/runs/g4p/p27256.wf",
+    "r3/oracle/runs/g4p/p27344.wf",
+    "r3/oracle/runs/g4p/p27362.wf",
+    "r3/oracle/runs/g4p/p27368.wf",
+    "r3/oracle/runs/g4p/p27524.wf",
+    "r3/oracle/runs/g4p/p27543.wf",
+    "r3/oracle/runs/g4p/p27646.wf",
+    "r3/oracle/runs/g4p/p27742.wf",
+    "r3/oracle/runs/g4p/p27975.wf",
+    "r3/oracle/runs/t3/p155.wf",
+    "verify/s5/R3a/h_gen3/p70181.wf",
+    "verify/s5/R3a/h_gen3/p70210.wf",
+    "verify/s5/R3a/h_gen4/p70206.wf",
+    "verify/s5/R3a/h_gen4/p70315.wf",
+    "verify/s5/R3a/h_gen4/p70365.wf",
+]
+reason = "stage R0e, tier 2 (336 programs): class R0E-T2-TASK: a task of a scope in a closure body (often the block of `apply`, or a spawn in a clause of a handler in a closure) is joined before the code that the old pipeline flags: through a tuple (`let (t, _) = pt`), a callee (`join_it(t)`), a `join` in a closure that a callee runs, or the end of the scope; or the access is to another field. The `ir` facts end the task at the join (O3-9, the R0D-T2-TASK class of R0d). `ereview/ev.sh`: no fault on seeds 1 to 3 with the `ir` engine nor with the `ast` engine, fact oracle ok"
+signed_by = "reviewer R0e: 20 sampled (r0erev/samp_TASK.list), 0 faults; the task is joined before the flagged access; no fault seeds 1-12, both engines"
+stage = "R0e"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g1/p287.wf",
+    "r2/oracle/runs/g3/p7068.wf",
+    "r2/oracle/runs/g3/p7487.wf",
+    "r2/oracle/runs/g4/p10403.wf",
+    "r2/oracle/runs/g4/p10875.wf",
+    "r2/oracle/runs/g5/p22450.wf",
+    "r2/oracle/runs/g5/p23526.wf",
+    "r2/oracle/runs/g5/p23681.wf",
+    "r2/oracle/runs/g6/p30418.wf",
+    "r2/oracle/runs/g6/p31095.wf",
+    "r2/oracle/runs/g6/p31853.wf",
+    "r2/oracle/runs/g6/p32003.wf",
+    "r2/oracle/runs/g6/p32990.wf",
+    "r2/oracle/runs/g6/p33718.wf",
+    "r2/oracle/runs/g7/p41358.wf",
+    "r2/oracle/runs/g7/p43094.wf",
+    "r3/oracle/runs/g1/p100971.wf",
+    "r3/oracle/runs/g3a/p1933.wf",
+    "r3/oracle/runs/g3a/p2441.wf",
+    "r3/oracle/runs/g3a/p3447.wf",
+    "r3/oracle/runs/g3a/p3657.wf",
+    "r3/oracle/runs/g3a/p6113.wf",
+    "r3/oracle/runs/g3a/p6275.wf",
+    "r3/oracle/runs/g3b/p11154.wf",
+    "r3/oracle/runs/g3b/p12183.wf",
+    "r3/oracle/runs/g3b/p13428.wf",
+    "r3/oracle/runs/g3b/p13510.wf",
+    "r3/oracle/runs/g3b/p17558.wf",
+    "r3/oracle/runs/g3b/p18319.wf",
+    "r3/oracle/runs/g3b/p20202.wf",
+    "r3/oracle/runs/g3b/p20347.wf",
+    "r3/oracle/runs/g3b/p20904.wf",
+    "r3/oracle/runs/g3b/p21033.wf",
+    "r3/oracle/runs/g3b/p24410.wf",
+    "r3/oracle/runs/g3b/p24533.wf",
+    "r3/oracle/runs/g3p/p40213.wf",
+    "r3/oracle/runs/g3p/p41207.wf",
+    "r3/oracle/runs/g3p/p42166.wf",
+    "r3/oracle/runs/g3p/p45410.wf",
+    "r3/oracle/runs/g3p/p46418.wf",
+    "r3/oracle/runs/g3p/p48776.wf",
+    "r3/oracle/runs/g4a/p1052.wf",
+    "r3/oracle/runs/g4a/p1103.wf",
+    "r3/oracle/runs/g4a/p1123.wf",
+    "r3/oracle/runs/g4a/p1136.wf",
+    "r3/oracle/runs/g4a/p1283.wf",
+    "r3/oracle/runs/g4a/p1351.wf",
+    "r3/oracle/runs/g4a/p1491.wf",
+    "r3/oracle/runs/g4a/p1497.wf",
+    "r3/oracle/runs/g4a/p1863.wf",
+    "r3/oracle/runs/g4a/p1936.wf",
+    "r3/oracle/runs/g4a/p2185.wf",
+    "r3/oracle/runs/g4a/p2569.wf",
+    "r3/oracle/runs/g4a/p2898.wf",
+    "r3/oracle/runs/g4a/p2940.wf",
+    "r3/oracle/runs/g4a/p3080.wf",
+    "r3/oracle/runs/g4a/p3221.wf",
+    "r3/oracle/runs/g4a/p3267.wf",
+    "r3/oracle/runs/g4a/p3273.wf",
+    "r3/oracle/runs/g4a/p3654.wf",
+    "r3/oracle/runs/g4a/p3762.wf",
+    "r3/oracle/runs/g4a/p3861.wf",
+    "r3/oracle/runs/g4a/p4228.wf",
+    "r3/oracle/runs/g4a/p4286.wf",
+    "r3/oracle/runs/g4a/p4548.wf",
+    "r3/oracle/runs/g4a/p4947.wf",
+    "r3/oracle/runs/g4a/p5296.wf",
+    "r3/oracle/runs/g4a/p5608.wf",
+    "r3/oracle/runs/g4a/p5802.wf",
+    "r3/oracle/runs/g4a/p5881.wf",
+    "r3/oracle/runs/g4a/p6122.wf",
+    "r3/oracle/runs/g4a/p6195.wf",
+    "r3/oracle/runs/g4a/p6271.wf",
+    "r3/oracle/runs/g4a/p6282.wf",
+    "r3/oracle/runs/g4a/p6300.wf",
+    "r3/oracle/runs/g4a/p6335.wf",
+    "r3/oracle/runs/g4a/p6503.wf",
+    "r3/oracle/runs/g4a/p6631.wf",
+    "r3/oracle/runs/g4a/p6761.wf",
+    "r3/oracle/runs/g4a/p6787.wf",
+    "r3/oracle/runs/g4a/p709.wf",
+    "r3/oracle/runs/g4a/p749.wf",
+    "r3/oracle/runs/g4a/p7575.wf",
+    "r3/oracle/runs/g4a/p7755.wf",
+    "r3/oracle/runs/g4a/p7816.wf",
+    "r3/oracle/runs/g4a/p784.wf",
+    "r3/oracle/runs/g4a/p7876.wf",
+    "r3/oracle/runs/g4a/p7885.wf",
+    "r3/oracle/runs/g4a/p7886.wf",
+    "r3/oracle/runs/g4a/p7911.wf",
+    "r3/oracle/runs/g4a/p7956.wf",
+    "r3/oracle/runs/g4a/p7986.wf",
+    "r3/oracle/runs/g4a/p85.wf",
+    "r3/oracle/runs/g4a/p907.wf",
+    "r3/oracle/runs/g4p/p20045.wf",
+    "r3/oracle/runs/g4p/p20466.wf",
+    "r3/oracle/runs/g4p/p20542.wf",
+    "r3/oracle/runs/g4p/p20664.wf",
+    "r3/oracle/runs/g4p/p20966.wf",
+    "r3/oracle/runs/g4p/p21036.wf",
+    "r3/oracle/runs/g4p/p21092.wf",
+    "r3/oracle/runs/g4p/p21361.wf",
+    "r3/oracle/runs/g4p/p21755.wf",
+    "r3/oracle/runs/g4p/p21955.wf",
+    "r3/oracle/runs/g4p/p22067.wf",
+    "r3/oracle/runs/g4p/p22205.wf",
+    "r3/oracle/runs/g4p/p22223.wf",
+    "r3/oracle/runs/g4p/p22286.wf",
+    "r3/oracle/runs/g4p/p22463.wf",
+    "r3/oracle/runs/g4p/p22684.wf",
+    "r3/oracle/runs/g4p/p23249.wf",
+    "r3/oracle/runs/g4p/p23323.wf",
+    "r3/oracle/runs/g4p/p23399.wf",
+    "r3/oracle/runs/g4p/p23619.wf",
+    "r3/oracle/runs/g4p/p23629.wf",
+    "r3/oracle/runs/g4p/p23708.wf",
+    "r3/oracle/runs/g4p/p23854.wf",
+    "r3/oracle/runs/g4p/p23966.wf",
+    "r3/oracle/runs/g4p/p24069.wf",
+    "r3/oracle/runs/g4p/p24259.wf",
+    "r3/oracle/runs/g4p/p24547.wf",
+    "r3/oracle/runs/g4p/p24759.wf",
+    "r3/oracle/runs/g4p/p24798.wf",
+    "r3/oracle/runs/g4p/p24957.wf",
+    "r3/oracle/runs/g4p/p25137.wf",
+    "r3/oracle/runs/g4p/p25303.wf",
+    "r3/oracle/runs/g4p/p25708.wf",
+    "r3/oracle/runs/g4p/p25955.wf",
+    "r3/oracle/runs/g4p/p26036.wf",
+    "r3/oracle/runs/g4p/p26151.wf",
+    "r3/oracle/runs/g4p/p26162.wf",
+    "r3/oracle/runs/g4p/p26396.wf",
+    "r3/oracle/runs/g4p/p26746.wf",
+    "r3/oracle/runs/g4p/p26790.wf",
+    "r3/oracle/runs/g4p/p26801.wf",
+    "r3/oracle/runs/g4p/p26839.wf",
+    "r3/oracle/runs/g4p/p27170.wf",
+    "r3/oracle/runs/g4p/p27519.wf",
+    "r3/oracle/runs/g4p/p27596.wf",
+    "r3/oracle/runs/g4p/p27604.wf",
+    "r3/oracle/runs/g4p/p27717.wf",
+    "r3/oracle/runs/g4p/p27886.wf",
+    "verify/s5/R3a/h_gen4/p70057.wf",
+    "verify/s5/R3a/h_gen4/p70320.wf",
+]
+reason = "stage R0e, tier 2 (144 programs): class R0E-T2-REF: the reference that the old pipeline flags (W0301) is made or used after the task of a scope in a closure body ended (a `join`, the end of the scope), or into a place that the task does not change. The `ir` facts give the task its end in the closure (the scope body splices into the closure body). `ereview/ev.sh`: no fault on seeds 1 to 3 with both engines, fact oracle ok"
+signed_by = "reviewer R0e: 20 sampled (r0erev/samp_REF.list), 0 faults; the reference is used after the task of the closure ended; no fault seeds 1-12, both engines"
+stage = "R0e"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/g3/p6501.wf",
+    "r2/oracle/runs/g7/p42242.wf",
+    "r2/oracle/runs/g7/p42694.wf",
+    "r3/oracle/runs/g3b/p12080.wf",
+    "r3/oracle/runs/g3b/p17971.wf",
+    "r3/oracle/runs/g3b/p18107.wf",
+    "r3/oracle/runs/g3b/p24990.wf",
+    "r3/oracle/runs/g3p/p41015.wf",
+    "r3/oracle/runs/g3p/p44277.wf",
+    "r3/oracle/runs/g3p/p46294.wf",
+    "r3/oracle/runs/g3p/p48035.wf",
+    "r3/oracle/runs/g3p/p49132.wf",
+    "r3/oracle/runs/g4a/p5971.wf",
+    "r3/oracle/runs/g4p/p20302.wf",
+    "r3/oracle/runs/g4p/p21317.wf",
+    "r3/oracle/runs/g4p/p25161.wf",
+    "r3/oracle/runs/t3/p168.wf",
+    "verify/s5/R3a/h_gen4/p70041.wf",
+    "verify/s5/R3a/h_gen4/p70265.wf",
+]
+reason = "stage R0e, tier 2 (19 programs): class R0E-T2-ARGS (as R0D-T2-ARGS of R0d): a callee gets a reference and a closure with a scope or a task that changes another part, or that it does not run while it holds the reference; the summary of the callee and of the closure show it, so W0312 of the old pipeline is a false positive. `ereview/ev.sh`: no fault on seeds 1 to 3 with both engines"
+signed_by = "reviewer R0e: all 19 run, 0 faults; the callee does not run the closure while it holds the reference; no fault seeds 1-12, both engines"
+stage = "R0e"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r2/oracle/runs/m2/p6926.wf",
+    "r2/oracle/runs/m2/p7947.wf",
+    "r3/oracle/runs/g3a/p1093.wf",
+    "r3/oracle/runs/g3a/p1489.wf",
+    "r3/oracle/runs/g3a/p2539.wf",
+    "r3/oracle/runs/g3a/p2905.wf",
+    "r3/oracle/runs/g3a/p4673.wf",
+    "r3/oracle/runs/g3a/p5408.wf",
+    "r3/oracle/runs/g3a/p5416.wf",
+    "r3/oracle/runs/g3a/p6090.wf",
+    "r3/oracle/runs/g3a/p6850.wf",
+    "r3/oracle/runs/g3a/p6851.wf",
+    "r3/oracle/runs/g3b/p10816.wf",
+    "r3/oracle/runs/g3b/p11077.wf",
+    "r3/oracle/runs/g3b/p11316.wf",
+    "r3/oracle/runs/g3b/p11827.wf",
+    "r3/oracle/runs/g3b/p12709.wf",
+    "r3/oracle/runs/g3b/p12812.wf",
+    "r3/oracle/runs/g3b/p12814.wf",
+    "r3/oracle/runs/g3b/p12947.wf",
+    "r3/oracle/runs/g3b/p13111.wf",
+    "r3/oracle/runs/g3b/p13679.wf",
+    "r3/oracle/runs/g3b/p13849.wf",
+    "r3/oracle/runs/g3b/p13940.wf",
+    "r3/oracle/runs/g3b/p14196.wf",
+    "r3/oracle/runs/g3b/p14683.wf",
+    "r3/oracle/runs/g3b/p16098.wf",
+    "r3/oracle/runs/g3b/p18013.wf",
+    "r3/oracle/runs/g3b/p18438.wf",
+    "r3/oracle/runs/g3b/p18800.wf",
+    "r3/oracle/runs/g3b/p18985.wf",
+    "r3/oracle/runs/g3b/p19220.wf",
+    "r3/oracle/runs/g3b/p19267.wf",
+    "r3/oracle/runs/g3b/p19287.wf",
+    "r3/oracle/runs/g3b/p19586.wf",
+    "r3/oracle/runs/g3b/p19970.wf",
+    "r3/oracle/runs/g3b/p20714.wf",
+    "r3/oracle/runs/g3b/p20806.wf",
+    "r3/oracle/runs/g3b/p21902.wf",
+    "r3/oracle/runs/g3b/p22266.wf",
+    "r3/oracle/runs/g3b/p23403.wf",
+    "r3/oracle/runs/g3b/p23927.wf",
+    "r3/oracle/runs/g3b/p24216.wf",
+    "r3/oracle/runs/g3b/p24596.wf",
+    "r3/oracle/runs/g3p/p40426.wf",
+    "r3/oracle/runs/g3p/p40545.wf",
+    "r3/oracle/runs/g3p/p40749.wf",
+    "r3/oracle/runs/g3p/p40771.wf",
+    "r3/oracle/runs/g3p/p40997.wf",
+    "r3/oracle/runs/g3p/p43068.wf",
+    "r3/oracle/runs/g3p/p43219.wf",
+    "r3/oracle/runs/g3p/p43459.wf",
+    "r3/oracle/runs/g3p/p43880.wf",
+    "r3/oracle/runs/g3p/p44963.wf",
+    "r3/oracle/runs/g3p/p45264.wf",
+    "r3/oracle/runs/g3p/p45358.wf",
+    "r3/oracle/runs/g3p/p46239.wf",
+    "r3/oracle/runs/g3p/p46422.wf",
+    "r3/oracle/runs/g3p/p46930.wf",
+    "r3/oracle/runs/g3p/p48242.wf",
+    "r3/oracle/runs/g3p/p48942.wf",
+    "r3/oracle/runs/g3p/p48945.wf",
+    "r3/oracle/runs/g3p/p49051.wf",
+    "r3/oracle/runs/g3p/p49795.wf",
+    "r3/oracle/runs/g4a/p1897.wf",
+    "r3/oracle/runs/g4a/p2144.wf",
+    "r3/oracle/runs/g4a/p2280.wf",
+    "r3/oracle/runs/g4a/p2909.wf",
+    "r3/oracle/runs/g4a/p5450.wf",
+    "r3/oracle/runs/g4a/p5801.wf",
+    "r3/oracle/runs/g4a/p7372.wf",
+    "r3/oracle/runs/g4a/p833.wf",
+    "r3/oracle/runs/g4p/p21043.wf",
+    "r3/oracle/runs/g4p/p21509.wf",
+    "r3/oracle/runs/g4p/p22525.wf",
+    "r3/oracle/runs/g4p/p22786.wf",
+    "r3/oracle/runs/g4p/p22872.wf",
+    "r3/oracle/runs/g4p/p23122.wf",
+    "r3/oracle/runs/g4p/p24297.wf",
+    "r3/oracle/runs/g4p/p24407.wf",
+    "r3/oracle/runs/g4p/p24448.wf",
+    "r3/oracle/runs/g4p/p25289.wf",
+    "r3/oracle/runs/g4p/p26369.wf",
+    "r3/oracle/runs/g4p/p26734.wf",
+    "r3/oracle/runs/g4p/p27654.wf",
+    "r3/oracle/runs/m3a/p502.wf",
+    "r3/oracle/runs/t3/p126.wf",
+    "verify/s5/R3a/h_gen3/p70554.wf",
+]
+reason = "stage R0e, tier 2 (88 programs): class R0E-T2-ONCE: a closure with a scope that moves a linear value into a task, and that a callee runs once on each path (`apply`; R0D-T2-ONCE of R0d); a closure with its own handler of a `multi` operation or with its own `Fail` handler, run as a block (O3-8); the scope capability across a `multi` operation in a closure (I3-8, not a `once` value in the `ir` pipeline). The old pipeline gives W0601, W0602 or W0503. `ereview/ev.sh`: no fault on seeds 1 to 3 with both engines, fact oracle ok"
+signed_by = "reviewer R0e: 20 sampled (r0erev/samp_ONCE.list), 0 faults; the callee runs the closure once on each path, or the multi handler is local to the closure; no fault seeds 1-12, both engines"
+stage = "R0e"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/quality/gen/p/g00014.wf",
+    "verify/quality/gen/p/g00026.wf",
+    "verify/quality/gen/p/g00137.wf",
+    "verify/quality/gen/p/g00142.wf",
+    "verify/quality/gen/p/g00202.wf",
+    "verify/quality/gen/p/g00203.wf",
+    "verify/quality/gen/p/g00208.wf",
+    "verify/quality/gen/p/g00219.wf",
+    "verify/quality/gen/p/g00222.wf",
+    "verify/quality/gen/p/g00231.wf",
+    "verify/quality/gen/p/g00282.wf",
+    "verify/quality/gen/p/g00288.wf",
+    "verify/quality/gen/p/g00326.wf",
+    "verify/quality/gen/p/g00332.wf",
+    "verify/quality/gen/p/g00341.wf",
+    "verify/quality/gen/p/g00358.wf",
+    "verify/quality/gen/p/g00379.wf",
+    "verify/quality/gen/p/g00382.wf",
+    "verify/quality/gen/p/g00387.wf",
+    "verify/quality/gen/p/g00413.wf",
+    "verify/quality/gen/p/g00414.wf",
+    "verify/quality/gen/p/g00424.wf",
+    "verify/quality/gen/p/g00493.wf",
+    "verify/quality/gen/p/g00500.wf",
+    "verify/quality/gen/p/g00522.wf",
+    "verify/quality/gen/p/g00535.wf",
+    "verify/quality/gen/p/g00547.wf",
+    "verify/quality/gen/p/g00554.wf",
+    "verify/quality/gen/p/g00637.wf",
+    "verify/quality/gen/p/g00672.wf",
+    "verify/quality/gen/p/g00683.wf",
+    "verify/quality/gen/p/g00742.wf",
+    "verify/quality/gen/p/g00746.wf",
+    "verify/quality/gen/p/g00755.wf",
+    "verify/quality/gen/p/g00796.wf",
+    "verify/quality/gen/p/g00820.wf",
+    "verify/quality/gen/p/g00847.wf",
+    "verify/quality/gen/p/g00874.wf",
+    "verify/quality/gen/p/g00896.wf",
+    "verify/quality/gen/p/g00897.wf",
+    "verify/quality/gen/p/g00906.wf",
+    "verify/quality/gen/p/g00918.wf",
+    "verify/quality/gen/p/g01065.wf",
+    "verify/quality/gen/p/g01117.wf",
+    "verify/quality/gen/p/g01121.wf",
+    "verify/quality/gen/p/g01146.wf",
+    "verify/quality/gen/p/g01155.wf",
+    "verify/quality/gen/p/g01180.wf",
+    "verify/quality/gen/p/g01255.wf",
+    "verify/quality/gen/p/g01256.wf",
+    "verify/quality/gen/p/g01267.wf",
+    "verify/quality/gen/p/g01276.wf",
+    "verify/quality/gen/p/g01331.wf",
+    "verify/quality/gen/p/g01367.wf",
+    "verify/quality/gen/p/g01402.wf",
+    "verify/quality/gen/p/g01428.wf",
+    "verify/quality/gen/p/g01471.wf",
+    "verify/quality/gen/p/g01488.wf",
+]
+codes = ["W0301", "W0302", "W0312", "W0314", "W0315", "W0403", "W0503", "W0601", "W0602", "W0702", "W0703"]
+reason = "stage R0e, tier 2 (58 programs): a scope or a `fork` in a closure comes into scope. Both pipelines give W0702 and W0703 for the effects of the tasks; the `ir` pipeline names the task by the start of the task expression (`fork task`, the column of the `fork`), the old pipeline by the branch, and the counts of W0601 of task results and handles differ (F3-6, O3-4). `ereview/ev.sh` on each row: no fault that the `ir` pipeline loses"
+stage = "R0e"
+
+[[entry]]
+class = "changed"
+files = [
+    "r2/oracle/t0/p44.wf",
+    "r3/quality/fuzzcorp/132_scope_escape.wf",
+    "verify/quality/gen/p/g00025.wf",
+    "verify/quality/gen/p/g00050.wf",
+    "verify/quality/gen/p/g00115.wf",
+    "verify/quality/gen/p/g00157.wf",
+    "verify/quality/gen/p/g00176.wf",
+    "verify/quality/gen/p/g00199.wf",
+    "verify/quality/gen/p/g00305.wf",
+    "verify/quality/gen/p/g00316.wf",
+    "verify/quality/gen/p/g00324.wf",
+    "verify/quality/gen/p/g00335.wf",
+    "verify/quality/gen/p/g00370.wf",
+    "verify/quality/gen/p/g00411.wf",
+    "verify/quality/gen/p/g00420.wf",
+    "verify/quality/gen/p/g00540.wf",
+    "verify/quality/gen/p/g00555.wf",
+    "verify/quality/gen/p/g00618.wf",
+    "verify/quality/gen/p/g00813.wf",
+    "verify/quality/gen/p/g00832.wf",
+    "verify/quality/gen/p/g00914.wf",
+    "verify/quality/gen/p/g01088.wf",
+    "verify/quality/gen/p/g01111.wf",
+    "verify/quality/gen/p/g01136.wf",
+    "verify/quality/gen/p/g01206.wf",
+    "verify/quality/gen/p/g01207.wf",
+    "verify/quality/gen/p/g01246.wf",
+    "verify/quality/gen/p/g01254.wf",
+    "verify/quality/gen/p/g01311.wf",
+    "verify/quality/gen/p/g01495.wf",
+]
+codes = ["W0301", "W0302", "W0312", "W0314", "W0315", "W0403", "W0405", "W0503", "W0601", "W0602"]
+reason = "stage R0e, tier 2 (30 programs): a scope or a `fork` in a closure comes into scope. The `ir` pipeline gives W0601 for task results and handles that no one consumes (F3-6, O3-4) and W0602 or W0503 at other nodes of the same values; the old pipeline at the end of the closure. The other codes are the same, at other columns. `ereview/ev.sh` on each row: no fault that the `ir` pipeline loses"
+stage = "R0e"
+
+[[entry]]
+class = "moved"
+files = [
+    "r2/oracle/runs/g6/p33444.wf",
+    "r2/oracle/t0/p119.wf",
+    "r2/oracle/t0/q207.wf",
+    "verify/s5/R3a/h_gen3/p70271.wf",
+]
+codes = ["W0301", "W0503", "W0602"]
+reason = "stage R0e, tier 2 (4 programs): a scope in a closure comes into scope; the same code at another line of the same function (the node of the run of the closure, or of the join). `ereview/ev.sh`: the fault line is in both"
+stage = "R0e"
+
+[[entry]]
+class = "sig"
+parts = ["drops", "holds", "multi", "muts", "named", "passthrough", "pins", "raises", "repeats", "task_effects", "task_runs", "tasks"]
+files = [
+    "crates/weft-interp/tests/programs/abort_fork_result.wf",
+    "crates/weft-interp/tests/programs/interrupt_wait_clause_value.wf",
+    "tests/gate/probes/fixes/r0e/a08_ok.wf",
+    "tests/gate/probes/fixes/r0e/a08_timeout_fork.wf",
+    "tests/gate/probes/fixes/r0e/a13_ok.wf",
+    "tests/gate/probes/fixes/r0e/u09_escape_closure.wf",
+    "tests/gate/probes/r2/oracle/fp/W0314_p3243.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0405_p43090.wf",
+    "tests/gate/probes/r3/interp/probe/b1_timeout_scope.wf",
+    "tests/gate/probes/r3/interp/probe/b8_unwind_children_value_lost.wf",
+    "tests/gate/probes/r3/interp/probe/g14_fork_result_lin.wf",
+    "tests/gate/probes/r3/interp/probe/g15_fork_result_lin_onabort.wf",
+    "tests/gate/probes/r3/oracle/probes/l9_closure_scope_tail.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/crash/c10.wf",
+    "tests/gate/probes/verify/s5/R2d/p/e2_tuple.wf",
+    "tests/gate/probes/verify/s5/R2d/p/e3_rr4_tuple_option.wf",
+    "tests/ir_targets/f3_6_task_results.wf",
+    "tests/programs/134_steal_pins.wf",
+    "tests/programs/190_closure_tasks.wf",
+]
+reason = "stage R0e: programs with a scope or a `fork` in a closure body, or with a spawn that does not name its scope, come into scope. task_effects (class F19-SIG-TASKEFF): a standard effect of a task in a closure body goes to the root handlers of the task (the run prints the root `Log`, `r0e/t/te3.wf`), so the summary of the closure has no part `task_effects`; pins: the old inference pins a task whose closure a closure made, the `ir` pipeline follows the closure (`u09`, `a08`, `f3_6`), and pins a task that runs code of a caller (`plain_callee`); raises, named, muts: a closure that no one runs gives nothing to its maker (`W0314_p3243`, `W0405_p43090` `h1`), and a scope with no task in a closure does not raise (`l9`, stage C1.5: as a scope with no task in a function body); multi: the `multi` of a scope capability across a `multi` operation in a closure (`e2_tuple`); passthrough, tasks, task_runs, holds, drops, repeats: the run of a closure that the result gives back runs its tasks (`spawn_drop`, `detach_drop`, `c10.wf`, `param_in_sim`); muts of `join_it`: a `join` changes the place of the handle (C5 of the fact oracle)"
+stage = "R0e"
+
+# Stage R0e fix (OR7): a task of a callee runs while the callee runs a
+# function value that captures a local of the caller (Run::during). The
+# lost-clean rows wait for the independent review of the R0e fix.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/191_value_runs_with_tasks.wf"]
+codes = ["W0312", "W0405"]
+reason = "stage R0e fix (OR7): the corpus file of a value that a callee runs while a task of the callee runs. Both pipelines give W0312 at the calls where the task clears the vector that the value reads (`local_capture`, `field_capture`, `through_callee`, `in_struct`, `in_sim`). The old pipeline also gives W0312 at the calls where the task ends before the run, where the callee has no task, and where the value reads another field (`local_capture_joined`, `local_capture_no_task`, `other_field`): no race, the `ir` pipeline accepts them (its precision of C3). The `ir` pipeline gives W0405 in `clause_reads`: the clause of the local handler runs while the task clears the vector that the clause reads (`fixes/r0e/or7_handler_value.wf` faults at run time); the old pipeline misses it. Rejected in both"
+stage = "R0e fix"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/or7_fork.wf",
+    "tests/gate/probes/fixes/r0e/or7_fork_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_with_task.wf",
+    "tests/gate/probes/fixes/r0e/or7_with_task_direct.wf",
+    "tests/gate/probes/fixes/r0e/or7_maker_scope_runner.wf",
+]
+codes = ["W0312", "W0405"]
+reason = "stage R0e fix (OR7): the value runs as a task of the callee, or the task of a closure of the callee races with the closure body. The codes of the `ir` pipeline at R0e: W0405 at the `fork` or at the call of the runner (`TaskHow::with`), W0403 as the old pipeline; the old pipeline gives W0312 at the call of the caller in place of (or with) W0405. `or7_maker_scope_runner` gets W0312 at the call too (the fix: a task of the callee runs while the callee runs the value). The oracle finds the race in `or7_fork`, `or7_with_task`, `or7_with_task_direct` and `or7_maker_scope_runner`; `or7_fork_ok` has no fault and both pipelines reject it (W0403). Rejected in both"
+stage = "R0e fix"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0e/or7_local_ref_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_seq_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_two_values_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_field_ok.wf",
+]
+reason = "stage R0e fix (OR7): the clean twins of the probes of the fix. The old pipeline gives W0312: the closure argument captures the local that the callee changes through a reference argument. The `ir` pipeline accepts them, as at R0e (its precision since C3): the task ends before the run (`or7_local_ref_ok`), the callee has no task (`or7_seq_ok`), the value that reads the local runs before the task starts (`or7_two_values_ok`), or the value reads another field than the task changes (`or7_field_ok`). The interpreter runs each program with no fault (seeds 1 to 3, both engines, `ereview/ev.sh`)"
+signed_by = "reviewer R0e round 2: the reads of the value come before the task starts or after it ends, or the value only reads another place; the variants that fault (a02, a10, a12, a41) are held, the clean a54-a57 and a59 are accepted; no fault seeds 1-12, both engines"
+stage = "R0e fix"
+
+# Stage R0e fix 2: the holes B1, B2, O1 and O2 of the review of R0e.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/192_clause_scope_tasks.wf"]
+codes = ["W0405"]
+reason = "stage R0e fix 2: the corpus file of a scope body in a clause (B1 of the review of R0e), a task of a clause of a handler in a closure (O1) and a `once` value that a callee spawns two times (O2). The `ir` pipeline gives the markers of the bad cases. The old pipeline also gives W0405 at the line of the clause in a closure, in the clean case too: the handled body does not access `c`; the run of the clean cases has no race. Rejected in both"
+stage = "R0e fix 2"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/rv1_b1_d08.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d08b.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d08c.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d17.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d22.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d23.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d24.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_n02.wf",
+    "tests/gate/probes/fixes/r0e/rv1_o1_d06c.wf",
+    "tests/gate/probes/fixes/r0e/rv1_o1_d10.wf",
+    "tests/gate/probes/fixes/r0e/rv1_o1_d26.wf",
+]
+codes = ["W0405"]
+reason = "stage R0e fix 2 (B1 and O1 of the review of R0e): a task that a clause starts on an outer scope (in a scope body of the clause, or in a clause of a handler in a closure) starts at the node that runs the clause, or at the node that runs the closure. Both pipelines give W0405 at the access after that node (the race of the run); the old pipeline also gives W0405 at the line of the clause, where the `ir` pipeline has the task start. One row in place of two for the same race. Rejected in both"
+stage = "R0e fix 2"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0e/rv1_o1_ok.wf"]
+reason = "stage R0e fix 2 (the clean twin of O1): the clause of the handler in the closure spawns on the scope of the maker and resumes; the handled body does not access `c`, and the write comes after the scope. The old pipeline gives W0405 at the line of the clause; the `ir` pipeline starts the task at the run of the closure and ends it at the end of the scope, so no access overlaps it. The interpreter runs it with no fault (seeds 1 to 3, both engines)"
+signed_by = "reviewer R0e round 2: the write is after the end of the scope, and the task of the clause ends there; the twin c14_ok is accepted, c13 is held; no fault seeds 1-12, both engines"
+stage = "R0e fix 2"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/fixes/r0e/rv1_cs2_ok.wf",
+    "tests/gate/probes/fixes/r0e/rv1_cs2_scope_in_clause_write.wf",
+    "tests/programs/192_clause_scope_tasks.wf",
+]
+reason = "stage R0e fix 2: a scope with no task in a clause does not raise (stage C1.5: as a scope with no task in a function body); the old inference says `raises` for each scope"
+stage = "R0e fix 2"
+
+# Stage R0e fix 3 (H19): a callee gives a `once` value to code of a caller, a
+# function value of the interface (Run::via_only, Run::via). The lost-clean
+# rows wait for the independent review of R0e fix 3.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/193_value_runs_once_value.wf"]
+codes = ["W0502"]
+reason = "stage R0e fix 3 (H19): the corpus file of a `once` closure that a callee gives to a function value `g`. Both pipelines give W0502 where `g` runs the closure two times (two runs of `g`, two runs inside `g`, an item `g`, a loop, a struct field). The old pipeline also gives W0502 where `g` runs it one time or not at all, or gets it in one of its two runs (`once_through_g`, `once_through_item`, `g_does_not_run`, `once_of_two_runs`): no second run, the `ir` pipeline accepts them (it counts the runs of the argument in the summary of `g`). Rejected in both"
+stage = "R0e fix 3"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/h19_g_stores.wf",
+    "tests/gate/probes/fixes/r0e/h19_linear.wf",
+]
+codes = ["W0302", "W0602"]
+reason = "stage R0e fix 3 (H19): both pipelines give W0502 at the call. The `ir` pipeline also gives W0302 at the later run of the stored copy (`h19_g_stores`: `g` puts its argument into a vector, the worst way of a second run) and W0602 for the linear capture that a run of code of a caller can drop (`h19_linear`, as at R0e fix 2). `h19_linear` faults at run time; `h19_g_stores` has no fault. Rejected in both"
+stage = "R0e fix 3"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0e/h19_once_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_g_ignores_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_item_once_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_second_arg_ok.wf",
+    "tests/gate/probes/fixes/r0e/h19_two_values_ok.wf",
+]
+reason = "stage R0e fix 3 (H19): the clean twins of the probes of the fix. The old pipeline gives W0502: a callee gives the `once` closure to code of a caller. The `ir` pipeline accepts them, as at R0e fix 2: the caller knows `g` and counts the runs of the argument in its summary. `g` runs it one time (`h19_once_ok`, `h19_item_once_ok`), does not run it (`h19_g_ignores_ok`), runs only its other argument (`h19_second_arg_ok`), or gets the closure in one of its two runs (`h19_two_values_ok`). The interpreter runs each program with no fault (seeds 1 to 3, both engines, `ereview/ev.sh`)"
+signed_by = "reviewer R0e round 3: the caller knows g and the summary counts one run of the argument; clean variants a06_ok, a07_ok, a22_ok, g03_ok, a13_ok accepted; fault variants held; no fault seeds 1-12, both engines"
+stage = "R0e fix 3"
+
+# Stage R0e fix 4: R2-B1 of the review of R0e, round 2, and three older
+# holes of `Run::during` and `TaskHow`.
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/rv2_b01.wf",
+    "tests/gate/probes/fixes/r0e/rv2_b16_join_or_detach.wf",
+    "tests/gate/probes/fixes/r0e/rv2_b18.wf",
+    "tests/gate/probes/fixes/r0e/rv2_b19.wf",
+    "tests/gate/probes/fixes/r0e/rv2_b24.wf",
+    "tests/gate/probes/fixes/r0e/rv2_b25.wf",
+]
+codes = ["W0405"]
+reason = "stage R0e fix 4 (R2-B1 of the review of R0e, round 2): a clause spawns on an outer scope and joins the task on one path only. The task starts at the node that runs the clause, so both pipelines give W0405 at the access after it (the race of the run); the old pipeline also gives W0405 at the line of the clause (and in `rv2_b24` at the join in the loop that does not run). One row in place of two for the same race. Rejected in both"
+stage = "R0e fix 4"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0e/rv2_a31_value_in_other_task.wf"]
+codes = ["W0312"]
+reason = "stage R0e fix 4 (an older hole of the review of R0e, round 2): the callee runs the value in a second task while its first task clears `v`. The `ir` pipeline gives W0405 at the call (the places of the other task are places that change while the value runs as a task, `TaskHow`); the old pipeline gives W0312 and W0405 there. Rejected in both"
+stage = "R0e fix 4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0e/rv2_b01_ok.wf",
+    "tests/gate/probes/fixes/r0e/rv2_b16_ok.wf",
+    "tests/gate/probes/fixes/r0e/rv2_b27_ok.wf",
+]
+reason = "stage R0e fix 4 (the clean twins of R2-B1): the clause joins the task of the outer scope on each path before its `resume` (`b01_ok`, `b27_ok`: `handlers::joined_in_clause`), or the write is after the end of the scope (`b16_ok`). The old pipeline gives W0405 at the line of the clause or at the write. The interpreter runs each with no fault (seeds 1 to 3, both engines)"
+signed_by = "reviewer R0e round 3: the clause joins on each path before resume (b01_ok, b27_ok) or the write is after the scope (b16_ok); fault variants b01, b04-b08, b12, b15, f06, f16, f17, f19, i01-i04 held; no fault seeds 1-12, both engines"
+stage = "R0e fix 4"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0e/rv2_a15_run_in_clause_ok.wf",
+    "tests/gate/probes/fixes/r0e/rv2_a31_value_in_other_task_ok.wf",
+    "tests/gate/probes/fixes/r0e/rv2_a35_clause_inner_runs_ok.wf",
+]
+reason = "stage R0e fix 4 (the clean twins of the older holes a15, a31, a35): the task of the callee only reads `v`, and the value only reads `w`, so no access of the value conflicts with the task. The old pipeline gives W0312 (a callee that can change the place of the reference argument while the value points into it). The interpreter runs each with no fault (seeds 1 to 3, both engines)"
+signed_by = "reviewer R0e round 3: the task only reads v and the value only reads w; fault variants d01-d10, e01-e14, h02, h04, k03, k04 held; clean twins e02, e03, e06, e11, e13, e15, k01, k02 accepted; no fault seeds 1-12, both engines"
+stage = "R0e fix 4"
+
+# Stage R0f: task runs. A value of a caller that a foreign function, code of a
+# caller or a function value runs as a task applies at the task nodes of the
+# call (the worst way, or the way of the code that the node knows); a closure
+# that spawns a value of its interface on a scope of its maker gives the value
+# to that task. The lost-clean rows wait for the independent review of R0f.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/194_task_runs.wf"]
+codes = ["W0312", "W0314", "W0403", "W0405"]
+reason = "stage R0f: the corpus file of task runs. Both pipelines give W0403, W0405, W0401, W0502 and W0314 for a foreign function, `http.serve` and code of a caller that run a value as a task. The `ir` pipeline runs a value as code of a caller runs it when it knows that code: no W0403 for a closure that spawns its parameter (no `fork`), W0312 in place of W0405 for a value that the callee runs while its task runs, W0405 at the call of `mid_job` (the old pipeline gives W0314 two times at the scope line), no error for a code that runs the value one time (the old pipeline gives W0403, W0405), and W0405 for a closure that spawns its parameter on a scope of its maker while main changes the place after the call (the old pipeline misses it). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/133_task_params.wf"]
+codes = ["W0403", "W0405"]
+reason = "stage R0f: the closure value and the returned closure that spawn their parameter two times are known at the call (a task of the call of the function value, not the worst way): W0405 and no W0403 (no `fork`); the old pipeline gives W0403 too. In `via_pass_on` the `ir` pipeline gives W0403 for the `fork` of `par` and the old pipeline also W0405. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/38_callbacks.wf"]
+codes = ["W0301"]
+reason = "stage R0f: the program is in scope (the closure that the foreign `foreign_apply` runs as a task). In `captured` and `captured_named` the callee clears the vector and then runs the closure that reads `r`: the `ir` pipeline gives W0301 (the run uses `r` after the clear) next to the W0312 of both pipelines. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/61_task_paths.wf"]
+codes = ["W0313", "W0314", "W0405", "W0702"]
+reason = "stage R0f: the program is in scope (the closure that the parameter `k` can run on another thread). The `ir` pipeline gives W0702 next to W0314 for a task that performs `Note` through a local handler (as `redteam/t03_items.wf` at R0c); no W0314 for `spawn_item_out`, whose task performs through the row (part `task_effects`: a caller with a local handler gets W0314); one W0405 for the clause task in place of two; W0314 without W0313 for `k(|| note(1))` (the value is a task of the call: W0314 rejects it). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/82_stored_spawns.wf"]
+codes = ["W0405"]
+reason = "stage R0f: the program is in scope (the stored closure that code of a caller runs). `stored_either_branch` gets W0405: two runs of the stored value on the two branches of an `if` are `many` in the `ir` pipeline (the precision of plain runs on two branches, as `d27_ok` of the review of R0e). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0f/c12_struct.wf",
+    "tests/gate/probes/fixes/r0f/c15_serve_handler.wf",
+    "tests/gate/probes/fixes/r0f/c16_cc_during_plain.wf",
+    "tests/gate/probes/fixes/r0f/c18_cc_store_handler.wf",
+    "tests/gate/probes/fixes/r0f/c20_serve_linear.wf",
+    "tests/gate/probes/fixes/r0f/c22_cc_two_values.wf",
+    "tests/gate/probes/fixes/r0f/c25_cc_returned.wf",
+    "tests/gate/probes/fixes/r0f/c26_cc_maker_scope.wf",
+    "tests/gate/probes/fixes/r0f/c26_cc_maker_scope_ok.wf",
+    "tests/gate/probes/fixes/r0f/c29d_closure_maker_write.wf",
+    "tests/gate/probes/fixes/r0f/v1_via_hof.wf",
+]
+codes = ["W0301", "W0312", "W0313", "W0314", "W0403", "W0405", "W0602", "W0705"]
+reason = "stage R0f probes: a value of a caller that a foreign function, `http.serve` or code of a caller runs as a task. The `ir` pipeline runs the value as the code that the node knows runs it: W0405 at the call for two spawns of a field value (`c12`, the old pipeline gives W0314 two times), W0312 for a value that the callee runs while its task changes the place (`c16`, the old pipeline gives W0405), W0405 and no W0403 where no `fork` runs the value (`c22`, `c25`, `c29d`), W0403 only for the worst way of code of a caller that spawns on a scope of main (`c26`, `c26_ok`; the old pipeline also gives W0405, and both reject the clean `c26_ok`), W0314 without W0313 where code of a caller keeps a closure of a local handler (`c18`, `v1_via_hof`: the task of the call is W0314), W0705 for the handler of `http.serve` that performs a user effect (`c15`), one more W0602 for a linear capture (`c20`). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/interp/probe/k1_http_user_effect.wf",
+    "tests/gate/probes/r3/interp/probe/k2_http_user_effect_closure.wf",
+]
+codes = ["W0702", "W0705", "W0805"]
+reason = "stage R0f: the handler of `http.serve` performs a user effect that a local handler handles. Both pipelines give W0314 (the request task cannot perform through a handler of the task of `main`). The `ir` pipeline also gives W0705 (the function type of the parameter of `serve` has no row) and, for the item handler, W0702 and W0805 (the effect of the task goes to the row of `main`, part `task_effects`). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/s5/p/hof2.wf",
+    "tests/gate/probes/verify/partb/p/e3_apply.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/f4_alias.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_variants.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_more.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_apply.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_cb.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_local_closure_copy.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b3_param_value_first.wf",
+]
+codes = ["W0204", "W0301", "W0312", "W0313", "W0403", "W0405", "W0601", "W0602"]
+reason = "stage R0f: these programs come into scope (a value that code of a caller or a foreign function can run as a task). The `ir` pipeline runs a value as plain code where it knows the code of the caller (`or3_variants` `via_hof_unknown`: W0301 and W0312 of the second run of `twice` in place of the W0403 and W0405 of the worst way), gives W0314 without W0313 for a closure of a local handler that code of a caller can keep (`e3_apply`, `b1*`: the task of the call is W0314; `b1*` also get W0601 and W0602 for the linear capture of a closure that the unknown value in `keep` can drop), W0204 in place of W0312 for `hof_bad` (`hof2`), and W0405 in place of W0312 in `b3_param_value_first`. `f4_alias` loses the W0312 of an item callee that runs a value that changes what an argument points into (an older hole of the `ir` pipeline, in scope at R0e fix 4 in the form without the foreign call; the program is rejected by W0312 and W0405 at other lines). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0f/c05_cc_plain_ok.wf",
+    "tests/gate/probes/fixes/r0f/c06_cc_once_ok.wf",
+    "tests/gate/probes/fixes/r0f/c22_cc_two_values_ok.wf",
+    "tests/gate/probes/verify/s5/diff/p/fp1.wf",
+    "tests/gate/probes/verify/s5/diff/p/fp2.wf",
+]
+reason = "stage R0f: the callee gives the value to code of the caller that the node knows (`transfer::via_plain`): it runs the value one time as plain code (`c05_ok`, `c22_ok`, `fp1`, `fp2`), or spawns it one time (`c06_ok`: the `once` value runs one time). The old pipeline gives the worst way of code of a caller (W0403, W0405, W0502, or W0314 for a closure of a local handler that the code runs on the task of the call). The interpreter runs each with no fault"
+signed_by = "reviewer R0f round 1: the five programs are clean (one plain run, one spawn of the once value in a joined scope, sequential runs, closures of a live local handler on the task of the call); the interpreter and the oracle find no fault; the old pipeline gives the worst way"
+stage = "R0f"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0e/rv1_b2_ok.wf"]
+reason = "stage R0f: the run as a task of an unknown value of a value of a callee (E7 of R0e fix 2) is no fallback: the callee gives that value to code of a caller, and the worst way at the task nodes of the call counts the runs of the code (`via_twice`). Here the code spawns the `once` value one time: no second run. The old pipeline gives W0502 (as at R0e fix 2, where the program fell back). The interpreter runs it with no fault"
+signed_by = "reviewer R0f round 1: the code spawns the once value one time in a joined scope; no second run, no fault; the old W0502 is a false positive"
+stage = "R0f"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "named", "passthrough", "pins", "raises", "reach_repeats", "reaches", "ret", "ret_refs", "task_effects", "tasks"]
+files = [
+    "tests/gate/probes/fixes/r0e/h19_multi.wf",
+    "tests/gate/probes/fixes/r0e/h19_multi_ok.wf",
+    "tests/gate/probes/fixes/r0f/c05_cc_plain_ok.wf",
+    "tests/gate/probes/fixes/r0f/c22_cc_two_values_ok.wf",
+    "tests/gate/probes/fixes/r0f/c29_closure_maker_capture.wf",
+    "tests/gate/probes/r3/interp/probe/k3_http_cancel.wf",
+    "tests/gate/probes/r3/interp/probe/k6_http_once.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_variants.wf",
+    "tests/gate/probes/verify/s5/R2d/p/i1_foreign.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/ip7_e.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_more.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_apply.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_cb.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1m_p_local_closure_copy.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2a_cb.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2a_variants.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b3_param_value_first.wf",
+    "tests/gate/probes/verify/s5/S5c/p/r10_param_value.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_generic_copy.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_generic_take.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_self_copy.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_swapped.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1b_via_callee.wf",
+    "tests/gate/probes/verify/s5/diff/p/v2a.wf",
+    "tests/programs/06_http.wf",
+    "tests/programs/133_task_params.wf",
+    "tests/programs/61_task_paths.wf",
+    "tests/programs/82_stored_spawns.wf",
+]
+reason = "stage R0f: these programs come into scope (a value that a foreign function, `http.serve`, code of a caller or a function value runs as a task). The parts of the `ir` signatures: `pins` and `tasks` of a task of a call (the old inference says that a body that gives a value to code of a caller can pin, and the `ir` summary pins only for a task of the body that pins); `task_effects` of a task that performs through the row (the `ir` summary has them in its row, as for each task of a callee); `reaches`, `reach_repeats` and `passthrough` are parts of the old inference that the `ir` summary has in part `runs`; `multi`, `raises` and `named` of a callee with no IR (a body with W0303, the worst case of its declaration, stage R0b) or of a value of a caller that can resume more than once; `ret` and `ret_refs` of a returned function value (part `ret`)"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/133_task_params.wf",
+    "verify/s5/S5c/mut/progs/m00203_133_task_params.wf",
+    "verify/s5/S5c/mut/progs/m00281_133_task_params.wf",
+    "verify/s5/S5c/mut/progs/m01838_133_task_params.wf",
+]
+codes = ["W0403", "W0405"]
+reason = "stage R0f: copies and mutants of `tests/programs/133_task_params.wf` (its entry of R0f): the closure value and the returned closure that spawn their parameter are known at the call, so W0405 and no W0403; `via_pass_on` gets the W0403 of the `fork` and no W0405. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00876_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01649_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01694_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01826_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m01925_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02068_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02270_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02512_61_task_paths.wf",
+    "verify/s5/S5c/mut/progs/m02844_61_task_paths.wf",
+]
+codes = ["W0313", "W0314", "W0405", "W0702"]
+reason = "stage R0f: mutants of `tests/programs/61_task_paths.wf` (its entry of R0f): W0702 next to W0314 for a task that performs through a local handler, no W0314 for a task that performs through the row, one W0405 for the clause task, W0314 without W0313 for a value that unknown code can run as a task; `m01925` also gets W0405 at the read after the call of the closure that spawns (the mutant drops the line of the old marker). Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/S5c/mut/progs/m00463_67_task_starts.wf"]
+codes = ["W0314", "W0405"]
+reason = "stage R0f: a mutant of `tests/programs/67_task_starts.wf` comes into scope. The `ir` pipeline gives W0405 at the read after `run_maker` (the task of the returned closure, the marker line of the corpus file) and W0314 at the perform of the handled body, not at the spawn of the operation argument in the clause. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "changed"
+files = ["r3/quality/fuzzcorp/82_stored_spawns.wf"]
+codes = ["W0405"]
+reason = "stage R0f: a copy of `tests/programs/82_stored_spawns.wf` (its entry of R0f): W0405 for the two branches of `run_either`. Rejected in both"
+stage = "R0f"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/S5c/mut/progs/m01966_82_stored_spawns.wf"]
+codes = ["W0405"]
+reason = "stage R0f: a mutant of `tests/programs/82_stored_spawns.wf` moves the closure of `stored_run_by_two` into a closure that no one runs and gives `stored_either_branch` the spawn: the `ir` pipeline gives W0405 at `run_either` (two runs on two branches are `many`), the old pipeline at the call of `stored_run_by_two`. Rejected in both"
+stage = "R0f"
+
+# Stage R0f fix (the review of R0f, round 1: B1 and B2).
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0f/rv1_h03_cc_two_args_one_code_ok.wf",
+    "tests/gate/probes/fixes/r0f/rv1_h07_callee_task_and_via_plain.wf",
+    "tests/gate/probes/fixes/r0f/rv1_h10_mid_gives_two_codes_same_task.wf",
+]
+codes = ["W0403", "W0405"]
+reason = "stage R0f fix (B2 of the review of R0f): a value that the node runs as plain code where the code of the caller runs it keeps its plain places for the `with` of the task of the other value (`call_tasks` skips a slot with no value), and a value in a task of the call gives its places to a task of a scope of a maker (`maker_task_runs`). Both pipelines give W0405; the old pipeline also gives W0403 (the worst way: a `fork` branch), the `ir` pipeline knows the code (no `fork`). `rv1_h10` gets two W0405 (the plain writer while the maker task reads, and the task of the call). `rv1_h03_ok` is clean at run time; both pipelines reject it (the `ir` pipeline: the worst way of the task with the plain value). Rejected in both"
+stage = "R0f fix"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0f/rv1_h07_callee_task_and_via_plain_ok.wf"]
+reason = "stage R0f fix (the clean twin of B2 `h07`): the callee joins its task before it gives `h` to the code of the caller, which runs it as plain code (`via_plain`): no task runs while `h` writes. The old pipeline gives W0403 and W0405 (the worst way of code of a caller). The interpreter runs it with no fault"
+signed_by = "reviewer R0f round 2: mid joins the task of f before it gives h to the code, which runs h one time as plain code; no task runs while h writes; ev.sh gives nofault and the IR 0 errors; the old W0403 and W0405 are the worst way"
+stage = "R0f fix"
+
+[[entry]]
+class = "moved"
+files = ["verify/s5/S5c/mut/progs/m00897_48_lend_alias.wf"]
+codes = ["W0301"]
+reason = "stage R0f fix: a mutant of `tests/programs/48_lend_alias.wf`. The `ir` pipeline now gives the W0405 of the old pipeline at `g(|| print(r.hp), world)` (code of a caller that gets `world` can change it while it runs the reader as a task, B1 of the review of R0f); the W0301 at the closure of `lend_and_read` is on the line of the call in the `ir` pipeline (as at C3). Rejected in both"
+stage = "R0f fix"

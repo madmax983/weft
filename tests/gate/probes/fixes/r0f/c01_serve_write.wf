@@ -1,0 +1,6 @@
+// http.serve runs the handler for each request, two at one time: a write of a captured local races.
+fn main(env: Env) / io {
+    let count = 0
+    http.serve(env.net.listen(":8080"), |req| { count += 1; Response.text("ok") })
+    print(count)
+}

@@ -1,0 +1,10 @@
+// Stage R0e: the clean twin of a13: the value prints only.
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn main() {
+    let f = || print(1)
+    param_in_sim(f)
+}

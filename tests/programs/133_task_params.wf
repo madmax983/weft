@@ -85,7 +85,7 @@ fn via_task_and_call() / async {
 // The parameters of `pass_on` run in a `fork`.
 fn via_pass_on() / par {
     let n = 0
-    pass_on(|| n += 1, || print(n))   //~ W0403 W0405
+    pass_on(|| n += 1, || print(n))   //~ W0403 old: W0403 W0405
 }
 
 // A fork branch of the callee captures a nonportable value.
@@ -127,7 +127,7 @@ fn via_closure() / async {
             s.spawn(f)
         }
     }
-    g(|| n += 1)   //~ W0403 W0405
+    g(|| n += 1)   //~ W0405 old: W0403 W0405
 }
 
 fn via_unknown() / async {
@@ -144,7 +144,7 @@ fn via_item_value() / async {
 fn via_returned() / async {
     let n = 0
     let g = maker()
-    g(|| n += 1)   //~ W0403 W0405
+    g(|| n += 1)   //~ W0405 old: W0403 W0405
 }
 
 fn via_field() / async {

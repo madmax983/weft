@@ -1,0 +1,9 @@
+// mid gives f to code k1 that spawns it on a scope of main, and h to code k2 that runs it plain; main writes after.
+struct C { k: u64 }
+fn mid(k1: fn(fn()), k2: fn(fn()), f: fn(), h: fn()) { k1(f); k2(h) }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        mid(|x| { s.spawn(x); () }, |y| y(), || print(c.k), || c.k += 1)
+    }
+}

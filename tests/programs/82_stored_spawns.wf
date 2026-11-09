@@ -91,7 +91,7 @@ fn stored_run_by_two(st: &Stats) / mut(st), async {
 fn stored_either_branch(st: &Stats, c: bool) / mut(st), async {
     scope { s =>
         let j = Job { f: || { s.spawn(|| st.count += 1); () } }
-        run_either(&j, c)
+        run_either(&j, c)   //~ W0405 old:
     }
 }
 fn stored_run_once(st: &Stats) / mut(st), async {

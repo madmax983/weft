@@ -1,0 +1,8 @@
+// H19: `g` is a closure that captures a value and runs its argument (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }
+fn main() {
+    let v = [1]
+    let n = 3
+    run2(|x| { print(n); x() }, || take(v))
+}

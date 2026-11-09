@@ -138,17 +138,19 @@ pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
     at
 }
 
-/// True if body `b` splices into a function body, a test body or a clause.
+/// True if body `b` splices into a function, test, clause or closure body.
 ///
 /// `b` is such a body, or a handled body or a scope body whose site is one (through each
 /// such body on the way). A scope and the task terminators are in scope
 /// only there (plan stage F18; a clause from plan stage F19: the facts of
-/// a clause body splice its scope bodies too).
+/// a clause body splice its scope bodies too; a closure body from stage
+/// R0e: the facts of a closure splice its scope bodies, as its handled
+/// bodies from stage R0d).
 pub fn spliceable(p: &Program, b: BodyId) -> bool {
     p.body(splice_root(p, b)).is_some_and(|r| {
         matches!(
             r.kind,
-            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Clause(..)
+            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Clause(..) | BodyKind::Closure(_)
         )
     })
 }
@@ -162,6 +164,44 @@ pub fn maker_scope(p: &Program, site: weft_ir::SpawnId) -> bool {
         .and_then(|d| d.scope)
         .and_then(|k| p.scopes.get(k.index()))
         .is_some_and(|d| spliceable(p, d.body))
+}
+
+/// True if the spawn site `site` does not name its scope and the analysis
+/// finds that its scope is a scope of the closure body `cb` (stage R0e, as
+/// [`owned_site`]).
+pub fn owned_by_value(
+    p: &Program,
+    cb: BodyId,
+    site_scopes: &std::collections::BTreeMap<weft_ir::SpawnId, crate::analysis::tasks::SiteScope>,
+    site: weft_ir::SpawnId,
+) -> bool {
+    p.spawns
+        .get(site.index())
+        .is_some_and(|d| !d.fork && d.scope.is_none())
+        && site_scopes
+            .get(&site)
+            .and_then(crate::analysis::tasks::SiteScope::one)
+            .and_then(|k| p.scopes.get(k.index()))
+            .is_some_and(|d| super::alpha::unit_root(p, d.body) == cb)
+}
+
+/// True if body `b` splices into a closure body or a clause ([`splice_root`],
+/// stage R0e): a spawn there on a scope of a maker starts its task at the
+/// node that runs the closure or the clause.
+pub fn frame_of_closure_or_clause(p: &Program, b: BodyId) -> bool {
+    p.body(splice_root(p, b))
+        .is_some_and(|r| matches!(r.kind, BodyKind::Closure(_) | BodyKind::Clause(..)))
+}
+
+/// True if the spawn site `site` starts its task in a scope whose scope
+/// body is a body of the closure body `cb` (`super::alpha::unit_root`,
+/// stage R0e): the task starts and ends in a run of the closure.
+pub fn owned_site(p: &Program, cb: BodyId, site: weft_ir::SpawnId) -> bool {
+    p.spawns
+        .get(site.index())
+        .and_then(|d| d.scope)
+        .and_then(|k| p.scopes.get(k.index()))
+        .is_some_and(|d| super::alpha::unit_root(p, d.body) == cb)
 }
 
 /// True if the spawn site `site` of body `b` starts its task in a scope
@@ -1487,29 +1527,38 @@ fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet
         let mut at = key.body;
         for _ in 0..=p.bodies.len() {
             let x = p.bodies.get(at.index())?;
-            let BodyKind::Handled(h) = x.kind else {
+            // A handled body or a scope body splices into the clause at the
+            // terminator of its `handle` or `scope` (a scope body from stage
+            // R0e fix 2: its code and its spawns run at the nodes that run
+            // the clause too).
+            if !matches!(x.kind, BodyKind::Handled(_) | BodyKind::Scope(_)) {
                 return None;
-            };
+            }
             let site = x.parent?;
             if site == c {
                 let s = p.body(c)?;
-                let blk = s.blocks.iter().position(
-                    |blk| matches!(blk.term.kind, TermKind::Handle { handler, .. } if handler == h),
-                )?;
+                let blk = s
+                    .blocks
+                    .iter()
+                    .position(|blk| match (x.kind, &blk.term.kind) {
+                        (BodyKind::Handled(h), TermKind::Handle { handler, .. }) => *handler == h,
+                        (BodyKind::Scope(k), TermKind::Scope { scope, .. }) => *scope == k,
+                        _ => false,
+                    })?;
                 return Some((BlockId(u32::try_from(blk).ok()?), TERM, Phase::Main));
             }
             at = site;
         }
         None
     };
-    // The clause and the handled bodies that splice into it.
+    // The clause and the handled bodies and scope bodies that splice into it.
     let mut bodies = vec![c];
     let mut i = 0;
     while let Some(&x) = bodies.get(i) {
         i += 1;
         bodies.extend(ix.kids.get(&x).into_iter().flatten().copied().filter(|&k| {
             p.body(k)
-                .is_some_and(|d| matches!(d.kind, BodyKind::Handled(_)))
+                .is_some_and(|d| matches!(d.kind, BodyKind::Handled(_) | BodyKind::Scope(_)))
         }));
     }
     for (key, n) in ix.nodes(&bodies) {
@@ -1764,6 +1813,129 @@ fn clause_depth(p: &Program, b: BodyId) -> usize {
     n
 }
 
+/// The runs of values of the interface in clauses, at the nodes that run them.
+///
+/// `clause_runs` has the clause, the value, and the node of the clause
+/// (stage R0e fix 4). The run is at the perform for a node of the part before
+/// the first resume point, and at `Post` for a node after it. A task that runs
+/// at such a node runs while the body runs the value (`Run::during`).
+pub fn clause_run_at(
+    p: &Program,
+    table: &NodeTable,
+    hx: &Handlers,
+    clause_runs: &[(BodyId, (u32, bool, NodeId))],
+) -> Vec<(u32, bool, NodeId)> {
+    let ix = Index::new(p, table);
+    let mut regions: HashMap<BodyId, (HashSet<NodeId>, HashSet<NodeId>)> = HashMap::new();
+    let mut out = Vec::new();
+    for &(c, (param, capture, m)) in clause_runs {
+        let (pre, post) = regions.entry(c).or_insert_with(|| clause_nodes(p, &ix, c));
+        for r in hx.runs.iter().filter(|r| r.clause == c) {
+            if (!r.post && pre.contains(&m)) || (r.post && post.contains(&m)) {
+                out.push((param, capture, r.node));
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// True if the task of spawn site `site` starts and ends in a run of clause
+/// `c` (stage R0e fix 2, R2-B1 of the review): a spawn on the capability of a
+/// scope whose scope body is in the clause (through handled bodies and scope
+/// bodies), or a branch of a `fork` there. Such a task does not start at the
+/// node that runs the clause. A join of a task of an outer scope in the
+/// clause, also on each path, does not make it a task of the clause.
+fn owned_by_clause(p: &Program, hx: &Handlers, site: weft_ir::SpawnId, c: BodyId) -> bool {
+    let inside = |b: BodyId| {
+        let mut at = b;
+        for _ in 0..=p.bodies.len() {
+            if at == c {
+                return true;
+            }
+            let Some(x) = p.bodies.get(at.index()) else {
+                return false;
+            };
+            match (x.kind, x.parent) {
+                (BodyKind::Handled(_) | BodyKind::Scope(_), Some(up)) => at = up,
+                _ => return false,
+            }
+        }
+        false
+    };
+    let Some(d) = p.spawns.get(site.index()) else {
+        return false;
+    };
+    if d.fork {
+        return p.bodies.iter().enumerate().any(|(i, b)| {
+            b.blocks.iter().any(|blk| {
+                matches!(&blk.term.kind, TermKind::Fork { sites, .. } if sites.contains(&site))
+            }) && inside(BodyId(u32::try_from(i).unwrap_or(u32::MAX)))
+        });
+    }
+    let scope = d.scope.or_else(|| {
+        hx.site_scopes
+            .get(&site)
+            .and_then(crate::analysis::tasks::SiteScope::one)
+    });
+    scope
+        .and_then(|k| p.scopes.get(k.index()))
+        .is_some_and(|sd| inside(sd.body))
+}
+
+/// True if each path of the clause from the start `n` of task `task` passes
+/// a `joined_at` node of the task before it leaves the nodes of the clause
+/// (`pre`, `post`) or reaches a `resume` of clause `c` (stage R0e fix 4): the
+/// task ends in the run of the clause. A path that leaves the clause (an end
+/// with no `resume`, an abort) or a `resume` that runs the rest of the
+/// handled body while the task runs makes the task run past the clause.
+fn joined_in_clause(
+    facts: &FnFacts,
+    hx: &Handlers,
+    (task, n): (weft_facts::TaskId, NodeId),
+    c: BodyId,
+    (pre, post): (&HashSet<NodeId>, &HashSet<NodeId>),
+) -> bool {
+    let joins: HashSet<NodeId> = facts
+        .joined_at
+        .iter()
+        .filter(|(t, _)| *t == task)
+        .map(|(_, m)| *m)
+        .collect();
+    if joins.is_empty() {
+        return false;
+    }
+    let resumes: HashSet<NodeId> = hx
+        .resumes
+        .iter()
+        .filter(|(_, _, b)| *b == c)
+        .map(|(m, _, _)| *m)
+        .collect();
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    let mut work: Vec<NodeId> = succ.get(&n).cloned().unwrap_or_default();
+    if work.is_empty() {
+        return false;
+    }
+    while let Some(q) = work.pop() {
+        if joins.contains(&q) || !seen.insert(q) {
+            continue;
+        }
+        // A `resume`, a node outside the clause, or an end of the clause (a
+        // node with no edge: its `Return`).
+        let next = succ.get(&q).map_or(&[][..], Vec::as_slice);
+        if resumes.contains(&q) || !(pre.contains(&q) || post.contains(&q)) || next.is_empty() {
+            return false;
+        }
+        work.extend(next.iter().copied());
+    }
+    true
+}
+
 /// The facts of the clauses at the nodes that run them (see the module
 /// text): the `pre` part at each perform, the `post` part at `Post`, then
 /// the rest of the handled body at each `Resume`.
@@ -1791,12 +1963,26 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
     // O3-12): it starts at each node that runs the part of the clause with
     // its spawn (the perform for the part before the first resume point,
     // `Post` for the part after it).
+    // A task that the clause also ends (a task of a scope inside the clause,
+    // stage R0e fix 2) starts and ends in the run of the clause: it does not
+    // start at the node that runs the clause.
     let mut starts = Vec::new();
+    let site_of: HashMap<weft_facts::TaskId, weft_ir::SpawnId> =
+        hx.task_ids.iter().map(|(&s, &t)| (t, s)).collect();
     for &(task, n) in &facts.spawned_at {
         for r in &hx.runs {
             let Some((pre, post)) = regions.get(&r.clause) else {
                 continue;
             };
+            if site_of
+                .get(&task)
+                .is_some_and(|&site| owned_by_clause(p, hx, site, r.clause))
+            {
+                continue;
+            }
+            if joined_in_clause(facts, hx, (task, n), r.clause, (pre, post)) {
+                continue;
+            }
             if (!r.post && pre.contains(&n)) || (r.post && post.contains(&n)) {
                 starts.push((task, r.node));
             }

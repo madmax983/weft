@@ -1,0 +1,8 @@
+// The code of the caller is an item that spawns its parameter two times.
+fn spawn2(f: fn()) / async { scope { s => s.spawn(f); s.spawn(f); () } }
+fn mid(g: fn(fn()), f: fn()) / async { g(f) }
+fn main() / async {
+    let n = 0
+    mid(spawn2, || n += 1)
+    print(n)
+}

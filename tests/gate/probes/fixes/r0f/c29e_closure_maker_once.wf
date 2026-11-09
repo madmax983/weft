@@ -1,0 +1,9 @@
+// A closure spawns its parameter on a scope of main two times; the parameter is once.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    let v = [1]
+    scope { s =>
+        let g = |x: fn()| { s.spawn(x); s.spawn(x); () }
+        g(|| take(v))
+    }
+}

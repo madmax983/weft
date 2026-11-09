@@ -1,0 +1,10 @@
+// The value goes to code of the caller in a struct field.
+struct Job { f: fn() }
+fn mid(g: fn(&Job), j: &Job) / async { g(j) }
+fn main() / async {
+    let n = 0
+    let j = Job { f: || n += 1 }
+    mid(|jj| { let h = jj.f
+        scope { s => s.spawn(h); s.spawn(h); () } }, &j)
+    print(n)
+}

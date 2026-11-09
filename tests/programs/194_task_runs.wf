@@ -1,0 +1,172 @@
+// Stage R0f: a function value of a caller that a callee runs as a task.
+// A foreign function, `http.serve` and code of a caller run it in the worst
+// way: more than once, at the same time as the other values, and (for a
+// foreign function and code of a caller) on another thread. A caller that
+// knows the code of a caller runs the value as that code runs it. A closure
+// that spawns its parameter on a scope of its maker gives the value to that
+// task, which can run after the call.
+struct E { hp: u64 }
+struct C { k: u64 }
+struct Job { f: fn() }
+effect Ask { fn ask() -> u64 }
+
+extern fn ext(f: fn())
+
+fn take(v: Vec<u64>) { print(v.len()) }
+
+// The callee gives `f` to code of the caller.
+fn mid(g: fn(fn()), f: fn()) / async { g(f) }
+fn mid_job(g: fn(&Job), j: &Job) / async { g(j) }
+fn spawn2(f: fn()) / async {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+        ()
+    }
+}
+
+// A foreign function can run the value on another thread, two times at one
+// time.
+fn foreign_write() {
+    let n = 0
+    ext(|| n += 1)   //~ W0403 W0405
+    print(n)
+}
+fn foreign_rc() {
+    let a = Rc.new(E { hp: 1 })
+    ext(|| print(a.hp))   //~ W0401
+}
+fn foreign_read() {
+    let n = 3
+    ext(|| print(n))
+    print(n)
+}
+
+// `http.serve` runs the handler for each request, two at one time; it pins
+// the tasks, so an `Rc` capture is not an error.
+fn serve_write(env: Env) / io {
+    let count = 0
+    http.serve(env.net.listen(":8080"), |req| { count += 1; Response.text("ok") })   //~ W0405
+}
+fn serve_rc(env: Env) / io {
+    let hits = Rc.new(0)
+    http.serve(env.net.listen(":8080"), |req| { let h = hits.clone(); Response.text("hit") })
+}
+fn serve_once(env: Env) / io {
+    let v = [1]
+    http.serve(env.net.listen(":8080"), |req| { take(v); Response.text("ok") })   //~ W0502
+}
+
+// Code of the caller spawns the value two times.
+fn code_spawns_twice() / async {
+    let n = 0
+    mid(|x| { scope { s => s.spawn(x); s.spawn(x); () } }, || n += 1)   //~ W0403 W0405
+    print(n)
+}
+fn item_spawns_twice() / async {
+    let n = 0
+    mid(spawn2, || n += 1)   //~ W0403 W0405
+    print(n)
+}
+fn once_spawned_twice() / async {
+    let v = [1, 2]
+    mid(|x| { scope { s => s.spawn(x); s.spawn(x); () } }, || take(v))   //~ W0502
+}
+fn handler_in_task() / async {
+    handle Ask { fn ask() { resume(1) } } in {
+        mid(|x| { scope { s => s.spawn(x); () } }, || print(ask()))   //~ W0314
+    }
+}
+// The value goes to the code of the caller in a struct field.
+fn field_spawned_twice() / async {
+    let n = 0
+    let j = Job { f: || n += 1 }
+    mid_job(|jj| {   //~ W0405 old:
+        let h = jj.f
+        scope { s => s.spawn(h); s.spawn(h); () }   //~ old: W0314 W0314
+    }, &j)
+    print(n)
+}
+// The code of the caller runs the value one time, as plain code.
+fn code_runs_once() / async {
+    let n = 0
+    mid(|x| x(), || n += 1)   //~ old: W0403 W0405
+    print(n)
+}
+fn field_runs_once() / async {
+    let n = 0
+    let j = Job { f: || n += 1 }
+    mid_job(|jj| {
+        let h = jj.f
+        h()
+    }, &j)
+    print(n)
+}
+
+// The callee starts a task that changes `c.k`, then gives `f` to code of the
+// caller while the task runs: `f` reads `c.k` (W0312).
+fn mid_during(g: fn(fn()), f: fn(), w: &C) / async, mut(w) {
+    scope { s =>
+        s.spawn(|| w.k += 1)
+        g(f)
+    }
+}
+fn during_task() / async {
+    let c = C { k: 0 }
+    mid_during(|x| x(), || print(c.k), &c)   //~ W0312 old: W0405
+}
+
+// A closure value that spawns its parameter two times.
+fn closure_spawns_twice() / async {
+    let n = 0
+    let g = |f: fn()| {
+        scope { s =>
+            s.spawn(f)
+            s.spawn(f)
+            ()
+        }
+    }
+    g(|| n += 1)   //~ W0405 old: W0403 W0405
+}
+
+// A closure spawns its parameter on a scope of its maker: the task runs after
+// the call of the closure.
+fn maker_task_read() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let g = |x: fn()| { s.spawn(x); () }
+        g(|| print(c.k))
+        c.k += 2   //~ W0405 old:
+    }
+}
+fn maker_task_write() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let g = |x: fn()| { s.spawn(x); () }
+        g(|| c.k += 1)   //~ W0405 old: W0403 W0405
+        print(c.k)   //~ W0405 old:
+    }
+}
+fn maker_task_handler() / async {
+    scope { s =>
+        handle Ask { fn ask() { resume(1) } } in {
+            let g = |x: fn()| { s.spawn(x); () }
+            g(|| print(ask()))   //~ W0314
+        }
+    }
+}
+fn maker_task_after_scope() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let g = |x: fn()| { s.spawn(x); () }
+        g(|| print(c.k))
+    }
+    c.k += 2
+}
+
+// A function value that the body does not know gets a value that holds a
+// nonportable value: it can run it on another thread.
+fn unknown_rc(h: fn(fn())) {
+    let a = Rc.new(E { hp: 1 })
+    h(|| print(a.hp))   //~ W0401
+}

@@ -1,0 +1,7 @@
+// Stage R0e fix 2 (O2: the clean twin of rv1_o2_h16: the value only reads the capture).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn twice(f: fn()) / async { scope { s => s.spawn(f); s.spawn(f); () } }
+fn main() / async {
+    let v = [1]
+    twice(|| print(v.len()))
+}

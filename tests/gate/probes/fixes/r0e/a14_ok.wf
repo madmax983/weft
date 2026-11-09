@@ -1,0 +1,11 @@
+// Stage R0e: the clean twin of a14: the clause of the `Fail` handler does not change `v`.
+fn boom() { assert(false) }
+fn main() / async {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Fail { fn fail(m) { print(m) } } in {
+        let f = || scope { s => s.spawn(|| boom()); () }
+        f()
+    }
+    print(r)
+}

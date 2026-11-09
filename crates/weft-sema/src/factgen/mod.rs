@@ -427,14 +427,24 @@ fn check_supported(
                 // A spawn in a closure body on a scope of its maker (plan
                 // stage F19): a node that runs the closure starts the task
                 // (part `tasks`), and the scope ends it.
+                // Also in a scope body or a handled body inside a closure
+                // body or a clause (stage R0e).
                 TermKind::Spawn { site, .. }
-                    if (p.closure_of(bid).is_some()
-                        || matches!(b.kind, BodyKind::Clause(..)))
+                    if handlers::frame_of_closure_or_clause(p, bid)
                         && handlers::maker_scope(p, *site) => {}
                 // A `scope`, and a `fork` (its tasks start and end at its own
                 // nodes; also in a clause, plan stage F19). In a closure body
                 // the captures of the branches are captures of the closure.
                 TermKind::Scope { .. } | TermKind::Fork { .. } if handlers::spliceable(p, bid) => {}
+                // A spawn that does not name its scope (stage R0e): the
+                // analysis finds the scope from the value of the scope
+                // operand, or the program is out of scope
+                // (`templates::UNOWNED_SCOPE`).
+                TermKind::Spawn { site, .. }
+                    if handlers::spliceable(p, bid)
+                        && p.spawns
+                            .get(site.index())
+                            .is_some_and(|d| !d.fork && d.scope.is_none()) => {}
                 TermKind::Spawn { .. } => {
                     return no(Group::E, "a task of a scope that the body does not own (stage F19)")
                 }
@@ -558,6 +568,10 @@ pub struct Emitted {
     /// How the entry body runs each function value of the interface that it
     /// runs as a task (part `runs`, plan stage F19).
     pub task_hows: Vec<crate::analysis::tasks::RawHow>,
+    /// The places of the tasks that run while the entry body runs each
+    /// function value of the interface as code that is not a task
+    /// (`Run::during`, stage R0e fix, OR7).
+    pub run_during: Vec<crate::analysis::tasks::RawDuring>,
     /// The tasks that are `opaque` only because they run code of a caller.
     pub code_opaque: Vec<weft_facts::TaskId>,
     /// The effects that a task of the entry body performs through a
@@ -744,6 +758,8 @@ pub fn emit_parts(
     let abort_joins: Vec<u32>;
     let fn_then: Vec<(u32, bool)>;
     let task_hows: Vec<crate::analysis::tasks::RawHow>;
+    let fn_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
+    let fn_inherited: Vec<(u32, bool, PlaceId, bool)>;
     let task_effects: std::collections::BTreeSet<String>;
     let fn_waits: crate::analysis::tasks::WaitRaw;
     let mut w0314: Vec<(weft_ir::Span, String)>;
@@ -775,8 +791,11 @@ pub fn emit_parts(
             run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
+            maker_site: None,
+            maker_runs: Vec::new(),
             run_at: Vec::new(),
             then_runs: Vec::new(),
+            run_during: Vec::new(),
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
@@ -800,7 +819,9 @@ pub fn emit_parts(
             templates::task_ends(&mut em);
         }
         task_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
-        fn_then = then_runs(em.facts, &em.run_at, &em.then_runs);
+        fn_run_at = std::mem::take(&mut em.run_at);
+        fn_inherited = std::mem::take(&mut em.run_during);
+        fn_then = then_runs(em.facts, &fn_run_at, &em.then_runs);
         code_opaque = std::mem::take(&mut em.code_opaque);
         task_effects = std::mem::take(&mut em.task_effects);
         fn_waits = std::mem::take(&mut em.waits);
@@ -873,6 +894,8 @@ pub fn emit_parts(
         })
         .collect();
     clause_bodies.sort();
+    let mut fn_clause_at: Vec<(weft_ir::BodyId, (u32, bool, weft_facts::NodeId))> = Vec::new();
+    let mut fn_clause_inherited: Vec<(u32, bool, PlaceId, bool)> = Vec::new();
     for &cb in &clause_bodies {
         let n = emit_clause(
             &ClosureCx {
@@ -906,6 +929,8 @@ pub fn emit_parts(
         clause_entries.push((cb, n.0));
         clause_stored.extend(n.1.into_iter().map(|x| (cb, x)));
         runs.extend(n.3);
+        fn_clause_at.extend((n.4).1 .0.into_iter().map(|x| (cb, x)));
+        fn_clause_inherited.extend((n.4).1 .1);
         // A closure that the clause makes starts from the states of the
         // clause (plan stage F16).
         unions.insert(cb, n.2);
@@ -957,12 +982,32 @@ pub fn emit_parts(
         }
     }
     hx.runs.append(&mut closure_runs);
+    unowned_joins(p, facts, &hx, &mut task_end_list);
     templates::task_end_lends(facts, &task_end_list, &task_frames);
     templates::wait_task_places(facts, &hx.wait_tasks);
     facts.task_reads.sort();
     facts.task_reads.dedup();
     facts.task_writes.sort();
     facts.task_writes.dedup();
+    // The tasks that run while the entry body runs a value of its interface
+    // (`Run::during`, stage R0e fix): the places of each task are whole now.
+    // A run of a value in a clause runs at the nodes that run the clause
+    // (stage R0e fix 4: the callee runs the value in a clause of its own
+    // handler while its task runs).
+    let fn_run_at: Vec<(u32, bool, weft_facts::NodeId)> = fn_run_at
+        .into_iter()
+        .chain(handlers::clause_run_at(p, &table, &hx, &fn_clause_at))
+        .collect();
+    let fn_inherited: Vec<(u32, bool, PlaceId, bool)> = fn_inherited
+        .into_iter()
+        .chain(fn_clause_inherited)
+        .collect();
+    let fn_during = crate::analysis::tasks::run_during(
+        facts,
+        &fn_run_at,
+        &fn_inherited,
+        &clause_task_ids(&hx.wait_tasks),
+    );
     let late = handlers::project(
         &handlers::Tables {
             p,
@@ -1103,11 +1148,48 @@ pub fn emit_parts(
         abort_joins,
         then_runs: fn_then,
         task_hows,
+        run_during: fn_during,
         code_opaque,
         task_effects,
         waits: fn_waits,
         wait_tasks: hx.wait_tasks,
     })
+}
+
+/// The ends of the tasks of the spawns that do not name their scope (stage
+/// R0e): `joined_at` at each `ScopeWait` of the scope that the analysis
+/// found (`Handlers::site_scopes`) and on its cleanup chain, and the node
+/// after `ScopeWait` changes what the task writes (`task_ends`). The
+/// template of `ScopeWait` ends the tasks that the analysis found before it;
+/// a spawn in a closure body on a scope of the function comes later.
+fn unowned_joins(
+    p: &weft_ir::Program,
+    facts: &mut FnFacts,
+    hx: &crate::analysis::clause::Handlers,
+    ends: &mut Vec<(weft_facts::TaskId, weft_facts::NodeId)>,
+) {
+    for (&site, &t) in &hx.task_ids {
+        for &(k, n, next) in &hx.scope_waits {
+            if !templates::site_in_scope(p, &hx.site_scopes, site, k) {
+                continue;
+            }
+            if !facts.joined_at.contains(&(t, n)) {
+                facts.joined_at.push((t, n));
+            }
+            if let Some(e) = next {
+                if !ends.contains(&(t, e)) {
+                    ends.push((t, e));
+                }
+            }
+        }
+        for &(k, n) in &hx.scope_unwinds {
+            if templates::site_in_scope(p, &hx.site_scopes, site, k)
+                && !facts.joined_at.contains(&(t, n))
+            {
+                facts.joined_at.push((t, n));
+            }
+        }
+    }
 }
 
 /// The block of each `sim.run` of the bodies `comp` runs with the root
@@ -1591,9 +1673,28 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
+    // The tasks that start and end in a run of the closure (stage R0e): a
+    // spawn on a scope inside the closure body and a branch of a `fork`
+    // there. Their facts give the part `runs` (a value of the interface that
+    // runs as a task) and the pins of the summary. A task of a scope of the
+    // maker has no task here: a node that runs the closure starts it (part
+    // `tasks`).
+    let site_scopes = hx.site_scopes.clone();
+    let owned = |s: weft_ir::SpawnId| {
+        p.spawns.get(s.index()).is_some_and(|d| d.fork)
+            || handlers::owned_site(p, cb, s)
+            || handlers::owned_by_value(p, cb, &site_scopes, s)
+    };
+    hx.task_ids = decls::tasks_where(p, &comp, &mut facts, owned);
+    let has_tasks = !hx.task_ids.is_empty();
     let closure_then: Vec<(u32, bool)>;
     let closure_waits: crate::analysis::tasks::WaitRaw;
     let run_multi: Vec<weft_facts::NodeId>;
+    let closure_hows: Vec<crate::analysis::tasks::RawHow>;
+    let closure_maker_runs: Vec<(u32, u32, bool)>;
+    let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
+    let closure_inherited: Vec<(u32, bool, PlaceId, bool)>;
+    let closure_opaque: Vec<weft_facts::TaskId>;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
@@ -1619,8 +1720,11 @@ fn closure_summary(
             run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
+            maker_site: None,
+            maker_runs: Vec::new(),
             run_at: Vec::new(),
             then_runs: Vec::new(),
+            run_during: Vec::new(),
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
@@ -1640,6 +1744,14 @@ fn closure_summary(
         };
         templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
+        if has_tasks {
+            templates::task_ends(&mut em);
+        }
+        closure_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        closure_maker_runs = std::mem::take(&mut em.maker_runs);
+        closure_run_at = em.run_at.clone();
+        closure_inherited = std::mem::take(&mut em.run_during);
+        closure_opaque = std::mem::take(&mut em.code_opaque);
         closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         closure_waits = std::mem::take(&mut em.waits);
         run_multi = std::mem::take(&mut em.run_multi);
@@ -1662,6 +1774,9 @@ fn closure_summary(
         )
     };
     let mut runs = runs;
+    let mut clause_started: Vec<u32> = Vec::new();
+    let mut clause_at: Vec<(weft_ir::BodyId, (u32, bool, weft_facts::NodeId))> = Vec::new();
+    let mut clause_inherited: Vec<(u32, bool, PlaceId, bool)> = Vec::new();
     // The clauses inside the closure body (stage R0d): their facts, then the
     // code of each clause at the nodes that run it, as in [`emit_parts`].
     if nested {
@@ -1678,7 +1793,7 @@ fn closure_summary(
         let (mut stored, mut cruns, mut escs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut w0314, mut ends, mut frames_of) = (Vec::new(), Vec::new(), Vec::new());
         for c in clauses {
-            let (_, _, _, r) = emit_clause(
+            let (_, _, _, r, (st, (c_at, c_during))) = emit_clause(
                 &ClosureCx {
                     a,
                     p,
@@ -1710,6 +1825,9 @@ fn closure_summary(
             // A run of a value of the interface in a clause is `many`: the
             // clause runs at each perform of its operation.
             runs.extend(r);
+            clause_started.extend(st);
+            clause_at.extend(c_at.into_iter().map(|x| (c, x)));
+            clause_inherited.extend(c_during);
         }
         // The clauses of the handlers outside the closure run at the node
         // that runs the closure: not in these facts.
@@ -1765,6 +1883,24 @@ fn closure_summary(
         &hx.iface_joins,
         true,
     );
+    // The tasks that run while the closure body runs a value of its
+    // interface (`Run::during`, stage R0e fix).
+    // A run of a value in a clause of the closure runs at the nodes that run
+    // the clause (stage R0e fix 4).
+    let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)> = closure_run_at
+        .into_iter()
+        .chain(handlers::clause_run_at(p, &table, &hx, &clause_at))
+        .collect();
+    let closure_inherited: Vec<(u32, bool, PlaceId, bool)> = closure_inherited
+        .into_iter()
+        .chain(clause_inherited)
+        .collect();
+    let closure_during = crate::analysis::tasks::run_during(
+        &facts,
+        &closure_run_at,
+        &closure_inherited,
+        &clause_task_ids(&hx.wait_tasks),
+    );
     let ret_linear = crate::analysis::summarize::ret_linear(p, &tys, &returns, cb);
     let mut sum = crate::analysis::summarize::closure(
         p,
@@ -1788,8 +1924,9 @@ fn closure_summary(
             joins: &joins,
             abort_joins: &abort_joins,
             then_runs: &closure_then,
-            task_hows: &[],
-            code_opaque: &[],
+            task_hows: &closure_hows,
+            during: &closure_during,
+            code_opaque: &closure_opaque,
             task_effects: &closure_task_effects,
             waits: &closure_waits,
         },
@@ -1797,10 +1934,37 @@ fn closure_summary(
     sum.ret.linear = ret_linear;
     // The tasks that the body starts in a scope of its maker (part
     // `tasks`, plan stage F19): a node that runs the closure starts them.
-    let mut started = started;
+    // A task of a scope inside the closure body (stage R0e) starts and
+    // ends in the run of the closure: it is no task of the part `tasks`.
+    let mut started: Vec<u32> = started
+        .into_iter()
+        .chain(clause_started)
+        .filter(|&s| {
+            let s = weft_ir::SpawnId(s);
+            !handlers::owned_site(p, cb, s) && !handlers::owned_by_value(p, cb, &site_scopes, s)
+        })
+        .collect();
     started.sort_unstable();
     started.dedup();
     sum.ret.tasks = ret_tasks(&returns, (cb, body.ret), &started);
+    // The values of the interface that a task of the part `tasks` runs
+    // (`TaskHow::tasks`, stage R0f): the task can run them after the node
+    // that runs the closure.
+    for &(site, param, capture) in &closure_maker_runs {
+        if !started.contains(&site) {
+            continue;
+        }
+        if let Some(r) = sum
+            .runs
+            .iter_mut()
+            .find(|r| r.param == param && r.capture == capture && !r.result)
+        {
+            if !r.how.tasks.contains(&site) {
+                r.how.tasks.push(site);
+                r.how.tasks.sort_unstable();
+            }
+        }
+    }
     sum.tasks = started;
     Ok(sum)
 }
@@ -2007,8 +2171,11 @@ fn emit_closure(
         run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
+        maker_site: None,
+        maker_runs: Vec::new(),
         run_at: Vec::new(),
         then_runs: Vec::new(),
+        run_during: Vec::new(),
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
@@ -2062,7 +2229,7 @@ fn emit_closure(
                 escapes: &[],
                 task_ids: cx.task_ids,
             };
-            let (entry, stored, union, _runs) =
+            let (entry, stored, union, _runs, _started) =
                 emit_clause(&ccx, out, (&mut hx, &frames, &splices), c)?;
             inner.push(InnerClause {
                 body: c,
@@ -2083,6 +2250,16 @@ fn emit_closure(
             out.escapes.push(e);
         }
     }
+    // The scopes of the spawns that do not name their scope, and the ends of
+    // the scopes (stage R0e): the function joins such a task at the end of
+    // its scope when the facts of the component are whole.
+    for (site, r) in std::mem::take(&mut hx.site_scopes) {
+        let have = fhx.site_scopes.entry(site).or_default();
+        have.scopes.extend(r.scopes);
+        have.other |= r.other;
+    }
+    fhx.scope_waits.append(&mut hx.scope_waits);
+    fhx.scope_unwinds.append(&mut hx.scope_unwinds);
     if nested {
         merge_handlers(fhx, hx);
     }
@@ -2162,6 +2339,15 @@ type ClauseOut = (
     Vec<templates::Stored>,
     crate::analysis::State,
     Vec<(crate::analysis::transfer::RunOf, bool)>,
+    (Vec<u32>, ClauseDuring),
+);
+
+/// The runs of values of the interface in a clause (`Em::run_at`, by its
+/// nodes) and the places of the tasks of callees that run while the clause
+/// runs a value (`Em::run_during`), stage R0e fix 4.
+type ClauseDuring = (
+    Vec<(u32, bool, weft_facts::NodeId)>,
+    Vec<(u32, bool, PlaceId, bool)>,
 );
 
 /// The facts of clause body `cb` (plan stage F14): its nodes (with the
@@ -2293,8 +2479,11 @@ fn emit_clause(
         run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
+        maker_site: None,
+        maker_runs: Vec::new(),
         run_at: Vec::new(),
         then_runs: Vec::new(),
+        run_during: Vec::new(),
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
@@ -2329,7 +2518,15 @@ fn emit_clause(
         .into_iter()
         .map(|(r, _)| (r, true))
         .collect();
-    Ok((en, stored, union, runs))
+    // The spawn sites of the tasks that the clause starts (stage R0e fix 2):
+    // in a closure body, a task of a scope of the maker is a task of the part
+    // `tasks` of the closure.
+    let started = std::mem::take(&mut em.started);
+    let during = (
+        std::mem::take(&mut em.run_at),
+        std::mem::take(&mut em.run_during),
+    );
+    Ok((en, stored, union, runs, (started, during)))
 }
 
 /// The facts of one component and the tables that map its IR to them
@@ -3089,9 +3286,13 @@ fn emit_block(
             dest,
             ..
         } => {
+            let after = match blk.term.kind {
+                weft_ir::TermKind::Spawn { next, .. } => table.first(bid, next, NORMAL),
+                _ => None,
+            };
             templates::spawn(
                 em,
-                n,
+                (n, after),
                 &st,
                 block,
                 (*site, scope, task, dest.as_ref()),
@@ -3336,6 +3537,15 @@ fn return_nodes(
             })
         })
         .collect()
+}
+
+/// The tasks of the calls that stand for the code of a clause of a local
+/// handler (`templates::WaitTask`): they are no tasks of the body that run
+/// while it runs a value of its interface (`Run::during`).
+fn clause_task_ids(
+    waits: &[templates::WaitTask],
+) -> std::collections::BTreeSet<weft_facts::TaskId> {
+    waits.iter().flat_map(|w| [w.task, w.back]).collect()
 }
 
 /// The values of the interface (index, capture) after whose run the body

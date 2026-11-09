@@ -165,15 +165,9 @@ fn more_classes_of_the_preview_are_rejected() {
 }
 
 #[test]
-fn a_closure_that_code_of_a_caller_can_run_on_another_thread_stays_with_the_old_pipeline() {
-    let src = program("foreign_task.wf");
-    let a = analyze_source(&src, abc(&src)).unwrap_or_else(|d| panic!("{}", d.message));
-    let why = a
-        .ir_scope
-        .as_ref()
-        .and_then(|s| s.fallback.clone())
-        .unwrap_or_default();
-    assert!(why.contains("another thread"), "{why}");
+fn a_closure_that_code_of_a_caller_can_run_on_another_thread_is_a_task_of_the_call() {
+    // Plan stage R0f: before, the program stayed with the old pipeline.
+    check("foreign_task.wf");
 }
 
 #[test]

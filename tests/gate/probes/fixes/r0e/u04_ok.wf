@@ -1,0 +1,11 @@
+// Stage R0e (E3): the clean twin of u04: the body joins the handle and consumes the result.
+linear struct Lock { id: u64 }
+fn mk() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn main() / async {
+    scope { s =>
+        let s2 = s
+        let h = s2.spawn(|| mk())
+        release(h.join())
+    }
+}

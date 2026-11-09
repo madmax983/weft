@@ -1,0 +1,15 @@
+// OR7 fix: the callee gets a closure that has its own scope: its task clears `v` while it runs a value (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn runk(k: fn()) / async { k() }
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    runk(|| scope { s => s.spawn(|| v.clear()); f() })
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}

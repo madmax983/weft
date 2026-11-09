@@ -1,0 +1,9 @@
+// Stage R0e: a closure with a scope spawns a function parameter, and a callee runs the closure: the value of the caller performs through a handler of another task (W0314).
+effect Note { fn note(x: u64) }
+fn later(g: fn()) { g() }
+fn param_in(f: fn()) / async {
+    later(|| scope { s => s.spawn(f); () })
+}
+fn main() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in param_in(|| note(1))
+}

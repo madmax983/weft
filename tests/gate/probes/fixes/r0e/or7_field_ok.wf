@@ -1,0 +1,12 @@
+// OR7 fix: the value reads the field `w.b`, and the task clears `w.a` (clean).
+struct W { a: Vec<u64>, b: Vec<u64> }
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        f()
+    }
+}
+fn main() / async {
+    let w = W { a: [1, 2], b: [3, 4] }
+    call_with(|| print(w.b[0]), &w.a)
+}

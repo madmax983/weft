@@ -1,0 +1,202 @@
+// Stage R0e: tasks in closure bodies (a `scope` or a `fork` inside a closure,
+// `sim.run`, `with_timeout`), and spawns on a scope that the spawn does not name
+// (a copy of the scope capability, a capability in a tuple or an `Option`).
+// A scope body in a closure body splices into it; the summary of the closure
+// has the tasks that start and end in a run of the closure.
+struct C { k: u64 }
+linear struct Lock { id: u64 }
+linear struct Guard { id: u64 }
+    on abort = drop_guard
+
+fn drop_guard(g: Guard) { let Guard(i) = g }
+fn release(l: Lock) { let Lock(i) = l }
+fn mk() -> Lock { Lock { id: 1 } }
+fn risky() / fail { fail("no") }
+fn later(f: fn()) { f() }
+
+// A task of a scope in a closure writes a capture while the closure body
+// writes it.
+fn race_in_closure() / async {
+    let c = C { k: 0 }
+    let f = || scope { s =>
+        s.spawn(|| c.k += 1)
+        c.k += 2   //~ W0405
+    }
+    f()
+    print(c.k)
+}
+
+// Clean: the write comes after the scope.
+fn after_scope_in_closure() / async {
+    let c = C { k: 0 }
+    let f = || {
+        scope { s => s.spawn(|| c.k += 1) }
+        c.k += 2
+    }
+    f()
+    print(c.k)
+}
+
+// A callee runs the closure: its task pushes to `v`, so `r` is invalid.
+fn callee_runs_later() / async {
+    let v = [1, 2]
+    let r = &v[0]
+    let f = || scope { s => s.spawn(|| v.push(3)); () }
+    later(f)
+    print(r)   //~ W0301
+}
+
+// Clean: the reference comes after the run.
+fn callee_runs_first() / async {
+    let v = [1, 2]
+    let f = || scope { s => s.spawn(|| v.push(3)); () }
+    later(f)
+    let r = &v[0]
+    print(r)
+}
+
+// A task of an outer scope reads `v` while a closure runs a task of its own
+// scope that pushes to `v`.
+fn outer_task_overlap() / async {
+    let v = [1, 2]
+    scope { o =>
+        o.spawn(|| print(v.len()))
+        let f = || scope { s => s.spawn(|| v.push(3)); () }
+        f()   //~ W0405
+    }
+}
+
+// A linear value moves into a task in a closure, and the closure can fail
+// before the join.
+fn linear_into_task() / async, fail {
+    let f = || {
+        let l = mk()
+        scope { s =>   //~ W0602
+            let h = s.spawn(|| release(l))   //~ W0602
+            risky()
+            h.join()
+        }
+    }
+    f()
+}
+
+// Clean: the linear value has an `on abort` function.
+fn guard_into_task() / async, fail {
+    let f = || {
+        let g = Guard { id: 1 }
+        scope { s =>
+            let h = s.spawn(|| drop_guard(g))
+            risky()
+            h.join()
+        }
+    }
+    f()
+}
+
+// Two branches of a `fork` in a `with_timeout` block write one place.
+fn timeout_fork() / async, fail, par {
+    let c = C { k: 0 }
+    with_timeout(1.s) { fork(|| c.k += 1, || c.k += 2) }   //~ W0403 W0403 W0405
+    print(c.k)
+}
+
+// A closure gives back the handle of an ended task: the caller must join it.
+fn handle_from_closure() / async {
+    let f = || scope { s => s.spawn(|| 1) }
+    let h = f()
+}   //~ W0601
+
+// Clean: the caller joins the handle.
+fn handle_joined() / async {
+    let f = || scope { s => s.spawn(|| 1) }
+    let h = f()
+    print(h.join())
+}
+
+// A spawn on a copy of the scope capability.
+fn copy_race() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let s2 = s
+        s2.spawn(|| c.k += 1)
+        c.k += 2   //~ W0405
+    }
+    print(c.k)
+}
+
+// Clean: the task of the copy ends with the scope.
+fn copy_after() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let s2 = s
+        s2.spawn(|| c.k += 1)
+    }
+    c.k += 2
+    print(c.k)
+}
+
+// A closure spawns on a copy of the capability of the scope of its maker.
+fn maker_copy() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let s2 = s
+        let f = || { s2.spawn(|| c.k += 1); () }
+        f()
+        c.k += 2   //~ W0405
+    }
+    print(c.k)
+}
+
+// The capability in an `Option`.
+fn in_option() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let o = Some(s)
+        match o {
+            Some(a) => {
+                a.spawn(|| c.k += 1)
+                ()
+            },
+            None => (),
+        }
+        c.k += 2   //~ W0405
+    }
+    print(c.k)
+}
+
+// A spawn statement on a copy of the capability has no local for its
+// result: a linear result goes away (the old pipeline misses it).
+fn linear_result() / async {
+    scope { s =>
+        let s2 = s
+        s2.spawn(|| mk())   //~ W0601 old:
+        print(1)
+    }
+}
+
+// Clean: the body joins the handle and consumes the result.
+fn linear_result_joined() / async {
+    scope { s =>
+        let s2 = s
+        let h = s2.spawn(|| mk())
+        release(h.join())
+    }
+}
+
+// A closure captures a copy of the capability and runs after the scope.
+fn copy_escapes() / async {
+    let k = || print(0)
+    scope { s =>
+        let s2 = s
+        k = || { s2.spawn(|| print(1)); () }
+    }
+    k()   //~ W0301
+}
+
+fn main() / async {
+    after_scope_in_closure()
+    callee_runs_first()
+    handle_joined()
+    copy_after()
+    linear_result_joined()
+}

@@ -2018,7 +2018,8 @@ As built (`irbuild/task.rs`, plan stage B11):
   `dest`.
 - `SpawnDecl::scope` is the scope of the receiver if the receiver names the scope
   binder `s` (also through a capture or an upvar of a nested body: the THIR binding
-  names the `scope`); else `None`.
+  names the `scope`); else `None`. For `None`, the analysis finds the scope from the
+  value of the receiver (plan stage R0e, 6.4).
 - `spawn`, `join` and `detach` are method calls: the receiver is a place first, then the
   arguments, then the read of the receiver (5.19). The spawn reads `s` as plain data
   (`copy s`). `join` and `detach` move the handle (a move through a reference is
@@ -2769,6 +2770,217 @@ callee to a local handler, such a task starts at the `FrameEnd` node of the abor
 (`Em::abort_starts`), so the code after the `handle` sees it. The start on the edges
 into `Main` stays for a `multi` resume. A value that the call runs itself (not a callee)
 orders its own operations and spawns: its body in the component, or its part `waits`.
+
+As built (plan stage R0e: tasks in closure bodies, and a spawn that does not name its
+scope):
+
+- A scope body or a `fork` in a closure body. The scope body splices into the closure
+  body, as a handled body does (R0d, 6.5): `handlers::spliceable` accepts a closure body
+  as the root of a splice. The facts of the summary of the closure (`closure_summary`)
+  have a task for each task that starts and ends in a run of the closure: a spawn on a
+  scope whose scope body is a body of the closure (`handlers::owned_site`), and a branch
+  of a `fork` there (`decls::tasks_where`). These tasks give the part `runs` of the
+  summary (`summarize::apply_hows`: a value of the interface that runs as a task, `twice`,
+  `thread`, `with`, as for a function body) and its pins (`task_pins` with the code of a
+  caller left out). They are not in the part `tasks`: the part has only the tasks of a
+  scope of the maker. A closure value whose summary runs a value of its interface as a
+  task stayed with the old pipeline at a call of the value (`VALUE_TASKS`); from
+  stage R0f the value of the argument applies at the task nodes of the call.
+- A value that a value of a callee runs as a task (a closure with such a scope that a
+  callee, `sim.run` or `with_timeout` runs, and that spawns a value of its maker; also a
+  closure that calls a callee that runs a value of the closure as a task) has no task
+  nodes at the call. Before R0e the call dropped such a run: the caller missed W0314
+  (`fixes/r0e/a13c_callee_bg_param.wf`, a hole of R0d that the old pipeline catches).
+  R0e applied it as plain code, but a plain run loses the second run of a `once` value
+  (W0502, B2 of the review of R0e: `fixes/r0e/rv1_b2_*`). As built (stage R0e fix 2): the
+  program is not in scope (`transfer::apply_runs` at depth > 0 for a run as a task with
+  function values, "a function value that a function value of a callee runs as a
+  task"; a run with no function value, as a capture that holds none, stays). A run of the callee itself as a task
+  applies at its task nodes (`task_run`).
+- A `once` value that a callee runs as a task more than once (two tasks at the same
+  time, `TaskHow::twice`, or one after the other, `Run::many` of a callee with a body):
+  the first task node moves the argument and the second one uses it (W0502; O2 of the
+  review of R0e, `fixes/r0e/rv1_o2_*`). A foreign run (the worst way of code of a
+  caller) is not a second run by its `many` alone.
+- A `once` value that a callee gives to code of a caller, a function value of its
+  interface (stage R0e fix 3, H19: `fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }` with
+  `run2(|x| x(), || take(v))`, a hole since C3 that the old pipeline catches). The run
+  of `f` is the worst way of the code of `g` (`task`, `TaskHow::foreign`), and its
+  `many` is true for each such value, so the rule above did not count it, and the run
+  of `g` at the caller does not know that its argument is `f`. The new fields
+  `Run::via_only` and `Run::via` of the part `runs` (6.7) say that the body only gives
+  the value to code of a caller, and to which values of the interface and arguments
+  (`transfer::apply_value`, the code that gets the values that the arguments reach;
+  `Via::again` for two blocks or a loop). A call that knows each value of such code
+  (`transfer::via_twice`) counts how many times their summaries run the argument
+  (`arg_runs`: a run that is `many`, two tasks, the worst way, `after`, or a value that
+  the summary gives back or puts into a place counts two), added over the entries of
+  `via`; with an unknown value the count is two (the worst way). Two runs or more:
+  the task nodes move the argument and use it again (`Applied::via_twice`, W0502). So
+  `g(f)` with a `g` that runs its argument one time, or not at all, stays clean
+  (`h19_once_ok.wf`, `h19_g_ignores_ok.wf`); a value that the given value runs in turn
+  (`g(|| f())`) has no `via` (the worst way: `h19_nested_ok.wf` is rejected, as in the
+  old pipeline).
+- A scope body in a clause (stage R0e fix 2, B1 of the review of R0e): its code and its
+  spawns run at the nodes that run the clause, as the code of a handled body in the
+  clause (`handlers::clause_nodes`: the scope body maps to the block of its `scope`).
+  Before, `project` did not map the nodes of such a scope body: a write there (a hole
+  since C3, `fixes/r0e/rv1_cs2_*`) and a spawn on an outer scope (`rv1_b1_*`) did not
+  reach the node that runs the clause. As built (stage R0e fix 4, R2-B1 of the second
+  review): a task does not start at that node only if it starts and ends in the run of
+  the clause: a spawn on a scope whose scope body is in the clause, or a branch of a
+  `fork` there (`handlers::owned_by_clause`), or a task of an outer scope that the
+  clause joins on each path before a `resume` or the end of the clause
+  (`handlers::joined_in_clause`). Fix 2 skipped the start when any `joined_at` of the
+  task was in the clause, so a join on one path and a detach on the other lost the race
+  (`fixes/r0e/rv2_b*`).
+- `Run::during` and `TaskHow` (stage R0e fix 4, older holes of the second review). A
+  run of a value of the interface in a clause of a local handler runs at the nodes that
+  run the clause (`handlers::clause_run_at`: the perform for the part before the first
+  resume point, `Post` for the part after it), with the places that the clause inherits
+  from its callees (`emit_clause` gives back its `run_at` and `run_during`), in the
+  summary of a function body and of a closure body (`rv2_a15`, `rv2_a35`). A task of the
+  body that runs at the same time as the task of a value of the interface gives its
+  changes and reads to `TaskHow::writes` and `reads` (`tasks::task_hows`; `rv2_a31`).
+- A clause of a handler in a closure body that spawns on a scope of the maker (O1 of
+  the review of R0e, since R0d): the task is in the part `tasks` of the closure
+  (`emit_clause` gives its spawn sites to `closure_summary`), so the node that runs the
+  closure starts it (`fixes/r0e/rv1_o1_*`).
+- A spawn in a scope body or a handled body inside a closure body or a clause, on a scope
+  of the maker, starts its task at the node that runs the closure, as a spawn in the
+  closure body itself (`handlers::frame_of_closure_or_clause`).
+- The summary of a closure has the pins of its callees (as the summary of a function
+  body). A task whose closure has a spawn or a `fork` in its bodies starts these tasks
+  (`spawns_in`, `templates::inner_tasks`). The tasks of a component are in the order of
+  the source (the start of the task expression, as the old lowering): a spawn inside the
+  task of another spawn has a lower site id.
+- A spawn that does not name its scope (`SpawnDecl::scope` is `None`: a copy of the
+  scope capability, a capability in a tuple or an `Option`, a capability through a
+  closure capture). In a program with such a spawn (`tasks::unowned`), the value of each
+  scope capability local points into the root of the local (`tasks::scope_cap_value`).
+  So a copy of the capability is invalid after the end of the scope body (W0301, as a
+  closure that captures the capability, RR4), and the analysis finds the scope of the
+  spawn from the references of its scope operand (`Handlers::site_scopes`,
+  `tasks::SiteScope`). The spawn needs exactly one scope and no other value; else the
+  program is not in scope (`templates::UNOWNED_SCOPE`: two scopes, a reference through a
+  reference, a capability that a generic callee gives back). In the facts of a closure
+  in the terms of its interface, the scope can be a scope of the maker (no reference into
+  a scope capability of the closure, and the spawn is not in a scope body of the
+  closure): then the task is in the part `tasks`. `ScopeWait` and the cleanup chain of
+  the scope end the task (`templates::site_in_scope`); for a spawn in a closure body that
+  the component emits after the scope, `unowned_joins` adds these ends when the facts of
+  the component are whole. Each `ScopeWait` of such a program can abort. A spawn
+  statement of this kind has no `TaskResult` local: its result goes away at the end of
+  the scope. A drop pair at the terminator (`vars.rs`, as for `detach`) gives W0601 for a
+  linear result (the old pipeline misses this: `fixes/r0e/u04_linear_result.wf`).
+
+As built (stage R0e fix, OR7: a task of a callee and a function value that the callee
+runs). The alias check of a call (W0312) compares the places of the arguments. A closure
+that captures a local of the caller by reference gives the call only the place of its
+environment, not the local: the run of the value at the call (part `runs`) checks what
+the value accesses, in the order of the code of the callee. That order does not hold
+when a task of the callee runs while the callee runs the value: before the fix the
+caller missed the race (`fixes/r0e/or7_local_ref.wf`; the old pipeline gives W0312, and a
+reference parameter that the closure captures gave W0312 in the `ir` pipeline too). The
+new field `Run::during` of the part `runs` (6.7) has the interface places that the tasks
+of the body change and read while the body runs the value as plain code: the tasks that
+are active at a node of `run_at` (`tasks::run_during`, computed when the facts of the
+component are whole; the two tasks of a `WaitTask` do not count), and σ of the part
+`during` of each callee that runs the value (`Applied::during_writes`,
+`Applied::during_reads`, `Em::run_during`). A call that applies a value that the body
+knows (`templates::during_check`): if a task changes a place, each place that the value
+accesses (but the places that the callee gives to the run) is a `call_arg` of the call
+with the root of the function value argument (`roots::fn_arg`); if a task reads a place,
+each place that the value changes is a `call_mut` with that root. So a change of the
+callee that overlaps a place of the value is W0312 at the call, as in the old pipeline.
+A clause of a local handler of an effect that the value performs runs while the tasks
+run too: the call gives their places to the tasks of `wait_tasks` (as the part `waits`
+does, W0405). A task that ends before the run, or a run with no task, stays clean
+(`or7_local_ref_ok.wf`, `or7_seq_ok.wf`). Precision losses: a call where a task runs
+during the run compares each place of the value with each change of the callee, also a
+change before the task starts; a closure of the callee that spawns on a scope of the
+callee and joins the task before it runs the value (`or7_maker_scope_ok.wf`): the
+summary of the closure does not order the spawn, the join and the run.
+
+As built (plan stage R0f: task runs, a value of a caller that a callee runs as a task):
+
+- A foreign function and code of a caller run a function value in the worst way
+  (`TaskHow::foreign`). Before R0f a value that can race (`transfer::task_unsafe`: it
+  changes or lends a place, puts a reference, or has a `ByRef`, nonportable, capability
+  or continuation capture) made the program fall back ("that code of a caller can run on
+  another thread", C1). Now it applies at the task nodes of the call as each other value
+  (`templates::call_tasks`). The worst way: a foreign function (an `extern fn`) runs each
+  value on another thread (`thread`: W0401, W0403), two tasks at one time (`twice`:
+  W0405, W0502), at the same time as its other values, while it changes and reads each
+  place that it gets (`sig::foreign_fn_parts`, `TaskHow::no_body`); a function of the
+  prelude (`http.serve`) runs it so, but not on another thread (the runtime pins its
+  tasks, as the old lowering). Code of a caller (a run as a task with no task of the body,
+  `summarize::apply_hows`) runs it on another thread, at the same time as the other values
+  of the interface. Two tasks of one value of code of a caller and the changes of the code
+  itself are not in the worst way: a value that changes a place is W0403 there, and two
+  readers do not race (a value that a callee gives to itself through code of a
+  caller, `Core_S2/probes/crash/c08.wf`, stays clean).
+- A run node that knows the code of a caller uses it. A value that the callee only gives
+  to code of a caller (`Run::via_only`, `Run::via`, stage R0e fix 3) runs as plain code,
+  as many times as that code runs it (`transfer::via_plain`, `via_twice`), when the node
+  knows each value of the code and no one of them runs the argument as a task, gives it
+  back, puts it into a place, starts a task of a scope of its maker, or runs it while a
+  task of its own runs (`Run::during`). The plain run gets the places of the tasks of the
+  callee that run while it runs the code (`Run::during` of the run of the code: W0312,
+  `fixes/r0f/c16_cc_during_plain.wf`). Else the run stays a task, two tasks at one time if
+  a value of the code runs the argument so (`transfer::via_code_twice`). So
+  `mid(|x| x(), f)` with `fn mid(g: fn(fn()), f: fn()) { g(f) }` is clean, and a `g` that
+  spawns `x` two times is W0405.
+- A run as a task at depth > 0 of a value that the run node does not know (`Unknown`, a
+  parameter of a value of a callee) is no fallback (E7 of R0e fix 2 stays for a known
+  value): the callee gives that value to code of a caller, so its own run of the value is
+  the worst way at the task nodes of the call. The run is a task in the part `runs` of the
+  body (`RunOf::task`), not a `task_run` of an index of another summary. As built (stage
+  R0f fix, B1 of the review of R0f): E7 stays also for an `Unknown` value whose task runs
+  while the value changes places or runs other values (`TaskHow::writes`, `with`): the
+  worst way of the callee has no changes of the code of the caller
+  (`outer(g) { g(|| print(c.k), &c) }` with a `g` that spawns the reader and writes
+  `d.k`). And code of a caller that gets a place in an argument with no function value
+  makes each value of the arguments a task of the call also when a value of the body
+  only reads a place (`transfer::local_reads`), with these places as the changes of the
+  code (`TaskOf::writes`): W0405 in the body that gives the reader
+  (`fixes/r0f/rv1_c15_unknown_extern_value.wf`, an older hole of the `ir` pipeline at
+  depth 0). A place that only the environment of a value reaches is no such place.
+- A call of a function value has task nodes (stage R0f): four for each argument that can
+  hold a function value (`frames::value_task_args`), as a call of an item has for each
+  entry of `runs` that runs as a task. A value of the callee that runs a value of an
+  argument as a task (`Applied::task_run` with `Applied::callee_param`, and how:
+  `Applied::task_how`) applies at the nodes of the slot of that argument
+  (`templates::value_slots`); a call with no such value has no task nodes in its facts
+  (`Em::task_nodes` is empty), so the facts of a call with no task do not change. Before
+  R0f such a call fell back (`VALUE_TASKS`, C7). The same nodes take a value that code of
+  a caller (a function value that the body does not know, `transfer::apply_value` with
+  `Given::Args`) gets and that can race: each value of the arguments of that call runs
+  there in the worst way (C1 of an unknown callee: `unknown_rc` of corpus 194, W0401).
+- A closure that spawns a value of its interface on a scope of its maker (part `tasks`)
+  runs the value in that task, after the call of the closure. Before R0f its summary
+  had a plain run of the value only: the task did not have the places of the value, and
+  a write of the maker after the call (`fixes/r0f/c29d_closure_maker_write.wf`, the old
+  pipeline gives W0405) or an operation of a local handler (`c29f`, W0314) was a hole,
+  and both pipelines missed a reader (`c26c`, `c29g`). Now the summary has the spawn site in
+  `TaskHow::tasks` of the run (`Em::maker_site`, `Em::maker_runs`), and a run node that
+  applies the value gives the changes and the reads of the value at the node to that
+  task too (`task_writes`, `task_reads`, W0314: `templates::maker_task_runs`). A value
+  that a callee gives to code of a caller that is such a closure gets the sites of the
+  code (`transfer::via_tasks`), also where the value runs in a task of the call (stage
+  R0f fix: `maker_task_runs` runs for a value at a task node too).
+- A slot of `call_tasks` for a value that the node runs as plain code
+  (`transfer::via_plain`) has no values: the call starts no task for it, and the plain
+  places of the value stay for the `with` of the other slots (stage R0f fix, B2 of the
+  review of R0f: `mid(g, f, h) { g(f, h) }` with a `g` that spawns `x` and runs `y`).
+- Open: a value that code of a caller keeps in a place (`copy(src, dst)` as the code of
+  `apply(k, a, b) { k(a, b) }`) has no values at the run node of the summary of the code
+  (`Given::Opaque`): a later run of the place runs `Unknown` (`r0f/p/c17_cc_store_ref.wf`,
+  a hole since C3 that the old pipeline catches; `c26b`, `c26d`: the code of a caller is a
+  closure that spawns on a scope of main, through an item, both pipelines miss them). A
+  run as a task of a known value at depth > 0 (E7), a task that runs a value more than once
+  (E2), a task that runs a variable that gets a new value (E4), and a task of code that the
+  body does not follow (E5) stay with the old pipeline.
 
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
@@ -3780,7 +3992,7 @@ the body that leaves it), `Caller` (a place of a caller), `Group(adt)`.
 | `performs` | the operations and their capability interface, with their arguments | `performs`, `op_args`, `cap_runs`, `callee_ops` |
 | `aborts` | the abort destinations (by capability interface), `assert`, failures (`raises`) | `abortive`, `abortive_local`, `raises` |
 | `multi` | the capability interfaces through which the body can resume more than once | `multi`, `reach_repeats` |
-| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), and if the body can perform or abort after the run (`then`, follow-up F19.4) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
+| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), if the body can perform or abort after the run (`then`, follow-up F19.4), and the places that the tasks of the body write and read while it runs the value as plain code (`during`, stage R0e fix); for a value that the body only gives to code of a caller, the values and arguments of that code (`via_only`, `via`, stage R0e fix 3); for a closure, the spawn sites of a task of a scope of its maker that runs the value (`TaskHow::tasks`, stage R0f); a run of a function with no body (`TaskHow::no_body`, stage R0f) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
 | `waits` | for each effect: the places that the tasks that can run while the body waits at an operation of the effect for a handler of a caller change and read (follow-up F19.5, 6.4). A key with no places: such a task runs, but it touches no place of the interface | none (the old pipeline misses R3-1 and R3-2) |
 | `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9), and those of them that it joins on each path of an abort too (`abort_joins`, a must part, follow-up F19.3: else `joined_at` at `Ret` of the run node) | `spawns`, `tasks`, `task_effects`, `pins` |
 | `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks (`ret.tasks`, follow-up F19.3: the spawn sites of the part `tasks` whose handle `_0` holds at each `Return`, and no other value), results of code of a caller | `ret`, `RetFn`, `ret_refs` |

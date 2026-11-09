@@ -1,0 +1,10 @@
+// Stage R0e fix 2 (B1: the task of a scope body in a clause changes a buffer while a reference into it is live (W0301, W0405)).
+effect Ask { fn ask() -> u64 }
+fn main() / async {
+    let v = [1, 2]
+    scope { s =>
+        let r = &v[0]
+        let x = handle Ask { fn ask() { scope { t => s.spawn(|| v.push(3)); () }; resume(1) } } in { ask() }
+        print(r)
+    }
+}

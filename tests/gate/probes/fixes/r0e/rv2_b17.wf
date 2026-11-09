@@ -1,0 +1,12 @@
+// Stage R0e fix 4 (R2-B1: in a scope body in the clause (W0405)).
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let b = false
+    scope { s =>
+        let x = handle Ask { fn ask() { scope { u => let t = s.spawn(|| c.k += 1); if b { t.join() } else { t.detach() }; () }; 0 } } in { ask() }
+        c.k += 2
+    }
+    print(c.k)
+}

@@ -1,0 +1,14 @@
+// Stage R0e (E3): the clean twin of u06.
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || {
+        scope { s =>
+            let s2 = s
+            s2.spawn(|| c.k += 1)
+        }
+        c.k += 2
+    }
+    f()
+    print(c.k)
+}

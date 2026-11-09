@@ -1,0 +1,14 @@
+// Stage R0e (E3): the scope operand can be the capability of two scopes: the old pipeline checks the program.
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let b = true
+    scope { a =>
+        scope { t =>
+            let x = if b { a } else { t }
+            x.spawn(|| c.k += 1)
+        }
+        c.k += 2
+    }
+    print(c.k)
+}

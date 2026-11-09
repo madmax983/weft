@@ -1,0 +1,8 @@
+// Stage R0e fix 2 (B2: a callee runs the closure that spawns f two times (W0502, old pipeline)).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn twice_run(h: fn()) { h(); h() }
+fn one(f: fn()) / async { twice_run(|| scope { s => s.spawn(f); () }) }
+fn main() / async {
+    let v = [1]
+    one(|| take(v))
+}

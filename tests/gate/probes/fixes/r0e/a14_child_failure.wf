@@ -1,0 +1,11 @@
+// Stage R0e: a task of a scope in a closure fails (an `assert` in a callee): the child failure at `ScopeWait` raises past the closure, and the clause of the `Fail` handler pushes to `v` while `r` points into it (W0301; both pipelines missed it in a first build).
+fn boom() { assert(false) }
+fn main() / async {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Fail { fn fail(m) { v.push(9) } } in {
+        let f = || scope { s => s.spawn(|| boom()); () }
+        f()
+    }
+    print(r)
+}

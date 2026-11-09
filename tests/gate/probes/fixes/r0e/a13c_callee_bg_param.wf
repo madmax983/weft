@@ -1,0 +1,10 @@
+// Stage R0e (a hole of R0d): a closure calls a callee that runs a captured parameter as a task, and a callee runs the closure (W0314).
+effect Note { fn note(x: u64) }
+fn later(g: fn()) { g() }
+fn bg_one(f: fn()) / async { scope { s => s.spawn(f) } }
+fn param_in(f: fn()) / async {
+    later(|| bg_one(f))
+}
+fn main() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in param_in(|| note(1))
+}

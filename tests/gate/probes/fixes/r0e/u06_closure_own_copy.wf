@@ -1,0 +1,12 @@
+// Stage R0e (E3): a closure with a scope spawns on a copy of its capability; the task races with the closure body (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || scope { s =>
+        let s2 = s
+        s2.spawn(|| c.k += 1)
+        c.k += 2
+    }
+    f()
+    print(c.k)
+}

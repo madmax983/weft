@@ -1915,10 +1915,10 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | --- | --- | --- | --- |
 | R0a | The diagnostic texts of the `ir` pipeline name the source value (issue #74) | (texts) | done (77efbd0) |
 | R0b | A callee with no IR, or an extern callee, gets a worst-case summary from its declaration; N1 becomes a `typeck` error (W0121); a handler with no clause for an operation passes it on (I1) | C3, E6, P1, C1 with a type error, N1, I1 | done (e13c8d3) |
-| R0c | The leftovers of groups A and B | A1, A2, B1 | done (this stage) |
-| R0d | Handlers in closure bodies; the two shapes of a handler that passes an operation on that R0b left | D2, C5 (C8, D5 stay: design note of R0d) | done (this stage) |
-| R0e | Tasks in closure bodies | E1, E3 | L |
-| R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, E2, E4, E5, C7 | M |
+| R0c | The leftovers of groups A and B | A1, A2, B1 | done (157ff56) |
+| R0d | Handlers in closure bodies; the two shapes of a handler that passes an operation on that R0b left | D2, C5 (C8, D5 stay: design note of R0d) | done (ec9563d) |
+| R0e | Tasks in closure bodies; a spawn that does not name its scope | E1, E3 (a new reason E3b stays for 2 programs of tier 1 and 3 of tier 2: R0e as built) | done (8b2c59c) |
+| R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, C7, E7 (E2, E4, E5 stay: R0f as built) | done (this stage) |
 | R0g | Continuations and capabilities in closures | D1, D4, C4, C6 | L |
 | R0h | Function values across operations | C2, D3 | M |
 | R0i | The other old inputs: `ValueProps`, W0502, W0303, `Analysis::sigs`, the seed facts (can run beside R1 and R2) | | M |
@@ -2316,6 +2316,497 @@ R0d as built:
   change invalidates (W0301). A run of a capture in a clause of the closure is `many` even when one perform
   runs the clause (D-CLAUSE-RUNS, as for a parameter of a function).
 
+R0e as built:
+
+- E1 (a task in a nested body, `factgen/mod.rs` `check_supported`): a scope body or a
+  `fork` in a closure body is in scope. `handlers::spliceable` accepts a closure body as
+  the root of a splice, so a scope body in a closure splices into it as a handled body
+  does at R0d (the closure units, `Frames::of_bodies`, the splices of `closure_summary`
+  and `emit_closure`). A spawn in a scope body or a handled body inside a closure body or
+  a clause, on a scope of the maker, is in scope too
+  (`handlers::frame_of_closure_or_clause`).
+- The summary of such a closure (`docs/ir.md` 6.4, "As built (plan stage R0e)"): its
+  facts have a task for each task that starts and ends in a run of the closure (a spawn
+  on a scope of the closure, `handlers::owned_site`; a branch of a `fork` there;
+  `decls::tasks_where`), with `task_ends`. These tasks give the part `runs`
+  (`summarize::apply_hows`, the code of `summarize` for a function body: `twice`,
+  `thread`, `with`, the places) and the pins (with the code of a caller left out). They
+  are not in the part `tasks` (only the tasks of a scope of the maker are). The summary
+  of a closure has the pins of its callees too, as the summary of a function body.
+- Three consumers that the new form needed. (1) A task whose closure has a spawn or a
+  `fork` in its bodies starts those tasks (`spawns_in`, `templates::inner_tasks`; the
+  rule `pinned(T) :- spawns_in(T, U), pinned(U)` of the spec fired only in the old facts
+  of `134_steal_pins.wf` before). (2) The tasks of a component are in the order of the
+  source (`decls::tasks`): a spawn inside the task of another spawn has a lower site id,
+  so the `stealable` marks of the corpus named the wrong tasks. (3) A value that a value
+  of a callee runs as a task (`transfer::apply_runs` at depth > 0: a closure with a scope
+  that spawns a value of its maker, run by a callee, `sim.run` or `with_timeout`; or a
+  closure that calls a callee that runs a capture as a task) applies as plain code at the
+  call, and the body runs the value as a task in the worst way (`RunOf::task`,
+  `TaskHow::foreign`). Before, `task_run` held an index of the summary of the inner
+  value, and the call template dropped the run: W0314 of the caller was lost. This was a
+  hole of R0d too (`fixes/r0e/a13c_callee_bg_param.wf`: the old pipeline gives W0314, the
+  run faults); the first build of R0e found it in the review probes (`a13`, `a13b`:
+  `sim.run` and a callee). Such a program now falls back (C: "a function value that
+  changes places ... and that code of a caller can run on another thread") when the
+  value of the caller is not task-safe.
+- E3 (a spawn that does not name its scope, `SpawnDecl::scope` is `None`). In a program
+  with such a spawn (`tasks::unowned`), the value of each scope capability local points
+  into the root of the local (`tasks::scope_cap_value`): a copy of the capability is
+  invalid after the end of the scope body (W0301, RR4), and the analysis finds the scope
+  of the spawn from the references of its scope operand (`Handlers::site_scopes`,
+  `tasks::SiteScope`). The spawn needs exactly one scope and no other value
+  (`templates::unowned_spawn`), else the program falls back with the new reason "a task
+  of a scope that the spawn does not name and that the analysis does not find (stage
+  R0e)": two scopes (`fixes/r0e/u03_two_scopes.wf`), a spawn through a reference to the
+  capability (`u10`), a capability that a generic callee gives back (`e03`, `m3.wf`: the
+  summary of `hold<T>` does not give the reference back). In the facts of a closure in
+  the terms of its interface, the scope can be a scope of the maker (no reference into a
+  scope capability of the closure, and the spawn is not in a scope body of the closure):
+  part `tasks`. `ScopeWait` and the cleanup chain end the task (`templates::site_in_scope`);
+  for a spawn in a closure that the component emits after the scope, `unowned_joins` adds
+  these ends at the end of the component. Each `ScopeWait` of such a program can abort
+  (`frames::destinations`). A spawn statement of this form has no `TaskResult` local: a
+  drop pair at the terminator (`vars.rs`, as for `detach`) gives W0601 for a linear
+  result. The old pipeline misses it (`u04_linear_result.wf`: a linear leak at run time).
+- Why not a simpler E3 rule: a task of a scope that the facts do not know must end at the
+  `ScopeWait` of its real scope, or the facts lose a conflict or a dangling capture; and a
+  capability can leave its scope (the 132 shapes), so a lexical choice of the scope is
+  not sound. The reference of the capability gives both the scope and the escape check.
+- Tests: corpus `tests/programs/190_closure_tasks.wf` (W0405, W0301, W0602, W0403 and
+  W0601 of tasks in closures, `with_timeout { fork }`, the handle of an ended task, and
+  the E3 shapes; the clean twins; W0601 `old:` for the linear result) with its IR golden;
+  `132_scope_escape.wf` and `134_steal_pins.wf` (markers of the `ir` pipeline with
+  `old:`); `ir_handlers.rs` (`h4_scope.wf` is in scope: W0502 and W0503 at the run of
+  the closure, as `h4_nested.wf`); probes `tests/gate/probes/fixes/r0e/` (63 programs:
+  the adversarial forms of the brief with their clean twins: a callee that runs the
+  closure later, closures in a struct and a vector, a spawn in a clause in a closure,
+  three levels, a capture of a capture, a linear value with an abort before the join,
+  `with_timeout { fork }`, a handle out of a closure, `sim.run`, `multi` re-entry `m1` to
+  `m7`, the E3 forms `u01` to `u12`, the hole forms `a13*` and `a14*`). The `multi`
+  re-entry (a handler that resumes two times runs code with spawns and joins again) is
+  in neither oracle, so the probes `m1` to `m7` and `u11` check it by hand: each form
+  that faults at run time (a value moved two times, a handle joined two times, an
+  operation of another task) is rejected by the `ir` pipeline (W0302, W0503, W0314);
+  `m1`, `m1_ok` and `m5_ok` are accepted with no fault (each copy of the frame has its
+  own scope and children, I3-8).
+- The fallbacks, before (ec9563d) and after, tier 1 / tier 2, by the note of `weft
+  check` (scratchpad `r0e/t1-final.tsv`, `t2-final.tsv`, the lists of the scope report):
+  E1 57/3958 to 0/0, E3 6/152 to 0/0. The new reason E3b ("a task of a scope that the
+  spawn does not name and that the analysis does not find") has 2/3. The programs whose
+  first failing body was E1 and that still fall back show their own reason: C7 2/3 to
+  12/80 (a closure value that runs a value of its interface as a task, `VALUE_TASKS`,
+  stage R0f), C1 39/107 to 41/139, E4 5/11 to 5/91, A2 1/41 to 2/53, E2 10/22 to 11/23,
+  D5 15/114 to 15/116, D4 15/46 to 15/47, D1 60/308 to 60/309. Total 279/4981 to
+  232/1080. 47 programs of tier 1 and 3901 of tier 2 come into scope (with the new corpus
+  file and the 63 probes of `fixes/r0e`: 111 of tier 1); no program goes out of scope, and no
+  program that was in scope changes its codes (the recount of both tiers).
+- Gates: tier 1 0 blockers (4378 of 4670 in scope; 3680 same, 9 open, 265 fixed, 1
+  new-fp, 112 lost-clean, 128 moved, 475 changed; `fixed` +3: `u04_linear_result.wf`,
+  `a14_child_failure.wf`, `a14b_child_failure_callee.wf`, which the old pipeline misses;
+  `lost-clean` +4 (`fixes/r0e/m1_ok`, `m1_pick_before_spawn`, `m5_ok`: the scope
+  capability is not `once`, I3-8; `rt22b.wf`: the handle of an ended task), `changed`
+  +12, each ledgered; the old records of the 64 new entries are new in
+  `tests/gate/baseline-tier1.jsonl`, and the records of `132` and `134` have the hash
+  of the new markers). Tier 2 (2 workers) 0 blockers (53648 of 57393 in
+  scope; 40462 same, 10 open, 88 fixed, 12 new-fp: the 12 rows of R0d, 0.096 %; 0
+  lost-fault; 3441 lost-clean, +588 in four classes R0E-T2-TASK, -REF, -ARGS, -ONCE;
+  1824 moved; 11556 changed; the old records of tier 2 do not change). Each lost-clean
+  row of R0e says `signed_by = "UNSIGNED"`: the review of R0e signs them. Fact oracle
+  tier 1 0 failures (8 faults of accepted programs: the 7 of C3 and
+  `r3/interp/probe/g14_fork_result_lin.wf`, which comes into scope; F3-6, issue #73, both
+  pipelines accept it). Sigdiff tier 1 0 rows with no entry (one `sig` entry of R0e:
+  `task_effects`, `pins`, `raises` of a closure that no one runs, and the parts of a
+  closure that the result gives back). The fact oracle over the 3901 programs of tier 2
+  that come into scope: 37 failures (summary oracle A3, code of a caller), each in a
+  program that the `ir` pipeline rejects; none in an accepted program.
+- `ereview/ev.sh` (binary `r0e/bin/weft-final`) on each program of tier 2 that comes into
+  scope and that the `ir` pipeline accepts (854): 853 no fault, 1 HOLE+oldmiss
+  (`g14_fork_result_lin.wf`, F3-6 above); on the 111 programs of tier 1 (the new ones,
+  the probes, the corpus files): 0 HOLE but that one (52 no fault, 33 held, 21 both
+  reject with no fault, 3 `oldmiss`: `u04`, `a14`, `a14b`, which only the `ir` pipeline
+  rejects); on the 92 `changed` and `moved` rows of tier 2: no lost fault line. The review
+  sets of R0d (`r0drev/p`, `p2`, `p3`, 174 programs): the same verdicts as the R0d fix 2
+  binary (the 5 `HOLE+oldmiss` rows `r5`, `r7*` are older: both pipelines miss them).
+- Open (issue candidates). (1) A function body `call_with(f, v)` whose task writes `v`
+  while it runs `f`, which reads `v` (`r0e/t/or7a.wf`): the `ir` pipeline of R0d accepts
+  it, the old pipeline gives W0312, the oracle finds a data race; R0e does not change it
+  (the program was in scope before). The R0e fix closes it (below). (2) The summary of a closure has no part
+  `task_effects`: a standard effect of its task goes to the root handlers (the run
+  agrees), but a function body gives W0314 for the same task (`r0e/t/te3.wf`). (3) A
+  closure that runs a value of its interface as a task falls back at a call of the
+  value (C7, stage R0f), and a value of a caller that is not task-safe falls back at a
+  callee (C1). (4) The scope capability is not a `once` value (I3-8, F19.1): R0e keeps
+  the policy for a scope in a closure. (5) A scope with tasks in a closure raises in the
+  summary of the closure also when no task can fail, as a scope in a function body does
+  (precision: a `Fail` clause that changes a place then is W0301; the old pipeline
+  accepts the function-body form `r0e/t/ab10ok.wf`, and the `ir` pipeline of R0d rejects
+  it). (6) `hold(s)` of a generic
+  callee loses the reference of the capability: E3b.
+
+R0e fix as built (OR7: a task of a callee and a function value that the callee runs;
+`docs/ir.md` 6.4, "As built (stage R0e fix, OR7)"):
+
+- Cause. A closure that captures a local of the caller by reference gives the call only
+  the place of its environment (`call_arg`), so the alias check (W0312) does not compare
+  the local with the reference arguments; the run of the value (part `runs`) checks its
+  accesses in the order of the code of the callee. No part of the summary had the tasks
+  that run while the callee runs the value as plain code (`TaskHow` is for a value that
+  runs as a task, `waits` for an operation of a handler of a caller). So a task of the
+  callee that changes a place while the value reads it was a race that the caller did
+  not see. A closure that captures a reference parameter points into the place itself,
+  so W0312 caught that form (`or7/arg2.wf`).
+- Fix. `Run::during` (6.7): the interface places that the tasks of the body change and
+  read while it runs the value (`tasks::run_during` when the facts of the component are
+  whole, and σ of the part of each callee that runs the value: `Applied::during_writes`,
+  `during_reads`, `Em::run_during`). A call that applies a value that the body knows
+  (`templates::during_check`) gives each place of the value a `call_arg` with the root
+  `roots::fn_arg` if a task changes a place (a `call_mut` of each change of the value if
+  a task reads a place): W0312 at the call, as the old pipeline gives. An effect that the
+  value performs gives these places to the `WaitTask` of a local handler of the call
+  (W0405): this closes the handler form (`or7_handler_value.wf`, `or7_handler_fail.wf`,
+  which both pipelines missed). No rule of the spec changes.
+- Probes `tests/gate/probes/fixes/r0e/or7_*` (42 files): 20 forms that faulted with no
+  diagnostic of the `ir` pipeline (a capture of a local, of a field, of the whole local
+  while the task changes a field, two values, a struct, an `Option`,
+  a tuple, a loop, a callee that passes the value on, a runner, two levels, a local
+  closure, a closure with a scope that a callee runs, a closure of the callee that spawns
+  on the scope of the callee, `sim.run`, `with_timeout`, a vector behind a reference, an
+  `rc` object, the two handler forms) are rejected now; the clean twins stay clean but
+  `or7_maker_scope_ok.wf` (precision: the summary of the closure does not order its
+  spawn, join and run; the old pipeline rejects it too). Corpus
+  `tests/programs/191_value_runs_with_tasks.wf` with its IR golden.
+- Gates: tier 1 0 blockers (4713 programs: 3709 same, 9 open, 269 fixed (+4: `or7_rc`,
+  `or7_handler`, `or7_handler_value`, `or7_handler_fail`, which the old pipeline misses),
+  1 new-fp, 116 lost-clean (+4, the clean twins that the old pipeline rejects, ledgered,
+  `signed_by` UNSIGNED), 128 moved, 481 changed (+6, ledgered); no row of R0e changes
+  class). Tier 2 (2 workers) 0 blockers: 40461 same, 10 open, 88 fixed, 12 new-fp
+  (0.096 %, as R0e), 3441 lost-clean (as R0e), 1824 moved, 11557 changed, 0 lost-fault;
+  one row goes from same to changed (`r2/oracle/runs/g7/p43726.wf`, a program that
+  faults: one more W0312), and five changed rows get other W0312 rows. Fact oracle tier 1
+  0 failures (the 8 faults and 16 timeouts of R0e); sigdiff tier 1 0 rows with no entry.
+
+R0e fix 2 as built (the review of R0e, round 1: blockers B1 and B2, and the older holes
+O1 and O2; `docs/ir.md` 6.4, "As built (plan stage R0e)"):
+
+- B1 (a spawn on an outer scope in a scope body in a clause). Cause: `project` maps the
+  nodes of a clause and of the handled bodies in it to the nodes that run the clause
+  (`handlers::clause_nodes`), but not the nodes of a scope body in it. So the task of
+  such a spawn did not start at the perform, and a write in such a scope body did not
+  reach the perform either: the second form is a hole since C3 (`fixes/r0e/rv1_cs2_*`,
+  which the old pipeline catches). R0e put the first form in scope through
+  `frame_of_closure_or_clause`. Fix: `clause_nodes` maps a scope body to the block of its
+  `scope` in the clause, as a handled body to its `handle`; a task that the clause also
+  ends (a task of a scope inside the clause) does not start at the node that runs the
+  clause. Real fix: the 10 forms of the review (`rv1_b1_*`) give W0405 at the race.
+- O1 (a clause of a handler in a closure spawns on a scope of the maker, since R0d):
+  `closure_summary` did not put the spawn sites of the clauses of the closure in the part
+  `tasks`. Fix: `emit_clause` gives them back. Real fix (`rv1_o1_*`).
+- O2 (a callee spawns its parameter two times, since R0a): the task nodes of a call did
+  not move the `once` argument. Fix (`templates::task_runs` path): for a run as a task
+  with `TaskHow::twice`, or `Run::many` of a callee with a body (not a foreign run), the
+  first task node moves the argument of the parameter and the second one uses it
+  (W0502). Only the operand of the parameter counts (a value that it runs gets its runs
+  from its own summary: `fixes/f20_3/i2_ctl_twice_c.wf` stays clean). Real fix
+  (`rv1_o2_h16.wf`, `rv1_o2_seq.wf`: a spawn, a join and a spawn again).
+- B2 (a `once` value that a value of a callee runs as a task more than once): fallback.
+  R0e applied such a run as plain code, and a plain run of a value of a value loses the
+  second run of a `once` value. This is older and wider: with no task at all,
+  `fn run2(g: fn(fn()), f: fn()) { g(f); g(f) }` with `run2(|x| x(), || take(v))` is
+  accepted by the `ir` pipeline since C3 (the old pipeline gives W0502; issue
+  candidate, not fixed here; R0e fix 3 closes it, below). A fix in proportion is not possible in this stage, so
+  `transfer::apply_runs` at depth > 0 with a run as a task that has function values
+  gives the new fallback reason
+  E7 "a function value that a function value of a callee runs as a task (stage R0e fix
+  2)". The forms `a13`, `a13b` and `a13c` of R0e fall back too (the old pipeline catches
+  them). The clean twin `rv1_b2_ok.wf` gets the old W0502 again (a false positive of the
+  old pipeline, as before R0e).
+- The fallbacks (scope-report lists, tier 1 / tier 2): E7 0/0 to 3/19 (C1 41/139 to
+  40/126, C7 12/80 to 12/79, D4 15/47 to 15/46: the first failing body changes); total
+  232/1080 to 234/1084. The fallback needs a function value of the run: a run of a
+  capture that holds no function value (the `fork` of `fixes/f20_2/p2_fork_*`, test
+  `ir_tasks.rs` `a_fork_that_a_closure_body_starts_checks_its_branches`) stays in
+  scope. 2 programs of tier 1 (`crash/c08.wf`, `c10.wf`: a foreign run of a recursive
+  value; `sim1.wf` changes its reason) and 4 of tier 2 go out of scope; each was in
+  scope at R0e. 9 programs of tier 2 that stay in scope change their codes: 4 get the
+  W0312 of the R0e fix, 3 get W0502 (O2), and 2 (`m3a/p2018.wf`, `p6386.wf`) lose a
+  W0405 at a `fork` in a clause that the old pipeline does not give either (a task of
+  the clause that the clause ends).
+- Tests: corpus `tests/programs/192_clause_scope_tasks.wf` (B1, O1, O2, the clean
+  twins) with its IR golden; probes `tests/gate/probes/fixes/r0e/rv1_*` (26 files).
+- Gates: tier 1 0 blockers (4439 of 4740 in scope; 3723 same, 9 open, 269 fixed, 1
+  new-fp, 117 lost-clean (+1: `rv1_o1_ok.wf`, UNSIGNED), 128 moved, 493 changed).
+  Tier 2 (2 workers) 0 blockers (53644 of 57393 in scope; 40476 same, 10 open, 88
+  fixed, 12 new-fp (0.096 %), 0 lost-fault, 3441 lost-clean, 1822 moved, 11544 changed).
+  Fact oracle tier 1 0 failures (the 8 faults and 16 timeouts of R0e). Sigdiff tier 1 0
+  rows with no entry (one `sig` entry: a scope with no task in a clause does not
+  raise). The reviewer signed the lost-clean rows of R0e; the rows of the R0e fix and of
+  this fix wait for the review.
+
+R0e fix 3 as built (H19, the plain form of B2 above; `docs/ir.md` 6.4, "As built (plan
+stage R0e)"):
+
+- Cause. A callee gives a `once` closure `f` to code of a caller, a function value `g`
+  of its interface (`g(f); g(f)`). The callee does not know `g`: the run of `f` is the
+  worst way of that code (`task`, `TaskHow::foreign`), and its `Run::many` is true for
+  each such value. The rule of O2 above leaves out the `many` of a foreign run (else each
+  `once` closure that goes to code of a caller is W0502), and the run of `g` at the
+  caller does not know that its argument is `f`. So no rule counted the second run (a
+  hole since C3, `fixes/r0e/h19_*`; the old pipeline gives W0502). A callee that is a
+  function item (`call(f); call(f)`) was right: its summary runs its parameter.
+- Fix. `Run::via_only` and `Run::via` (`docs/ir.md` 6.7): the body only gives the value
+  to code of a caller, and the values and arguments of that code
+  (`transfer::apply_value`; `Via::again` for two blocks or a loop). A call that knows each
+  value of the code counts the runs of the argument in their summaries
+  (`transfer::via_twice`, `arg_runs`), added over the entries; else the count is two.
+  Two runs or more: the task nodes of the call move the argument and use it again
+  (`Applied::via_twice`, W0502). This keeps the precision of the `ir` pipeline where `g`
+  runs `f` one time or not at all. Fallback E7 (B2) stays: it is a run as a task of a
+  value of a value at depth > 0, which has no task nodes; this fix does not change it.
+- Probes `tests/gate/probes/fixes/r0e/h19_*` (24 files): 10 forms that faulted with no
+  diagnostic of the `ir` pipeline (two runs of `g`, `async`, two runs inside `g`, a
+  capture in `g`, an item `g`, a struct field, an `Option`, a loop, both arguments, a
+  closure that runs `f`) are W0502 now. The clean twins stay clean but
+  `h19_nested_ok.wf` (`g(|| f())`: no `via` for a value that the given value runs in
+  turn; the old pipeline rejects it too). Corpus
+  `tests/programs/193_value_runs_once_value.wf` with its IR golden.
+- Gates: tier 1 0 blockers (4460 of 4765 in scope; 3740 same, 9 open, 269 fixed, 1
+  new-fp, 122 lost-clean (+5, the clean twins that the old pipeline rejects,
+  `signed_by` UNSIGNED), 128 moved, 496 changed (+3, ledgered); no row of R0e fix 2
+  changes class). Tier 2 (2 workers) 0 blockers, each row as R0e fix 2 (40476 same, 10
+  open, 88 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3441 lost-clean, 1822 moved, 11544
+  changed). Fact oracle tier 1 0 failures (the faults and timeouts of R0e fix 2).
+  Sigdiff tier 1 0 rows with no entry. `ereview/ev.sh` on `r0erev/p` and
+  `fixes/r0e` (342 programs): 0 HOLE; only the `h19_*` rows change.
+
+R0e fix 4 as built (the review of R0e, round 2: blocker R2-B1 and three older holes;
+`docs/ir.md` 6.4, "As built (plan stage R0e)"):
+
+- R2-B1 (a regression of fix 2). Cause: the lift filter of `handlers::project` skipped
+  the start of a task at the node that runs a clause when any `joined_at` of the task
+  was in the clause. A join on one path (also in a loop that does not run) and a detach
+  on the other let the task run past the clause, and the race after the perform was
+  lost (`b16`, `b17` to `b19`, `b21`, `b24`, `b25` of the review; `b17` was a B1 form
+  of round 1). Fix: the start is skipped only for a task that starts and ends in the run
+  of the clause: a spawn on a scope whose scope body is in the clause, or a branch of a
+  `fork` there (`owned_by_clause`; the `t/cs1.wf` false positive of fix 2), or a task of
+  an outer scope that the clause joins on each path from the spawn before a `resume`,
+  an edge out of the clause or the end of the clause (`joined_in_clause`). So `b01_ok`
+  and `b27_ok` (a join on each path) stay clean; the old pipeline rejects them.
+- Older holes (old W0312, the `ir` pipeline 0 since the R0e fix or before; fixed in
+  proportion): `a15` and `a35`: the callee runs the value in a clause of its own handler
+  (or a clause gives it to a callee) while its task runs. `Run::during` read the
+  `run_at` and `run_during` of the main `Em` only. Now `emit_clause` gives back its own,
+  and `handlers::clause_run_at` maps a run node of a clause to the nodes that run the
+  clause (function and closure summaries). `a31`: the callee runs the value in a second
+  task while the first one clears `v`. `tasks::task_hows` did not count the changes of
+  another task that runs at the same time as the task of the value; now `TaskHow::writes`
+  and `reads` have them (W0405 at the call).
+- Tests: corpus `192_clause_scope_tasks.wf` gets `clause_join_or_detach` (W0405) and the
+  clean `clause_join_both` (`old:` W0405); probes `tests/gate/probes/fixes/r0e/rv2_*`
+  (17: the R2-B1 forms, the three older holes, and their clean twins).
+- Gates: tier 1 0 blockers (4477 of 4782 in scope; 3744 same, 9 open, 269 fixed, 1
+  new-fp, 128 lost-clean (+6: the clean twins, UNSIGNED), 128 moved, 503 changed (+7);
+  no row of fix 3 changes class). Tier 2 (2 workers) 0 blockers (53644 of 57393 in scope;
+  40476 same, 10 open, 88 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3441 lost-clean,
+  1822 moved, 11544 changed; one changed row, `r3/oracle/runs/m3b/p24092.wf`, gets the
+  W0405 at line 76 that the old pipeline gives). Fact oracle tier 1 0 failures (the 8
+  faults and 16 timeouts); sigdiff tier 1 0 rows with no entry. `ereview/ev.sh` on
+  `r0erev/p`, `r0erev2/p` and `fixes/r0e` (517 programs) against the fix 3 binary: the
+  20 HOLE rows are held; no other row changes; the one `HOLE+oldmiss` is `a04` (both
+  pipelines miss it). The reviewer signed the rows of the R0e fix and of fix 2.
+
+R0f design note (task runs: a value of a caller that a callee runs as a task):
+
+- Where a value of a caller runs as a task. (1) A callee with a body: the part `runs`
+  says it (`Run::task`, `TaskHow`: `thread`, `twice`, `with`, the places of the body
+  while the task runs), and the run node applies the value at its task nodes
+  (`templates::call_tasks`). (2) A foreign function (`extern fn`) and a function of the
+  prelude with no body (`http.serve`): `sig::foreign_fn_parts`, the worst way. (3) Code
+  of a caller: a value that the body gives to a function value that it does not know
+  (`transfer::apply_value` with `Given::Args`): a task with no task of the body, the
+  worst way (`TaskHow::foreign`). (4) A function value of the caller whose summary runs
+  a value of its arguments as a task (C7). (5) A closure that spawns a value of its
+  interface on a scope of its maker (part `tasks`): the task runs the value after the
+  call of the closure.
+- Before R0f, (2) and (3) fell back for a value that can race (`transfer::task_unsafe`,
+  C1), (4) fell back always (`VALUE_TASKS`, C7), a task run of a value of a value fell
+  back at depth > 0 (E7, R0e fix 2), and (5) was a plain run at the node only (a hole:
+  the task did not have the places of the value).
+- The checks. W0314: `task_w0314` of the values of the task (a task node, a task of a
+  scope of a maker). W0405: the footprint of the task (`task_writes`, `task_reads`), a
+  second start for `twice`, the places of the other values (`with`) and of the callee at
+  the third task node. W0401 and W0403: `thread` (`fork_task`, `captures`,
+  `mut_through`). W0502 and W0601: the task nodes move a `once` argument that runs two
+  times (`twice`, `many` of a callee with a body, `via_twice`, O2 and H19 of R0e). Pins
+  and steal: a task of code of a caller is `opaque` (pinned), as before. Raises: the
+  call aborts as the summary says (no change). The R0e fixes stay: `Run::during`,
+  `Run::via`, `via_twice` and the lift filter of a clause task are not changed; the worst
+  way of code of a caller and `via_plain` read them.
+- The worst way. A foreign function: on another thread (the old lowering,
+  `Lower::callee_task_runs`), two at one time, with the other values, while it changes
+  and reads what it gets. `http.serve`: the same, but its tasks are pinned (no
+  `thread`). Code of a caller: on another thread, with the other values of the
+  interface. Two tasks of one value of code of a caller and the changes of the code
+  itself are not in its worst way: with them, a value that a callee gives to itself
+  through code of a caller (`Core_S2/probes/crash/c08.wf`) was a new false positive over
+  the 0.1 % rule of both tiers. A value that changes a captured place is W0403 there,
+  and a run node that knows the code uses the way of the code (below).
+- A run node that knows the code of a caller uses its summaries (`transfer::via_plain`):
+  plain code as many times as `via_twice` counts, with the places of the tasks of the
+  callee while it runs the code (`Run::during` of the run of the code), when no value
+  of the code runs the argument as a task, gives it back, puts it into a place, starts a
+  task of a scope of its maker or runs it while a task of its own runs; else a task, two
+  tasks at one time if a value of the code runs the argument so
+  (`transfer::via_code_twice`).
+- A task that the facts of the callee do not describe (a task in a clause of the callee,
+  `r0erev3/p3/k05_value_in_clause_task.wf`) keeps the fallback C1 for a value that can
+  race: the worst way of code of a caller does not have the places of the other tasks of
+  the callee (the first build of R0f accepted `k05`, a race).
+- A call of a function value has four task nodes for each argument that can hold a
+  function value (`frames::value_task_args`): (4) and the values of (3) that can race
+  apply there (`templates::value_slots`). With no such value the call keeps its facts
+  of R0e (the task nodes are not in `Em::task_nodes`).
+- (5): the summary of the closure has the spawn site in `TaskHow::tasks` of the run of
+  the value; the run node gives the changes and the reads of the value to that task too
+  (`templates::maker_task_runs`, also W0314).
+- Size: C1, C7 and E7 in one commit; E2 (a task that runs a value more than once: a
+  spawn has one node), E4 (a task that runs a variable that gets a new value) and E5 (a
+  task of code that the body does not follow) stay (next stage).
+
+R0f as built:
+
+- The changes of the design note: `summarize::apply_hows` (the worst way of code of a
+  caller: `thread`, `with`), `sig::from_signature` (a foreign function: `thread`,
+  `TaskHow::no_body`), `transfer::apply_runs` (no fallback for a foreign run of a value
+  that can race, but for a task of the callee with no `TaskHow` and no `via`;
+  `via_plain`, `via_code_twice`, `via_tasks`; E7 only for a known value; at depth > 0 a
+  task run is `RunOf::task`, not `task_run`), `transfer::apply_value` (code of a caller
+  that gets a value that can race: each value of the arguments is a task of the call,
+  `Applied::task_how`), `templates::call_tasks` (slots: `item_slots`, `value_slots`),
+  `templates::call_value` (the task nodes of a call of a function value),
+  `frames::add_tasks` (`value_task_args`), `templates::maker_task_runs` and
+  `closure_summary` (`TaskHow::tasks`, `Em::maker_site`, `Em::maker_runs`). No rule of
+  the spec changes (`docs/ir.md` 6.4, "As built (plan stage R0f)").
+- Tests: corpus `tests/programs/194_task_runs.wf` (W0401, W0403, W0405, W0502, W0314,
+  W0312 of the forms of the design note, with `old:` where the old pipeline differs;
+  clean cases) with its IR golden; the markers of `38_callbacks.wf`, `61_task_paths.wf`,
+  `82_stored_spawns.wf` and `133_task_params.wf`, which come into scope; probes
+  `tests/gate/probes/fixes/r0f/` (43: the adversarial forms of the brief with clean
+  twins: a callback that runs two times, concurrently with the code of the caller or of
+  the callee, with a `once` or linear capture, an `Rc` capture, a `&mut`-like capture,
+  an operation of a local handler, a callee that stores the callback, a value of a value,
+  a generic callee, a field, `http.serve` with a handler that writes a local, and the
+  maker-scope forms); `ir_fn_values.rs`
+  (`a_closure_that_code_of_a_caller_can_run_on_another_thread_is_a_task_of_the_call`)
+  and `ir_handlers.rs` (`gen_k.wf` is in scope).
+- The probes found three holes of HEAD (R0e fix 4) in scope, which R0f closes: a value
+  that code of a caller runs as plain code while a task of the callee changes its place
+  (`c16_cc_during_plain.wf`, old W0405), and a closure that spawns its parameter on a
+  scope of its maker while the maker writes (`c29d`, old W0405) or with an operation of
+  a local handler (`c29f`, old W0314); and two that both pipelines missed (`c26c`,
+  `c29g`: a reader, a dangling reference).
+
+- The fallbacks, before (R0e fix 2 recount, the lists of the scope report; R0e fix 3 and
+  fix 4 do not change the scope) and after, tier 1 / tier 2 (scratchpad `r0f/fb-x12.tsv`):
+  C1 40/126 to 0/0 (1/2 now show C2, "a function value that an operation gives to a
+  handler", and 0/2 show E2: the first failing body changes), C7 12/79 to 7/11, E7 3/19
+  to 2/5; E2 11/23 to 10/24, E5 3/14 to 4/15 and E4 5/91 to 5/91 stay (design note). 45
+  programs of the scope-report list of tier 1 and 204 of tier 2 come into scope; no
+  program goes out of scope (tier 2: 53644 to 53848 in scope, +204). Of the programs
+  that were in scope, no row of tier 1 or tier 2 changes class or codes but
+  `fixes/r0e/h19_linear.wf` (`changed` to `same`: the code of the caller runs the
+  linear capture as plain code, no W0602).
+- Gates: tier 1 0 blockers (4570 of 4826 in scope; 3741 same, 9 open, 274 fixed (+5:
+  `fixes/r0f/c10_generic`, `c26c`, `c29`, `c29e`, `c29g`, which the old pipeline
+  misses), 1 new-fp, 134 lost-clean (+6, UNSIGNED: `fixes/r0f/c05_cc_plain_ok`,
+  `c06_cc_once_ok`, `c22_cc_two_values_ok`, `verify/s5/diff/p/fp1.wf`, `fp2.wf`, and
+  `fixes/r0e/rv1_b2_ok.wf`), 128 moved, 539 changed (+36, ledgered); the old records of
+  the new entries and of the four corpus files with new markers are new in
+  `tests/gate/baseline-tier1.jsonl`). Tier 2 (2 workers) 0 blockers (53848 of 57393 in
+  scope; 40368 same, 10 open, 88 fixed, 12 new-fp (0.096 %, the rows of R0d), 0
+  lost-fault, 3443 lost-clean (+2: `fp1`, `fp2`), 1823 moved (+1), 11649 changed
+  (+105, ledgered); the old records of tier 2 do not change). Fact oracle tier 1 0
+  failures (the 8 faults of R0e; 22 timeouts: the 16 of R0e and six programs with
+  `http.serve` that come into scope). The first run found a summary-oracle failure (A3)
+  in the clean twin of the older hole `c17` below: the probe is not in the repository.
+  Sigdiff tier 1 0 rows with no entry (one `sig` entry of R0f for the 29 programs that
+  come into scope). The fact oracle over the programs that come into scope: 0 failures
+  (79 that run; 170 have `http.serve` or an `extern fn` and do not run).
+- `ereview/ev.sh` (binary `r0f/bin/weft-final`) on the 249 programs that come into scope:
+  0 HOLE (28 held, 12 no fault, 39 rejected by both pipelines with no fault: the old
+  pipeline rejected them at R0e fix 4 too; 170 do not run: the `ir` pipeline rejects each
+  one that the old pipeline rejects). On the review sets of R0e (`r0erev/p`,
+  `r0erev2/p`, `r0erev3/p`, `p2`, `p3`) and on `fixes/r0e` and `fixes/r0d` (756
+  programs) against the R0e fix 4 binary: no verdict gets worse; the 8 HOLE rows are
+  older (the open holes of the review of R0e, round 3, and `a04`); `j02_mid_known_g_ok`
+  goes from both-reject to no fault; three clean programs that fell back to the old
+  pipeline (which rejects them) are rejected by both pipelines now (`h19_multi_ok`,
+  `a04_g_to_h_ok`, `g16_via_after_multi_in_g`: W0502 of the worst way of code of a
+  caller after a `multi` value or of a value of a value, as the old pipeline). The first
+  build of R0f had two HOLE rows there (`r0erev2/p/e05_depth1_during.wf`: the code of the
+  caller runs the value while a task of its own changes the place; `r0erev3/p3/k05`: a
+  task in a clause of the callee): `via_plain` refuses a code with its own `during`, and
+  a task with no `TaskHow` keeps the fallback C1.
+- Open (issue candidates). (1) Code of a caller that keeps a value in a place
+  (`copy(src, dst)` run by `apply(k, a, b) { k(a, b) }`): the summary of the code gets
+  `Given::Opaque`, so the value that it puts is lost (`r0f/p/c17_cc_store_ref.wf`: a
+  hole since C3, the old pipeline gives W0301; the summary oracle finds it in the clean
+  twin). (2) The code of a caller is a closure that spawns its parameter on a scope of
+  `main` and an item runs it (`c26b`, `c26d`): both pipelines miss the race after the
+  call. (3) An item callee that runs a value that changes what another argument points
+  into (`r0f/t/f4a.wf`: in scope at R0e fix 4, the old pipeline gives W0312). (4) A
+  closure of a local handler that code of a caller can keep gets W0314, not W0313
+  (rejected for the other reason). (5) E2, E4, E5 and the rest of C7 and E7 stay.
+
+R0f fix as built (the review of R0f, round 1: blockers B1 and B2; `docs/ir.md` 6.4, "As
+built (plan stage R0f)"):
+
+- B1 (the E7 relaxation of R0f). R0f took the fallback E7 off a task run of an `Unknown`
+  value at depth > 0, because the callee runs that value in the worst way. But in the
+  body that gives a reader to code of a caller (`transfer::apply_value` with
+  `Given::Args`), the values became tasks only when they can race, and the worst way has
+  no changes of the code itself: `outer(g) { let c = ..; g(|| print(c.k), &c) }` with a
+  `g` of `main` that spawns the reader and writes `d.k` was accepted (`r0frev/p/c04_e7_*`,
+  `c09`, `c12`, `c16`, `c22`, `c24`, `c25`; held at R0e fix 4 by E7). Fix, both options
+  of the review: (b) code of a caller that gets a place in an argument with no function
+  value makes each value of the arguments a task of the call also when a value of the
+  body reads a place (`transfer::local_reads`), with these places as the changes of the
+  code (`TaskOf::writes`); this closes `rv1_c15_unknown_extern_value.wf` (code from a
+  foreign function, an older hole); a place that only the environment of a value
+  reaches does not count (`r0frev/p/c26_e7_caller_place_ok.wf` stays clean). (a) E7
+  stays for an `Unknown` value whose task runs while the value changes places or runs
+  other values (`TaskHow::writes`, `with`): one program of tier 2 goes out of scope
+  again; `rv1_b2_ok.wf` stays clean.
+- B2. `templates::item_slots` made a slot for each entry of `runs` that runs as a task,
+  also for a value that `via_plain` runs as plain code (no values in the slot), and
+  `call_tasks` then put the empty task places of that parameter in place of its plain
+  places, so the `with` of the other slot found nothing (`h03`, `h03d`, `h07`, `h08`,
+  `h10` of the review; held at R0e fix 4). Fix: a slot with no values starts no task and
+  keeps the plain places. `maker_task_runs` runs for a value at a task node too, so a
+  value that goes to a task of a scope of a maker through the code of a caller
+  (`via_tasks`) and runs in a task of the call gives its places to that task (`h10`).
+- Probes `tests/gate/probes/fixes/r0f/rv1_*` (8: `c04` and its twin, `h03` and its twin,
+  `h07` and its twin, `h10`, `c15`); `48_lend_alias.wf` gets the W0405 of the old pipeline
+  at `give_closure`. The reviewer signed the lost-clean rows of R0f; the new lost-clean
+  row `rv1_h07_callee_task_and_via_plain_ok.wf` waits for round 2.
+- `ereview/ev.sh` on the 127 programs of the review (`r0frev/p`) against the R0e fix 4
+  binary: 0 new HOLE (the 12 HOLE rows of R0f are held; the 3 HOLE rows that remain are
+  older: `g03`, `b13`, and `b08` = `c26b`). Precision: `h01_cc_code_writes_capture_ok`
+  (W0405: the code writes `c` after the scope, the worst way of the task of the call)
+  and `f07_vc_fork_rc` (W0401 for an `Rc` in a `fork` branch, the rule of ADR 0006) stay
+  rejected by the `ir` pipeline only.
+- Gates: tier 1 0 blockers (4574 of 4834 in scope; 3747 same, 9 open, 274 fixed, 1
+  new-fp, 135 lost-clean (+1, UNSIGNED), 128 moved, 540 changed (+1); the old records of
+  the 8 new probes and of `48_lend_alias.wf` are new in `tests/gate/baseline-tier1.jsonl`).
+  Tier 2 (2 workers) 0 blockers (53847 of 57393 in scope; 40371 same, 10 open, 88 fixed,
+  12 new-fp (0.096 %), 0 lost-fault, 3443 lost-clean, 1824 moved (+1, a mutant of corpus
+  48, ledgered), 11645 changed; 4 mutants of corpus 48 and `rt5_variants.wf` get the
+  W0405 of the old pipeline). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, as
+  R0f). Sigdiff tier 1 0 rows with no entry. On the review sets of R0e, `fixes/r0e` and
+  `fixes/r0d` (756 programs) each verdict is as at R0f. The fallbacks: E7 2/5 to 2/6 (the
+  program that goes out of scope); the other counts of R0f do not change.
+
 #### R1 Standalone `typeck`, part 1
 
 - Depends on: C3 and one review round.
@@ -2445,6 +2936,13 @@ gate and the exit of its parent, limited to its group of differences.
 | R0b | C3 | the fallbacks of a callee with no IR (C3, E6, P1, C1 with a type error), N1 and I1 (Phase R, R0b): a worst-case summary from the declaration, W0121, a handler with no clause passes the operation on. Fallbacks 331/7770 to 318/7382 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry | done (R0b) |
 | R0c | R0b | the fallbacks A1, A2 and B1 (Phase R, R0c): W0204 for a reference through a local `rc` handle that is not sure to be a copy of the handle parameter of the store (`templates::same_object`), the region of a `resume` skips the runs of a clause in a task that W0314 rejects, rule 5 of the widening (a summary part below depth 8). Fallbacks 318/7382 to 312/7372 (tier 1 / tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 19 programs that come into scope | done (R0c) |
 | R0d | R0c | handlers in closure bodies (Phase R, R0d; D2, C5, and the two pass-on shapes of R0b): a handled body splices into the closure body and the clauses are parts of the facts of the closure (`closure_units`), the closure summary carries the code of the handlers in the terms of its interface, `clause::serving` for a handler with no clause for an operation (it closes three holes of the pipeline of R0c, `fixes/r0d/ph1`, `ph3`, `ph5`), a capability that a closure of a closure captures again, the sparing at `Post` when the rest of the handled body cannot abort (issue #57). D5 and C8 stay (design note in R0d). Fallbacks 312/7372 to 279/4981. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE on the 669 programs that come into scope or change and on the review sets of group D and of the once-after-multi family. The review found three holes (an operation that a handler with no clause passes on, performed through a callee, a value or an inner closure): fixed in the second commit (`clause::serving_path`, `frames::served_dests`), which also closes the function-body form of R0c (`pi_ph5_direct_callee.wf`); the reviewer signed the lost-clean rows | done (R0d) |
+| R0e | R0d | tasks in closure bodies and spawns that do not name their scope (Phase R, R0e; E1, E3): a scope body in a closure splices into it, the closure summary has the tasks that start and end in a run of the closure (`runs`, pins, raises), `spawns_in`, the order of the tasks of the source, a value that a value of a callee runs as a task is run in the worst way (it closes a hole of R0d, `fixes/r0e/a13c_callee_bg_param.wf`), the scope capability points into its own root in a program with a spawn that does not name its scope (the scope from the analysis, W0601 for a lost linear result). Fallbacks 279/4981 to 232/1080. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE on the programs that come into scope and on the review sets of R0d. The lost-clean rows wait for the review | done (R0e) |
+| R0e fix | R0e | OR7: a task of a callee runs while the callee runs a function value that captures a local of the caller (`r0e/t/or7a.wf`, a hole since C3 that the old pipeline catches). `Run::during` (the places of the tasks that run while the body runs the value), `templates::during_check` (W0312 at the call; the places go to the `WaitTask` of a local handler of an effect of the value, W0405). 20 forms close (3 that both pipelines missed). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 4 new lost-clean rows wait for the review | done (R0e fix) |
+| R0e fix 2 | R0e fix | the review of R0e, round 1: B1 (a scope body in a clause: its code and its spawns reach the node that runs the clause; also a hole since C3, `rv1_cs2_*`), O1 (the spawns of a clause in a closure are in the part `tasks`), O2 (the task nodes move a `once` argument that runs as a task two times), B2 (fallback E7: a value that a value of a callee runs as a task). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12, lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. Open: the plain form of B2 (`run2(\|x\| x(), \|\| take(v))`, since C3) | done (R0e fix 2) |
+| R0e fix 3 | R0e fix 2 | H19, the plain form of B2: a callee gives a `once` closure to a function value of its interface two times (a hole since C3 that the old pipeline catches). `Run::via_only`, `Run::via`, `transfer::via_twice`: a caller that knows the value counts the runs of the argument in its summary (W0502 at two runs or more), else the worst way. 10 forms close. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, each row as R0e fix 2; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 5 new lost-clean rows wait for the review | done (R0e fix 3) |
+| R0e fix 4 | R0e fix 3 | the review of R0e, round 2: R2-B1 (the lift filter of fix 2 dropped a clause task that is joined on one path only: now only a task of a scope of the clause, a `fork` there, or a task that the clause joins on each path is skipped), and the older holes a15, a35 (a run of the value in a clause, `clause_run_at`) and a31 (a value that runs in a task next to another task of the callee, `task_hows`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 6 new lost-clean rows wait for the review | done (R0e fix 4) |
+| R0f | R0e fix 4 | task runs (Phase R, R0f; C1, C7, E7): a value of a caller that a foreign function, `http.serve`, code of a caller or a function value runs as a task applies at the task nodes of the call (the worst way, or the way of the code of a caller that the node knows: `via_plain`, `via_code_twice`); a call of a function value has task nodes for its arguments; a closure that spawns a value of its interface on a scope of its maker gives the value to that task (`TaskHow::tasks`; closes `c29d`, `c29f`, older holes). Fallbacks C1 40/126 to 0/0, C7 12/79 to 7/11, E7 3/19 to 2/5. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE. The 6 new lost-clean rows wait for the review | done (R0f) |
+| R0f fix | R0f | the review of R0f, round 1: B1 (a reader that code of a caller runs as a task while the code changes a place it gets: the values become tasks of the call with the places of the code; E7 stays for an `Unknown` value whose task runs with changes or other values) and B2 (a slot of a value that runs as plain code kept no plain places for `with`; a value in a task of the call gives its places to a maker task). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE on the 127 review probes. The reviewer signed the lost-clean rows of R0f; 1 new row waits for round 2 | done (R0f fix) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -2523,6 +3021,20 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0d fix (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %, as R0d) | 2853 (signed by the review of R0d) | 1707 | 10286 | 10 (as C3) |
 | R0d fix 2 (tier 1, the defaults) | 4274 of 4606 | 3635 | 262 (+2: `fixes/r0d/pj_b9c_*` and `pj_b9d_*`, which both pipelines missed) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 108 (signed) | 128 | 463 | 9 |
 | R0d fix 2 (tier 2, the defaults) | 49747 of 57393 | 42437 | 88 | 12 (0.096 %, as R0d) | 2853 (signed) | 1707 | 10286 | 10 (as C3) |
+| R0e (tier 1, the defaults) | 4378 of 4670 | 3680 | 265 (+3: `fixes/r0e/u04_linear_result.wf`, `a14_child_failure.wf`, `a14b_child_failure_callee.wf`, which the old pipeline misses) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 112 (+4, ledgered; `signed_by` UNSIGNED, the review signs) | 128 | 475 (+12, ledgered) | 9 |
+| R0e (tier 2, the defaults) | 53648 of 57393 | 40462 | 88 | 12 (0.096 %, the rows of R0d) | 3441 (+588 in four classes of R0e, `signed_by` UNSIGNED) | 1824 | 11556 (ledgered) | 10 (as C3) |
+| R0e fix (tier 1, the defaults) | 4421 of 4713 | 3709 | 269 (+4: `fixes/r0e/or7_rc`, `or7_handler`, `or7_handler_value`, `or7_handler_fail`, which the old pipeline misses) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 116 (+4, ledgered; `signed_by` UNSIGNED, the review signs) | 128 | 481 (+6, ledgered) | 9 |
+| R0e fix (tier 2, the defaults) | 53648 of 57393 | 40461 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1824 | 11557 (+1, `p43726.wf`, ledgered) | 10 (as C3) |
+| R0e fix 2 (tier 1, the defaults) | 4439 of 4740 | 3723 | 269 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 117 (+1, `rv1_o1_ok.wf`, UNSIGNED; the R0e rows signed) | 128 | 493 (+12, ledgered) | 9 |
+| R0e fix 2 (tier 2, the defaults) | 53644 of 57393 | 40476 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1822 | 11544 | 10 (as C3) |
+| R0e fix 3 (tier 1, the defaults) | 4460 of 4765 | 3740 | 269 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 122 (+5, the `h19_*` clean twins, UNSIGNED) | 128 | 496 (+3, ledgered) | 9 |
+| R0e fix 3 (tier 2, the defaults) | 53644 of 57393 | 40476 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1822 | 11544 | 10 (as C3) |
+| R0e fix 4 (tier 1, the defaults) | 4477 of 4782 | 3744 | 269 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 128 (+6, UNSIGNED; the rows of the R0e fix and of fix 2 signed) | 128 | 503 (+7, ledgered) | 9 |
+| R0e fix 4 (tier 2, the defaults) | 53644 of 57393 | 40476 | 88 | 12 (0.096 %, as R0e) | 3441 (as R0e) | 1822 | 11544 | 10 (as C3) |
+| R0f (tier 1, the defaults) | 4570 of 4826 | 3741 | 274 (+5: `fixes/r0f/c10_generic`, `c26c`, `c29`, `c29e`, `c29g`, which the old pipeline misses) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 134 (+6, UNSIGNED) | 128 | 539 (+36, ledgered) | 9 |
+| R0f (tier 2, the defaults) | 53848 of 57393 | 40368 | 88 | 12 (0.096 %, as R0e) | 3443 (+2, UNSIGNED) | 1823 | 11649 (+105, ledgered) | 10 (as C3) |
+| R0f fix (tier 1, the defaults) | 4574 of 4834 | 3747 | 274 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 135 (+1, UNSIGNED; the rows of R0f signed) | 128 | 540 (+1, ledgered) | 9 |
+| R0f fix (tier 2, the defaults) | 53847 of 57393 | 40371 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0f; signed) | 1824 (+1, ledgered) | 11645 | 10 (as C3) |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

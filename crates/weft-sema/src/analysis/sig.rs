@@ -231,6 +231,8 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                 writes: access.clone(),
                 reads: access.clone(),
                 foreign: true,
+                tasks: Vec::new(),
+                no_body: true,
             };
             join_run(
                 &mut inf.runs,
@@ -246,6 +248,9 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     maybe: false,
                     then: true,
                     after: std::collections::BTreeSet::new(),
+                    during: super::summary::Wait::default(),
+                    via_only: false,
+                    via: Vec::new(),
                 },
             );
             inf.ret_fns.insert(RetFn::Param(u(i)));
@@ -441,6 +446,9 @@ pub fn intrinsic(decl: &FnDecl, tys: &TyTable, i: weft_ir::Intrinsic) -> Summary
                 // `with_timeout` can fail after the block started (5.31).
                 then: i == weft_ir::Intrinsic::WithTimeout,
                 after: std::collections::BTreeSet::new(),
+                during: super::summary::Wait::default(),
+                via_only: false,
+                via: Vec::new(),
             });
         }
     }
@@ -833,14 +841,24 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         x.args.len(),
         x.how.clone(),
         x.after.len(),
+        x.during.clone(),
+        (x.via_only, x.via.clone()),
     );
     x.many |= r.many;
+    join_via(x, r);
     x.task |= r.task;
     x.then |= r.then;
     x.how.thread |= r.how.thread;
     x.how.foreign |= r.how.foreign;
+    x.how.no_body |= r.how.no_body;
     x.how.twice |= r.how.twice;
     x.how.with.extend(r.how.with.iter().copied());
+    for &t in &r.how.tasks {
+        if !x.how.tasks.contains(&t) {
+            x.how.tasks.push(t);
+        }
+    }
+    x.how.tasks.sort_unstable();
     for w in &r.how.writes {
         if !x.how.writes.contains(w) {
             x.how.writes.push(w.clone());
@@ -853,6 +871,17 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
     }
     x.how.writes.sort();
     x.how.reads.sort();
+    for (have, more) in [
+        (&mut x.during.writes, &r.during.writes),
+        (&mut x.during.reads, &r.during.reads),
+    ] {
+        for w in more {
+            if !have.contains(w) {
+                have.push(w.clone());
+            }
+        }
+        have.sort();
+    }
     x.multi |= r.multi;
     x.maybe |= r.maybe;
     x.after.extend(r.after.iter().copied());
@@ -872,7 +901,27 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
             x.args.len(),
             x.how.clone(),
             x.after.len(),
+            x.during.clone(),
+            (x.via_only, x.via.clone()),
         )
+}
+
+/// Joins the parts `via_only` and `via` of run `r` into run `x` (stage R0e
+/// fix 3): a run that is not only a value for code of a caller makes the
+/// join a run of its own, and one argument that two runs give is `again`.
+fn join_via(x: &mut Run, r: &Run) {
+    x.via_only &= r.via_only;
+    for v in &r.via {
+        match x
+            .via
+            .iter_mut()
+            .find(|w| (w.value, w.capture, w.arg) == (v.value, v.capture, v.arg))
+        {
+            Some(w) => w.again |= v.again,
+            None => x.via.push(v.clone()),
+        }
+    }
+    x.via.sort();
 }
 
 /// True if code of a caller of the function values of type `t` can resume
@@ -918,6 +967,14 @@ pub fn from_signature(
     let mut inf = Inferred::of_signature(sig, decl, tys);
     if !body {
         foreign_fn_parts(decl, tys, &mut inf);
+        // A foreign function can run a function value on another thread
+        // (the old lowering, `Lower::callee_task_runs`, stage R0f); a
+        // function of the prelude (`http.serve`) pins its tasks.
+        if foreign {
+            for r in &mut inf.runs {
+                r.how.thread = true;
+            }
+        }
         // A function with no body that performs can give a place of its
         // frame to an operation (plan stage F15).
         inf.gives_frame = !inf.named.is_empty();

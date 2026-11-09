@@ -1,0 +1,10 @@
+// H19: `g` comes from a struct field (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+struct G { g: fn(fn()) }
+fn run2(s: G, f: fn()) { let g = s.g
+ g(f)
+ g(f) }
+fn main() {
+    let v = [1]
+    run2(G { g: |x| x() }, || take(v))
+}

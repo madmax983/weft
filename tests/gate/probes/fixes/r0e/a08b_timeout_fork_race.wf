@@ -1,0 +1,7 @@
+// Stage R0e: two branches of a `fork` in a `with_timeout` block write the same place (W0405).
+struct C { k: u64 }
+fn main() / async, fail, par {
+    let c = C { k: 0 }
+    with_timeout(1.s) { fork(|| c.k += 1, || c.k += 2) }
+    print(c.k)
+}

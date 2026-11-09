@@ -1,0 +1,8 @@
+// The callee gives two values to code of the caller, which spawns both: one writes n, one reads n.
+struct C { k: u64 }
+fn mid(g: fn(fn(), fn()), f: fn(), h: fn()) / async { g(f, h) }
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|x, y| { scope { s => s.spawn(x); s.spawn(y); () } }, || c.k += 1, || print(c.k))
+    print(c.k)
+}

@@ -158,6 +158,21 @@ pub struct Handlers {
     /// the runs of the spawn (plan stage F18, `super::tasks`): `ScopeWait`
     /// gives it to the `TaskResult` local of a spawn statement.
     pub task_values: BTreeMap<weft_ir::SpawnId, Tree>,
+    /// The scopes that the scope operand of each spawn site with no scope
+    /// of its own (`SpawnDecl::scope` is `None`) can be, a join over the
+    /// runs of the spawn (stage R0e, `super::tasks::SiteScope`).
+    pub site_scopes: BTreeMap<weft_ir::SpawnId, super::tasks::SiteScope>,
+    /// The `ScopeWait` nodes of each scope in the facts, with the node after
+    /// each (stage R0e): a task of a spawn site that the analysis of a
+    /// closure body finds later ends there too.
+    pub scope_waits: Vec<(
+        weft_ir::ScopeId,
+        weft_facts::NodeId,
+        Option<weft_facts::NodeId>,
+    )>,
+    /// The nodes where the cleanup chain of a scope body joins the tasks of
+    /// the scope (stage R0e, as [`Self::scope_waits`]).
+    pub scope_unwinds: Vec<(weft_ir::ScopeId, weft_facts::NodeId)>,
     /// The task of each spawn site of the component in the facts (plan
     /// stage F18).
     pub task_ids: BTreeMap<weft_ir::SpawnId, weft_facts::TaskId>,
