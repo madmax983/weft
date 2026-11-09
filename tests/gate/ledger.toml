@@ -8823,14 +8823,14 @@ files = [
     "tests/gate/probes/fixes/r0e/m5_ok.wf",
 ]
 reason = "stage R0e: the old pipeline gives W0503 for the scope capability `s` that is live across a `multi` operation in the scope body of a closure. The `ir` pipeline does not make the scope capability a `once` value (I3-8, docs/ir.md 5.29, follow-up F19.1, as for a scope in a function body): a `multi` resume runs each copy of the scope body with its own children. The interpreter runs each program with no fault (seeds 1 to 3, both engines; `m1_pick_before_spawn` moves `v` into the task in each copy of the frame)"
-signed_by = "UNSIGNED: the author of stage R0e; the independent review of R0e must sign this row or reject it"
+signed_by = "reviewer R0e: the scope capability is not once (I3-8); the variants m01, m03, m04 are held, m02, m06 and c02 run clean; no fault seeds 1-12, both engines"
 stage = "R0e"
 
 [[entry]]
 class = "lost-clean"
 files = ["tests/gate/probes/verify/partb/S3/p/rt22b.wf"]
 reason = "stage R0e: `let_plain` binds the value of a scope whose tail is a spawn: the handle of a task that ended at `ScopeWait`, with a result that is not linear. The `ir` pipeline makes such a handle a value that is not linear (docs/ir.md 6.4, F18), so it gives no W0601; the old pipeline gives W0601. The program was out of scope for `closure_plain` (a scope in a closure); the function-body form is the same at HEAD. No `main`; a run of the shapes with a `main` has no fault"
-signed_by = "UNSIGNED: the author of stage R0e; the independent review of R0e must sign this row or reject it"
+signed_by = "reviewer R0e: the dropped handle of an ended task with a u64 result is not linear; l01 runs clean, l02 (a linear result) is W0601; no fault seeds 1-12, both engines"
 stage = "R0e"
 
 # Stage R0e, tier 2: the rows of the programs that R0e brings into scope.
@@ -9176,7 +9176,7 @@ files = [
     "verify/s5/R3a/h_gen4/p70365.wf",
 ]
 reason = "stage R0e, tier 2 (336 programs): class R0E-T2-TASK: a task of a scope in a closure body (often the block of `apply`, or a spawn in a clause of a handler in a closure) is joined before the code that the old pipeline flags: through a tuple (`let (t, _) = pt`), a callee (`join_it(t)`), a `join` in a closure that a callee runs, or the end of the scope; or the access is to another field. The `ir` facts end the task at the join (O3-9, the R0D-T2-TASK class of R0d). `ereview/ev.sh`: no fault on seeds 1 to 3 with the `ir` engine nor with the `ast` engine, fact oracle ok"
-signed_by = "UNSIGNED: the author of stage R0e; the independent review of R0e must sign this row or reject it"
+signed_by = "reviewer R0e: 20 sampled (r0erev/samp_TASK.list), 0 faults; the task is joined before the flagged access; no fault seeds 1-12, both engines"
 stage = "R0e"
 
 [[entry]]
@@ -9328,7 +9328,7 @@ files = [
     "verify/s5/R3a/h_gen4/p70320.wf",
 ]
 reason = "stage R0e, tier 2 (144 programs): class R0E-T2-REF: the reference that the old pipeline flags (W0301) is made or used after the task of a scope in a closure body ended (a `join`, the end of the scope), or into a place that the task does not change. The `ir` facts give the task its end in the closure (the scope body splices into the closure body). `ereview/ev.sh`: no fault on seeds 1 to 3 with both engines, fact oracle ok"
-signed_by = "UNSIGNED: the author of stage R0e; the independent review of R0e must sign this row or reject it"
+signed_by = "reviewer R0e: 20 sampled (r0erev/samp_REF.list), 0 faults; the reference is used after the task of the closure ended; no fault seeds 1-12, both engines"
 stage = "R0e"
 
 [[entry]]
@@ -9355,7 +9355,7 @@ files = [
     "verify/s5/R3a/h_gen4/p70265.wf",
 ]
 reason = "stage R0e, tier 2 (19 programs): class R0E-T2-ARGS (as R0D-T2-ARGS of R0d): a callee gets a reference and a closure with a scope or a task that changes another part, or that it does not run while it holds the reference; the summary of the callee and of the closure show it, so W0312 of the old pipeline is a false positive. `ereview/ev.sh`: no fault on seeds 1 to 3 with both engines"
-signed_by = "UNSIGNED: the author of stage R0e; the independent review of R0e must sign this row or reject it"
+signed_by = "reviewer R0e: all 19 run, 0 faults; the callee does not run the closure while it holds the reference; no fault seeds 1-12, both engines"
 stage = "R0e"
 
 [[entry]]
@@ -9451,7 +9451,7 @@ files = [
     "verify/s5/R3a/h_gen3/p70554.wf",
 ]
 reason = "stage R0e, tier 2 (88 programs): class R0E-T2-ONCE: a closure with a scope that moves a linear value into a task, and that a callee runs once on each path (`apply`; R0D-T2-ONCE of R0d); a closure with its own handler of a `multi` operation or with its own `Fail` handler, run as a block (O3-8); the scope capability across a `multi` operation in a closure (I3-8, not a `once` value in the `ir` pipeline). The old pipeline gives W0601, W0602 or W0503. `ereview/ev.sh`: no fault on seeds 1 to 3 with both engines, fact oracle ok"
-signed_by = "UNSIGNED: the author of stage R0e; the independent review of R0e must sign this row or reject it"
+signed_by = "reviewer R0e: 20 sampled (r0erev/samp_ONCE.list), 0 faults; the callee runs the closure once on each path, or the multi handler is local to the closure; no fault seeds 1-12, both engines"
 stage = "R0e"
 
 [[entry]]
@@ -9632,3 +9632,49 @@ files = [
 reason = "stage R0e fix (OR7): the clean twins of the probes of the fix. The old pipeline gives W0312: the closure argument captures the local that the callee changes through a reference argument. The `ir` pipeline accepts them, as at R0e (its precision since C3): the task ends before the run (`or7_local_ref_ok`), the callee has no task (`or7_seq_ok`), the value that reads the local runs before the task starts (`or7_two_values_ok`), or the value reads another field than the task changes (`or7_field_ok`). The interpreter runs each program with no fault (seeds 1 to 3, both engines, `ereview/ev.sh`)"
 signed_by = "UNSIGNED: the author of the R0e fix; the independent review must sign this row or reject it"
 stage = "R0e fix"
+
+# Stage R0e fix 2: the holes B1, B2, O1 and O2 of the review of R0e.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/192_clause_scope_tasks.wf"]
+codes = ["W0405"]
+reason = "stage R0e fix 2: the corpus file of a scope body in a clause (B1 of the review of R0e), a task of a clause of a handler in a closure (O1) and a `once` value that a callee spawns two times (O2). The `ir` pipeline gives the markers of the bad cases. The old pipeline also gives W0405 at the line of the clause in a closure, in the clean case too: the handled body does not access `c`; the run of the clean cases has no race. Rejected in both"
+stage = "R0e fix 2"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/rv1_b1_d08.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d08b.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d08c.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d17.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d22.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d23.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_d24.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b1_n02.wf",
+    "tests/gate/probes/fixes/r0e/rv1_o1_d06c.wf",
+    "tests/gate/probes/fixes/r0e/rv1_o1_d10.wf",
+    "tests/gate/probes/fixes/r0e/rv1_o1_d26.wf",
+]
+codes = ["W0405"]
+reason = "stage R0e fix 2 (B1 and O1 of the review of R0e): a task that a clause starts on an outer scope (in a scope body of the clause, or in a clause of a handler in a closure) starts at the node that runs the clause, or at the node that runs the closure. Both pipelines give W0405 at the access after that node (the race of the run); the old pipeline also gives W0405 at the line of the clause, where the `ir` pipeline has the task start. One row in place of two for the same race. Rejected in both"
+stage = "R0e fix 2"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0e/rv1_o1_ok.wf"]
+reason = "stage R0e fix 2 (the clean twin of O1): the clause of the handler in the closure spawns on the scope of the maker and resumes; the handled body does not access `c`, and the write comes after the scope. The old pipeline gives W0405 at the line of the clause; the `ir` pipeline starts the task at the run of the closure and ends it at the end of the scope, so no access overlaps it. The interpreter runs it with no fault (seeds 1 to 3, both engines)"
+signed_by = "UNSIGNED: the author of R0e fix 2; the independent review must sign this row or reject it"
+stage = "R0e fix 2"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/fixes/r0e/rv1_cs2_ok.wf",
+    "tests/gate/probes/fixes/r0e/rv1_cs2_scope_in_clause_write.wf",
+    "tests/programs/192_clause_scope_tasks.wf",
+]
+reason = "stage R0e fix 2: a scope with no task in a clause does not raise (stage C1.5: as a scope with no task in a function body); the old inference says `raises` for each scope"
+stage = "R0e fix 2"

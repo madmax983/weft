@@ -1753,6 +1753,7 @@ fn closure_summary(
         )
     };
     let mut runs = runs;
+    let mut clause_started: Vec<u32> = Vec::new();
     // The clauses inside the closure body (stage R0d): their facts, then the
     // code of each clause at the nodes that run it, as in [`emit_parts`].
     if nested {
@@ -1769,7 +1770,7 @@ fn closure_summary(
         let (mut stored, mut cruns, mut escs) = (Vec::new(), Vec::new(), Vec::new());
         let (mut w0314, mut ends, mut frames_of) = (Vec::new(), Vec::new(), Vec::new());
         for c in clauses {
-            let (_, _, _, r) = emit_clause(
+            let (_, _, _, r, st) = emit_clause(
                 &ClosureCx {
                     a,
                     p,
@@ -1801,6 +1802,7 @@ fn closure_summary(
             // A run of a value of the interface in a clause is `many`: the
             // clause runs at each perform of its operation.
             runs.extend(r);
+            clause_started.extend(st);
         }
         // The clauses of the handlers outside the closure run at the node
         // that runs the closure: not in these facts.
@@ -1901,6 +1903,7 @@ fn closure_summary(
     // ends in the run of the closure: it is no task of the part `tasks`.
     let mut started: Vec<u32> = started
         .into_iter()
+        .chain(clause_started)
         .filter(|&s| {
             let s = weft_ir::SpawnId(s);
             !handlers::owned_site(p, cb, s) && !handlers::owned_by_value(p, cb, &site_scopes, s)
@@ -2171,7 +2174,7 @@ fn emit_closure(
                 escapes: &[],
                 task_ids: cx.task_ids,
             };
-            let (entry, stored, union, _runs) =
+            let (entry, stored, union, _runs, _started) =
                 emit_clause(&ccx, out, (&mut hx, &frames, &splices), c)?;
             inner.push(InnerClause {
                 body: c,
@@ -2281,6 +2284,7 @@ type ClauseOut = (
     Vec<templates::Stored>,
     crate::analysis::State,
     Vec<(crate::analysis::transfer::RunOf, bool)>,
+    Vec<u32>,
 );
 
 /// The facts of clause body `cb` (plan stage F14): its nodes (with the
@@ -2449,7 +2453,11 @@ fn emit_clause(
         .into_iter()
         .map(|(r, _)| (r, true))
         .collect();
-    Ok((en, stored, union, runs))
+    // The spawn sites of the tasks that the clause starts (stage R0e fix 2):
+    // in a closure body, a task of a scope of the maker is a task of the part
+    // `tasks` of the closure.
+    let started = std::mem::take(&mut em.started);
+    Ok((en, stored, union, runs, started))
 }
 
 /// The facts of one component and the tables that map its IR to them

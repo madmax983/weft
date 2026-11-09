@@ -1,0 +1,7 @@
+// Stage R0e fix 2 (B2: the twin of rv1_b2_h19 with one run; the old pipeline checks it and gives W0502 (a false positive of the old pipeline, as before R0e)).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run1(g: fn(fn()), f: fn()) / async { g(f) }
+fn main() / async {
+    let v = [1]
+    run1(|x| scope { s => s.spawn(x); () }, || take(v))
+}

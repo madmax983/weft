@@ -4082,6 +4082,29 @@ fn call_tasks(
         em.in_task = None;
         let frames = frames?;
         end_frames(em, &at_s, &frames);
+        // A `once` value that the callee runs as a task more than once: two
+        // tasks at the same time (two spawns, a spawn in a loop,
+        // `TaskHow::twice`), or one task after the other (`Run::many` of a
+        // body that the callee has; a foreign run is the worst way of code
+        // of a caller, not a second run). The first start moves it, and the
+        // second start uses it (W0502; hole O2 of the review of R0e).
+        // Only the value of the parameter itself: a value that it runs gets
+        // its runs from the summary of the value.
+        let own = args.get(run.param as usize);
+        for app in &mine {
+            if run.how.twice || (run.many && !run.how.foreign) {
+                for (mb, op) in app
+                    .once_args
+                    .iter()
+                    .filter(|(mb, op)| *mb == body && Some(op) == own)
+                {
+                    for v in once_vars(em, st, *mb, op)? {
+                        em.facts.moved_at.push((v, s));
+                        em.facts.uses.push((v, d));
+                    }
+                }
+            }
+        }
         let roots = &*em.roots;
         let shared = |q: PlaceId| {
             em.facts.places.get(q.index()).is_none_or(|i| {

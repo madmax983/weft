@@ -2751,6 +2751,11 @@ pub fn cell_values<'r>(
     Ok((places, held))
 }
 
+/// The reason of the fallback for a value that a value of a callee runs as a
+/// task (stage R0e fix 2).
+const NESTED_TASK_RUN: &str =
+    "a function value that a function value of a callee runs as a task (stage R0e fix 2)";
+
 /// The reason for a function value that code of a caller can run as a task.
 const TASK_RUN: &str =
     "a function value that changes places or holds a nonportable value, and that code of a caller can run on another thread (stage F18)";
@@ -2871,6 +2876,14 @@ fn apply_runs(
             open.insert(key);
             continue;
         };
+        // A function value that a value of the callee runs as a task (a
+        // closure with a scope that spawns a value of its maker, and a callee
+        // or `sim.run` runs the closure): the run node has no task nodes for
+        // it, and a plain run of it loses the second run of a `once` value
+        // (W0502). The old pipeline checks the program (stage R0e fix 2).
+        if run.task && depth > 0 && !fns.is_empty() {
+            return Err(AlphaError::Later(NESTED_TASK_RUN));
+        }
         if fns.is_empty() {
             open.insert(key);
         }
@@ -2951,18 +2964,9 @@ fn apply_runs(
                     have.dedup();
                 }
                 // The callee runs the value as a task: the run node applies
-                // it at its task nodes (plan stage F19). A value that a value
-                // of the callee runs as a task (a closure with a scope that
-                // spawns a value of its maker, stage R0e) has no task nodes
-                // at the run node: it applies there, and the body runs the
-                // value as a task (`RunOf::task`), so a caller checks the
-                // value that it gives in the worst way (`TaskHow::foreign`).
+                // it at its task nodes (plan stage F19).
                 if run.task {
-                    if depth == 0 {
-                        a.task_run = Some(index);
-                    } else if let Some(x) = a.run.as_mut() {
-                        x.task = true;
-                    }
+                    a.task_run = Some(index);
                 }
                 if !run.capture {
                     a.callee_param = Some(run.param);

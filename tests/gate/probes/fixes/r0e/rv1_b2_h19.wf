@@ -1,0 +1,7 @@
+// Stage R0e fix 2 (B2 of the review: a callee runs a closure two times, and the closure spawns the once value of the caller: the old pipeline checks the program (W0502)).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(g: fn(fn()), f: fn()) / async { g(f); g(f) }
+fn main() / async {
+    let v = [1]
+    run2(|x| scope { s => s.spawn(x); () }, || take(v))
+}

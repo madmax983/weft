@@ -2788,11 +2788,30 @@ scope):
 - A value that a value of a callee runs as a task (a closure with such a scope that a
   callee, `sim.run` or `with_timeout` runs, and that spawns a value of its maker; also a
   closure that calls a callee that runs a value of the closure as a task) has no task
-  nodes at the call: the call applies it as plain code, and the body runs the value as a
-  task in the worst way (`RunOf::task`, `TaskHow::foreign`; `transfer::apply_runs` sets
-  `task_run` only for a run of the callee itself). Before R0e the call dropped such a
-  run: the caller missed W0314 (`fixes/r0e/a13c_callee_bg_param.wf`, a hole of R0d that
-  the old pipeline catches).
+  nodes at the call. Before R0e the call dropped such a run: the caller missed W0314
+  (`fixes/r0e/a13c_callee_bg_param.wf`, a hole of R0d that the old pipeline catches).
+  R0e applied it as plain code, but a plain run loses the second run of a `once` value
+  (W0502, B2 of the review of R0e: `fixes/r0e/rv1_b2_*`). As built (stage R0e fix 2): the
+  program is not in scope (`transfer::apply_runs` at depth > 0 for a run as a task with
+  function values, "a function value that a function value of a callee runs as a
+  task"; a run with no function value, as a capture that holds none, stays). A run of the callee itself as a task
+  applies at its task nodes (`task_run`).
+- A `once` value that a callee runs as a task more than once (two tasks at the same
+  time, `TaskHow::twice`, or one after the other, `Run::many` of a callee with a body):
+  the first task node moves the argument and the second one uses it (W0502; O2 of the
+  review of R0e, `fixes/r0e/rv1_o2_*`). A foreign run (the worst way of code of a
+  caller) is not a second run.
+- A scope body in a clause (stage R0e fix 2, B1 of the review of R0e): its code and its
+  spawns run at the nodes that run the clause, as the code of a handled body in the
+  clause (`handlers::clause_nodes`: the scope body maps to the block of its `scope`).
+  Before, `project` did not map the nodes of such a scope body: a write there (a hole
+  since C3, `fixes/r0e/rv1_cs2_*`) and a spawn on an outer scope (`rv1_b1_*`) did not
+  reach the node that runs the clause. A task that the clause also ends (a task of a
+  scope inside the clause) does not start at that node.
+- A clause of a handler in a closure body that spawns on a scope of the maker (O1 of
+  the review of R0e, since R0d): the task is in the part `tasks` of the closure
+  (`emit_clause` gives its spawn sites to `closure_summary`), so the node that runs the
+  closure starts it (`fixes/r0e/rv1_o1_*`).
 - A spawn in a scope body or a handled body inside a closure body or a clause, on a scope
   of the maker, starts its task at the node that runs the closure, as a spawn in the
   closure body itself (`handlers::frame_of_closure_or_clause`).

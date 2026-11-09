@@ -1,0 +1,8 @@
+// Stage R0e fix 2 (an older hole of the scope bodies in a clause: a write in a scope body in a clause invalidates r; W0301).
+effect Ask { fn ask() -> u64 }
+fn main() / async {
+    let v = [1, 2]
+    let r = &v[0]
+    let x = handle Ask { fn ask() { scope { t => v.push(3); () }; resume(0) } } in { let y = ask(); print(r); y }
+    print(x)
+}

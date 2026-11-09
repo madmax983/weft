@@ -1527,29 +1527,38 @@ fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet
         let mut at = key.body;
         for _ in 0..=p.bodies.len() {
             let x = p.bodies.get(at.index())?;
-            let BodyKind::Handled(h) = x.kind else {
+            // A handled body or a scope body splices into the clause at the
+            // terminator of its `handle` or `scope` (a scope body from stage
+            // R0e fix 2: its code and its spawns run at the nodes that run
+            // the clause too).
+            if !matches!(x.kind, BodyKind::Handled(_) | BodyKind::Scope(_)) {
                 return None;
-            };
+            }
             let site = x.parent?;
             if site == c {
                 let s = p.body(c)?;
-                let blk = s.blocks.iter().position(
-                    |blk| matches!(blk.term.kind, TermKind::Handle { handler, .. } if handler == h),
-                )?;
+                let blk = s
+                    .blocks
+                    .iter()
+                    .position(|blk| match (x.kind, &blk.term.kind) {
+                        (BodyKind::Handled(h), TermKind::Handle { handler, .. }) => *handler == h,
+                        (BodyKind::Scope(k), TermKind::Scope { scope, .. }) => *scope == k,
+                        _ => false,
+                    })?;
                 return Some((BlockId(u32::try_from(blk).ok()?), TERM, Phase::Main));
             }
             at = site;
         }
         None
     };
-    // The clause and the handled bodies that splice into it.
+    // The clause and the handled bodies and scope bodies that splice into it.
     let mut bodies = vec![c];
     let mut i = 0;
     while let Some(&x) = bodies.get(i) {
         i += 1;
         bodies.extend(ix.kids.get(&x).into_iter().flatten().copied().filter(|&k| {
             p.body(k)
-                .is_some_and(|d| matches!(d.kind, BodyKind::Handled(_)))
+                .is_some_and(|d| matches!(d.kind, BodyKind::Handled(_) | BodyKind::Scope(_)))
         }));
     }
     for (key, n) in ix.nodes(&bodies) {
@@ -1831,12 +1840,22 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
     // O3-12): it starts at each node that runs the part of the clause with
     // its spawn (the perform for the part before the first resume point,
     // `Post` for the part after it).
+    // A task that the clause also ends (a task of a scope inside the clause,
+    // stage R0e fix 2) starts and ends in the run of the clause: it does not
+    // start at the node that runs the clause.
     let mut starts = Vec::new();
     for &(task, n) in &facts.spawned_at {
         for r in &hx.runs {
             let Some((pre, post)) = regions.get(&r.clause) else {
                 continue;
             };
+            let inner = facts
+                .joined_at
+                .iter()
+                .any(|&(t, m)| t == task && (pre.contains(&m) || post.contains(&m)));
+            if inner {
+                continue;
+            }
             if (!r.post && pre.contains(&n)) || (r.post && post.contains(&n)) {
                 starts.push((task, r.node));
             }

@@ -1,0 +1,12 @@
+// Stage R0e fix 2 (B1: a callee runs the closure of d08 (W0405)).
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+fn later(f: fn()) { f() }
+fn main() / async {
+    let c = C { k: 0 }
+    later(|| scope { s =>
+        let x = handle Ask { fn ask() { scope { t => s.spawn(|| c.k += 1); () }; resume(1) } } in { ask() }
+        c.k += 2
+    })
+    print(c.k)
+}
