@@ -1,0 +1,13 @@
+// Stage R0e (multi re-entry): a `multi` operation between a spawn and its join in a closure: the second run joins the handle again (W0503).
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let f = || scope { s =>
+            let h = s.spawn(|| 1)
+            let b = pick()
+            print(h.join())
+        }
+        f()
+    }
+}

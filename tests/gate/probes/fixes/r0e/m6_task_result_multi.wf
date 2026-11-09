@@ -1,0 +1,16 @@
+// Stage R0e (multi re-entry): a `multi` operation between a spawn statement and the end of its scope in a closure body: the scope has a child (W0503, I3-8).
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+linear struct Lock { id: u64 }
+fn mk() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn main() / async {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let f = || scope { s =>
+            let h = s.spawn(|| mk())
+            let b = pick()
+            release(h.join())
+        }
+        f()
+    }
+}

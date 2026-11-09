@@ -1,0 +1,17 @@
+// Stage R0e (E3): the scope capability in an `Option`; the task races with the scope body (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { s =>
+        let o = Some(s)
+        match o {
+            Some(a) => {
+                a.spawn(|| c.k += 1)
+                ()
+            },
+            None => (),
+        }
+        c.k += 2
+    }
+    print(c.k)
+}

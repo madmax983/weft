@@ -1,0 +1,9 @@
+// Stage R0e: a spawn in a scope in a clause of a handler in a closure body; the task and the clause write `c.k` (W0405).
+effect Ask { fn ask() -> u64 }
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || handle Ask { fn ask() { scope { s => s.spawn(|| c.k += 1); c.k += 5 }; resume(1) } } in { ask() }
+    print(f())
+    print(c.k)
+}

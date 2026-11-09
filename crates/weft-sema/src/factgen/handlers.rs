@@ -138,17 +138,19 @@ pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
     at
 }
 
-/// True if body `b` splices into a function body, a test body or a clause.
+/// True if body `b` splices into a function, test, clause or closure body.
 ///
 /// `b` is such a body, or a handled body or a scope body whose site is one (through each
 /// such body on the way). A scope and the task terminators are in scope
 /// only there (plan stage F18; a clause from plan stage F19: the facts of
-/// a clause body splice its scope bodies too).
+/// a clause body splice its scope bodies too; a closure body from stage
+/// R0e: the facts of a closure splice its scope bodies, as its handled
+/// bodies from stage R0d).
 pub fn spliceable(p: &Program, b: BodyId) -> bool {
     p.body(splice_root(p, b)).is_some_and(|r| {
         matches!(
             r.kind,
-            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Clause(..)
+            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Clause(..) | BodyKind::Closure(_)
         )
     })
 }
@@ -162,6 +164,44 @@ pub fn maker_scope(p: &Program, site: weft_ir::SpawnId) -> bool {
         .and_then(|d| d.scope)
         .and_then(|k| p.scopes.get(k.index()))
         .is_some_and(|d| spliceable(p, d.body))
+}
+
+/// True if the spawn site `site` does not name its scope and the analysis
+/// finds that its scope is a scope of the closure body `cb` (stage R0e, as
+/// [`owned_site`]).
+pub fn owned_by_value(
+    p: &Program,
+    cb: BodyId,
+    site_scopes: &std::collections::BTreeMap<weft_ir::SpawnId, crate::analysis::tasks::SiteScope>,
+    site: weft_ir::SpawnId,
+) -> bool {
+    p.spawns
+        .get(site.index())
+        .is_some_and(|d| !d.fork && d.scope.is_none())
+        && site_scopes
+            .get(&site)
+            .and_then(crate::analysis::tasks::SiteScope::one)
+            .and_then(|k| p.scopes.get(k.index()))
+            .is_some_and(|d| super::alpha::unit_root(p, d.body) == cb)
+}
+
+/// True if body `b` splices into a closure body or a clause ([`splice_root`],
+/// stage R0e): a spawn there on a scope of a maker starts its task at the
+/// node that runs the closure or the clause.
+pub fn frame_of_closure_or_clause(p: &Program, b: BodyId) -> bool {
+    p.body(splice_root(p, b))
+        .is_some_and(|r| matches!(r.kind, BodyKind::Closure(_) | BodyKind::Clause(..)))
+}
+
+/// True if the spawn site `site` starts its task in a scope whose scope
+/// body is a body of the closure body `cb` (`super::alpha::unit_root`,
+/// stage R0e): the task starts and ends in a run of the closure.
+pub fn owned_site(p: &Program, cb: BodyId, site: weft_ir::SpawnId) -> bool {
+    p.spawns
+        .get(site.index())
+        .and_then(|d| d.scope)
+        .and_then(|k| p.scopes.get(k.index()))
+        .is_some_and(|d| super::alpha::unit_root(p, d.body) == cb)
 }
 
 /// True if the spawn site `site` of body `b` starts its task in a scope

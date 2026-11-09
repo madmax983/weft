@@ -1,0 +1,10 @@
+// Stage R0e (multi re-entry): a `multi` handler inside the closure; the rest of its handled body moves `v` into a task twice (W0503).
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    let v = [1]
+    let f = || handle Pick { fn pick() { resume(true); resume(false) } } in {
+        scope { s => let b = pick(); s.spawn(|| take(v)); () }
+    }
+    f()
+}

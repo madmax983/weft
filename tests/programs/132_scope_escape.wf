@@ -2,13 +2,19 @@
 // `s`, as a closure that captures `&s` does. The end of the scope ends `s`, so
 // the closure is invalid after it (W0301). Else a call of the closure after the
 // scope would start a task that no scope joins (ADR 0006).
+// Stage R0e: the `ir` pipeline checks this program (a spawn on a capability in
+// a tuple or an `Option`). The default markers are its result; `old:` is the old
+// pipeline. A task that a closure starts after the end of its scope runs to the
+// end of the function (W0405 at the end of `st`). The task of `tuple_inside`
+// captures `b` of the closure body: the end of `b` is a conflict (as for a named
+// scope, `templates::task_captures`). Ledger `changed`, stage R0e.
 struct Stats { count: u64 }
 struct Job { f: fn() }
 
 fn run_it(f: fn()) { f() }
 
 // The closure goes to a local outside the scope.
-fn escape(st: &Stats) / mut(st), async {
+fn escape(st: &Stats) / mut(st), async {   //~ W0405 old:
     let keep = || print(0)
     scope { s =>
         keep = || {
@@ -20,21 +26,21 @@ fn escape(st: &Stats) / mut(st), async {
 }
 
 // The closure is the value of the scope.
-fn as_value(st: &Stats) / mut(st), async {
+fn as_value(st: &Stats) / mut(st), async {   //~ W0405 old:
     let k = scope { s => || { s.spawn(|| st.count += 1); () } }   //~ W0301
-    k()
+    k()   //~ W0301 old:
 }
 
 // The closure goes to a field of a local outside the scope.
-fn as_field(st: &Stats) / mut(st), async {
+fn as_field(st: &Stats) / mut(st), async {   //~ W0405 old:
     let j = Job { f: || print(0) }
     scope { s => j.f = || { s.spawn(|| st.count += 1); () } }
-    let g = j.f   //~ W0301
+    let g = j.f   //~ old: W0301
     g()   //~ W0301
 }
 
 // The closure captures a tuple that holds the scope capability.
-fn in_tuple(st: &Stats) / mut(st), async {
+fn in_tuple(st: &Stats) / mut(st), async {   //~ W0405 old:
     let keep = || print(0)
     scope { s =>
         let t = (s, 1)
@@ -48,7 +54,7 @@ fn in_tuple(st: &Stats) / mut(st), async {
 }
 
 // The closure captures an `Option` that holds the scope capability.
-fn in_option(st: &Stats) / mut(st), async {
+fn in_option(st: &Stats) / mut(st), async {   //~ W0405 old:
     let keep = || print(0)
     scope { s =>
         let o = Some(s)
@@ -81,7 +87,7 @@ fn tuple_inside(st: &Stats) / mut(st), async {
             let (a, b) = t
             a.spawn(|| st.count += b)
             ()
-        }
+        }   //~ W0405 old:
         run_it(f)
     }
 }

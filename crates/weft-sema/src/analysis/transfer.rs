@@ -1292,8 +1292,12 @@ pub fn term(
             super::clause::call_clauses(cx, (body, block), before.as_ref(), st, t)
         }
         TermKind::Spawn {
-            site, task, dest, ..
-        } => super::tasks::spawn(cx, (body, block), st, *site, task, dest.as_ref()),
+            site,
+            scope,
+            task,
+            dest,
+            ..
+        } => super::tasks::spawn(cx, (body, block), st, (*site, scope), task, dest.as_ref()),
         TermKind::Join { task, dest, .. } => {
             // A child failure runs the `fail` clause of a local handler.
             let before = super::clause::runs_clauses(cx, body, t).then(|| st.clone());
@@ -2909,9 +2913,18 @@ fn apply_runs(
                 a.late = true;
                 a.then |= run.then;
                 // The callee runs the value as a task: the run node applies
-                // it at its task nodes (plan stage F19).
+                // it at its task nodes (plan stage F19). A value that a value
+                // of the callee runs as a task (a closure with a scope that
+                // spawns a value of its maker, stage R0e) has no task nodes
+                // at the run node: it applies there, and the body runs the
+                // value as a task (`RunOf::task`), so a caller checks the
+                // value that it gives in the worst way (`TaskHow::foreign`).
                 if run.task {
-                    a.task_run = Some(index);
+                    if depth == 0 {
+                        a.task_run = Some(index);
+                    } else if let Some(x) = a.run.as_mut() {
+                        x.task = true;
+                    }
                 }
                 if !run.capture {
                     a.callee_param = Some(run.param);

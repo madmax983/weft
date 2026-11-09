@@ -1,0 +1,12 @@
+// Stage R0e (multi re-entry): the clean twin of m4: the `multi` operation comes after the scope.
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    let v = [1]
+    let f = || handle Pick { fn pick() { resume(true); resume(false) } } in {
+        scope { s => s.spawn(|| take(v)); () }
+        let b = pick()
+        ()
+    }
+    f()
+}

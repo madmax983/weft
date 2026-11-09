@@ -1,0 +1,5 @@
+// Stage R0e (E3): the scope capability is the value of the scope; a spawn on it after the end of the scope (W0301).
+fn main() / async {
+    let k = scope { s => s }
+    k.spawn(|| print(1))
+}

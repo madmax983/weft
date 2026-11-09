@@ -1,0 +1,6 @@
+// Stage R0e: the clean twin of a09: the caller joins the handle.
+fn main() / async {
+    let f = || scope { s => s.spawn(|| 1) }
+    let h = f()
+    print(h.join())
+}

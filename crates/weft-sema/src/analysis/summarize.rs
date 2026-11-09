@@ -191,36 +191,7 @@ pub fn summarize(
     // A run that code of a caller can do on another thread (a value that
     // an unknown function value reaches, `task` with no task of the body):
     // the worst way, as a foreign function.
-    for r in &mut runs {
-        if r.task
-            && !fv
-                .task_hows
-                .iter()
-                .any(|h| h.param == r.param && h.capture == r.capture)
-        {
-            r.how.foreign = true;
-        }
-    }
-    for h in fv.task_hows {
-        let Some(r) = runs
-            .iter_mut()
-            .find(|r| r.param == h.param && r.capture == h.capture && !r.result)
-        else {
-            continue;
-        };
-        r.task = true;
-        r.how.thread |= h.thread;
-        r.how.twice |= h.twice;
-        r.how.with.extend(h.with.iter().copied());
-        let mut ws: Vec<IPlace> = h.writes.iter().filter_map(iface).collect();
-        let mut rs: Vec<IPlace> = h.reads.iter().filter_map(iface).collect();
-        ws.sort();
-        ws.dedup();
-        rs.sort();
-        rs.dedup();
-        r.how.writes = ws;
-        r.how.reads = rs;
-    }
+    apply_hows(&mut runs, fv.task_hows, &iface);
     changed.multi |= fv.code_multi;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
@@ -375,6 +346,46 @@ pub fn summarize(
     // of a caller (follow-up F19.5, issue #50).
     out.waits = super::tasks::waits_of(facts, nodes, fv.waits, &place);
     out
+}
+
+/// The part `how` of each run of `runs` from the tasks of the body that run
+/// a value of the interface (`hows`, plan stage F19); `iface` maps a place of
+/// the facts to the interface. A run as a task with no such task is code of
+/// a caller on another thread: the worst way (`foreign`).
+fn apply_hows(
+    runs: &mut [super::summary::Run],
+    hows: &[crate::analysis::tasks::RawHow],
+    iface: &dyn Fn(&PlaceId) -> Option<IPlace>,
+) {
+    for r in runs.iter_mut() {
+        if r.task
+            && !hows
+                .iter()
+                .any(|h| h.param == r.param && h.capture == r.capture)
+        {
+            r.how.foreign = true;
+        }
+    }
+    for h in hows {
+        let Some(r) = runs
+            .iter_mut()
+            .find(|r| r.param == h.param && r.capture == h.capture && !r.result)
+        else {
+            continue;
+        };
+        r.task = true;
+        r.how.thread |= h.thread;
+        r.how.twice |= h.twice;
+        r.how.with.extend(h.with.iter().copied());
+        let mut ws: Vec<IPlace> = h.writes.iter().filter_map(iface).collect();
+        let mut rs: Vec<IPlace> = h.reads.iter().filter_map(iface).collect();
+        ws.sort();
+        ws.dedup();
+        rs.sort();
+        rs.dedup();
+        r.how.writes = ws;
+        r.how.reads = rs;
+    }
 }
 
 /// True if a task of the facts `facts` is pinned for a reason in the body.
@@ -1379,7 +1390,7 @@ pub fn closure(
             .any(|&(m, q, _)| m == n && place(q).is_none())
     });
     out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
-    out.pins = task_pins(facts, &[]);
+    out.pins = task_pins(facts, fv.code_opaque);
     out.joins = fv.joins.iter().copied().collect();
     out.abort_joins = fv.abort_joins.iter().copied().collect();
     // The tasks that run while the closure waits at an operation of a
@@ -1441,6 +1452,49 @@ pub fn closure(
         }
     }
     nested_aborts(ir, tys, sums, body, &mut out);
+    // A child failure at a `join`, at `ScopeWait` or at a `fork` in a body of
+    // the closure that no `Fail` handler of the closure stops raises past
+    // the closure (stage R0e, as in [`summarize`] for a function body).
+    for (i, x) in ir.bodies.iter().enumerate() {
+        let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        if crate::factgen::alpha::unit_root(ir, id) != body {
+            continue;
+        }
+        for blk in x.blocks.iter().filter(|b| !b.cleanup) {
+            if !matches!(
+                blk.term.kind,
+                TermKind::Join { .. } | TermKind::ScopeWait { .. } | TermKind::Fork { .. }
+            ) {
+                continue;
+            }
+            let ds = crate::factgen::frames::destinations(ir, tys, sums, id, &blk.term.kind);
+            let stopped = ds.iter().any(|d| match d {
+                crate::factgen::frames::Dest::Handler { handler, .. } => ir
+                    .handlers
+                    .get(handler.index())
+                    .is_some_and(|h| crate::factgen::alpha::unit_root(ir, h.handled) == body),
+                crate::factgen::frames::Dest::Past => false,
+            });
+            if !ds.is_empty() && !stopped {
+                out.aborts.insert(Abort::Raises);
+            }
+        }
+    }
+    // A callee that can start a pinned task (stage R0e, as in [`summarize`]):
+    // a task that runs the closure is pinned too.
+    if !ir.spawns.is_empty() {
+        out.pins |= ir.bodies.iter().enumerate().any(|(i, x)| {
+            let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+            crate::factgen::alpha::unit_root(ir, id) == body
+                && x.blocks.iter().any(|blk| match &blk.term.kind {
+                    TermKind::Call {
+                        callee: Callee::Fn(f, _),
+                        ..
+                    } => sums.get(*f).is_ok_and(|s| s.pins),
+                    _ => false,
+                })
+        });
+    }
     // The function values of the interface that the body runs: its captures
     // and its parameters (stage F12).
     out.runs = runs_of(
@@ -1451,6 +1505,29 @@ pub fn closure(
     );
     for r in &mut out.runs {
         r.then = fv.then_runs.contains(&(r.param, r.capture));
+    }
+    // How the body runs a value of its interface in a task of a scope
+    // inside it, or in a branch of a `fork` (stage R0e, as in
+    // [`summarize`]): a caller gives the places of the interface. A run as
+    // a task with no such task (a value that a value of a callee runs as a
+    // task) is the worst way.
+    {
+        let iface = |q: &PlaceId| {
+            closure_place(ir, facts, roots, body, *q, false)
+                .map(|x| x.0)
+                .filter(|ip| {
+                    matches!(
+                        ip.root,
+                        IRoot::Param(_)
+                            | IRoot::Held(_)
+                            | IRoot::Capture(_)
+                            | IRoot::CaptureCell(_)
+                            | IRoot::CaptureHeld(_)
+                            | IRoot::CaptureDeep(_)
+                    )
+                })
+        };
+        apply_hows(&mut out.runs, fv.task_hows, &iface);
     }
     out.uses = decl
         .captures

@@ -2018,7 +2018,8 @@ As built (`irbuild/task.rs`, plan stage B11):
   `dest`.
 - `SpawnDecl::scope` is the scope of the receiver if the receiver names the scope
   binder `s` (also through a capture or an upvar of a nested body: the THIR binding
-  names the `scope`); else `None`.
+  names the `scope`); else `None`. For `None`, the analysis finds the scope from the
+  value of the receiver (plan stage R0e, 6.4).
 - `spawn`, `join` and `detach` are method calls: the receiver is a place first, then the
   arguments, then the read of the receiver (5.19). The spawn reads `s` as plain data
   (`copy s`). `join` and `detach` move the handle (a move through a reference is
@@ -2769,6 +2770,56 @@ callee to a local handler, such a task starts at the `FrameEnd` node of the abor
 (`Em::abort_starts`), so the code after the `handle` sees it. The start on the edges
 into `Main` stays for a `multi` resume. A value that the call runs itself (not a callee)
 orders its own operations and spawns: its body in the component, or its part `waits`.
+
+As built (plan stage R0e: tasks in closure bodies, and a spawn that does not name its
+scope):
+
+- A scope body or a `fork` in a closure body. The scope body splices into the closure
+  body, as a handled body does (R0d, 6.5): `handlers::spliceable` accepts a closure body
+  as the root of a splice. The facts of the summary of the closure (`closure_summary`)
+  have a task for each task that starts and ends in a run of the closure: a spawn on a
+  scope whose scope body is a body of the closure (`handlers::owned_site`), and a branch
+  of a `fork` there (`decls::tasks_where`). These tasks give the part `runs` of the
+  summary (`summarize::apply_hows`: a value of the interface that runs as a task, `twice`,
+  `thread`, `with`, as for a function body) and its pins (`task_pins` with the code of a
+  caller left out). They are not in the part `tasks`: the part has only the tasks of a
+  scope of the maker. A closure value whose summary runs a value of its interface as a
+  task stays with the old pipeline at a call of the value (`VALUE_TASKS`, stage R0f).
+- A value that a value of a callee runs as a task (a closure with such a scope that a
+  callee, `sim.run` or `with_timeout` runs, and that spawns a value of its maker; also a
+  closure that calls a callee that runs a value of the closure as a task) has no task
+  nodes at the call: the call applies it as plain code, and the body runs the value as a
+  task in the worst way (`RunOf::task`, `TaskHow::foreign`; `transfer::apply_runs` sets
+  `task_run` only for a run of the callee itself). Before R0e the call dropped such a
+  run: the caller missed W0314 (`fixes/r0e/a13c_callee_bg_param.wf`, a hole of R0d that
+  the old pipeline catches).
+- A spawn in a scope body or a handled body inside a closure body or a clause, on a scope
+  of the maker, starts its task at the node that runs the closure, as a spawn in the
+  closure body itself (`handlers::frame_of_closure_or_clause`).
+- The summary of a closure has the pins of its callees (as the summary of a function
+  body). A task whose closure has a spawn or a `fork` in its bodies starts these tasks
+  (`spawns_in`, `templates::inner_tasks`). The tasks of a component are in the order of
+  the source (the start of the task expression, as the old lowering): a spawn inside the
+  task of another spawn has a lower site id.
+- A spawn that does not name its scope (`SpawnDecl::scope` is `None`: a copy of the
+  scope capability, a capability in a tuple or an `Option`, a capability through a
+  closure capture). In a program with such a spawn (`tasks::unowned`), the value of each
+  scope capability local points into the root of the local (`tasks::scope_cap_value`).
+  So a copy of the capability is invalid after the end of the scope body (W0301, as a
+  closure that captures the capability, RR4), and the analysis finds the scope of the
+  spawn from the references of its scope operand (`Handlers::site_scopes`,
+  `tasks::SiteScope`). The spawn needs exactly one scope and no other value; else the
+  program is not in scope (`templates::UNOWNED_SCOPE`: two scopes, a reference through a
+  reference, a capability that a generic callee gives back). In the facts of a closure
+  in the terms of its interface, the scope can be a scope of the maker (no reference into
+  a scope capability of the closure, and the spawn is not in a scope body of the
+  closure): then the task is in the part `tasks`. `ScopeWait` and the cleanup chain of
+  the scope end the task (`templates::site_in_scope`); for a spawn in a closure body that
+  the component emits after the scope, `unowned_joins` adds these ends when the facts of
+  the component are whole. Each `ScopeWait` of such a program can abort. A spawn
+  statement of this kind has no `TaskResult` local: its result goes away at the end of
+  the scope. A drop pair at the terminator (`vars.rs`, as for `detach`) gives W0601 for a
+  linear result (the old pipeline misses this: `fixes/r0e/u04_linear_result.wf`).
 
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):

@@ -1,0 +1,10 @@
+// Stage R0e (E3): a spawn statement on a copy of the scope capability whose result is linear: the old pipeline checks the program.
+linear struct Lock { id: u64 }
+fn mk() -> Lock { Lock { id: 1 } }
+fn main() / async {
+    scope { s =>
+        let s2 = s
+        s2.spawn(|| mk())
+        print(1)
+    }
+}

@@ -1,0 +1,9 @@
+// Stage R0e: the clean twin of a10.
+test "sim" {
+    let v = [1, 2]
+    sim.run(seed: 1) {
+        scope { s => s.spawn(|| v.push(3)) }
+    }
+    let r = &v[0]
+    print(r)
+}

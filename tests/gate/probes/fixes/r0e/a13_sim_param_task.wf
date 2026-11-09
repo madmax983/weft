@@ -1,0 +1,10 @@
+// Stage R0e: a `sim.run` block with a scope spawns a function parameter; the value of the caller performs `Note`, whose handler is on another task (W0314; a fault at run time).
+effect Note { fn note(x: u64) }
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in param_in_sim(|| note(1))
+}

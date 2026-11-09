@@ -1,0 +1,16 @@
+// Stage R0e: the clean twin of a07: the linear value has an `on abort` function.
+linear struct Lock { id: u64 }
+    on abort = release
+fn release(l: Lock) { let Lock(i) = l }
+fn risky() / fail { fail("no") }
+fn main() / async, fail {
+    let f = || {
+        let l = Lock { id: 1 }
+        scope { s =>
+            let h = s.spawn(|| release(l))
+            risky()
+            h.join()
+        }
+    }
+    f()
+}

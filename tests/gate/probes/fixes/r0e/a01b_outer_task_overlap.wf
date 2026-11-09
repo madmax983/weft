@@ -1,0 +1,9 @@
+// Stage R0e: a task of an outer scope reads `v` while a closure runs a task of its own scope that pushes to `v` (W0405).
+fn main() / async {
+    let v = [1, 2]
+    scope { o =>
+        o.spawn(|| print(v.len()))
+        let f = || scope { s => s.spawn(|| v.push(3)); () }
+        f()
+    }
+}

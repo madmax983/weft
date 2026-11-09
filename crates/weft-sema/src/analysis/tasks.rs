@@ -253,18 +253,23 @@ pub fn scope_run(cx: &mut Cx<'_>, st: &State, k: ScopeId) -> Result<ScopeOut, Al
         .body(sb)
         .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", sb.0)))?;
     let mut init = st.clone();
-    // The scope capability `_1`: plain data.
+    // The scope capability `_1`: plain data (and, in a program with a spawn
+    // on a scope that the spawn does not name, a reference into itself:
+    // [`scope_cap_value`]).
     if let Some(cap) = sbody
         .locals
         .iter()
         .position(|d| d.kind == LocalKind::ScopeCap)
         .and_then(|i| u32::try_from(i).ok())
     {
-        init.write(
+        let v = scope_cap_value(
+            cx.p,
+            cx.tys,
+            cx.facts,
+            cx.roots,
             (sb, weft_ir::LocalId(cap)),
-            &[],
-            Tree::leaf(AbsVal::plain()),
-        );
+        )?;
+        init.write((sb, weft_ir::LocalId(cap)), &[], v);
     }
     // The re-entry states of a `multi` handler outside the scope at the
     // nodes of the scope body (`Handlers::extra`, plan stage F19).
@@ -473,6 +478,127 @@ pub fn lose_operands<'o>(
     Ok(())
 }
 
+/// True if a spawn of program `p` does not name its scope (stage R0e).
+///
+/// `SpawnDecl::scope` is `None` and the site is not a `fork`: a copy of the
+/// scope capability, a capability in a tuple or an `Option`, a capability
+/// that a callee gives back.
+pub fn unowned(p: &weft_ir::Program) -> bool {
+    p.spawns.iter().any(|d| !d.fork && d.scope.is_none())
+}
+
+/// The value of the scope capability local `cap` (stage R0e).
+///
+/// In a program with a spawn on a scope that the spawn does not name
+/// ([`unowned`]), the value points into the root of the local: the analysis
+/// finds the scope of such a spawn from the references of its scope operand
+/// ([`SiteScope`]), and a copy of the capability is invalid after the end of
+/// the scope body (as a closure that captures the capability, RR4). In
+/// another program it is plain data.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn scope_cap_value(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    facts: &mut weft_facts::FnFacts,
+    roots: &mut crate::factgen::alpha::Roots,
+    cap: Key,
+) -> Result<Tree, AlphaError> {
+    let mut v = AbsVal::plain();
+    if unowned(p) {
+        v.refs.insert(roots.local(p, tys, facts, cap.0, cap.1)?);
+    }
+    Ok(Tree::leaf(v))
+}
+
+/// The scopes that the scope operand of a spawn site can be (stage R0e).
+///
+/// `scopes`: the scope of each scope capability local whose root a
+/// reference of the operand points into. `other`: the operand has no such
+/// reference, or a reference to another place (a place of the interface of
+/// a closure body, a place that the analysis does not follow).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SiteScope {
+    /// The scopes of the scope capability locals.
+    pub scopes: BTreeSet<ScopeId>,
+    /// The operand can be another value.
+    pub other: bool,
+}
+
+impl SiteScope {
+    /// The one scope that the operand can be, if it can be no other value.
+    pub fn one(&self) -> Option<ScopeId> {
+        match (self.scopes.len(), self.other) {
+            (1, false) => self.scopes.iter().next().copied(),
+            _ => None,
+        }
+    }
+}
+
+/// The scope of the scope capability local whose root is fact place `q`.
+fn scope_of_root(
+    p: &weft_ir::Program,
+    facts: &weft_facts::FnFacts,
+    roots: &crate::factgen::alpha::Roots,
+    q: weft_facts::PlaceId,
+) -> Option<ScopeId> {
+    let info = facts.places.get(q.index())?;
+    if info.parent.is_some() {
+        return None;
+    }
+    let Some(crate::factgen::alpha::Role::Local((b, l))) = roots.role(info.root) else {
+        return None;
+    };
+    let body = p.body(b)?;
+    match (body.kind, body.local(l).map(|d| d.kind)) {
+        (weft_ir::BodyKind::Scope(k), Some(LocalKind::ScopeCap)) => Some(k),
+        _ => None,
+    }
+}
+
+/// Records the scopes that the scope operand `scope` of the spawn of site
+/// `site` can be in state `st` (`Handlers::site_scopes`, stage R0e), if the
+/// spawn does not name its scope.
+///
+/// # Errors
+///
+/// The errors of the transfer functions.
+fn note_site_scope(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    site: SpawnId,
+    scope: &Operand,
+) -> Result<(), AlphaError> {
+    let p = cx.p;
+    if !p
+        .spawns
+        .get(site.index())
+        .is_some_and(|d| !d.fork && d.scope.is_none())
+    {
+        return Ok(());
+    }
+    let v = transfer::operand(cx, body, st, scope)?.flat();
+    let mut res = SiteScope {
+        other: v.refs.is_empty(),
+        ..SiteScope::default()
+    };
+    for &q in &v.refs {
+        match scope_of_root(p, cx.facts, cx.roots, q) {
+            Some(k) => {
+                res.scopes.insert(k);
+            }
+            None => res.other = true,
+        }
+    }
+    let have = cx.hx.site_scopes.entry(site).or_default();
+    have.scopes.extend(res.scopes);
+    have.other |= res.other;
+    Ok(())
+}
+
 /// The value of a handle of type `handle_ty` of the task of site `site`
 /// whose result has the value `result`: the site, and what the result
 /// points into and holds.
@@ -511,11 +637,12 @@ pub fn spawn(
     cx: &mut Cx<'_>,
     (body, block): (BodyId, weft_ir::BlockId),
     st: &mut State,
-    site: SpawnId,
+    (site, scope): (SpawnId, &Operand),
     task: &Operand,
     dest: Option<&Place>,
 ) -> Result<(), AlphaError> {
     let p = cx.p;
+    note_site_scope(cx, body, st, site, scope)?;
     let ret_ty = task_ret(cx, body, task)?;
     let out = transfer::value_out_ty(cx, (body, block), st, task, &[], ret_ty)?;
     transfer::apply_apps(cx, st, &out.apps, true);

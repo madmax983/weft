@@ -600,7 +600,11 @@ fn reach(
                 Some(BodyKind::Scope(k)) => Some(k),
                 _ => None,
             };
-            if k.is_none_or(|k| p.spawns.iter().any(|d| d.scope == Some(k))) {
+            // A spawn that does not name its scope can start a task in each
+            // scope (stage R0e).
+            if k.is_none_or(|k| p.spawns.iter().any(|d| d.scope == Some(k)))
+                || crate::analysis::tasks::unowned(p)
+            {
                 out.push(Dest::Past);
                 out.push(fails(site_env_of(p, body)));
             }

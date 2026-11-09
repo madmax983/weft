@@ -427,14 +427,24 @@ fn check_supported(
                 // A spawn in a closure body on a scope of its maker (plan
                 // stage F19): a node that runs the closure starts the task
                 // (part `tasks`), and the scope ends it.
+                // Also in a scope body or a handled body inside a closure
+                // body or a clause (stage R0e).
                 TermKind::Spawn { site, .. }
-                    if (p.closure_of(bid).is_some()
-                        || matches!(b.kind, BodyKind::Clause(..)))
+                    if handlers::frame_of_closure_or_clause(p, bid)
                         && handlers::maker_scope(p, *site) => {}
                 // A `scope`, and a `fork` (its tasks start and end at its own
                 // nodes; also in a clause, plan stage F19). In a closure body
                 // the captures of the branches are captures of the closure.
                 TermKind::Scope { .. } | TermKind::Fork { .. } if handlers::spliceable(p, bid) => {}
+                // A spawn that does not name its scope (stage R0e): the
+                // analysis finds the scope from the value of the scope
+                // operand, or the program is out of scope
+                // (`templates::UNOWNED_SCOPE`).
+                TermKind::Spawn { site, .. }
+                    if handlers::spliceable(p, bid)
+                        && p.spawns
+                            .get(site.index())
+                            .is_some_and(|d| !d.fork && d.scope.is_none()) => {}
                 TermKind::Spawn { .. } => {
                     return no(Group::E, "a task of a scope that the body does not own (stage F19)")
                 }
@@ -957,6 +967,7 @@ pub fn emit_parts(
         }
     }
     hx.runs.append(&mut closure_runs);
+    unowned_joins(p, facts, &hx, &mut task_end_list);
     templates::task_end_lends(facts, &task_end_list, &task_frames);
     templates::wait_task_places(facts, &hx.wait_tasks);
     facts.task_reads.sort();
@@ -1108,6 +1119,42 @@ pub fn emit_parts(
         waits: fn_waits,
         wait_tasks: hx.wait_tasks,
     })
+}
+
+/// The ends of the tasks of the spawns that do not name their scope (stage
+/// R0e): `joined_at` at each `ScopeWait` of the scope that the analysis
+/// found (`Handlers::site_scopes`) and on its cleanup chain, and the node
+/// after `ScopeWait` changes what the task writes (`task_ends`). The
+/// template of `ScopeWait` ends the tasks that the analysis found before it;
+/// a spawn in a closure body on a scope of the function comes later.
+fn unowned_joins(
+    p: &weft_ir::Program,
+    facts: &mut FnFacts,
+    hx: &crate::analysis::clause::Handlers,
+    ends: &mut Vec<(weft_facts::TaskId, weft_facts::NodeId)>,
+) {
+    for (&site, &t) in &hx.task_ids {
+        for &(k, n, next) in &hx.scope_waits {
+            if !templates::site_in_scope(p, &hx.site_scopes, site, k) {
+                continue;
+            }
+            if !facts.joined_at.contains(&(t, n)) {
+                facts.joined_at.push((t, n));
+            }
+            if let Some(e) = next {
+                if !ends.contains(&(t, e)) {
+                    ends.push((t, e));
+                }
+            }
+        }
+        for &(k, n) in &hx.scope_unwinds {
+            if templates::site_in_scope(p, &hx.site_scopes, site, k)
+                && !facts.joined_at.contains(&(t, n))
+            {
+                facts.joined_at.push((t, n));
+            }
+        }
+    }
 }
 
 /// The block of each `sim.run` of the bodies `comp` runs with the root
@@ -1591,9 +1638,25 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
+    // The tasks that start and end in a run of the closure (stage R0e): a
+    // spawn on a scope inside the closure body and a branch of a `fork`
+    // there. Their facts give the part `runs` (a value of the interface that
+    // runs as a task) and the pins of the summary. A task of a scope of the
+    // maker has no task here: a node that runs the closure starts it (part
+    // `tasks`).
+    let site_scopes = hx.site_scopes.clone();
+    let owned = |s: weft_ir::SpawnId| {
+        p.spawns.get(s.index()).is_some_and(|d| d.fork)
+            || handlers::owned_site(p, cb, s)
+            || handlers::owned_by_value(p, cb, &site_scopes, s)
+    };
+    hx.task_ids = decls::tasks_where(p, &comp, &mut facts, owned);
+    let has_tasks = !hx.task_ids.is_empty();
     let closure_then: Vec<(u32, bool)>;
     let closure_waits: crate::analysis::tasks::WaitRaw;
     let run_multi: Vec<weft_facts::NodeId>;
+    let closure_hows: Vec<crate::analysis::tasks::RawHow>;
+    let closure_opaque: Vec<weft_facts::TaskId>;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
@@ -1640,6 +1703,11 @@ fn closure_summary(
         };
         templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
+        if has_tasks {
+            templates::task_ends(&mut em);
+        }
+        closure_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        closure_opaque = std::mem::take(&mut em.code_opaque);
         closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         closure_waits = std::mem::take(&mut em.waits);
         run_multi = std::mem::take(&mut em.run_multi);
@@ -1788,8 +1856,8 @@ fn closure_summary(
             joins: &joins,
             abort_joins: &abort_joins,
             then_runs: &closure_then,
-            task_hows: &[],
-            code_opaque: &[],
+            task_hows: &closure_hows,
+            code_opaque: &closure_opaque,
             task_effects: &closure_task_effects,
             waits: &closure_waits,
         },
@@ -1797,7 +1865,15 @@ fn closure_summary(
     sum.ret.linear = ret_linear;
     // The tasks that the body starts in a scope of its maker (part
     // `tasks`, plan stage F19): a node that runs the closure starts them.
-    let mut started = started;
+    // A task of a scope inside the closure body (stage R0e) starts and
+    // ends in the run of the closure: it is no task of the part `tasks`.
+    let mut started: Vec<u32> = started
+        .into_iter()
+        .filter(|&s| {
+            let s = weft_ir::SpawnId(s);
+            !handlers::owned_site(p, cb, s) && !handlers::owned_by_value(p, cb, &site_scopes, s)
+        })
+        .collect();
     started.sort_unstable();
     started.dedup();
     sum.ret.tasks = ret_tasks(&returns, (cb, body.ret), &started);
@@ -2083,6 +2159,16 @@ fn emit_closure(
             out.escapes.push(e);
         }
     }
+    // The scopes of the spawns that do not name their scope, and the ends of
+    // the scopes (stage R0e): the function joins such a task at the end of
+    // its scope when the facts of the component are whole.
+    for (site, r) in std::mem::take(&mut hx.site_scopes) {
+        let have = fhx.site_scopes.entry(site).or_default();
+        have.scopes.extend(r.scopes);
+        have.other |= r.other;
+    }
+    fhx.scope_waits.append(&mut hx.scope_waits);
+    fhx.scope_unwinds.append(&mut hx.scope_unwinds);
     if nested {
         merge_handlers(fhx, hx);
     }
@@ -3089,9 +3175,13 @@ fn emit_block(
             dest,
             ..
         } => {
+            let after = match blk.term.kind {
+                weft_ir::TermKind::Spawn { next, .. } => table.first(bid, next, NORMAL),
+                _ => None,
+            };
             templates::spawn(
                 em,
-                n,
+                (n, after),
                 &st,
                 block,
                 (*site, scope, task, dest.as_ref()),

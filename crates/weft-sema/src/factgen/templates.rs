@@ -5914,7 +5914,7 @@ fn at_or_below(facts: &FnFacts, inner: PlaceId, outer: PlaceId) -> bool {
 /// capability of a local handler, and the errors of α.
 pub fn spawn(
     em: &mut Em<'_>,
-    n: NodeId,
+    (n, next): (NodeId, Option<NodeId>),
     st: &State,
     block: weft_ir::BlockId,
     (site, scope, task, dest): (weft_ir::SpawnId, &Operand, &Operand, Option<&Place>),
@@ -5923,12 +5923,20 @@ pub fn spawn(
     use crate::analysis::tasks;
     let body = em.body;
     operand(em, n, st, scope)?;
+    unowned_spawn(em, site)?;
     let (ret_ty, out_ret) = task_start(em, n, st, block, site, task, origin)?;
     em.facts.escapes_at.push((n, ASYNC.to_string()));
     em.started.push(site.0);
     // The value after the spawn: the handle, or the `TaskResult` local.
     let mut after = st.clone();
-    tasks::spawn(&mut em.cx(), (body, block), &mut after, site, task, dest)?;
+    tasks::spawn(
+        &mut em.cx(),
+        (body, block),
+        &mut after,
+        (site, scope),
+        task,
+        dest,
+    )?;
     if let Some(d) = dest {
         let v = if let Some((k, path)) = transfer::move_path(em.p, body, d)? {
             after.value(k, &path)
@@ -5940,6 +5948,16 @@ pub fn spawn(
             tasks::handle_value(&em.cx(), t, site, &result)
         };
         return bind_dest(em, n, st, d, &v);
+    }
+    // A spawn statement that does not name its scope: its result goes away
+    // (the drop pair of the terminator, stage R0e: W0601 for a linear
+    // result at the node after the spawn). The pair has an `on abort` and
+    // is not `once` (`vars.rs`): it gives W0601 only.
+    if let Some(d) = em.vars.get(&VarKey::D(body, block, super::nodes::TERM)) {
+        if let (true, Some(x)) = (em.facts.var(d).linear, next) {
+            em.facts.rebound_at.push((d, n));
+            em.facts.scope_end.push((d, x));
+        }
     }
     let orphan = em.p.body(body).and_then(|b| {
         b.locals
@@ -5953,6 +5971,69 @@ pub fn spawn(
     }
     Ok(())
 }
+
+/// The check of a spawn that does not name its scope (stage R0e): the
+/// analysis must find the one scope of its scope operand
+/// (`Handlers::site_scopes`).
+///
+/// In the facts of a closure body in the terms of its interface, the scope
+/// can be a scope of the maker: then no reference of the operand points
+/// into a scope capability of the closure, and the spawn is not in a scope
+/// body of the closure (part `tasks`).
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] if a check fails.
+fn unowned_spawn(em: &mut Em<'_>, site: weft_ir::SpawnId) -> R {
+    let Some(d) = em.p.spawns.get(site.index()) else {
+        return Ok(());
+    };
+    if d.fork || d.scope.is_some() {
+        return Ok(());
+    }
+    let body = em.body;
+    let res = em.hx.site_scopes.get(&site).cloned().unwrap_or_default();
+    let ok = match super::alpha::unit_closure(em.p, body) {
+        Some(cb) if transfer::in_interface(&em.cx(), body) => {
+            let own = |k: &weft_ir::ScopeId| {
+                em.p.scopes
+                    .get(k.index())
+                    .is_some_and(|s| super::alpha::unit_root(em.p, s.body) == cb)
+            };
+            match res.one() {
+                Some(k) => own(&k),
+                None => !res.scopes.iter().any(own) && !in_scope_body(em.p, body),
+            }
+        }
+        _ => res.one().is_some(),
+    };
+    if !ok {
+        return Err(AlphaError::Later(UNOWNED_SCOPE));
+    }
+    Ok(())
+}
+
+/// True if body `b` is a scope body or splices into one inside its frame
+/// (through handled bodies and scope bodies).
+fn in_scope_body(p: &weft_ir::Program, b: BodyId) -> bool {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = p.body(at) else {
+            return false;
+        };
+        match (x.kind, x.parent) {
+            (weft_ir::BodyKind::Scope(_), _) => return true,
+            (weft_ir::BodyKind::Handled(_), Some(up)) => at = up,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The reason of the fallback for a spawn whose scope the analysis does not
+/// find (stage R0e).
+pub const UNOWNED_SCOPE: &str =
+    "a task of a scope that the spawn does not name and that the analysis does not find (stage R0e)";
 
 /// `Fork` (`docs/ir.md` 6.4, plan stage F19): the nodes `Main`, a
 /// [`super::nodes::Phase::Task`] node for each branch, the node where the
@@ -6281,6 +6362,15 @@ fn task_start(
         em.facts.task_writes.extend(writes.iter().map(|&q| (t, q)));
         em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
         task_captures(em, st, t, &fns, &writes)?;
+        // A task that starts in the code of this task: a spawn or a `fork`
+        // in a body of a closure that the task runs (a scope inside the
+        // closure body, stage R0e). A pinned child pins the task
+        // (`spawns_in`, as the old lowering).
+        for u in inner_tasks(em, &fns) {
+            if u != t && !em.facts.spawns_in.contains(&(t, u)) {
+                em.facts.spawns_in.push((t, u));
+            }
+        }
         // A callee that can start a pinned task: work stealing cannot check
         // the task (`pinned`). Code of a caller: the body does not know it
         // (the caller checks the value that it gives, part `runs`).
@@ -6293,6 +6383,38 @@ fn task_start(
         }
     }
     Ok((ret_ty, out.ret))
+}
+
+/// The tasks of the component whose spawn site is in a body of a closure of
+/// `fns` ([`super::alpha::unit_root`]: the closure body and the scope bodies,
+/// handled bodies and clauses inside it; stage R0e).
+fn inner_tasks(em: &Em<'_>, fns: &std::collections::BTreeSet<FnVal>) -> Vec<weft_facts::TaskId> {
+    let mut out = Vec::new();
+    for f in fns {
+        let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
+            continue;
+        };
+        let Some(cb) = em.p.closures.get(c.index()).map(|d| d.body) else {
+            continue;
+        };
+        for (i, b) in em.p.bodies.iter().enumerate() {
+            let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+            if super::alpha::unit_root(em.p, id) != cb {
+                continue;
+            }
+            for blk in &b.blocks {
+                let sites: Vec<weft_ir::SpawnId> = match &blk.term.kind {
+                    TermKind::Spawn { site, .. } => vec![*site],
+                    TermKind::Fork { sites, .. } => sites.clone(),
+                    _ => Vec::new(),
+                };
+                out.extend(sites.iter().filter_map(|s| em.hx.task_ids.get(s).copied()));
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// The facts of the captures of the closures `fns` that task `t` runs, in
@@ -6628,13 +6750,29 @@ fn scope_tasks(em: &Em<'_>, sb: BodyId) -> Vec<weft_facts::TaskId> {
     em.hx
         .task_ids
         .iter()
-        .filter(|(site, _)| {
-            em.p.spawns
-                .get(site.index())
-                .is_some_and(|d| d.scope == Some(k))
-        })
+        .filter(|(site, _)| site_in_scope(em.p, &em.hx.site_scopes, **site, k))
         .map(|(_, t)| *t)
         .collect()
+}
+
+/// True if spawn site `site` starts its task in scope `k`: the spawn names
+/// the scope, or the analysis finds that its scope operand can be only the
+/// capability of `k` (`site_scopes`, stage R0e).
+pub fn site_in_scope(
+    p: &weft_ir::Program,
+    site_scopes: &std::collections::BTreeMap<weft_ir::SpawnId, crate::analysis::tasks::SiteScope>,
+    site: weft_ir::SpawnId,
+    k: weft_ir::ScopeId,
+) -> bool {
+    p.spawns.get(site.index()).is_some_and(|d| {
+        d.scope == Some(k)
+            || (!d.fork
+                && d.scope.is_none()
+                && site_scopes
+                    .get(&site)
+                    .and_then(crate::analysis::tasks::SiteScope::one)
+                    == Some(k))
+    })
 }
 
 /// `ScopeWait` (`docs/ir.md` 6.4, plan stage F18).
@@ -6667,6 +6805,9 @@ pub fn scope_wait(
             em.hx.task_ends.push((t, e));
         }
     }
+    if let Some(weft_ir::BodyKind::Scope(k)) = em.p.body(body).map(|b| b.kind) {
+        em.hx.scope_waits.push((k, n, nodes.ret));
+    }
     if nodes.may_abort {
         em.facts.may_abort.push(n);
     }
@@ -6694,6 +6835,9 @@ pub fn scope_unwind(em: &mut Em<'_>, n: NodeId, place: &Place) {
     if cap {
         for t in scope_tasks(em, body) {
             em.facts.joined_at.push((t, n));
+        }
+        if let Some(weft_ir::BodyKind::Scope(k)) = em.p.body(body).map(|b| b.kind) {
+            em.hx.scope_unwinds.push((k, n));
         }
     }
 }
@@ -6747,15 +6891,10 @@ pub fn scope_main(em: &mut Em<'_>, n: NodeId, sb: BodyId, may_abort: bool) -> R 
             .and_then(|i| u32::try_from(i).ok())
     }) {
         let k = transfer::key(em.p, sb, LocalId(cap))?;
+        let v = crate::analysis::tasks::scope_cap_value(em.p, em.tys, em.facts, em.roots, k)?;
         let saved = em.body;
         em.body = sb;
-        whole(
-            em,
-            n,
-            &State::new(),
-            k,
-            &Tree::leaf(crate::analysis::AbsVal::plain()),
-        );
+        whole(em, n, &State::new(), k, &v);
         em.body = saved;
     }
     em.facts.escapes_at.push((n, ASYNC.to_string()));

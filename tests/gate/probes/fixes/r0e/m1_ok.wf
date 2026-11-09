@@ -1,0 +1,10 @@
+// Stage R0e (multi re-entry): the clean twin of m1: the task copies a number.
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let n = 1
+        let f = || scope { s => let b = pick(); s.spawn(|| print(n)); () }
+        f()
+    }
+}

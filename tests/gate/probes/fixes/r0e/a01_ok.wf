@@ -1,0 +1,9 @@
+// Stage R0e: the clean twin of a01: the reference comes after the run.
+fn later(f: fn()) { f() }
+fn main() / async {
+    let v = [1, 2]
+    let f = || scope { s => s.spawn(|| v.push(3)); () }
+    later(f)
+    let r = &v[0]
+    print(r)
+}

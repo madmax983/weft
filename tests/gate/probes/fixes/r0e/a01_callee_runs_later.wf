@@ -1,0 +1,9 @@
+// Stage R0e: a closure with a scope; a callee runs it later. Its task pushes to `v`, so the reference `r` into `v` is invalid after the call (W0301).
+fn later(f: fn()) { f() }
+fn main() / async {
+    let v = [1, 2]
+    let r = &v[0]
+    let f = || scope { s => s.spawn(|| v.push(3)); () }
+    later(f)
+    print(r)
+}

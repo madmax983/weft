@@ -1,0 +1,13 @@
+// Stage R0e (E3): an inner scope copies the capability of the outer scope; the task of the outer scope runs after the inner scope ends (W0405 with the write after it).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    scope { a =>
+        scope { t =>
+            let x = a
+            x.spawn(|| c.k += 1)
+        }
+        c.k += 2
+    }
+    print(c.k)
+}

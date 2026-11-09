@@ -1,0 +1,7 @@
+// Stage R0e: `with_timeout` runs a block with a `fork` (the block is a closure). A linear value moves into a branch; the timeout can cancel the branch (W0602).
+linear struct Lock { id: u64 }
+fn release(l: Lock) { let Lock(i) = l }
+fn main() / async, fail, par {
+    let l = Lock { id: 1 }
+    with_timeout(1.s) { fork(|| release(l), || print(2)) }
+}
