@@ -88,8 +88,9 @@ impl fmt::Display for Unsupported {
 /// What [`emit`] reads.
 #[derive(Clone, Copy, Debug)]
 pub struct Input<'a> {
-    /// The analysis of the old lowering: the program, the signatures and
-    /// the THIR tables.
+    /// The analysis: the program, the declarations of the bodies and the
+    /// THIR tables. The fact generator does not read the facts and the
+    /// signatures of the old lowering and of its inference (plan stage R0i).
     pub analysis: &'a Analysis,
     /// The IR.
     pub built: &'a Built,
@@ -105,19 +106,9 @@ pub struct Input<'a> {
     /// No root handler serves an effect (W0118).
     pub no_runtime: bool,
     /// W0118 from the summaries of the `on abort` functions
-    /// ([`checks::on_abort_rows`]). An emit that leaves it `None` keeps the
-    /// W0118 of the old inference.
+    /// ([`checks::on_abort_rows`]). For an emit that leaves it `None`,
+    /// `factgen::run` asks the summaries itself.
     pub on_abort: &'a std::cell::RefCell<Option<Vec<Diagnostic>>>,
-}
-
-/// W0118 of the old inference, for an emit that does not give its own, and
-/// the option that the check needs.
-#[derive(Clone, Debug, Default)]
-pub struct OnAbortRows {
-    /// The diagnostics of the old inference.
-    pub old: Vec<Diagnostic>,
-    /// No root handler serves an effect.
-    pub no_runtime: bool,
 }
 
 /// A fact generator.
@@ -197,13 +188,6 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
     for (f, e) in &inf.effects {
         diags.extend(w0701(input.analysis, *f, e));
     }
-    // A function with no row of the IR yet (stage F12): the row of the old
-    // inference, which adds the effects of the closures that it makes.
-    for &f in &inf.old_rows {
-        if let Some(sig) = input.analysis.sigs.get(f.index()) {
-            diags.extend(w0701(input.analysis, f, &sig.effects));
-        }
-    }
     input.effects.borrow_mut().extend(inf.effects);
     Ok(())
 }
@@ -218,7 +202,7 @@ fn w0701(a: &Analysis, f: crate::FnId, e: &crate::program::EffectSig) -> Option<
     use weft_syntax::diag::Code;
     let prog = &a.program;
     let def = prog.fns.get(f.index())?;
-    let declared = a.sigs.get(f.index()).is_some_and(|s| s.declared);
+    let declared = def.sig.declared;
     let to_state = !e.muts.is_empty() || !e.named.is_empty();
     if !def.is_pub || declared || !to_state || def.decl.is_extern {
         return None;
@@ -282,11 +266,11 @@ pub fn preview(a: &Analysis, built: &Built, index: usize) -> Result<FnFacts, Uns
         Some(Outcome::Built(b)) => *b,
         _ => return Err(unsupported("the body has no IR")),
     };
-    let old = a
-        .bodies
+    let decl = a
+        .decls
         .get(index)
         .ok_or_else(|| unsupported("no such body"))?;
-    let mut facts = seed(&old.facts);
+    let mut facts = seed(decl);
     let sums = summaries(a, built);
     emit_body(a, built, &sums, index, entry, &mut facts)?;
     Ok(facts)
@@ -718,10 +702,11 @@ pub fn emit_parts(
     }
     let mut hx = crate::analysis::clause::Handlers::default();
     let sig = a
-        .bodies
+        .decls
         .get(index)
         .and_then(|b| b.func)
-        .and_then(|f| a.sigs.get(f.index()));
+        .and_then(|f| a.program.fns.get(f.index()))
+        .map(|def| &def.sig);
     let (params, ret_places) = match sig {
         Some(sig) => {
             let ps = decls::params(p, &mut tys, facts, &mut roots, entry, sig)
@@ -789,7 +774,7 @@ pub fn emit_parts(
     let mut holders = holders::Holders::new(vars.holder_parts());
     let has_tasks = !task_ids.is_empty();
     hx.task_ids = task_ids;
-    hx.no_runtime = a.bodies.iter().any(|b| b.facts.no_runtime);
+    hx.no_runtime = a.decls.iter().any(|b| b.no_runtime);
     let joins: Vec<u32>;
     let abort_joins: Vec<u32>;
     let fn_then: Vec<(u32, bool)>;
@@ -1119,15 +1104,17 @@ pub fn emit_parts(
         v.once |= v.uniq;
     }
     sim_blocks(p, &comp, &table, facts);
-    decls::std_effects(facts);
+    if let Some(d) = a.decls.get(index) {
+        decls::effect_names(&a.program, d.module, facts);
+    }
     // The checks of a generic function item as a value (RR9, V081).
     let names = |f: weft_ir::FnId, j: u32| -> String {
         built
             .fns
             .iter()
             .find(|(_, g)| **g == f)
-            .and_then(|(s, _)| a.sigs.get(s.index()))
-            .and_then(|sig| sig.generics.get(j as usize).cloned())
+            .and_then(|(s, _)| a.program.fns.get(s.index()))
+            .and_then(|def| def.sig.generics.get(j as usize).cloned())
             .unwrap_or_else(|| format!("T{j}"))
     };
     generic::copy_held(facts, &held);
@@ -2620,7 +2607,7 @@ pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsuppo
 /// The components of [`components`].
 fn components_of(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
     let inf = crate::analysis::callgraph::infer(a, built, None);
-    let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
+    let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
     let mut tables = Vec::new();
     for (i, e) in built.entries.iter().enumerate() {
         let Outcome::Built(entry) = e.outcome else {
@@ -3883,11 +3870,16 @@ pub struct IrFacts {
     /// the builder (W0315), and those of the fact generator and of its
     /// effect inference (W0204 stores, W0701, W0706).
     pub diags: Vec<Diagnostic>,
-    /// The signatures, by [`crate::FnId`]: a function whose summary comes
-    /// from its body has the `EffectSig` of its summary
+    /// The signatures, by [`crate::FnId`] ([`ir_sigs`]): a function whose
+    /// summary comes from its body has the `EffectSig` of its summary
     /// (`crate::analysis::sig::to_effect_sig`, `docs/ir.md` 6.8); the other
-    /// functions keep the signature of the old inference.
+    /// functions keep their declaration. No row comes from the old inference
+    /// (plan stage R0i).
     pub sigs: Vec<crate::FnSig>,
+    /// The functions whose body has no IR. Their signature in
+    /// [`IrFacts::sigs`] is their declaration, so `weft-gate sigdiff` does
+    /// not compare it.
+    pub no_ir: Vec<crate::FnId>,
 }
 
 /// The text of a list of groups that are off: `group A`, or
@@ -3904,11 +3896,16 @@ fn off_text(off: Groups) -> String {
     }
 }
 
-/// Runs the `ir` pipeline on the analysis `a` of the old lowering, with the
-/// groups `on` and the fact generator `emit`. `kept` holds the diagnostics of
-/// the analysis that the `ir` pipeline keeps (`docs/ir.md` 2.4), and `rows`
-/// the W0118 of the old inference: `emit` can replace them with its own
-/// ([`Input::on_abort`]).
+/// Runs the `ir` pipeline on the analysis `a`, with the groups `on` and the
+/// fact generator `emit`. `kept` holds the diagnostics of the analysis that
+/// the `ir` pipeline keeps (`docs/ir.md` 2.4). `no_runtime`: no root handler
+/// serves an effect (W0118).
+///
+/// The pipeline reads the program, the declarations of the bodies
+/// ([`Analysis::decls`]) and the THIR tables. It does not read the facts of
+/// the old lowering or the signatures of the old inference (plan stage
+/// R0i): the signatures come from the summaries of the IR and from the
+/// declarations ([`ir_sigs`]).
 ///
 /// Returns the scope of the program and, if it is in scope, its facts and
 /// diagnostics.
@@ -3917,7 +3914,7 @@ pub(crate) fn run(
     on: Groups,
     emit: Emit,
     kept: Vec<Diagnostic>,
-    rows: OnAbortRows,
+    no_runtime: bool,
 ) -> (Scope, Option<IrFacts>) {
     let built = irbuild::build(a);
     let bodies = scope::groups(&built);
@@ -3968,7 +3965,7 @@ pub(crate) fn run(
         ));
         return (s, None);
     }
-    let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
+    let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
     let emitted = std::cell::RefCell::new(Vec::new());
     let effects = std::cell::RefCell::new(Vec::new());
     let on_abort = std::cell::RefCell::new(None);
@@ -3978,7 +3975,7 @@ pub(crate) fn run(
         scope: &s,
         diags: &emitted,
         effects: &effects,
-        no_runtime: rows.no_runtime,
+        no_runtime,
         on_abort: &on_abort,
     };
     let _ = crate::analysis::clause::take_pending();
@@ -4000,28 +3997,33 @@ pub(crate) fn run(
     for f in &mut facts {
         prune::prune(f);
     }
-    let mut sigs = a.sigs.clone();
-    for (f, e) in effects.into_inner() {
-        if let Some(sig) = sigs.get_mut(f.index()) {
-            sig.effects = e;
-        }
-    }
+    // An emit that gives no W0118 (a test hook): the summaries give it.
+    let on_abort = on_abort.into_inner().unwrap_or_else(|| {
+        let sums = summaries(a, &built);
+        checks::on_abort_rows(a, &built, &sums, no_runtime)
+    });
+    let (sigs, no_ir) = ir_sigs(a, &built, effects.into_inner());
     let bodies = a
-        .bodies
+        .decls
         .iter()
         .zip(facts)
         .map(|(b, facts)| BodyFacts {
             func: b.func,
             unit: b.unit,
             facts,
+            // A test has no signature and no summary: its row is empty.
             effects: b
                 .func
                 .and_then(|f| sigs.get(f.index()))
-                .map_or_else(|| b.effects.clone(), |s| s.effects.clone()),
+                .map(|s| s.effects.clone())
+                .unwrap_or_default(),
         })
         .collect();
     let mut diags = kept;
-    diags.extend(on_abort.into_inner().unwrap_or(rows.old));
+    diags.extend(on_abort);
+    // The `fip` functions with the signatures of the `ir` pipeline.
+    let fns: Vec<crate::FnId> = a.decls.iter().filter_map(|b| b.func).collect();
+    diags.extend(crate::fip_diags(&a.program, &sigs, &fns));
     diags.extend(built.diags.iter().cloned());
     diags.extend(emitted.into_inner());
     (
@@ -4030,6 +4032,7 @@ pub(crate) fn run(
             bodies,
             diags,
             sigs,
+            no_ir,
         }),
     )
 }
@@ -4055,18 +4058,52 @@ pub fn component(built: &Built, entry: weft_ir::BodyId) -> Vec<weft_ir::BodyId> 
         .collect()
 }
 
-/// The facts of the declarations of a body, from the facts of the old
-/// lowering: the name, the names of the effects, and the flags of the driver
-/// (`library()`, `started()`, `no_runtime()`). They do not depend on the code
-/// of the body.
-pub(crate) fn seed(old: &FnFacts) -> FnFacts {
+/// The facts of the declaration `d` of a body: the name and the flags of
+/// the driver (`library()`, `started()`, `no_runtime()`). They do not depend
+/// on the code of the body, and they do not come from the old lowering
+/// (plan stage R0i). The names of the effects come from the facts of the IR
+/// ([`decls::effect_names`]).
+pub(crate) fn seed(d: &crate::BodyDecl) -> FnFacts {
     FnFacts {
-        name: old.name.clone(),
-        effect_names: old.effect_names.clone(),
-        hidden_effects: old.hidden_effects.clone(),
-        library: old.library,
-        started: old.started,
-        no_runtime: old.no_runtime,
+        name: d.name.clone(),
+        library: d.library,
+        started: d.started,
+        no_runtime: d.no_runtime,
         ..FnFacts::default()
     }
+}
+
+/// The signatures of the `ir` pipeline, by [`crate::FnId`] (plan stage
+/// R0i): the declaration of each function, with the row `effects` of each
+/// function whose summary comes from its body.
+///
+/// A function of the program whose body has no IR (a type error, W0303)
+/// keeps its declaration (its stated row, or an empty row): its callers
+/// apply the worst case of its declaration
+/// (`crate::analysis::sig::from_declaration`), but the program has an error
+/// for the body (`irbuild::Entry::reported`), so the checks that read a
+/// signature (`fip`, `weft deps`) do not add errors of the worst case to
+/// it. An extern function and a function of the prelude keep their
+/// declaration. The second result holds the functions whose body has no
+/// IR.
+pub fn ir_sigs(
+    a: &Analysis,
+    built: &Built,
+    effects: Vec<(crate::FnId, crate::program::EffectSig)>,
+) -> (Vec<crate::FnSig>, Vec<crate::FnId>) {
+    let sigs_of = a.program.fns.iter().map(|f| f.sig.clone());
+    let mut sigs: Vec<crate::FnSig> = sigs_of.collect();
+    let no_ir = a
+        .decls
+        .iter()
+        .zip(&built.entries)
+        .filter(|(_, e)| matches!(e.outcome, Outcome::NoIr(_)))
+        .filter_map(|(b, _)| b.func)
+        .collect();
+    for (f, e) in effects {
+        if let Some(sig) = sigs.get_mut(f.index()) {
+            sig.effects = e;
+        }
+    }
+    (sigs, no_ir)
 }

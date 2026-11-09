@@ -2622,7 +2622,7 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
   with no edges.
 - `Call`, `Perform`, `Resume` at `Main`: the operands; `call_arg(n, A, root)` for each
   place `A` that an argument reaches, also through stored references (R3RT3), with one
-  root kind of `body/roots.rs` for each; `call_mut(n, M, root)` for each place `M` of the
+  root kind of `roots.rs` (`body/roots.rs` before plan stage R0i) for each; `call_mut(n, M, root)` for each place `M` of the
   applied `muts` part, with the root of the parameter that the summary names (a change
   that comes from a run of function argument `i` gets the root of argument `i`, so a
   closure argument does not conflict with itself, O3-7); `arg_at`, `param_in`, `uniq_param`,
@@ -3373,10 +3373,12 @@ the default set):
   v.push(3) }` makes `r` invalid after the call (hole H1 of the review of the ABC
   preview, F12-fix). A change before the rebind stays at `Main` only.
 - A function with a function value in its signature and no stated row has no summary
-  until stage F12 (`callgraph::summary_of`). W0701 takes the row of the old inference
+  until stage F12 (`callgraph::summary_of`). W0701 took the row of the old inference
   for it (`Inference::old_rows`), which adds the effects of the closures that the
   function makes. A function that returns a closure inside a struct has a summary with
-  no row for the closure: its W0701 waits for F12.
+  no row for the closure: its W0701 waits for F12. From plan stage R0i each function
+  with IR has a summary (`summary_of` fails only for a function with no signature), so
+  `old_rows` is gone.
 
 As built (plan stage F14, `crates/weft-sema/src/analysis/clause.rs`,
 `factgen/handlers.rs`; group D is a preview with `--groups ABCD` until stage F17
@@ -4185,7 +4187,8 @@ As built (plan stage F5, `crates/weft-sema/src/analysis/`):
   of each function of the IR, or the reason why it has none yet.
 - `sig.rs`: `from_signature` gives the summary of a function with a stated row (an
   extern function too). The parts that only the old inference has for a function with a
-  body (`drops`, `holds`, `raises`) come from `Analysis::sigs` until stage F6. A signature
+  body (`drops`, `holds`, `raises`) came from `Analysis::sigs` until stage F6; from plan
+  stage R0i the declaration (`FnDef::sig`) gives the signature. A signature
   with a function value, a store into an `rc` object, a foreign change of an `rc` object,
   or a task gives a reason, and the program stays with the old pipeline. From plan stage
   R0b a function with no summary of its body uses `from_declaration` (6.8).
@@ -4674,6 +4677,43 @@ analysis (`Analysis::sigs`, `BodyFacts::effects`) are these, so W0701, `weft dep
 the interpreter read them; W0701 comes from them, with the text of the old lowering.
 `weft-gate sigdiff` compares them with the old ones on each program in scope; each
 difference needs a ledger entry of class `sig`.
+
+As built (plan stage R0i, part a): the `ir` pipeline reads no part of the old inference
+and no fact of the old lowering, but the exports of a body with no IR
+(`factgen::exports::copy_old`, plan stage R4). The parts:
+
+- The declaration of each body (`BodyDecl` in `Analysis::decls`: the function, the
+  unit, the module, the name, `library()`, `started()`, `no_runtime()`) comes from the
+  program and the options. It gives the first facts of a body (`factgen::seed`), the
+  entries of the builder and the nodes of the call graph.
+- The names that the diagnostics show for the user effects (`FnFacts::effect_names`,
+  `hidden_effects`) come from the facts of the IR (`decls::effect_names`, with
+  `std_effect`): the effects that escape, the stated effects, the effects that a clause
+  performs, the handled effects and the effects of function arguments. Before, the
+  seed took them from the old facts, so an effect that only the IR facts name showed
+  its identity (`main.Note`) with the note of a private effect.
+- A signature part of the declaration (the types, the parameters, the stated places,
+  the stated row, `declared`) comes from `FnDef::sig`. The part `pins` of a function
+  with a stated row comes from its body only (before: also from the old inference).
+- `factgen::ir_sigs` gives `IrFacts::sigs`: the declaration of each function, with the
+  row of the summary of each function with IR. A function whose body has no IR keeps
+  its declaration (its stated row, or an empty row): its callers apply the worst case
+  of its declaration (`sig::from_declaration`), but the program has an error for the
+  body, so the checks that read a signature (`fip`, `weft deps`) do not add the errors
+  of the worst case (the worst case gave W1004 and W0901 there in a first build).
+  `IrFacts::no_ir` names these functions, so `weft-gate sigdiff` does not compare
+  them. A test body has an empty row (`BodyFacts::effects`): it has no signature and
+  no summary.
+- W0118: `checks::on_abort_rows` reads the summary, and the part `reaches` is the
+  summary too (`checks::reaches`: a run of the part `runs` that is not a task, or a run
+  of a value that no part names, `unknown_multi`), only for a function with IR (the
+  worst case runs each value of its parameter, and its other parts give W0118
+  already). A task of the function is not a call of an unknown value: the summary of
+  `s.spawn(|| x)` with `x` of a type parameter has a run of the parameter as a task
+  (`verify/s5/R3x/p1/c14_task.wf` of tier 2). An emit that gives no W0118 (a test
+  hook) gets the rows of the summaries from `factgen::run`.
+- `fip` (W1001 to W1004): `factgen::run` checks each `fip` function with the
+  signatures of the `ir` pipeline.
 
 As built (plan stage F13 part 2, group C on): `DEFAULT_GROUPS` is A, B and C, so the
 `ir` pipeline checks closures, function values and stored function values by default.

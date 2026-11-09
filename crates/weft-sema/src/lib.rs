@@ -14,6 +14,7 @@ pub mod infer;
 pub mod irbuild;
 pub mod program;
 pub mod props;
+pub mod roots;
 pub mod thir;
 pub mod types;
 
@@ -209,6 +210,31 @@ pub struct BodyFacts {
     pub effects: program::EffectSig,
 }
 
+/// The declaration of one body: what the `ir` pipeline needs to know of a
+/// body before it reads its code (plan stage R0i).
+///
+/// It comes from the program and the options, not from a lowering, so the
+/// `ir` pipeline does not read the facts of the old lowering for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BodyDecl {
+    /// The function, or `None` for a test.
+    pub func: Option<program::FnId>,
+    /// The unit index of the body.
+    pub unit: usize,
+    /// The module of the body.
+    pub module: program::ModId,
+    /// The name of the body (`FnFacts::name`): the path of a function, or
+    /// `test "name"`.
+    pub name: String,
+    /// The body is in a library (`library()`).
+    pub library: bool,
+    /// The runtime starts the body (`started()`): `main` and the tests of
+    /// the root.
+    pub started: bool,
+    /// The body is `main` with no runtime (`no_runtime()`).
+    pub no_runtime: bool,
+}
+
 /// The result of analysis.
 #[derive(Clone, Debug)]
 pub struct Analysis {
@@ -218,6 +244,9 @@ pub struct Analysis {
     pub sigs: Vec<FnSig>,
     /// The facts of every user body.
     pub bodies: Vec<BodyFacts>,
+    /// The declaration of each body, in the order of [`Analysis::bodies`]
+    /// (plan stage R0i).
+    pub decls: Vec<BodyDecl>,
     /// Diagnostics from analysis (not from the checker).
     pub diags: Vec<Diagnostic>,
     /// The number of body lowerings that effect inference used.
@@ -406,10 +435,8 @@ fn analyze_bounded(
     kept.extend(typeck_only(&inferred.diags));
     diags.extend(inferred.diags);
     // W0118 of the old inference. The `ir` pipeline asks the summaries
-    // (`factgen::checks`) and keeps these only with another emit.
-    let rows = program::check_on_abort_rows(&prog, &sigs, opts.no_runtime);
-    let old_rows = rows.clone();
-    diags.extend(rows);
+    // (`factgen::checks`).
+    diags.extend(program::check_on_abort_rows(&prog, &sigs, opts.no_runtime));
     let mut bodies = Vec::new();
     let mut work = Work::default();
     let (mut thir_tys, thir_decl_error) = match types::ir_ty_table(&prog) {
@@ -423,6 +450,7 @@ fn analyze_bounded(
         Some(program::ItemRef::Fn(m)) => Some(m),
         _ => None,
     };
+    let decls = body_decls(&prog, &user_fns, main, opts);
     for (&f, mut l) in user_fns.iter().zip(inferred.lowered) {
         kept.extend(typeck_only(&l.diags));
         diags.extend(l.diags);
@@ -466,25 +494,15 @@ fn analyze_bounded(
             effects: l.effects,
         });
     }
-    for &f in &user_fns {
-        if prog.fns[f].decl.is_fip {
-            let unit = unit_of(&prog, prog.fns[f].module);
-            let fip: Vec<Diagnostic> = fip::check(&prog, &sigs, f)
-                .into_iter()
-                .map(|mut d| {
-                    d.unit = unit;
-                    d
-                })
-                .collect();
-            kept.extend(fip.iter().cloned());
-            diags.extend(fip);
-        }
-    }
+    // The `ir` pipeline checks the `fip` functions with its own signatures
+    // (`factgen::run`).
+    diags.extend(fip_diags(&prog, &sigs, &user_fns));
     work.item_steps = prog.item_steps();
     let mut a = Analysis {
         program: prog,
         sigs,
         bodies,
+        decls,
         diags,
         lowerings: inferred.lowerings,
         work,
@@ -495,11 +513,7 @@ fn analyze_bounded(
         ir_facts: None,
     };
     if opts.facts != FactGen::Old {
-        let on_abort = factgen::OnAbortRows {
-            old: old_rows,
-            no_runtime: opts.no_runtime,
-        };
-        let (mut scope, ir) = factgen::run(&a, opts.ir_groups, emit, kept, on_abort);
+        let (mut scope, ir) = factgen::run(&a, opts.ir_groups, emit, kept, opts.no_runtime);
         // A program that the `ir` pipeline checks only if it rejects it
         // keeps both views (stage R0g): `weft_check::check_analysis`
         // decides.
@@ -517,6 +531,62 @@ fn analyze_bounded(
         }
     }
     a
+}
+
+/// The declaration of each body: the functions `user_fns`, then the tests
+/// (the order of [`Analysis::bodies`]). `main` is `main` of the root.
+fn body_decls(
+    prog: &Program,
+    user_fns: &[FnId],
+    main: Option<FnId>,
+    opts: Options,
+) -> Vec<BodyDecl> {
+    let mut out = Vec::with_capacity(user_fns.len() + prog.tests.len());
+    for &f in user_fns {
+        let def = &prog.fns[f];
+        let unit = unit_of(prog, def.module);
+        let started = unit == ROOT_UNIT && main == Some(f);
+        out.push(BodyDecl {
+            func: Some(f),
+            unit,
+            module: def.module,
+            name: def.path.clone(),
+            library: opts.library || unit > ROOT_UNIT,
+            started,
+            no_runtime: started && opts.no_runtime,
+        });
+    }
+    for t in &prog.tests {
+        let unit = unit_of(prog, t.module);
+        // A test is a harness: it can install root handlers, also in a
+        // library (W0801).
+        out.push(BodyDecl {
+            func: None,
+            unit,
+            module: t.module,
+            name: format!("test \"{}\"", t.name),
+            library: false,
+            started: unit == ROOT_UNIT,
+            no_runtime: false,
+        });
+    }
+    out
+}
+
+/// The diagnostics of the `fip` functions of `fns` (W1001 to W1004), with
+/// the signatures `sigs`.
+pub(crate) fn fip_diags(prog: &Program, sigs: &[FnSig], fns: &[FnId]) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for &f in fns {
+        if prog.fns[f].decl.is_fip {
+            let unit = unit_of(prog, prog.fns[f].module);
+            out.extend(fip::check(prog, sigs, f).into_iter().map(|mut d| {
+                d.unit = unit;
+                d
+            }));
+        }
+    }
+    out
 }
 
 /// The codes of the old lowering that the `ir` pipeline drops.

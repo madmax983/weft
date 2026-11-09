@@ -188,6 +188,11 @@ pub fn check(base: &Path, entry: &Entry, groups: Groups) -> Outcome {
     // A program that the `ir` pipeline checks only if it rejects it (stage
     // R0g): the check decides if it is in scope.
     if a.ir_scope.as_ref().is_some_and(|s| s.pending.is_some()) {
+        let no_ir = a
+            .ir_facts
+            .as_ref()
+            .map(|f| f.no_ir.clone())
+            .unwrap_or_default();
         let c = weft_check::check_analysis(a, &pkg.files);
         let Some(ir) = c.ir else {
             return Outcome::default();
@@ -197,6 +202,7 @@ pub fn check(base: &Path, entry: &Entry, groups: Groups) -> Outcome {
             bodies: ir.analysis.bodies,
             diags: ir.analysis.diags,
             sigs: ir.analysis.sigs,
+            no_ir,
         });
     }
     let Some(ir) = a.ir_facts.as_ref() else {
@@ -208,7 +214,10 @@ pub fn check(base: &Path, entry: &Entry, groups: Groups) -> Outcome {
     };
     for f in a.program.fn_ids() {
         let def = &a.program.fns[f];
-        if def.is_std || def.decl.body.is_none() {
+        // A function whose body has no IR keeps its declaration in the `ir`
+        // pipeline (plan stage R0i): the program has an error for the body,
+        // and the row is not an inferred row.
+        if def.is_std || def.decl.body.is_none() || ir.no_ir.contains(&f) {
             continue;
         }
         let (Some(old), Some(new)) = (a.sigs.get(f.index()), ir.sigs.get(f.index())) else {

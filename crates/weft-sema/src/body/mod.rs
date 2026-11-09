@@ -40,7 +40,7 @@ mod late;
 pub mod loops;
 mod oprefs;
 mod repeat;
-pub mod roots;
+pub(crate) use crate::roots;
 mod stmt;
 mod tasks;
 

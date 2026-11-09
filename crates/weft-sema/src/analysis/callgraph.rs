@@ -58,10 +58,6 @@ pub struct Inference {
     /// The `EffectSig` of each function of the program of the analysis
     /// whose summary comes from its body (`super::sig::to_effect_sig`).
     pub effects: Vec<(crate::FnId, EffectSig)>,
-    /// Each function of the program of the analysis whose body has IR but
-    /// whose summary has no row yet (a function value in its signature:
-    /// stage F12). W0701 takes the row of the old inference for it.
-    pub old_rows: Vec<crate::FnId>,
     /// W0706 for each function of a component whose fixpoint stopped.
     pub diags: Vec<Diagnostic>,
     /// The facts of the last round of each function body, by the index of
@@ -206,8 +202,10 @@ fn summary_of(
     inf: &Inferred,
 ) -> Result<Summary, &'static str> {
     let sig = a
-        .sigs
+        .program
+        .fns
         .get(sema.index())
+        .map(|def| &def.sig)
         .ok_or("a call of a function with no signature")?;
     if sig.declared {
         let mut s = sig.clone();
@@ -232,7 +230,7 @@ fn summary_of(
             sig::put_parts(&mut sum, inf);
             sum.gives_frame = inf.gives_frame;
             sum.caller_muts = inf.caller_muts;
-            sum.pins = inf.pins || sig.effects.pins;
+            sum.pins = inf.pins;
             sum.joins.clone_from(&inf.joins);
             sum.abort_joins.clone_from(&inf.abort_joins);
             sum.task_effects.clone_from(&inf.task_effects);
@@ -253,7 +251,7 @@ fn summary_of(
 /// `sum`: a function with a stated row keeps its row and gets the parts that
 /// its body gives.
 fn effect_sig(a: &Analysis, sema: crate::FnId, inf: &Inferred, sum: &Summary) -> EffectSig {
-    match a.sigs.get(sema.index()) {
+    match a.program.fns.get(sema.index()).map(|def| &def.sig) {
         Some(sig) if sig.declared => EffectSig {
             muts: sig.effects.muts.clone(),
             named: sig.effects.named.clone(),
@@ -262,9 +260,9 @@ fn effect_sig(a: &Analysis, sema: crate::FnId, inf: &Inferred, sum: &Summary) ->
             multi: inf.multi,
             drops: inf.drops.iter().map(|&j| j as usize).collect(),
             holds: inf.holds.iter().map(|&j| j as usize).collect(),
-            // A stated signature keeps the part `pins` of the old
-            // inference too (a callee of the runtime, `http.serve`).
-            pins: inf.pins || sig.effects.pins,
+            // The part `pins` comes from the body (plan stage R0i: not from
+            // the old inference).
+            pins: inf.pins,
             task_effects: inf.task_effects.clone(),
             ..EffectSig::default()
         },
@@ -331,7 +329,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
     let tys = &built.tys;
     let prog = &a.program;
     let index_of: HashMap<crate::FnId, usize> = a
-        .bodies
+        .decls
         .iter()
         .enumerate()
         .filter_map(|(i, b)| b.func.map(|f| (f, i)))
@@ -438,7 +436,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
         for &i in &comp {
             let Some(n) = nodes.get(i) else { continue };
             let (Some(sig), Some(decl)) = (
-                a.sigs.get(n.sema.index()),
+                prog.fns.get(n.sema.index()).map(|def| &def.sig),
                 built.program.fns.get(n.f.index()),
             ) else {
                 continue;
@@ -480,15 +478,15 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                     continue;
                 }
                 let Some(n) = nodes.get(i) else { continue };
-                let (Some(sig), Some(decl), Some(old)) = (
-                    a.sigs.get(n.sema.index()),
+                let (Some(sig), Some(decl), Some(bd)) = (
+                    prog.fns.get(n.sema.index()).map(|def| &def.sig),
                     built.program.fns.get(n.f.index()),
-                    a.bodies.get(n.index),
+                    a.decls.get(n.index),
                 ) else {
                     continue;
                 };
                 out.rounds += 1;
-                let mut facts = factgen::seed(&old.facts);
+                let mut facts = factgen::seed(bd);
                 let run = factgen::emit_parts(a, built, &out.sums, n.index, n.body, &mut facts);
                 match run {
                     Ok(e) => {
@@ -595,9 +593,6 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
     }
     for (i, n) in nodes.iter().enumerate() {
         let (Ok(sum), Some(x), Some(true)) = (out.sums.get(n.f), inf.get(i), ok.get(i)) else {
-            if out.sums.get(n.f).is_err() && ok.get(i) == Some(&true) {
-                out.old_rows.push(n.sema);
-            }
             continue;
         };
         out.effects.push((n.sema, effect_sig(a, n.sema, x, sum)));

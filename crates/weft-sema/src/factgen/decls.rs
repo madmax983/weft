@@ -10,12 +10,12 @@
 //! - [`ret_places`]: the stated returned places (`ref_in` of `Return`).
 //! - [`tasks`]: `task` and `fork_task`, one task for each spawn site and each
 //!   branch of a `fork`.
-//! - [`std_effects`]: `std_effect` for each standard effect that the facts
-//!   name.
+//! - [`effect_names`]: `std_effect` for each standard effect that the facts
+//!   name, and the names that the diagnostics show for the user effects.
 //!
 //! `library()`, `started()` and `no_runtime()` come from the unit and the
-//! driver: the fact generator copies them from the facts of the
-//! declarations of the body (`super::seed`).
+//! driver: the fact generator takes them from the declaration of the body
+//! (`crate::BodyDecl`, `super::seed`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -472,12 +472,19 @@ pub fn tasks_where(
     out
 }
 
-/// `std_effect(E)` for each standard effect that the facts name.
+/// The names of the effects that the facts name.
+///
+/// `std_effect(E)` for each standard effect, and the name that the body in
+/// module `module` can write for each user effect (`FnFacts::effect_names`,
+/// `FnFacts::hidden_effects`).
 ///
 /// The facts name the effects that escape, the stated effects, the effects
 /// that a clause performs, the handled effects and the effects of function
-/// arguments (as the old lowering, `name_effects`).
-pub fn std_effects(facts: &mut FnFacts) {
+/// arguments (as the old lowering, `name_effects`). The names come from the
+/// facts of the IR, not from the facts of the old lowering (plan stage
+/// R0i). A user effect that the module cannot write but can see is a
+/// hidden effect: a diagnostic shows its identity and tells why.
+pub fn effect_names(prog: &crate::Program, module: crate::ModId, facts: &mut FnFacts) {
     let named: BTreeSet<&str> = facts
         .escapes_at
         .iter()
@@ -489,11 +496,22 @@ pub fn std_effects(facts: &mut FnFacts) {
         .chain(facts.param_effect.iter().map(|(_, _, e)| e.as_str()))
         .collect();
     let std: Vec<String> = named
-        .into_iter()
+        .iter()
         .filter(|e| effects::is_std(e))
-        .map(str::to_string)
+        .map(|e| (*e).to_string())
         .collect();
+    let mut names = Vec::new();
+    let mut hidden = Vec::new();
+    for id in named.into_iter().filter(|e| !effects::is_std(e)) {
+        match effects::written(prog, module, id) {
+            Some(w) => names.push((id.to_string(), w)),
+            None if effects::seen(prog, module, id) => hidden.push(id.to_string()),
+            None => {}
+        }
+    }
     facts.std_effects = std;
+    facts.effect_names = names;
+    facts.hidden_effects = hidden;
 }
 
 /// True if root `r` of `facts` is the value of a local.

@@ -86,7 +86,7 @@ pub fn interface_place(
             let a = roots.group_adt(info.root)?;
             (
                 IRoot::Group(a),
-                crate::body::roots::group(crate::AdtId(a.index())),
+                crate::roots::group(crate::AdtId(a.index())),
             )
         }
         _ => return None,
@@ -1022,26 +1022,26 @@ fn closure_place(
 ) -> Option<(IPlace, u32)> {
     let info = facts.places.get(p.index())?;
     let steps = steps_of(facts, p);
-    let stored = crate::body::roots::STORED;
+    let stored = crate::roots::STORED;
     let (root, idx, steps) = match roots.role(info.root)? {
         Role::Capture(b, k) if b == body => (IRoot::Capture(k), stored, steps),
         Role::CaptureHeld(b, k) if b == body => (IRoot::CaptureHeld(k), stored, steps),
         Role::CaptureDeep(b, k) if b == body => (IRoot::CaptureDeep(k), stored, steps),
         Role::Param(b, i) if b == body && i > 0 => (
             IRoot::Param(i - 1),
-            crate::body::roots::param(i as usize - 1),
+            crate::roots::param(i as usize - 1),
             steps,
         ),
         Role::Held(b, i) if b == body && i > 0 => (
             IRoot::Held(i - 1),
-            crate::body::roots::param(i as usize - 1),
+            crate::roots::param(i as usize - 1),
             steps,
         ),
         Role::Group => {
             let a = roots.group_adt(info.root)?;
             (
                 IRoot::Group(a),
-                crate::body::roots::group(crate::AdtId(a.index())),
+                crate::roots::group(crate::AdtId(a.index())),
                 steps,
             )
         }
@@ -1412,7 +1412,7 @@ pub fn closure(
             .unwrap_or_else(|| format!("parameter {j}"));
         out.params.push(ParamIface {
             name,
-            root: crate::body::roots::param(j - 1),
+            root: crate::roots::param(j - 1),
             in_place: None,
         });
     }

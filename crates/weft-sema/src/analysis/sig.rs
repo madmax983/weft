@@ -44,9 +44,9 @@ use super::summary::{
     Abort, CapIface, Flow, IPlace, IRoot, IStep, ParamIface, Perform, Ret, RetFn, Run, Store,
     Summary,
 };
-use crate::body::roots;
 use crate::program::{EffectSig, FnSig, SigPlace, SigRoot, SigStep};
 use crate::props::ir_props;
+use crate::roots;
 
 /// True if a value of type `t` is a reference.
 pub fn is_ref(tys: &TyTable, t: TyId) -> bool {

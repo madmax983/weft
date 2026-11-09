@@ -1317,7 +1317,9 @@ fn the_effect_sig_of_each_corpus_function_of_group_a_is_the_one_of_the_old_infer
         programs += 1;
         for g in a.program.fn_ids() {
             let def = &a.program.fns[g];
-            if def.is_std || def.decl.body.is_none() {
+            // A function whose body has no IR keeps its declaration (plan
+            // stage R0i), as `weft-gate sigdiff` says.
+            if def.is_std || def.decl.body.is_none() || ir.no_ir.contains(&g) {
                 continue;
             }
             fns += 1;

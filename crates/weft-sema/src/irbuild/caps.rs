@@ -182,7 +182,7 @@ impl Builder<'_> {
     fn item_row(&self, f: crate::FnId) -> Option<Vec<EffectId>> {
         let a = self.d.a;
         let def = a.program.fns.get(f.index())?;
-        let sig = a.sigs.get(f.index())?;
+        let sig = &def.sig;
         if !sig.declared || super::intrinsic(a, def).is_some() {
             return None;
         }

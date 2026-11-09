@@ -487,7 +487,7 @@ pub struct Summary {
 pub struct ParamIface {
     /// The name of the parameter.
     pub name: String,
-    /// The callee root index (`crate::body::roots`): a parameter with an
+    /// The callee root index (`crate::roots`): a parameter with an
     /// `in` place has the root of the parameter of its place.
     pub root: u32,
     /// The stated `in` place of a reference parameter.

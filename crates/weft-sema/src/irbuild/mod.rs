@@ -275,7 +275,7 @@ fn build_all(a: &Analysis) -> Built {
         adds: Vec::new(),
     });
     let mut decl_ok = Vec::new();
-    for b in &a.bodies {
+    for b in &a.decls {
         if let Some(f) = b.func {
             let (decl, ok) = fn_decl(a, &mut out.tys, f);
             out.fns
@@ -284,17 +284,17 @@ fn build_all(a: &Analysis) -> Built {
             decl_ok.push(ok);
         }
     }
-    let funcs = a.bodies.iter().filter(|b| b.func.is_some()).count();
+    let funcs = a.decls.iter().filter(|b| b.func.is_some()).count();
     let mut fn_index = 0;
-    for (i, (b, t)) in a.bodies.iter().zip(&a.thir).enumerate() {
-        let name = b.facts.name.clone();
+    for (i, (b, t)) in a.decls.iter().zip(&a.thir).enumerate() {
+        let name = b.name.clone();
         // The bodies of the tests come after the bodies of the functions.
         let test = i.checked_sub(funcs).and_then(|j| a.program.tests.get(j));
         let src = if let Some(f) = b.func {
             let k = fn_index;
             fn_index += 1;
             let def = a.program.fns.get(f.index());
-            let sig = a.sigs.get(f.index());
+            let sig = def.map(|d| &d.sig);
             match (def, sig, out.fns.get(&f)) {
                 (Some(def), Some(sig), Some(&id)) => def.decl.body.as_ref().map(|block| Src {
                     kind: BodyKind::Fn(id),
@@ -501,7 +501,7 @@ fn body_outcome(
 /// (V10).
 fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
     let mut ok = true;
-    let (Some(def), Some(sig)) = (a.program.fns.get(f.index()), a.sigs.get(f.index())) else {
+    let Some(def) = a.program.fns.get(f.index()) else {
         return (
             FnDecl {
                 name: String::new(),
@@ -515,6 +515,7 @@ fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
             false,
         );
     };
+    let sig = &def.sig;
     let mut ty = |t: &crate::types::Ty| {
         crate::types::final_ty(&a.program, tys, t).unwrap_or_else(|_| {
             ok = false;

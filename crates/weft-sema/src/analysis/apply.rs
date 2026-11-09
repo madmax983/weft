@@ -1306,16 +1306,16 @@ pub fn main(
         for ps in &s.cap_helds {
             cx.facts
                 .call_arg
-                .extend(ps.iter().map(|&p| (n, p, crate::body::roots::STORED)));
+                .extend(ps.iter().map(|&p| (n, p, crate::roots::STORED)));
         }
-        let g = given.unwrap_or_else(|| crate::body::roots::param(0));
+        let g = given.unwrap_or_else(|| crate::roots::param(0));
         let mut places: Vec<PlaceId> = s.args.iter().flatten().copied().collect();
         places.extend(s.others.iter().copied());
         places.sort();
         places.dedup();
         for p in places {
             let root = if in_env(cx.facts, p) {
-                crate::body::roots::STORED
+                crate::roots::STORED
             } else if s.nested {
                 // The closure gives the place to the run, not the callee of
                 // the node: the body of the closure checks it (issue #58).
@@ -1342,7 +1342,7 @@ pub fn main(
         cx.facts.mutates_at.push((n, p));
         if item || run {
             let root = if in_env(cx.facts, p) {
-                crate::body::roots::STORED
+                crate::roots::STORED
             } else {
                 as_given(idx)
             };
@@ -1362,7 +1362,7 @@ pub fn main(
             IRoot::Caller => None,
             // A capture is no argument: the value that the call runs.
             IRoot::Capture(_) | IRoot::CaptureHeld(_) | IRoot::CaptureDeep(_) => {
-                Some(crate::body::roots::STORED)
+                Some(crate::roots::STORED)
             }
             _ => Some(0),
         };
@@ -1372,7 +1372,7 @@ pub fn main(
             // check (W0312) compares it.
             if let (Some(root), true) = (root, item || run) {
                 let root = if in_env(cx.facts, p) {
-                    crate::body::roots::STORED
+                    crate::roots::STORED
                 } else {
                     as_given(root)
                 };

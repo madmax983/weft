@@ -501,7 +501,7 @@ pub fn perform_local(
     let places = op_places(em, out.clause);
     let ins = in_roots(&places, s.args.len());
     for (i, ps) in s.args.iter().enumerate() {
-        let root = crate::body::roots::param(ins.get(i).copied().unwrap_or(i));
+        let root = crate::roots::param(ins.get(i).copied().unwrap_or(i));
         for &q in ps {
             em.facts.reads_at.push((n, q));
             em.facts.call_arg.push((n, q, root));
@@ -515,7 +515,7 @@ pub fn perform_local(
         if transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
             continue;
         }
-        let root = crate::body::roots::fn_arg(i);
+        let root = crate::roots::fn_arg(i);
         let mut refs: Vec<PlaceId> = transfer::operand(&mut em.cx(), body, st, a)?
             .flat()
             .refs
@@ -632,7 +632,7 @@ fn check_in_places(
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| format!("parameter {i}")),
-            root: crate::body::roots::param(i),
+            root: crate::roots::param(i),
             in_place: sp.as_ref().map(crate::analysis::sig::sig_place),
         });
     }
@@ -2525,7 +2525,7 @@ fn copy_part(
             .map(|(_, q)| *q)
             .collect()
     };
-    let clause_root = cap.map_or(crate::body::roots::STORED, crate::body::roots::clause);
+    let clause_root = cap.map_or(crate::roots::STORED, crate::roots::clause);
     // A parameter of the clause points into its own root and into the places
     // of the arguments (plan stage F15): a change through it has a row for
     // each. The row of the place of an argument at a node that has a row
@@ -2564,7 +2564,7 @@ fn copy_part(
             Mapped::Param(i, ps) => {
                 let i = i as usize;
                 (
-                    Some(crate::body::roots::param(ins.get(i).copied().unwrap_or(i))),
+                    Some(crate::roots::param(ins.get(i).copied().unwrap_or(i))),
                     ps,
                 )
             }
@@ -2572,7 +2572,7 @@ fn copy_part(
                 let root = m
                     .param_runs
                     .get(&x)
-                    .map_or(clause_root, |&i| crate::body::roots::fn_arg(i as usize));
+                    .map_or(clause_root, |&i| crate::roots::fn_arg(i as usize));
                 (Some(root), vec![q])
             }
             Mapped::Own => continue,

@@ -3862,7 +3862,7 @@ fn during_check(
             })
     };
     let (writes, reads) = places_since(facts, marks, keep);
-    let root = crate::body::roots::fn_arg(app.callee_param.map_or(0, |j| j as usize));
+    let root = crate::roots::fn_arg(app.callee_param.map_or(0, |j| j as usize));
     if !app.during_writes.is_empty() {
         let mut all: Vec<PlaceId> = writes.iter().chain(&reads).copied().collect();
         all.sort();
@@ -5715,7 +5715,7 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
         }
     }
     for (i, ps) in out.args.iter().enumerate() {
-        let root = crate::body::roots::param(i);
+        let root = crate::roots::param(i);
         for &p in ps {
             em.facts.reads_at.push((n, p));
             em.facts.call_arg.push((n, p, root));
@@ -5724,7 +5724,7 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
         }
     }
     for (i, ps) in out.values.iter().enumerate() {
-        let root = crate::body::roots::fn_arg(i);
+        let root = crate::roots::fn_arg(i);
         em.facts.call_arg.extend(ps.iter().map(|&p| (n, p, root)));
     }
     let lent: Vec<PlaceId> = out.args.iter().flatten().copied().collect();

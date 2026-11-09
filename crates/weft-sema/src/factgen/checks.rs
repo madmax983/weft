@@ -30,9 +30,10 @@ use crate::Analysis;
 /// The summary gives the row: the
 /// changed places (`muts`), the effects through the capability of a caller
 /// (`performs`), `raises`, `drops` and `holds`
-/// (`crate::analysis::sig::to_effect_sig`). A function with no summary
-/// keeps the row of the old inference. `no_runtime`: no root handler serves
-/// an effect.
+/// (`crate::analysis::sig::to_effect_sig`), and `reaches` (`checks::reaches`). A
+/// function with no summary (an extern function that no body calls) keeps
+/// its declaration. No row comes from the old inference (plan stage R0i).
+/// `no_runtime`: no root handler serves an effect.
 pub fn on_abort_rows(
     a: &Analysis,
     built: &Built,
@@ -41,7 +42,7 @@ pub fn on_abort_rows(
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for f in on_abort_fns(&a.program) {
-        let Some(sig) = a.sigs.get(f.index()) else {
+        let Some(sig) = a.program.fns.get(f.index()).map(|def| &def.sig) else {
             continue;
         };
         let row = built
@@ -51,17 +52,35 @@ pub fn on_abort_rows(
             .map_or_else(
                 || sig.effects.clone(),
                 |s| {
-                    // A call of a function value that the function does not
-                    // know is an item check of the old inference (`reaches`,
-                    // class D-W0118 of stage F17): the summary keeps it.
                     let mut row = to_effect_sig(&a.program, s);
-                    row.reaches |= sig.effects.reaches;
+                    // The worst case of a body with no IR runs each value
+                    // of its parameter; the program has an error for the
+                    // body, and the other parts of the worst case give
+                    // W0118 already.
+                    let body = built
+                        .fns
+                        .get(&f)
+                        .and_then(|g| built.program.fns.get(g.index()))
+                        .is_some_and(|d| d.body.is_some());
+                    row.reaches = body && reaches(s);
                     row
                 },
             );
         out.extend(on_abort_row(&a.program, f, sig, &row, no_runtime));
     }
     out
+}
+
+/// True if a function with summary `s` can call a function value that it
+/// does not know (`reaches` of W0118, class D-W0118 of stage F17): it calls
+/// a function value of its interface (a run of the part `runs` that is not
+/// a task: a value in its parameter, also through a callee), or a value that
+/// no part names (`unknown_multi`). Such a value can do what its maker can,
+/// so an `on abort` function cannot call it (plan stage R0i: the old
+/// inference gave this part). A task of the function gives W0118 for its
+/// scope already.
+fn reaches(s: &crate::analysis::summary::Summary) -> bool {
+    s.runs.iter().any(|r| !r.task) || s.unknown_multi
 }
 
 /// The span of the `handle` of handler `h`: the `handle` terminator of its

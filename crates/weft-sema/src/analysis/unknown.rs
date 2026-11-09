@@ -173,7 +173,7 @@ pub fn code_of_caller(
         let k = u32::try_from(i).unwrap_or(u32::MAX);
         s.params.push(ParamIface {
             name: format!("parameter {i}"),
-            root: crate::body::roots::param(i),
+            root: crate::roots::param(i),
             in_place: None,
         });
         // The code gets the places of the argument (as the old lowering: a

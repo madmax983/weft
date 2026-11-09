@@ -2348,7 +2348,7 @@ pub fn given(
         let root = sum_roots
             .get(i)
             .copied()
-            .unwrap_or_else(|| crate::body::roots::param(i));
+            .unwrap_or_else(|| crate::roots::param(i));
         let of = |v: &Vec<Vec<weft_facts::PlaceId>>| v.get(i).cloned().unwrap_or_default();
         for q in of(&s.args)
             .into_iter()
@@ -2359,7 +2359,7 @@ pub fn given(
         }
     }
     for &q in &app_places {
-        roots.push((q, crate::body::roots::STORED));
+        roots.push((q, crate::roots::STORED));
     }
     roots.sort();
     roots.dedup();
@@ -2406,18 +2406,18 @@ fn given_value(
     let inst = transfer::run_inst(body, block);
     let mut roots: Vec<(weft_facts::PlaceId, u32)> = Vec::new();
     for (i, a) in args.iter().enumerate() {
-        let root = crate::body::roots::param(i);
+        let root = crate::roots::param(i);
         for q in transfer::reach_refs(cx, body, st, a)? {
             roots.push((cx.facts.wildcard(q), root));
         }
     }
     for q in transfer::reach_refs(cx, body, st, f)? {
-        roots.push((cx.facts.wildcard(q), crate::body::roots::STORED));
+        roots.push((cx.facts.wildcard(q), crate::roots::STORED));
     }
     // The places of a perform of the closure are exact places: the perform
     // lends them (plan stage F16).
     for q in cap_given(cx, (body, block), st)?.1 {
-        roots.push((q, crate::body::roots::STORED));
+        roots.push((q, crate::roots::STORED));
     }
     roots.sort();
     roots.dedup();

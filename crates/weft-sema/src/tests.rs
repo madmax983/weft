@@ -853,7 +853,7 @@ fn a_closure_argument_passes_its_captures() {
     let n = node(&f, "run");
     assert!(f
         .call_arg
-        .contains(&(n, place(&f, "w.es[]"), crate::body::roots::fn_arg(0))));
+        .contains(&(n, place(&f, "w.es[]"), crate::roots::fn_arg(0))));
     assert!(f.call_arg.contains(&(n, place(&f, "w"), 1)));
 }
 
@@ -1830,4 +1830,83 @@ fn the_splits_of_two_calls_are_apart() {
     let near: Vec<u32> = ["b", "c", "d"].iter().flat_map(|n| split_of(n)).collect();
     assert_eq!((far.len(), near.len()), (1, 3), "{far:?} {near:?}");
     assert!(near.iter().all(|s| !far.contains(s)), "{far:?} {near:?}");
+}
+
+/// The `ir` pipeline does not read the signatures of the old inference or
+/// the facts of the old lowering (plan stage R0i). A run of the pipeline on
+/// an analysis whose old signatures and old facts are wrong gives the same
+/// facts, signatures and diagnostics. Only the exports of the old facts of
+/// a body with no IR stay (`factgen::exports::copy_old`, plan stage R4).
+#[test]
+fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
+    let programs = [
+        include_str!("../../../tests/programs/06_http.wf"),
+        include_str!("../../../tests/programs/13_signatures.wf"),
+        include_str!("../../../tests/programs/14_tasks.wf"),
+        include_str!("../../../tests/programs/49_fip_paths.wf"),
+        include_str!("../../../tests/programs/120_on_abort_effects.wf"),
+        include_str!("../../../tests/programs/140_named_args.wf"),
+        include_str!("../../../tests/programs/183_no_ir_callee.wf"),
+        include_str!("../../../tests/programs/194_task_runs.wf"),
+    ];
+    let mut checked = 0;
+    for src in programs {
+        let opts = Options {
+            facts: crate::FactGen::Both,
+            ..Options::from_markers(src)
+        };
+        let Ok(a) = crate::analyze_source(src, opts) else {
+            panic!("the program parses");
+        };
+        let run = |a: &Analysis| {
+            crate::factgen::run(
+                a,
+                crate::DEFAULT_GROUPS,
+                crate::factgen::emit,
+                Vec::new(),
+                opts.no_runtime,
+            )
+        };
+        let (scope, ir) = run(&a);
+        // Wrong old signatures and wrong old facts: each part of each row,
+        // and facts with no relation but the exports.
+        let mut wrong = a.clone();
+        for s in &mut wrong.sigs {
+            s.effects.named.insert("Wrong".into());
+            s.effects.pins = !s.effects.pins;
+            s.effects.reaches = !s.effects.reaches;
+            s.effects.raises = !s.effects.raises;
+            s.effects.drops.insert(7);
+        }
+        for b in &mut wrong.bodies {
+            b.effects.named.insert("Wrong".into());
+            b.facts = FnFacts {
+                vars: b.facts.vars.clone(),
+                by_value: b.facts.by_value.clone(),
+                arg_order: b.facts.arg_order.clone(),
+                int_ops: b.facts.int_ops.clone(),
+                name: "wrong".into(),
+                library: !b.facts.library,
+                started: !b.facts.started,
+                no_runtime: !b.facts.no_runtime,
+                ..FnFacts::default()
+            };
+        }
+        let (scope2, ir2) = run(&wrong);
+        assert_eq!(scope.fallback, scope2.fallback);
+        let (Some(ir), Some(ir2)) = (ir, ir2) else {
+            continue;
+        };
+        checked += 1;
+        assert_eq!(ir.diags, ir2.diags);
+        assert_eq!(ir.no_ir, ir2.no_ir);
+        for (s, s2) in ir.sigs.iter().zip(&ir2.sigs) {
+            assert_eq!(s.effects, s2.effects);
+        }
+        for (b, b2) in ir.bodies.iter().zip(&ir2.bodies) {
+            assert_eq!(b.facts, b2.facts, "{}", b.facts.name);
+            assert_eq!(b.effects, b2.effects, "{}", b.facts.name);
+        }
+    }
+    assert!(checked >= 6, "{checked} programs in scope");
 }

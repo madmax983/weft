@@ -206,6 +206,7 @@ fn check_source_here(name: &str, src: &str, opts: Options) -> Checked {
                 program: weft_sema::Program::default(),
                 sigs: Vec::new(),
                 bodies: Vec::new(),
+                decls: Vec::new(),
                 diags: Vec::new(),
                 lowerings: 0,
                 work: weft_sema::Work::default(),

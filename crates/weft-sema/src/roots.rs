@@ -4,6 +4,11 @@
 //! W0312 compares the places of one call that have different roots. Two places
 //! with one root are parts of one argument, so they can overlap. Each kind of
 //! root has a range of its own, so two kinds never share a root.
+//!
+//! The old lowering (`crate::body`) and the fact generator of the IR
+//! (`crate::factgen`, `crate::analysis`) use the same roots, and the checker
+//! reads them in its diagnostics. The module is not a part of `body/`, so
+//! plan stage R3 can delete `body/` (plan stage R0i).
 
 use weft_facts::CapId;
 

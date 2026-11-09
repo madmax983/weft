@@ -1920,8 +1920,9 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0e | Tasks in closure bodies; a spawn that does not name its scope | E1, E3 (a new reason E3b stays for 2 programs of tier 1 and 3 of tier 2: R0e as built) | done (8b2c59c) |
 | R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, C7, E7 (E2, E4, E5 stay: R0f as built) | done (f364e26) |
 | R0g | Continuations and capabilities in closures; a construct with no full facts is in scope only if the `ir` pipeline rejects the program | D1, D4, C4, C6, D5, C8 (D1 15/49, D4 1/2, D5 5/5 stay: R0g as built) | done (5aea3a8) |
-| R0h | Function values across operations: an operation of a caller gets a function value; a clause gets a function value of the callee, or gives a reference or a function value back to it | C2, D3 (after the fix of R0h C2 17/68, D3 1/1 stay; E2, E4, E5, C7, E7 stay: R0h as built, R0h fix as built) | done (this stage) |
-| R0i | The other old inputs: `ValueProps`, W0502, W0303, `Analysis::sigs`, the seed facts (can run beside R1 and R2) | | M |
+| R0h | Function values across operations: an operation of a caller gets a function value; a clause gets a function value of the callee, or gives a reference or a function value back to it | C2, D3 (after the fix of R0h C2 17/68, D3 1/1 stay; E2, E4, E5, C7, E7 stay: R0h as built, R0h fix as built) | done (c9da6d3) |
+| R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built) | | done (this stage) |
+| R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; can run beside R1 and R2) | | M |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -3197,6 +3198,125 @@ R0h fix as built (the review of R0h, round 1: seven HOLE rows of one root cause)
   fault to rejected by both) but `r0hrev/p/c10_ret_fn_out.wf` (no fault to FP-IR, a
   precision loss); the seven blockers are `held` (the old pipeline rejects them), `f47`
   has no fault; the 3 HOLE rows are older (`c4_07`, `k09`, `k10`).
+
+R0i design note (the other old inputs of the `ir` pipeline; the scope report, "Other
+reads of `body/` that R1/R2 do not cover"):
+
+- The inventory at c9da6d3 (scratchpad `r0i/notes.md`). The `ir` pipeline reads:
+  - the facts of the old lowering (`Analysis::bodies`): the first facts of each body
+    (`factgen::seed`: the name, `effect_names`, `hidden_effects`, `library()`,
+    `started()`, `no_runtime()`), the function and the unit of each body (the builder,
+    the call graph, `factgen::run`), `no_runtime` of the handlers (`emit_parts`), the
+    row of a test body (`BodyFacts::effects`), and the exports of a body with no IR
+    (`exports::copy_old`, stage R4);
+  - the signatures of the old inference (`Analysis::sigs`). Most reads take a part of
+    the declaration (the types, the parameters, the stated places and row,
+    `declared`), equal to `FnDef::sig`: the inference changes only `effects`, and only
+    the parts other than the row of a function with a stated row. The reads of real
+    inferred parts: `pins` of a function with a stated row (`callgraph::summary_of`,
+    `effect_sig`), `reaches` of W0118 (`checks::on_abort_rows`), W0701 with the old
+    row (`Inference::old_rows`), the rows of the functions with no IR (`IrFacts::sigs`
+    starts as a copy of the old signatures), the rows that `fip::check` reads (W1004),
+    and the old W0118 for an emit that gives none (`OnAbortRows::old`);
+  - the diagnostics of the old lowering that `typeck_only` keeps: the W01xx, W0119,
+    W0120 and W0504 of `typeck` (stages R1 and R2), W0303 (a move through a
+    reference; `irbuild::reported` reads it for `NoIr::MoveThroughRef`), and W0502 of
+    `keep_modes` (a `once` closure into a place of plain data);
+  - `Binding::value` of the THIR tables (`ValueProps`: `linear`, `no_on_abort`,
+    `once`, `nonportable`): the recorder joins the `VarInfo` of the old value flow, and
+    `Builder::binding_props_of` puts it into the `LocalDecl::props` of a local of a
+    function type (also the cleanup: a `linear` local gets an `UnwindValue`);
+  - the constants `body::roots`.
+- The stage is two parts. Part a (this commit, "R0i as built") removes each read of the
+  old inference and of the old facts but `copy_old`: the declarations of the bodies
+  come from the program, the effect names from the facts of the IR, each signature
+  part from the declaration or from the summary, W0118 and W1004 from the signatures of
+  the `ir` pipeline. It changes no class of the gate.
+- Part b (R0i-b, the design for the next stage): the reads of the old value flow and of
+  the move diagnostics. They share one need: the builder must know the closures that
+  a local of a function type can hold, and it must go on after an error.
+  - `ValueProps`: the builder makes each body with the properties of the types only,
+    then a pass over the IR of the component joins, for each local of a function type,
+    the properties of the closures that reach it (`closure_props` of each
+    `Aggregate(Closure)`, a `Use` of another local, a field or an element read of a
+    place that holds one, the `ret.fns` and `ret.linear` of the summary of a callee,
+    the values that a clause or a resume gives). A parameter of a function type, and
+    code of a caller, are `many` and not linear (the caller cannot give a `once` or a
+    linear closure there: W0502, W0601 at the call). The cleanup reads `linear`, so a
+    body whose locals get a new property is built again with them (a fixpoint: at
+    most four bits for each local). The test: for each body of tiers 1 and 2, the
+    properties equal the `ValueProps` of the recorder, else a ledger entry.
+  - W0502 of `keep_modes`: with these properties, `factgen` checks each operand that
+    holds a `once` value and goes into a place of plain data: a field or an element of
+    an aggregate, the place of an assignment that is not a new binding, an argument of
+    a parameter that the callee keeps (the parts `puts` and `put_fns` of its summary),
+    with the text of the old lowering.
+  - W0303: the builder records each move through a reference with the span of the
+    expression and the text of its type (`TyTable::show`, with the text of the old
+    lowering for a function type: `fn() -> ()`), gives a placeholder operand and goes
+    on; a body with a record has the outcome `NoIr::MoveThroughRef` and the builder
+    gives the diagnostics (14 programs of tier 1 have more than one W0303 in a body).
+    `irbuild::reported` reads them, and W0303 joins `IR_DROPS`. A body that the
+    builder stops for another reason after a record keeps the record (the program has
+    the error, so it stays in scope as now).
+  - The gate: ideally no class change; `ereview/ev.sh` on each program whose
+    diagnostics change.
+
+R0i as built (part a):
+
+- The constants of the roots are `crate::roots` (`body::roots` uses them again for
+  the old lowering; `weft-check` reads `weft_sema::roots`).
+- `Analysis::decls` holds a `BodyDecl` for each body (the function, the unit, the
+  module, the name, `library()`, `started()`, `no_runtime()`), from the program and
+  the options (`lib.rs`, `body_decls`). `factgen::seed`, the builder, the call graph,
+  `factgen::run` and `exports::fill` read it, not the old facts.
+- `decls::effect_names` (with `std_effect`, before `decls::std_effects`) gives the
+  names of the user effects from the facts of the IR. 13 programs of tier 1 change
+  only the text of a diagnostic: an effect that only the facts of the IR name showed
+  its identity (`main.Note`) and the note of a private effect; now it shows its name
+  (`Note`) and the note of a missing handler (W0805, W0702; for example
+  `r2/fidelity/p/e1_resume_abort.wf`).
+- The reads of a declaration part take `FnDef::sig`. `pins` of a function with a
+  stated row comes from the body only (65 functions of 30 files of tier 1 lose the
+  `pins` of the old inference: a `sig` entry of class F19-SIG-PINS; the interpreter
+  reads `pins` only for a function item that `http.serve` runs, and none of them is
+  one). `Inference::old_rows` is gone (each function with IR has a summary).
+  `factgen::ir_sigs` gives `IrFacts::sigs`: the summary rows, and the declaration of
+  each other function; `IrFacts::no_ir` lists the functions whose body has no IR, and
+  `weft-gate sigdiff` and the test of the corpus signatures do not compare them. A
+  first build gave such a function the row of the worst case of its declaration: then
+  W1004 (`49_fip_paths.wf`, `unknown`) and W0901 (four packages of tier 2, for
+  example `verify/partb/S3/pkg1`) came from the worst case, as more errors of a
+  program with a type error. A test body has an empty row.
+- W0118 reads `reaches` from the summary (`checks::reaches`: a run of the part `runs`
+  that is not a task, or `unknown_multi`), only for a function with IR. The 14 programs
+  of tier 1 with this W0118 keep it. A first build counted each run and the worst case
+  too: then a function with a type error (`fd1_v2_generic.wf`, nine mutants of
+  `r2/oracle/runs`) and `verify/s5/R3x/p1/c14_task.wf` (a task `s.spawn(|| x)` with
+  `x` of a type parameter: the summary has a run of the parameter as a task) got one
+  more W0118. `factgen::run` gives W0118 for an emit with none. `OnAbortRows` is gone.
+- `fip`: `factgen::run` checks each `fip` function with the signatures of the `ir`
+  pipeline.
+- Test: `weft-sema` `tests.rs`
+  `the_ir_pipeline_reads_no_old_signature_and_no_old_fact` (a run on an analysis with
+  wrong old signatures and old facts gives the same facts, rows and diagnostics).
+- What still reads the old pipeline: `copy_old` (stage R4), the THIR tables and the
+  `typeck` diagnostics (stages R1, R2), `ValueProps`, W0502 and W0303 (R0i-b).
+- Gates (binary `r0i/bin/weft-final`, `weft-gate`): tier 1 0 blockers, each row as at
+  R0h fix (4739 of 4910 in scope; 3752 same, 14 open, 277 fixed, 1 new-fp, 0
+  lost-fault, 139 lost-clean, 145 moved, 582 changed). Tier 2 (2 workers) 0 blockers,
+  each row as at R0h fix (54386 of 57393 in scope; 40051 same, 6 open, 92 fixed, 12
+  new-fp (0.096 %), 0 lost-fault, 3444 lost-clean, 1857 moved, 11931 changed; 4
+  timeouts). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, 1315 pass, as R0h
+  fix). Sigdiff tier 1 0 rows with no entry (40076 functions compared, 584 fewer: the
+  functions with no IR; the new `sig` entry of R0i for `pins`). No new probe, so the
+  manifest, the oracle caches and the baseline of tier 1 do not change; no new
+  lost-clean row. The diagnostics of `weft check` on `tests/programs` and
+  `tests/gate/probes` (5247 files) against `weft-r0hfix1`: only the 13 texts of the
+  effect names change; `ereview/ev.sh` on those 13 and the 30 files of the `pins` entry
+  (44 with the first-build file `fd1_v2_generic.wf`): each verdict and each fact-oracle
+  column as with `weft-r0hfix1` (21 held, 14 rejected by both, 7 no fault, 2 old
+  misses; 0 HOLE).
 
 #### R1 Standalone `typeck`, part 1
 
