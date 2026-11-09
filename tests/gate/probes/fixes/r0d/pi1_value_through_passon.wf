@@ -1,0 +1,18 @@
+// R0d review: a closure g made in a pass-on handler (no clause for `a`) inside
+// closure f performs `a`; the outer clause of `a` fails. The IR accepts.
+effect Two {
+    fn a() -> u64
+    fn b() -> u64
+}
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn main() {
+  handle Fail { fn fail(m) { print(m) } } in {
+    let l = Lk { id: 1 }
+    handle Two { fn a() { fail("x"); resume(0) } fn b() { resume(1) } } in {
+      let f = || handle Two { fn b() { resume(2) } } in { let g = || a(); g() }
+      print(f())
+    }
+    unlock(l)
+  }
+}

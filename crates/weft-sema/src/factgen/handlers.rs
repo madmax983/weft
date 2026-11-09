@@ -647,7 +647,6 @@ fn spares(em: &Em<'_>, body: BodyId, t: &TermKind) -> Option<Vec<BodyId>> {
 /// the call (no `call_mut`: the callee gives the place, as it lends a place
 /// to an operation of a caller).
 pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
-    captured_calls(em, nodes, st, t)?;
     let n = nodes.main;
     let body = em.body;
     let block = em.at.0;
@@ -664,6 +663,13 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
         }
     }
     let hs = clause::run_handlers(&em.cx(), body, block, t);
+    // A node that a `multi` resume runs again (its `Copy` node goes on at
+    // `Ret`): the callee runs again from the operation that resumed, and
+    // the clauses of the other handlers that it reaches after that
+    // operation run again too (stage R0d). The clauses also run at `Ret`.
+    let rerun = em.hx.reentry.contains_key(&(body, block))
+        || em.hx.dyn_rows.contains(&(body, block))
+        || super::frames::row_multi(em.p, em.tys, em.sums, body, t);
     let gv = if hs.is_empty() {
         clause::Given::default()
     } else {
@@ -680,32 +686,58 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                 .and_then(|d| em.tys.effects().get(d.effect.index()))
                 .map(|e| e.identity.clone());
         if let Some(e) = effect {
-            let at = |x: &NodeId| *x == n || Some(*x) == nodes.ret;
-            em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+            // A handler with no clause for an operation passes it on (stage
+            // R0d): to a caller (the effect leaves the function), or out of
+            // the closure through a capture (the summary performs through
+            // `Cap(k)`, `captured_calls`).
+            let paths = clause::serving_paths(em.p, em.tys, h);
+            let unit = super::alpha::unit_closure(em.p, body);
+            for s in &paths {
+                if let clause::Served::Capture(cb, k) = *s {
+                    if Some(cb) == unit {
+                        em.hx.cap_performs.push((n, k, e.clone()));
+                    }
+                }
+            }
+            // An operation that passes on, through the captures on the
+            // way, to a caller: a `multi_at` row of the node stays a row of
+            // the summary of the closure.
+            if clause::serving_all(em.p, em.tys, h).1 {
+                em.hx.cap_callers.push(n);
+            }
+            if !paths.contains(&clause::Served::Caller) {
+                let at = |x: &NodeId| *x == n || Some(*x) == nodes.ret;
+                em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+            }
         }
         let clauses: Vec<BodyId> =
             em.p.handlers
                 .get(h.index())
                 .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
                 .unwrap_or_default();
+        let again = nodes.ret.filter(|_| rerun && !clause::multi_twice(em.p, h));
         for clause in clauses {
             let (args, deps) = gv.sigma(em.p, em.tys, clause);
-            em.hx.runs.push(ClauseRun {
-                node: n,
-                handler: h,
-                clause,
-                post: false,
-                helds: args.clone(),
-                args,
-                deps,
-                at: body,
-                spares: None,
-                ins: Vec::new(),
-                given: Some(gv.roots.clone()),
-            });
+            for at_node in std::iter::once(n).chain(again) {
+                em.hx.runs.push(ClauseRun {
+                    node: at_node,
+                    handler: h,
+                    clause,
+                    post: false,
+                    helds: args.clone(),
+                    args: args.clone(),
+                    deps: deps.clone(),
+                    at: body,
+                    spares: None,
+                    ins: Vec::new(),
+                    given: Some(gv.roots.clone()),
+                });
+            }
         }
     }
-    Ok(())
+    // After the local handlers: an operation that one of them passes on out
+    // of the closure is a perform through a capture (stage R0d).
+    captured_calls(em, nodes, st, t)
 }
 
 /// A call in a closure body whose effect goes to a capability that the
@@ -728,10 +760,15 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
     };
     let p = em.p;
     let body = em.body;
-    let Some((c, _)) = p.closure_of(body) else {
+    // A call in a handled body or a clause inside the closure body runs
+    // with the environment of the closure too (stage R0d).
+    let Some(cb) = super::alpha::unit_closure(p, body) else {
         return Ok(());
     };
-    let Some(own) = p.body(body).map(|b| b.cap_env) else {
+    let Some((c, _)) = p.closure_of(cb) else {
+        return Ok(());
+    };
+    let Some(own) = p.body(cb).map(|b| b.cap_env) else {
         return Ok(());
     };
     let n = nodes.main;
@@ -753,15 +790,39 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
         if id != own {
             continue;
         }
-        let Some((k, _)) = clause::captured_cap(p, em.tys, body, &q) else {
+        let Some((k, _)) = clause::captured_cap(p, em.tys, cb, &q) else {
             continue;
         };
         let Some(h) = clause::capture_handler(p, c, k) else {
             continue;
         };
-        em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+        // A handler that passes an operation on: the handler that serves it
+        // runs its clause too, and an operation that no local handler
+        // serves leaves the function (stage R0d).
+        let (all, caller) = clause::serving_all(p, em.tys, h);
+        if caller {
+            em.hx.cap_callers.push(n);
+        } else {
+            em.facts.escapes_at.retain(|(x, f)| !at(x) || *f != e);
+        }
         em.hx.cap_performs.push((n, k, e));
-        hs.push(h);
+        hs.extend(all);
+    }
+    // A run of a closure that the closure body made and that performs
+    // through a capture of a capture of the closure body (stage R0d,
+    // `apply::main`, at `Main` or at `Ret` for a late run of a callee): the
+    // node runs the clauses of the handler of that capture.
+    let again: Vec<u32> = em
+        .hx
+        .cap_performs
+        .iter()
+        .filter(|(x, _, _)| at(x))
+        .map(|(_, j, _)| *j)
+        .collect();
+    for j in again {
+        if let Some(h) = clause::capture_handler(p, c, j) {
+            hs.extend(clause::serving_all(p, em.tys, h).0);
+        }
     }
     hs.sort();
     hs.dedup();
@@ -770,6 +831,11 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
     }
     let block = em.at.0;
     let gv = clause::given(&mut em.cx(), body, block, st, t)?;
+    // A node that a `multi` resume runs again: the clauses run at `Ret` too
+    // (stage R0d, as in [`call_clauses`]).
+    let rerun = em.hx.reentry.contains_key(&(body, block))
+        || em.hx.dyn_rows.contains(&(body, block))
+        || super::frames::row_multi(p, em.tys, em.sums, body, t);
     for h in hs {
         let (_, cap) = ids(em, h);
         em.facts.performs_at.push((n, cap));
@@ -778,21 +844,24 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
             .get(h.index())
             .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
             .unwrap_or_default();
+        let again = nodes.ret.filter(|_| rerun && !clause::multi_twice(p, h));
         for clause in clauses {
             let (args, deps) = gv.sigma(p, em.tys, clause);
-            em.hx.runs.push(ClauseRun {
-                node: n,
-                handler: h,
-                clause,
-                post: false,
-                helds: args.clone(),
-                args,
-                deps,
-                at: body,
-                spares: None,
-                ins: Vec::new(),
-                given: Some(gv.roots.clone()),
-            });
+            for node in std::iter::once(n).chain(again) {
+                em.hx.runs.push(ClauseRun {
+                    node,
+                    handler: h,
+                    clause,
+                    post: false,
+                    helds: args.clone(),
+                    args: args.clone(),
+                    deps: deps.clone(),
+                    at: body,
+                    spares: None,
+                    ins: Vec::new(),
+                    given: Some(gv.roots.clone()),
+                });
+            }
         }
     }
     Ok(())
@@ -1788,6 +1857,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
         all_preds.entry(b).or_default().push(a);
     }
     let mut clause_preds: HashMap<(BodyId, bool), Preds> = HashMap::new();
+    let quiet = quiet_reruns(p, &ix, facts, hx);
     for r in order {
         let Some((pre, post)) = regions.get(&r.clause) else {
             continue;
@@ -1863,12 +1933,32 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
             late.uses
                 .extend(clause_uses((part, nodes, preds), &new.uses));
         }
+        // A timeout of `with_timeout` unwinds the frames of the handled
+        // body first, then the clause runs: its reads and changes happen at
+        // the `UnwindExit` nodes of the abort to the handler too (A3 of the
+        // summary oracle). Only the reads and the changes: a move or a use
+        // there would count two times.
+        for x in timeout_unwind_nodes(t, r) {
+            facts
+                .reads_at
+                .extend(new.reads_at.iter().map(|&(_, q)| (x, q)));
+            facts
+                .mutates_at
+                .extend(new.mutates_at.iter().map(|&(_, q)| (x, q)));
+            facts
+                .lends_mut
+                .extend(new.lends_mut.iter().map(|&(_, q)| (x, q)));
+        }
         add_rows(facts, &new);
         if let Some(c) = clause_of.get(&r.node) {
             add_rows(parts.entry(*c).or_default(), &new);
         }
         if let (Some(hs), false) = (&r.spares, abort) {
             spare(p, facts, &cands, (r.node, hs));
+        } else if r.post && !abort && quiet.contains(&r.handler) {
+            if let Some(hb) = p.handlers.get(r.handler.index()).map(|d| d.handled) {
+                spare(p, facts, &cands, (r.node, &[hb]));
+            }
         }
     }
     // A clause that puts a reference of its parameter into a place outside
@@ -1919,6 +2009,15 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
             .filter(|(n, _)| pre.contains(n) || post.contains(n))
             .map(|(_, e)| e.clone())
             .collect();
+        // A perform through a captured capability in the clause (a clause
+        // of a handler in a closure body, stage R0d) forwards the effect to
+        // the handler of the capture.
+        escapes.extend(
+            hx.cap_performs
+                .iter()
+                .filter(|(n, _, _)| pre.contains(n) || post.contains(n))
+                .map(|(_, _, e)| e.clone()),
+        );
         // A perform through the capability of a local handler outside the
         // clause (not a handler that the clause itself installs) forwards
         // the effect too (corpus 15, `nested`; plan stage F19).
@@ -1943,6 +2042,107 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
             .extend(escapes.into_iter().map(|e| (hid, e)));
     }
     late
+}
+
+/// The `UnwindExit` nodes of the block of a `with_timeout` call whose
+/// timeout runs clause run `r` (stage R0d). A timeout unwinds the frame of
+/// the block first; the clause runs while that frame waits at its
+/// `UnwindExit`. Empty for another run.
+fn timeout_unwind_nodes(t: &Tables<'_>, r: &ClauseRun) -> Vec<NodeId> {
+    let p = t.p;
+    if r.post {
+        return Vec::new();
+    }
+    let Some(key) = t.table.iter().find(|(_, &n)| n == r.node).map(|(k, _)| *k) else {
+        return Vec::new();
+    };
+    let Some(b) = p.body(key.body) else {
+        return Vec::new();
+    };
+    let Some(TermKind::Call {
+        callee: weft_ir::Callee::Fn(f, _),
+        args,
+        ..
+    }) = b.blocks.get(key.block.index()).map(|x| &x.term.kind)
+    else {
+        return Vec::new();
+    };
+    if p.fns.get(f.index()).and_then(|d| d.intrinsic) != Some(weft_ir::Intrinsic::WithTimeout) {
+        return Vec::new();
+    }
+    let locals: Vec<weft_ir::LocalId> = args
+        .iter()
+        .filter_map(|a| match a {
+            weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) if q.proj.is_empty() => {
+                Some(q.local)
+            }
+            _ => None,
+        })
+        .collect();
+    let blocks: HashSet<BodyId> = b
+        .blocks
+        .iter()
+        .flat_map(|x| &x.stmts)
+        .filter_map(|s| match &s.kind {
+            weft_ir::StmtKind::Assign(
+                q,
+                weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(c), _),
+            ) if q.proj.is_empty() && locals.contains(&q.local) => {
+                p.closures.get(c.index()).map(|d| d.body)
+            }
+            _ => None,
+        })
+        .collect();
+    t.table
+        .iter()
+        .filter(|(k, _)| {
+            blocks.contains(&k.body)
+                && k.at == TERM
+                && k.phase == Phase::Main
+                && p.body(k.body).is_some_and(|x| x.unwind_exit == k.block)
+        })
+        .map(|(_, &n)| n)
+        .collect()
+}
+
+/// The handlers of `multi` clauses whose handled body cannot abort in the
+/// facts (stage R0d; issue #57). A later `resume` of such a clause runs the
+/// rest of the handled body again at `Post`, so an abort there unwinds only
+/// what the handled body unwinds: with no node of the handled body (or of a
+/// body that splices into it) that can abort, the values outside the handled
+/// body are spared at `Post`, as at a perform of the handler (ADR 0005). The
+/// static destinations (`frames::rerun_spares`) count each run of a function
+/// value as an abort past the function; the facts have the summaries of the
+/// values. Before [`project`] no node has the code of a clause yet: a node
+/// that runs a clause of another handler counts as one that can abort.
+fn quiet_reruns(p: &Program, ix: &Index, facts: &FnFacts, hx: &Handlers) -> HashSet<HandlerId> {
+    let aborts: HashSet<NodeId> = facts.may_abort.iter().copied().collect();
+    let mut out = HashSet::new();
+    let mut seen = HashSet::new();
+    for r in hx.runs.iter().filter(|r| r.post && r.spares.is_none()) {
+        let h = r.handler;
+        if !seen.insert(h) || !clause::multi_twice(p, h) {
+            continue;
+        }
+        let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+            continue;
+        };
+        let bodies: Vec<BodyId> = ix
+            .subtree(hb)
+            .into_iter()
+            .filter(|&b| splice_root(p, b) != b)
+            .collect();
+        let nodes: HashSet<NodeId> = ix.nodes(&bodies).map(|(_, n)| *n).collect();
+        let loud = nodes.iter().any(|n| aborts.contains(n))
+            || hx
+                .runs
+                .iter()
+                .any(|x| x.handler != h && nodes.contains(&x.node));
+        if !loud {
+            out.insert(h);
+        }
+    }
+    out
 }
 
 /// The nodes of the clauses `clauses` that call a function value of a
@@ -2832,13 +3032,18 @@ impl Region<'_> {
                 // A perform in a closure body that a node of the handled
                 // body runs: that node is a run of the clause too (a call
                 // that runs a clause, plan stage F16). A closure that no
-                // node runs (dead code) runs no clause.
-                None if !mapped => {
+                // node runs (dead code) runs no clause. A run in the body
+                // of a task that W0314 rejects is on another task: the
+                // rest of the handled body does not run after it (stage
+                // R0c). A run of an inner clause whose handler is in a
+                // closure body (stage R0d) is the same: the node that runs
+                // the closure is a run of the clause.
+                None => {
                     let mut runs = self
                         .hx
                         .runs
                         .iter()
-                        .filter(|y| y.clause == c && y.given.is_some())
+                        .filter(|y| y.clause == c && y.given.is_some() && !self.in_w0314_task(y.at))
                         .peekable();
                     if runs.peek().is_some() && !runs.any(|y| body.contains(&y.node)) {
                         return None;
@@ -2859,6 +3064,24 @@ impl Region<'_> {
             }
         }
         Some(out)
+    }
+
+    /// True if body `b` is inside the body of a task that W0314 rejects
+    /// (`Handlers::w0314_bodies`): `b` or a body around it.
+    fn in_w0314_task(&self, b: BodyId) -> bool {
+        let mut at = Some(b);
+        let mut steps = 0usize;
+        while let Some(x) = at {
+            if self.hx.w0314_bodies.contains(&x) {
+                return true;
+            }
+            steps += 1;
+            if steps > self.p.bodies.len() {
+                return false;
+            }
+            at = self.p.body(x).and_then(|d| d.parent);
+        }
+        false
     }
 
     /// The nodes from the nodes `starts` (each with the node itself or only

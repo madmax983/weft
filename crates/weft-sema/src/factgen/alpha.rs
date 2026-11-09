@@ -206,6 +206,39 @@ pub fn owner_local(p: &Program, body: BodyId, l: LocalId) -> Result<(BodyId, Loc
     ))
 }
 
+/// The body whose frame body `b` runs in (stage R0d).
+///
+/// It is `b` for a function, a test or a closure body; for a handled body,
+/// a clause or a scope body, the body of that kind that its parents reach
+/// first. A handled body or a clause in a closure body has the closure body
+/// as its root: it names the environment of the closure through upvar
+/// locals.
+pub fn unit_root(p: &Program, b: BodyId) -> BodyId {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = p.bodies.get(at.index()) else {
+            return at;
+        };
+        match (x.kind, x.parent) {
+            (
+                weft_ir::BodyKind::Handled(_)
+                | weft_ir::BodyKind::Clause(..)
+                | weft_ir::BodyKind::Scope(_),
+                Some(up),
+            ) => at = up,
+            _ => return at,
+        }
+    }
+    at
+}
+
+/// The closure body that body `b` is, or that it is inside through
+/// handled bodies, clauses and scope bodies ([`unit_root`]).
+pub fn unit_closure(p: &Program, b: BodyId) -> Option<BodyId> {
+    let r = unit_root(p, b);
+    p.closure_of(r).map(|_| r)
+}
+
 /// The text of a local in the facts: its name, or what it is.
 pub fn local_text(tys: &TyTable, d: &LocalDecl) -> String {
     if let Some(n) = &d.name {
@@ -696,14 +729,27 @@ enum Next {
 /// The capture that `place` of body `body` names: the closure, the index
 /// `k` and the mode of the capture, if the place is `env.k` (or a place
 /// below it) of the environment local of a closure body.
+///
+/// The place can also be in a handled body, a clause or a scope body inside
+/// the closure body: an upvar local of the environment local (stage R0d).
+/// [`unit_root`] of such a body is the closure body.
 pub fn env_capture(
     p: &Program,
     body: BodyId,
     place: &Place,
 ) -> Option<(ClosureId, u32, CaptureMode)> {
-    let (c, decl) = p.closure_of(body)?;
-    let b = p.body(body)?;
-    if b.params.first() != Some(&place.local) || b.local_kind(place.local)? != LocalKind::Env {
+    let (ob, local) = if p.closure_of(body).is_some() {
+        (body, place.local)
+    } else {
+        let b = p.body(body)?;
+        if !matches!(b.local_kind(place.local)?, LocalKind::Upvar(_)) {
+            return None;
+        }
+        owner_local(p, body, place.local).ok()?
+    };
+    let (c, decl) = p.closure_of(ob)?;
+    let b = p.body(ob)?;
+    if b.params.first() != Some(&local) || b.local_kind(local)? != LocalKind::Env {
         return None;
     }
     let Some(Proj::Field(f)) = place.proj.first() else {
@@ -1038,6 +1084,9 @@ pub fn alpha_with(
     pointees: &mut Pointees<'_>,
 ) -> Result<Alpha, AlphaError> {
     let (mut out, mut at, skip) = if let Some((c, k, mode)) = env_capture(p, body, place) {
+        // The closure body of the environment (a nested body names it
+        // through an upvar local, stage R0d).
+        let cb = p.closures.get(c.index()).map_or(body, |d| d.body);
         // A capture whose source the fact generator cannot type is a
         // place of a nested body of a later stage (an environment view
         // in a handled body or a scope body).
@@ -1047,8 +1096,11 @@ pub fn alpha_with(
         let name = capture_name(p, c, k);
         let out = match mode {
             // A reference or a value in the environment: a place of the
-            // environment root.
-            CaptureMode::ByRef | CaptureMode::ByMove => {
+            // environment root. A captured capability is a value of the
+            // environment too: a closure that the body makes captures it
+            // again (stage R0d). Its handler comes from the captures of the
+            // makers (`clause::capture_handler`), not from this place.
+            CaptureMode::ByRef | CaptureMode::ByMove | CaptureMode::Cap => {
                 let env = roots.local(p, tys, facts, body, place.local)?;
                 let step = Step {
                     kind: StepKind::Field { id: k },
@@ -1061,7 +1113,7 @@ pub fn alpha_with(
             }
             // The cell of the variable: the place of the maker in the
             // instantiated facts, else the `Capture` root.
-            CaptureMode::Kept if roots.is_instantiated(body) => {
+            CaptureMode::Kept if roots.is_instantiated(cb) => {
                 let decl = p
                     .closures
                     .get(c.index())
@@ -1074,10 +1126,10 @@ pub fn alpha_with(
                 alpha_with(p, tys, facts, roots, decl.maker, &source, pointees)?
             }
             CaptureMode::Kept => Alpha {
-                places: vec![roots.capture(facts, body, k, &name)],
+                places: vec![roots.capture(facts, cb, k, &name)],
                 ..Alpha::default()
             },
-            CaptureMode::Cap | CaptureMode::Kont => {
+            CaptureMode::Kont => {
                 return Err(AlphaError::Later(
                     "a capability or a continuation in a closure (stage F14)",
                 ))

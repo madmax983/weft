@@ -1,0 +1,14 @@
+// Stage R0d (issue #57, the row N2 of the second review of group F): the rest of the handled body runs only closures that cannot abort, so `lk8`, outside the handled body, is spared at `Post` (ADR 0005). No error.
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let f7 = || print(0)
+    let lk8 = Lk { id: 8 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        twice(f7)
+        f7()
+    }
+    unlock(lk8)
+}

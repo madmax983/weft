@@ -1,0 +1,16 @@
+// Stage R0d (a capability captured again, review holes of a05_nested_closure.wf and a29_nested_closure_in_closure_rowfn.wf): a closure in a vector that a callee runs (W0301).
+effect Log { fn log(m: i64) }
+fn call_all(fs: &Vec<fn()>) { for i in 0..fs.len() { let g = fs[i]; g() } }
+fn main() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let f = || {
+            let fs: Vec<fn()> = Vec.new()
+            fs.push(|| log(1))
+            call_all(&fs)
+        }
+        f()
+    }
+    print(r)
+}

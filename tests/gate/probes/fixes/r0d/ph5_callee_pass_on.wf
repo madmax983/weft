@@ -1,0 +1,20 @@
+// Stage R0d: as ph1, through a callee that the closure calls (W0301). The old pipeline and the ir pipeline of R0c miss it.
+effect Log2 {
+    fn info(m: String)
+    fn warn(m: String)
+}
+fn g() / Log2 { warn("x") }
+fn main() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { v.push(3); resume(()) }
+    } in {
+        handle Log2 { fn info(m) { print("inner"); resume(()) } } in {
+            let f = || g()
+            f()
+        }
+    }
+    print(r)
+}

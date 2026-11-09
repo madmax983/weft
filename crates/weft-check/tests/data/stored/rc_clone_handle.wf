@@ -1,7 +1,10 @@
 // A copy of a handle of the object that gets the store (`let d = c.clone()`)
 // is a handle of the same object: the reference goes away with the object.
-// The facts cannot tell a copy from a handle of another object, so the old
-// pipeline checks the program (it accepts it).
+// `d` gets its value at one place only, from the handle parameter `c` of the
+// store, and neither handle gets another value, so the IR shows that the
+// objects are the same (plan stage R0c). Before R0c the facts could not tell
+// a copy from a handle of another object, and the old pipeline checked the
+// program (it accepts it).
 struct Cache { refs: Vec<&u64>, data: Vec<u64> }
 fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
 fn fill(c: Rc<Cache>) / mut(Cache) {

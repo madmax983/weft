@@ -1,0 +1,14 @@
+// Stage R0d fix: as pm2 in a function body (W0302).
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+fn take(v: Vec<u64>) { print(v.len()) }
+fn helper() -> bool / P2 { pk() }
+fn main() {
+    let v = [1]
+    handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in {
+        handle P2 { fn other() { resume(1) } } in { if helper() { print(1) } }
+        take(v)
+    }
+}

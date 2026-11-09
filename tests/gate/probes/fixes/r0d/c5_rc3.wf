@@ -1,0 +1,17 @@
+// Stage R0d (a capability captured again, review holes of a05_nested_closure.wf and a29_nested_closure_in_closure_rowfn.wf): the inner closure performs an operation whose clause ends with no `resume`: `l` is not consumed (W0602).
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let n = handle Ask { fn ask() { 7 } } in {
+        let f = || {
+            let l = Lk { id: 1 }
+            let g = || ask()
+            let x = g()
+            unlock(l)
+            x
+        }
+        f()
+    }
+    print(n)
+}

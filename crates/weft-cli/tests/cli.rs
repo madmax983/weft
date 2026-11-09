@@ -1028,19 +1028,20 @@ fn oracle_turns_on_the_strict_run_time_checks() {
 #[test]
 fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     // Each group is on by default (stage F20, plan §2.6): a program with a
-    // construct that the fact generator does not support yet (a handler in
-    // a closure body, a fallback of stage F16) goes to the old pipeline, and
-    // the command says why on standard error.
+    // construct that the fact generator does not support yet (a `multi`
+    // operation of a handler of a caller in a clause, a fallback of stage
+    // F16; a handler in a closure body is in scope from stage R0d) goes to
+    // the old pipeline, and the command says why on standard error.
     let dir = scratch(
         "fallback",
         &[
             (
                 "nested_bad.wf",
-                "effect Log { fn log(n: u64) }\nfn quiet() { let f = || { handle Log { fn log(n) { resume(()) } } in log(1) }\n f() }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
+                "effect Choice { multi fn choose() -> bool }\neffect Log { fn log(n: u64) }\nfn quiet() / Choice { handle Log { fn log(n) { resume(()); let b = choose() } } in log(1) }\nfn bad() / Choice {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { handle Choice { fn choose() { resume(true) } } in bad() }\n",
             ),
             (
                 "nested_run.wf",
-                "effect Log { fn log(n: u64) }\nfn quiet() { let f = || { handle Log { fn log(n) { resume(()) } } in log(1) }\n f() }\nfn main() { quiet() }\ntest \"quiet\" { quiet() }\n",
+                "effect Choice { multi fn choose() -> bool }\neffect Log { fn log(n: u64) }\nfn quiet() / Choice { handle Log { fn log(n) { resume(()); let b = choose() } } in log(1) }\nfn main() { handle Choice { fn choose() { resume(true) } } in quiet() }\ntest \"quiet\" { handle Choice { fn choose() { resume(true) } } in quiet() }\n",
             ),
         ],
     );
@@ -1070,7 +1071,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         out.stderr
     );
     // Each command that checks takes the switch.
-    // `nested_run.wf` has a handler in a closure body too.
+    // `nested_run.wf` has such a clause too.
     let run = format!("{dir}/nested_run.wf");
     let rules = "examples/lints/ref_across_abort.dl";
     for args in [
@@ -1231,9 +1232,10 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         "{}",
         forked.stderr
     );
-    // A program that is not in scope (a handler in a closure body, a
-    // fallback of stage F16): the oracle checks nothing.
-    let nested = format!("{INTERP}/abort_block_cells.wf");
+    // A program that is not in scope (a `multi` operation of a handler of a
+    // caller in a clause, a fallback of stage F16): the oracle checks
+    // nothing.
+    let nested = format!("{INTERP}/multi_nested_drop.wf");
     let out = cmd(&["run", "--fact-oracle", &nested]);
     assert!(
         out.stderr.contains("the oracle checks nothing"),

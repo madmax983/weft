@@ -1,0 +1,24 @@
+// Stage R0d fix (review of R0d, probe c6m_callee_to_caller): an operation that a handler with no clause passes on, performed through a callee, a function value or an inner closure.
+// A closure with a pass-on handler makes g, g performs `warn`, which passes on to a caller with no resume.
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+effect Log2 {
+    fn info(m: String)
+    fn warn(m: String)
+}
+fn f() / Log2 {
+    let l = Lk { id: 1 }
+    let c = || handle Log2 { fn info(m) { resume(()) } } in {
+        let h = 0
+        helper()
+    }
+    c()
+    unlock(l)
+}
+fn main() {
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { print("stop") }
+    } in f()
+}
+fn helper() / Log2 { warn("y") }

@@ -149,8 +149,15 @@ pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: 
                 CapArgs::Lexical(e) => Some(*e),
                 CapArgs::Root => None,
             };
-            let past =
-                |effect: &str| env.is_none_or(|e| resolve(p, tys, e, effect, true) == Dest::Past);
+            // An effect that a local handler with no clause for an operation
+            // passes on to a caller goes past the function too (stage R0d,
+            // `clause::serving_all`).
+            let past = |effect: &str| {
+                env.is_none_or(|e| match resolve(p, tys, e, effect, true) {
+                    Dest::Past => true,
+                    Dest::Handler { handler, .. } => clause::serving_all(p, tys, handler).1,
+                })
+            };
             match sums.get(*f) {
                 Ok(s) => {
                     let mut multi_ops = s
@@ -207,7 +214,9 @@ pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: 
 /// (`Run::many`: the caller runs them again), but they get no re-entry edge:
 /// the copy of the frames gives a value that the closure moved a new copy.
 pub fn captured_multi_nodes(p: &Program, tys: &TyTable, body: BodyId) -> Vec<BlockId> {
-    let Some((c, _)) = p.closure_of(body) else {
+    // A handled body or a clause inside the closure body performs through
+    // the environment of the closure too (stage R0d).
+    let Some((c, _)) = super::alpha::unit_closure(p, body).and_then(|cb| p.closure_of(cb)) else {
         return Vec::new();
     };
     let Some(b) = p.body(body) else {
@@ -220,14 +229,79 @@ pub fn captured_multi_nodes(p: &Program, tys: &TyTable, body: BodyId) -> Vec<Blo
         .filter(|(_, blk)| match &blk.term.kind {
             TermKind::Perform {
                 cap: CapOperand::Local(place),
+                op,
                 ..
             } => clause::captured_cap(p, tys, body, place)
-                .and_then(|(k, _)| clause::capture_handler(p, c, k))
+                .map(|(k, _)| k)
+                .or_else(|| clause::passes_to_capture(p, body, place, *op).map(|(k, _)| k))
+                .and_then(|k| clause::capture_handler(p, c, k))
+                .and_then(|h| clause::serving(p, h, *op))
                 .is_some_and(|h| clause::multi_twice(p, h)),
+            // A run of a function value, if a closure that the closure body
+            // made captures a capability of a `multi` handler of the closure
+            // again (stage R0d): the value can be that closure.
+            TermKind::Call {
+                callee: Callee::Value(_),
+                ..
+            } if recaptures_multi(p, tys, c) => true,
+            // A call in the handled body of a handler of the closure that
+            // passes an operation on out of the closure, to a capture of a
+            // `multi` handler (stage R0d): the callee can perform it.
+            TermKind::Call { .. } => passes_out_multi(p, tys, c, body),
             _ => false,
         })
         .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
         .collect()
+}
+
+/// True if body `body` of closure `c` is inside the handled body of a
+/// handler of the closure that passes an operation on out of the closure
+/// to a capture whose handler (or a handler that serves an operation that it
+/// passes on) can resume more than once (stage R0d).
+fn passes_out_multi(p: &Program, tys: &TyTable, c: weft_ir::ClosureId, body: BodyId) -> bool {
+    let Some(cb) = p.closures.get(c.index()).map(|d| d.body) else {
+        return false;
+    };
+    p.handlers.iter().enumerate().any(|(i, d)| {
+        let h = HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
+        super::alpha::unit_root(p, d.handled) == cb
+            && clause::inside(p, body, d.handled)
+            && clause::serving_paths(p, tys, h).iter().any(|s| match *s {
+                clause::Served::Capture(x, k) if x == cb => clause::capture_handler(p, c, k)
+                    .is_some_and(|ch| {
+                        clause::serving_all(p, tys, ch)
+                            .0
+                            .iter()
+                            .any(|&y| clause::multi_twice(p, y))
+                    }),
+                _ => false,
+            })
+    })
+}
+
+/// True if a closure that the body of closure `c` (or a body inside it)
+/// makes captures a `Cap` capture of `c` again whose handler, or a handler
+/// that serves an operation that it passes on, can resume more than once
+/// (stage R0d).
+fn recaptures_multi(p: &Program, tys: &TyTable, c: weft_ir::ClosureId) -> bool {
+    let Some(cb) = p.closures.get(c.index()).map(|d| d.body) else {
+        return false;
+    };
+    p.closures.iter().any(|d| {
+        super::alpha::unit_root(p, d.maker) == cb
+            && d.captures.iter().any(|cap| {
+                cap.mode == weft_ir::CaptureMode::Cap
+                    && super::alpha::env_capture(p, d.maker, &cap.source)
+                        .filter(|(oc, _, m)| *oc == c && *m == weft_ir::CaptureMode::Cap)
+                        .and_then(|(_, k, _)| clause::capture_handler(p, c, k))
+                        .is_some_and(|h| {
+                            clause::serving_all(p, tys, h)
+                                .0
+                                .iter()
+                                .any(|&x| clause::multi_twice(p, x))
+                        })
+            })
+    })
 }
 
 /// The blocks of body `body` whose terminator can wait at a `multi`
@@ -446,7 +520,7 @@ fn reach(
     if t.unwind().is_none() {
         return Vec::new();
     }
-    let mut out = Vec::new();
+    let mut out: Vec<Dest> = Vec::new();
     // A child failure: `Fail.fail` through the environment `env`.
     let fails = |env: Option<CapEnvId>| env.map_or(Dest::Past, |e| resolve(p, tys, e, FAIL, true));
     match t {
@@ -493,15 +567,27 @@ fn reach(
         }
         TermKind::Perform {
             cap: CapOperand::Local(place),
+            op,
             ..
         } => {
-            // The perform resolves its effect in its lexical environment. A
-            // field of a closure environment holds a captured capability.
-            let effect = cap_effect(p, tys, body, place);
-            out.push(match (effect, env_of(p, body)) {
-                (Some(e), Some(env)) => resolve(p, tys, env, e, true),
-                _ => Dest::Past,
-            });
+            // The perform goes to the handler that serves its operation: a
+            // handler with no clause for it passes it on (stage R0d,
+            // `clause::serving`), maybe to a caller. A field of a closure
+            // environment holds a captured capability.
+            match clause::perform_target(p, body, place, *op) {
+                Some(Some(handler)) => out.push(Dest::Handler {
+                    handler,
+                    value: true,
+                }),
+                Some(None) => out.push(Dest::Past),
+                None => {
+                    let effect = cap_effect(p, tys, body, place);
+                    out.push(match (effect, env_of(p, body)) {
+                        (Some(e), Some(env)) => resolve(p, tys, env, e, true),
+                        _ => Dest::Past,
+                    });
+                }
+            }
         }
         TermKind::Join { .. } | TermKind::Fork { .. } => {
             out.push(Dest::Past);
@@ -540,11 +626,20 @@ fn reach(
         }
         _ => out.push(Dest::Past),
     }
+    // A call does not name the operation: a handler with no clause for an
+    // operation passes it on to the handler that serves it, out of the
+    // closure, or to a caller (stage R0d, `clause::serving_paths`).
+    if matches!(t, TermKind::Call { .. }) {
+        out = out
+            .into_iter()
+            .flat_map(|d| served_dests(p, tys, d))
+            .collect();
+    }
     // A run of a function value can run a closure that performs through a
     // captured capability of a local handler: the node runs the clauses of
     // the handler (plan stage F16).
     if full && runs_values(p, tys, sums, body, t) {
-        for h in clause::captured_handlers(p) {
+        for h in clause::captured_handlers(p, tys) {
             let active = p
                 .handlers
                 .get(h.index())
@@ -560,6 +655,23 @@ fn reach(
     out.sort();
     out.dedup();
     out
+}
+
+/// The destinations of destination `d` of a call with each operation of the
+/// effect of its handler (stage R0d): the handler that serves each operation
+/// (`clause::serving_path`), and past the function for an operation that
+/// passes on to a caller or out of the closure.
+fn served_dests(p: &Program, tys: &TyTable, d: Dest) -> Vec<Dest> {
+    match d {
+        Dest::Past => vec![Dest::Past],
+        Dest::Handler { handler, value } => clause::serving_paths(p, tys, handler)
+            .into_iter()
+            .map(|s| match s {
+                clause::Served::Local(x) => Dest::Handler { handler: x, value },
+                clause::Served::Capture(..) | clause::Served::Caller => Dest::Past,
+            })
+            .collect(),
+    }
 }
 
 /// The effects of local handlers that a run of the function value `f` of

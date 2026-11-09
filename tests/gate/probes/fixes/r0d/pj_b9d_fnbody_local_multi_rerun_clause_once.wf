@@ -1,0 +1,15 @@
+// Stage R0d fix 2 (round 2 of the review, probe b9d_fnbody_local_multi_rerun_clause_once): a multi operation that handlers with no clause pass on to a caller, or a clause that a multi re-run runs again.
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+fn take(v: Vec<u64>) { print(v.len()) }
+fn helper() -> u64 / P2 { if pk() { 1 } else { other() } }
+fn main() {
+  let v = [1]
+  let t = || take(v)
+  handle P2 { fn pk() { resume(true) } fn other() { t(); resume(0) } } in {
+    let x = handle P2 { fn pk() { resume(false); resume(false) } } in { helper() }
+    print(x)
+  }
+}

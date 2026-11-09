@@ -301,7 +301,12 @@ pub fn summarize(
     out.raises |= applied.contains(&Abort::Raises);
     out.assert |= applied.contains(&Abort::Assert);
     out.gives_frame |= gives_frame(ir, tys, sums, (facts, roots), comp, nodes);
-    for &b in comp.iter().filter(|&&b| ir.closure_of(b).is_none()) {
+    // The bodies inside a closure body run when the closure runs: the
+    // summary of the closure has their aborts (stage R0d).
+    for &b in comp
+        .iter()
+        .filter(|&&b| crate::factgen::alpha::unit_closure(ir, b).is_none())
+    {
         let Some(body) = ir.bodies.get(b.index()) else {
             continue;
         };
@@ -427,7 +432,7 @@ fn gives_frame(
         return true;
     }
     comp.iter()
-        .filter(|&&b| ir.closure_of(b).is_none())
+        .filter(|&&b| crate::factgen::alpha::unit_closure(ir, b).is_none())
         .filter_map(|&b| ir.body(b))
         .flat_map(|b| &b.blocks)
         .any(|blk| match &blk.term.kind {
@@ -493,6 +498,9 @@ pub struct FnParts<'a> {
     /// of the effect (plan stage F16). The summary performs through `Cap(k)`: the node that runs the
     /// closure runs the clause of the handler of the capability.
     pub cap_performs: &'a [(weft_facts::NodeId, u32, String)],
+    /// The nodes of `cap_performs` where an operation can pass on to a
+    /// caller (stage R0d, `clause::Handlers::cap_callers`).
+    pub cap_callers: &'a [weft_facts::NodeId],
     /// The task handles of the interface that the body joins on each path
     /// (part `joins`, plan stage F18).
     pub joins: &'a [u32],
@@ -962,7 +970,13 @@ fn closure_place(
                 steps.get(1..).unwrap_or(&[]).to_vec(),
             )
         }
-        Role::Local((b, _)) if frame && b == body => return Some((IPlace::wild(IRoot::Frame), 0)),
+        // A local of a handled body or a clause inside the closure body is
+        // a local of its frame too (stage R0d).
+        Role::Local((b, _))
+            if frame && (b == body || crate::factgen::alpha::unit_root(ir, b) == body) =>
+        {
+            return Some((IPlace::wild(IRoot::Frame), 0))
+        }
         Role::Frame(_) if frame => return Some((IPlace::wild(IRoot::Frame), 0)),
         _ => return None,
     };
@@ -1180,6 +1194,71 @@ fn late_muts(
     out
 }
 
+/// The aborts of the handled bodies, the clauses and the scope bodies
+/// inside closure body `body` (stage R0d), as for the closure body itself:
+/// an `assert`, and an abort of a callee. A failure of a callee does not
+/// leave the closure if the `Fail` handler of the call is a local handler
+/// whose handled body is inside the closure: its clause cannot resume
+/// (W0504), so it ends the `handle` with its value. A `Fail` handler of the
+/// maker (a captured capability) is outside the closure: the failure leaves
+/// the closure.
+fn nested_aborts(
+    ir: &weft_ir::Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    out: &mut super::summary::Summary,
+) {
+    for (i, x) in ir.bodies.iter().enumerate() {
+        let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        if id == body || crate::factgen::alpha::unit_root(ir, id) != body {
+            continue;
+        }
+        for blk in x.blocks.iter().filter(|b| !b.cleanup) {
+            match &blk.term.kind {
+                TermKind::Assert { .. } => {
+                    out.aborts.insert(Abort::Assert);
+                }
+                TermKind::Call {
+                    callee: Callee::Fn(f, _),
+                    caps,
+                    ..
+                } => {
+                    let Ok(s) = sums.get(*f) else {
+                        continue;
+                    };
+                    let caught = match caps {
+                        weft_ir::CapArgs::Lexical(e) => {
+                            match crate::factgen::frames::resolve(ir, tys, *e, "Fail", true) {
+                                crate::factgen::frames::Dest::Handler { handler, .. } => {
+                                    ir.handlers.get(handler.index()).is_some_and(|d| {
+                                        crate::factgen::alpha::unit_root(ir, d.handled) == body
+                                    })
+                                }
+                                crate::factgen::frames::Dest::Past => false,
+                            }
+                        }
+                        weft_ir::CapArgs::Root => false,
+                    };
+                    for a in &s.aborts {
+                        match a {
+                            Abort::Raises if !caught => {
+                                out.aborts.insert(a.clone());
+                            }
+                            Abort::Assert => {
+                                out.aborts.insert(a.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                    out.unknown_multi |= s.unknown_multi;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 /// The summary of closure body `body` from the facts `facts` of its
 /// component in the terms of its interface (`docs/ir.md` 6.7, stage F11).
 ///
@@ -1206,6 +1285,7 @@ fn late_muts(
 #[allow(clippy::too_many_arguments)]
 pub fn closure(
     ir: &weft_ir::Program,
+    tys: &TyTable,
     sums: &Summaries,
     facts: &FnFacts,
     roots: &Roots,
@@ -1336,7 +1416,7 @@ pub fn closure(
         *rows.entry(n).or_default() += 1;
     }
     out.multi = rows.iter().any(|(n, &k)| {
-        !fv.cap_performs.iter().any(|(x, _, _)| x == n)
+        (!fv.cap_performs.iter().any(|(x, _, _)| x == n) || fv.cap_callers.contains(n))
             && k > code_rows.get(n).copied().unwrap_or(0)
     });
     for blk in &b.blocks {
@@ -1360,6 +1440,7 @@ pub fn closure(
             _ => {}
         }
     }
+    nested_aborts(ir, tys, sums, body, &mut out);
     // The function values of the interface that the body runs: its captures
     // and its parameters (stage F12).
     out.runs = runs_of(

@@ -1,6 +1,7 @@
-// Out of scope of the ir pipeline: a handler in a closure body (a fallback of
-// stage F16).
+// Out of scope of the ir pipeline: a `multi` operation of a handler of a
+// caller in a clause (a fallback of stage F16). A handler in a closure body
+// is in scope from stage R0d.
+effect Choice { multi fn choose() -> bool }
 effect Log { fn log(n: u64) }
-fn quiet() { let f = || { handle Log { fn log(n) { resume(()) } } in log(1) }
- f() }
-fn main() { quiet() }
+fn quiet() / Choice { handle Log { fn log(n) { resume(()); let b = choose() } } in log(1) }
+fn main() { handle Choice { fn choose() { resume(true) } } in quiet() }

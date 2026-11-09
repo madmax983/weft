@@ -143,6 +143,10 @@ pub struct Handlers {
     /// effect (plan stage F16): the summary of the closure performs through
     /// `Cap(k)`.
     pub cap_performs: Vec<(weft_facts::NodeId, u32, String)>,
+    /// The nodes of [`Self::cap_performs`] where an operation can pass on to
+    /// a caller through the handlers on the way (stage R0d): a `multi_at`
+    /// row there stays a row of the summary of the closure.
+    pub cap_callers: Vec<weft_facts::NodeId>,
     /// The callee frames whose heap slots hold while the clauses that their
     /// calls run are running, with the body of the call, the innermost last
     /// (`run_clause`).
@@ -177,6 +181,12 @@ pub struct Handlers {
     /// The program runs with no runtime (`// weft: no-runtime`): no root
     /// handler serves a standard effect on a task (plan stage F18).
     pub no_runtime: bool,
+    /// The closure bodies that a task runs, for each task that W0314
+    /// rejects (`crate::factgen::templates::task_start`, stage R0c). A
+    /// clause that a node of such a body runs runs on another task: the
+    /// continuation of its `resume` has no node of the handled body
+    /// (`crate::factgen::handlers`, `Region::starts`).
+    pub w0314_bodies: std::collections::BTreeSet<BodyId>,
 }
 
 /// How a closure that captures the capability of a handler leaves the
@@ -448,7 +458,8 @@ pub fn perform_never_returns(p: &Program, body: BodyId, t: &TermKind) -> bool {
     else {
         return false;
     };
-    cap_handler(p, body, cap)
+    perform_target(p, body, cap, *op)
+        .flatten()
         .and_then(|h| p.handlers.get(h.index()))
         .and_then(|d| d.clauses.iter().find(|(o, _)| o == op).map(|(_, c)| *c))
         .is_some_and(|c| !has_resume(p, c))
@@ -530,12 +541,224 @@ pub fn capture_handler(p: &Program, c: weft_ir::ClosureId, k: u32) -> Option<Han
     None
 }
 
+/// The handler that serves operation `op` of a perform through the
+/// capability of handler `h` (stage R0d).
+///
+/// A handler with no clause for an operation passes it on to the handler
+/// of the effect around its `handle` (stage R0b, `docs/ir.md` 5.26): the
+/// handler of the first environment of that chain that adds the effect. A
+/// closure environment adds a captured capability: its handler is the
+/// handler of the capture (`capture_handler`). Returns `None` if no local
+/// handler serves it: the operation passes on to a caller (through the
+/// row).
+pub fn serving(p: &Program, h: HandlerId, op: weft_ir::OpIdx) -> Option<HandlerId> {
+    let mut h = h;
+    for _ in 0..=p.handlers.len() {
+        match serving_path(p, h, op) {
+            Served::Local(x) => return Some(x),
+            Served::Caller => return None,
+            Served::Capture(cb, k) => {
+                let (c, _) = p.closure_of(cb)?;
+                h = capture_handler(p, c, k)?;
+            }
+        }
+    }
+    None
+}
+
+/// Where an operation that the capability of a handler gets goes, up to the
+/// first closure environment on the way ([`serving_path`], stage R0d).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Served {
+    /// A local handler with a clause for the operation.
+    Local(HandlerId),
+    /// The capture `k` of closure body `cb`: a handler outside the closure
+    /// serves it. The summary of the closure performs through `Cap(k)`.
+    Capture(BodyId, u32),
+    /// No handler of the program around serves it: a handler of a caller.
+    Caller,
+}
+
+/// [`serving`] up to the first closure environment on the way (stage R0d).
+pub fn serving_path(p: &Program, h: HandlerId, op: weft_ir::OpIdx) -> Served {
+    let mut h = h;
+    for _ in 0..=p.handlers.len() {
+        let Some(d) = p.handlers.get(h.index()) else {
+            return Served::Caller;
+        };
+        if d.clauses.iter().any(|(o, _)| *o == op) {
+            return Served::Local(h);
+        }
+        let Some(hb) = p.body(d.handled) else {
+            return Served::Caller;
+        };
+        let mut at = p.cap_envs.get(hb.cap_env.index()).and_then(|e| e.parent);
+        let mut next = None;
+        for _ in 0..=p.cap_envs.len() {
+            let Some(id) = at else { break };
+            let Some(env) = p.cap_envs.get(id.index()) else {
+                break;
+            };
+            if let Some((_, place)) = env.adds.iter().find(|(e, _)| *e == d.effect) {
+                next = Some((id, place.clone()));
+                break;
+            }
+            at = env.parent;
+        }
+        let Some((id, place)) = next else {
+            return Served::Caller;
+        };
+        let opener = p.bodies.iter().enumerate().find_map(|(i, b)| {
+            (b.cap_env == id && matches!(b.kind, BodyKind::Handled(_) | BodyKind::Closure(_)))
+                .then(|| BodyId(u32::try_from(i).unwrap_or(u32::MAX)))
+        });
+        let Some(opener) = opener else {
+            return Served::Caller;
+        };
+        match p.body(opener).map(|b| b.kind) {
+            Some(BodyKind::Handled(h2)) => h = h2,
+            Some(BodyKind::Closure(_)) => {
+                return match crate::factgen::alpha::env_capture(p, opener, &place) {
+                    Some((_, k, weft_ir::CaptureMode::Cap)) => Served::Capture(opener, k),
+                    _ => Served::Caller,
+                };
+            }
+            _ => return Served::Caller,
+        }
+    }
+    Served::Caller
+}
+
+/// [`serving_path`] of each operation of the effect of handler `h` (stage R0d).
+///
+/// For an operation that the node does not know: a callee or a closure
+/// that performs the effect.
+pub fn serving_paths(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> Vec<Served> {
+    let n = p
+        .handlers
+        .get(h.index())
+        .and_then(|d| tys.effects().get(d.effect.index()))
+        .map_or(0, |e| e.ops.len());
+    let mut out: Vec<Served> = (0..n)
+        .map(|i| serving_path(p, h, weft_ir::OpIdx(u32::try_from(i).unwrap_or(u32::MAX))))
+        .collect();
+    if out.is_empty() {
+        out.push(Served::Local(h));
+    }
+    out.dedup();
+    out
+}
+
+/// The capture and the effect of a perform that passes on out of the closure
+/// (stage R0d, [`Served::Capture`]).
+///
+/// The perform is through the capability local `cap` of body `body`, and
+/// the capture is a capture of the closure body of `body`.
+pub fn passes_to_capture(
+    p: &Program,
+    body: BodyId,
+    cap: &Place,
+    op: weft_ir::OpIdx,
+) -> Option<(u32, weft_ir::EffectId)> {
+    let h = cap_handler(p, body, cap)?;
+    match serving_path(p, h, op) {
+        Served::Capture(cb, k) if Some(cb) == crate::factgen::alpha::unit_closure(p, body) => {
+            p.handlers.get(h.index()).map(|d| (k, d.effect))
+        }
+        _ => None,
+    }
+}
+
+/// The handlers that a perform through the capability of handler `h` can
+/// run, for an operation that the node does not know.
+///
+/// The node is a callee or a closure that performs the effect. They are
+/// `h`, and the handler that serves each operation that `h` passes on
+/// ([`serving`]). The flag is true if an operation passes on to a caller.
+pub fn serving_all(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> (Vec<HandlerId>, bool) {
+    let mut out = vec![h];
+    let mut caller = false;
+    let n = p
+        .handlers
+        .get(h.index())
+        .and_then(|d| tys.effects().get(d.effect.index()))
+        .map_or(0, |e| e.ops.len());
+    for i in 0..n {
+        let op = weft_ir::OpIdx(u32::try_from(i).unwrap_or(u32::MAX));
+        match serving(p, h, op) {
+            Some(x) => out.push(x),
+            None => caller = true,
+        }
+    }
+    out.sort();
+    out.dedup();
+    (out, caller)
+}
+
+/// Where a perform of operation `op` through the whole capability local
+/// `cap` of body `body` goes (stage R0d).
+///
+/// `Some(Some(h))` for the local handler `h` that serves it ([`serving`]),
+/// `Some(None)` if it passes on to a caller, and `None` if `cap` is not the
+/// capability of a local handler (a captured capability).
+pub fn perform_target(
+    p: &Program,
+    body: BodyId,
+    cap: &Place,
+    op: weft_ir::OpIdx,
+) -> Option<Option<HandlerId>> {
+    cap_handler(p, body, cap).map(|h| match serving_path(p, h, op) {
+        Served::Local(x) => Some(x),
+        Served::Capture(..) | Served::Caller => None,
+    })
+}
+
+/// The effect of a perform that passes on to a caller ([`perform_target`]).
+///
+/// The perform is of operation `op` through the capability local `cap` of
+/// body `body`: the handler of the capability has no clause for it, and no
+/// local handler serves it. `None` for each other perform.
+pub fn passes_to_caller(
+    p: &Program,
+    body: BodyId,
+    cap: &Place,
+    op: weft_ir::OpIdx,
+) -> Option<weft_ir::EffectId> {
+    let h = cap_handler(p, body, cap)?;
+    if serving_path(p, h, op) != Served::Caller {
+        return None;
+    }
+    p.handlers.get(h.index()).map(|d| d.effect)
+}
+
+/// The closure body and the index of the `Cap` capture whose field of the
+/// environment fact place `q` is (stage R0d).
+///
+/// A closure that a closure makes captures the capability again, and a
+/// perform through the inner capture is a perform through this one.
+pub fn env_cap_of(
+    p: &Program,
+    facts: &weft_facts::FnFacts,
+    roots: &crate::factgen::alpha::Roots,
+    q: weft_facts::PlaceId,
+) -> Option<(BodyId, u32)> {
+    let ((cb, l), path) = roots.path_of(facts, q)?;
+    let (_, decl) = p.closure_of(cb)?;
+    if p.body(cb)?.params.first() != Some(&l) {
+        return None;
+    }
+    let [super::domain::PathStep::Field(k)] = path.as_slice() else {
+        return None;
+    };
+    (decl.captures.get(*k as usize)?.mode == weft_ir::CaptureMode::Cap).then_some((cb, *k))
+}
+
 /// The local handlers whose capability a closure of the program captures.
 ///
 /// A run of such a closure can perform through the capability (plan stage
 /// F16), so a node of the handled body that can run a function value runs
 /// the clauses of the handler.
-pub fn captured_handlers(p: &Program) -> Vec<HandlerId> {
+pub fn captured_handlers(p: &Program, tys: &weft_ir::TyTable) -> Vec<HandlerId> {
     let mut out: Vec<HandlerId> = p
         .closures
         .iter()
@@ -546,6 +769,10 @@ pub fn captured_handlers(p: &Program) -> Vec<HandlerId> {
                 .filter_map(move |k| capture_handler(p, c, u32::try_from(k).unwrap_or(u32::MAX)))
         })
         .collect();
+    // A handler that passes an operation on: the handler that serves it
+    // runs the clause too (stage R0d).
+    let more: Vec<HandlerId> = out.iter().flat_map(|&h| serving_all(p, tys, h).0).collect();
+    out.extend(more);
     out.sort();
     out.dedup();
     out
@@ -1188,9 +1415,13 @@ pub fn note_reentry(cx: &mut Cx<'_>, body: BodyId, block: BlockId, t: &TermKind,
             cap: weft_ir::CapOperand::Local(cap),
             dest,
             next,
+            op,
             ..
         } => (
-            cap_handler(p, body, cap).into_iter().collect(),
+            perform_target(p, body, cap, *op)
+                .flatten()
+                .into_iter()
+                .collect(),
             Some(dest.clone()),
             Some(*next),
         ),
@@ -1385,6 +1616,15 @@ pub fn perform_run(
     let h = cap_handler(p, body, cap).ok_or(AlphaError::Later(
         "a perform through a captured capability (stage F16)",
     ))?;
+    // A handler with no clause for the operation passes it on (stage R0d,
+    // [`serving`]). An operation that passes on to a caller is a perform
+    // through the row (`transfer`).
+    let Served::Local(h) = serving_path(p, h, op) else {
+        return Err(AlphaError::BadPlace(format!(
+            "handler h{} passes an operation out of the body",
+            h.0
+        )));
+    };
     handler(p, h)?;
     let cb = clause_of(p, h, op).ok_or_else(|| {
         AlphaError::BadPlace(format!("handler h{} has no clause of an operation", h.0))
@@ -1622,7 +1862,7 @@ pub fn note_cap_apps(
     apps: &[super::transfer::Applied],
 ) {
     let p = cx.p;
-    for h in captured_handlers(p) {
+    for h in captured_handlers(p, cx.tys) {
         let effect = p
             .handlers
             .get(h.index())

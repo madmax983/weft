@@ -1,0 +1,127 @@
+// A handler in a closure body (plan stage R0d): the handled body splices
+// into the closure body, and the clauses are parts of the facts of the
+// closure, as in a function body. The summary of the closure has what the
+// handler does in the terms of its interface: the changes of a clause
+// through a capture, the aborts that leave the closure, the `multi` points
+// that stay inside it.
+
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn apply(f: fn()) { f() }
+fn maybe(n: u64) -> u64 { if n > 1 { fail("big") }; n }
+
+// The bad cases. A clause in the closure pushes to a captured vector while
+// a reference into it is live.
+fn clause_push() {
+    let v = [1, 2]
+    let r = &v[0]
+    let f = || handle Ask { fn ask() { v.push(3); resume(0) } } in ask()
+    print(f())
+    print(r)   //~ W0301
+}
+
+// The same through a reference parameter of the closure.
+fn param_push() {
+    let v = [1, 2]
+    let f = |w: &Vec<u64>| handle Ask { fn ask() { w.push(3); resume(0) } } in ask()
+    let r = &v[0]
+    print(f(&v))
+    print(r)   //~ W0301
+}
+
+// A linear local of the handled body is live across a perform of the
+// `multi` handler of the closure.
+fn local_multi() {
+    let g = || {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            let k = Lk { id: 3 }
+            let b = pick()   //~ W0503 W0602
+            unlock(k)
+        }
+    }
+    g()
+}
+
+// The `Fail` handler is outside the closure: a run of the closure can
+// abort.
+fn fail_outside() {
+    handle Fail { fn fail(m) { print("caught") } } in {
+        let l = Lk { id: 1 }
+        let f = || handle Ask { fn ask() { resume(1) } } in { maybe(2) + ask() }
+        print(f())   //~ W0602
+        unlock(l)
+    }
+}
+
+// The clean cases. The `Fail` handler is inside the closure: a run of the
+// closure cannot abort (the old pipeline gives W0602).
+fn fail_inside() {
+    let l = Lk { id: 1 }
+    let f = || handle Fail { fn fail(m) { 0 } } in { maybe(2) }
+    print(f())   //~ old: W0602
+    unlock(l)
+}
+
+// A `multi` operation of a handler in the closure does not leave it (O3-8:
+// the old pipeline gives W0503 and W0602 at the run of `g`).
+fn inner_multi() {
+    let l = Lk { id: 2 }
+    let g = || {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+        }
+    }
+    g()   //~ old: W0503 W0602
+    apply(|| {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+        }
+    })
+    unlock(l)
+}
+
+// A clause in the closure pushes to a captured vector, and the reference
+// comes after the run.
+fn clause_push_ok() {
+    let v = [1, 2]
+    let f = || handle Ask { fn ask() { v.push(3); resume(0) } } in ask()
+    print(f())
+    let r = &v[0]
+    print(r)
+}
+
+// A `many` capture runs after a perform of the `multi` handler of the
+// closure.
+fn many_after_multi() {
+    let v = [1]
+    let g = || print(v.len())
+    let h = || {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+            g()
+        }
+    }
+    h()
+}
+
+// A closure that a closure makes captures the capability again (the
+// capture of a capture).
+fn cap_again() {
+    handle Ask { fn ask() { resume(4) } } in {
+        let f = || {
+            let h = || ask()
+            h() + 1
+        }
+        print(f())
+    }
+}
+
+fn main() {
+    fail_inside()
+    inner_multi()
+    clause_push_ok()
+    many_after_multi()
+    cap_again()
+}

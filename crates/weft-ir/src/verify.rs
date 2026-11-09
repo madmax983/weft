@@ -41,8 +41,8 @@ use std::fmt;
 use crate::ty::{AdtKind, ExternDeref, FnTy, Lang, Ty};
 use crate::{
     id_of, AggKind, BlockId, Body, BodyId, BodyKind, Callee, CapEnvId, CapOperand, CaptureMode,
-    ClosureId, EffectId, IterSource, LocalId, LocalKind, Operand, Place, Program, Proj, Rvalue,
-    StmtKind, TempKind, TermKind, TyId, TyTable, VariantIdx,
+    ClosureId, EffectId, IterSource, LocalId, LocalKind, OpIdx, Operand, Place, Program, Proj,
+    Rvalue, StmtKind, TempKind, TermKind, TyId, TyTable, VariantIdx,
 };
 
 /// One broken rule: the rule, and where the verifier found it.
@@ -96,7 +96,10 @@ pub enum Rule {
     /// V10: a terminator that can abort has no `unwind` block.
     NoUnwind,
     /// V11: a capability operand is not a capability value, or a `Row` operand names
-    /// an effect that the capability environment of the body binds.
+    /// an effect that the capability environment of the body binds. One `Row`
+    /// operand is valid there: an operation that the handler of a handled body
+    /// has no clause for, if no environment around the handler binds the effect
+    /// (the operation goes to the handler of a caller, `docs/ir.md` 5.1.8).
     BadCap,
     /// V11: a `Resume` names a place that is not a continuation of the clause, an
     /// upvar local of one, or a `Kont` field of an environment.
@@ -1381,6 +1384,27 @@ impl<'a> Cx<'a> {
         false
     }
 
+    /// True if this body is the handled body of a handler of effect `e` with no
+    /// clause for operation `op`, and no capability environment around the handler
+    /// binds `e`: the handler passes the operation on to the handler of a caller
+    /// (`docs/ir.md` 5.1.8).
+    fn passes_on(&self, e: EffectId, op: OpIdx) -> bool {
+        let BodyKind::Handled(h) = self.body.kind else {
+            return false;
+        };
+        let Some(d) = self.p.handlers.get(h.index()) else {
+            return false;
+        };
+        if d.effect != e || d.clauses.iter().any(|(o, _)| *o == op) {
+            return false;
+        }
+        self.p
+            .cap_envs
+            .get(self.body.cap_env.index())
+            .and_then(|c| c.parent)
+            .is_none_or(|outer| !self.env_binds(outer, e))
+    }
+
     /// V11: capability operands and continuations.
     fn caps(&mut self) {
         for (i, blk) in self.body.blocks.iter().enumerate() {
@@ -1409,9 +1433,10 @@ impl<'a> Cx<'a> {
                 }
                 TermKind::Perform {
                     cap: CapOperand::Row(e),
+                    op,
                     ..
                 } => {
-                    if self.env_binds(self.body.cap_env, *e) {
+                    if self.env_binds(self.body.cap_env, *e) && !self.passes_on(*e, *op) {
                         self.push(Rule::BadCap, Some(id), None);
                     }
                 }

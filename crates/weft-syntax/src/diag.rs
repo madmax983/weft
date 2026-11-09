@@ -90,6 +90,8 @@ codes! {
     W0119,
     /// W0120: match does not cover every value.
     W0120,
+    /// W0121: a variant payload that is not one value.
+    W0121,
     /// W0201: bad place root.
     W0201,
     /// W0203: argument points elsewhere.

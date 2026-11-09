@@ -172,20 +172,19 @@ fn a_reference_through_another_handle_of_the_rc_type_is_a_store_of_a_local() {
 }
 
 #[test]
-fn a_reference_through_a_copy_of_the_handle_of_the_store_goes_to_the_old_pipeline() {
-    // `let d = c.clone()`: the facts cannot tell a copy of the handle from a
-    // handle of another object, so the program is not in scope.
+fn a_reference_through_a_copy_of_the_handle_of_the_store_is_accepted() {
+    // `let d = c.clone()` of the handle parameter of the store, and neither
+    // handle gets another value: the IR shows that both are handles of one
+    // object (plan stage R0c, `templates::same_object`), so the reference
+    // goes away with the object. Before R0c the program went to the old
+    // pipeline.
     let name = "rc_clone_handle.wf";
     let src = program(name);
     let a = analyze_source(&src, ab(&src))
         .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
-    let why = a
-        .ir_scope
-        .as_ref()
-        .and_then(|s| s.fallback.clone())
-        .unwrap_or_default();
-    assert!(why.contains("a copy of an `rc` handle"), "{name}: {why}");
-    assert!(check_analysis(a, &[]).diags.is_empty(), "{name}");
+    let why = a.ir_scope.as_ref().and_then(|s| s.fallback.clone());
+    assert_eq!(why, None, "{name}");
+    check_ab(name);
 }
 
 #[test]

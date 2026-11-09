@@ -1,0 +1,19 @@
+// Stage R0d fix 2 (round 2 of the review, probe HOLE4b_linear): a multi operation that handlers with no clause pass on to a caller, or a clause that a multi re-run runs again.
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+linear struct Lk { id: u64 }
+    on abort = drop_lk
+fn drop_lk(l: Lk) { let Lk(id) = l; print("drop", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn helper() -> bool / P2 { pk() }
+fn g2() / P2 {
+  let k = Lk { id: 1 }
+  handle P2 { fn other() { resume(0) } } in {
+    let f = || handle P2 { fn other() { resume(1) } } in { helper() }
+    print(f())
+  }
+  unlock(k)
+}
+fn main() { handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in { g2() } }

@@ -1,0 +1,18 @@
+// Stage R0d (a capability captured again, review holes of a05_nested_closure.wf and a29_nested_closure_in_closure_rowfn.wf): a handler in the outer closure and a capability captured again (W0301).
+effect Log { fn log(m: i64) }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let v = [1, 2]
+    let r = &v[0]
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let f = || {
+            handle Ask { fn ask() { resume(1) } } in {
+                let g = || log(1)
+                g()
+                ask()
+            }
+        }
+        print(f())
+    }
+    print(r)
+}

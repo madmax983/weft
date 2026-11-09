@@ -1,0 +1,14 @@
+// Stage R0d fix (review of R0d, probe c6k_passon_nested_ref): an operation that a handler with no clause passes on, performed through a callee, a function value or an inner closure.
+effect Two {
+    fn a() -> u64
+    fn b() -> u64
+}
+fn main() {
+  let v = [1, 2]
+  let r = &v[0]
+  handle Two { fn a() { v.push(3); resume(0) } fn b() { resume(1) } } in {
+    let f = || handle Two { fn b() { resume(2) } } in { let g = || a(); g() }
+    print(f())
+  }
+  print(r)
+}

@@ -1,0 +1,20 @@
+// Stage R0d fix (review of R0d, probe c6s_callee_passon_caller_multi): an operation that a handler with no clause passes on, performed through a callee, a function value or an inner closure.
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+fn helper() -> bool / P2 { pk() }
+fn f() / P2 {
+    let k = Lk { id: 1 }
+    let c = || handle P2 { fn other() { resume(1) } } in { helper() }
+    if c() { print(1) }
+    unlock(k)
+}
+fn main() {
+    handle P2 {
+        fn pk() { resume(true); resume(false) }
+        fn other() { resume(0) }
+    } in f()
+}

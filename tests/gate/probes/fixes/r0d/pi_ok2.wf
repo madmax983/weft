@@ -1,0 +1,23 @@
+// Stage R0d fix: as pi2, with `l` consumed before the run: no error.
+// R0d review: a closure installs a handler with no clause for `warn` and
+// calls a function that performs `warn`. The operation passes on to the
+// caller, whose clause ends with no `resume`. The IR accepts; old W0602.
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+effect Log2 {
+    fn info(m: String)
+    fn warn(m: String)
+}
+fn helper() / Log2 { warn("y") }
+fn f() / Log2 {
+    let l = Lk { id: 1 }
+    let c = || handle Log2 { fn info(m) { resume(()) } } in { helper() }
+    unlock(l)
+    c()
+}
+fn main() {
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { print("go"); resume(()) }
+    } in f()
+}

@@ -24,11 +24,13 @@
 //!
 //! The signature of a function with a body also has the parts that the old
 //! inference gives (`drops`, `holds`, `raises`). From stage F6 the fixpoint
-//! of `super::callgraph` gives them from the body ([`Inferred`]); a function
-//! with a stated row whose body the fact generator does not support yet
-//! keeps the parts of the old inference. A signature with a part that a
-//! summary cannot carry yet (a function value, a store into an `rc` object,
-//! a task) gives an error: the program stays with the old pipeline.
+//! of `super::callgraph` gives them from the body ([`Inferred`]). A function
+//! with no summary of its body (no IR, or a body that the fact generator
+//! does not support) gets [`from_declaration`] (stage R0b): the worst case
+//! of its declaration. It never reads the parts of the old inference. A
+//! signature of an extern function with a part that a summary cannot carry
+//! yet (a task of the runtime) gives an error: the program stays with the
+//! old pipeline.
 //!
 //! [`build`] gives the summary of a function with no stated row from its
 //! signature and the parts that its body gives, and [`to_effect_sig`]
@@ -253,6 +255,152 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
         inf.ret_fns.insert(RetFn::Unknown);
         inf.ret_places.extend(args);
     }
+}
+
+/// The summary of function `f` from its declaration only (plan stage R0b).
+///
+/// It is for an extern function, a function with a body that has no IR (a
+/// type error or W0303, `docs/ir.md` 5.36), and a function whose body the
+/// fact generator does not support (`docs/ir.md` 6.7, 6.8).
+///
+/// It reads the signature of the source (`FnDef::sig`: the types, the stated
+/// places, the stated row) and `decl`, the declaration of the IR. It never
+/// reads the parts of the old inference. An extern function (or a function
+/// of the prelude) gets its signature and the worst case of its function
+/// values
+/// ([`foreign_fn_parts`]). A function with a body gets the worst case of
+/// that body (`body_worst_case`).
+///
+/// # Errors
+///
+/// Returns the reason if the signature of an extern function has a part
+/// that a summary cannot carry.
+pub fn from_declaration(
+    prog: &crate::Program,
+    f: crate::FnId,
+    decl: &FnDecl,
+    tys: &TyTable,
+) -> Result<Summary, &'static str> {
+    let Some(def) = prog.fns.get(f.index()) else {
+        return Err("a call of a function with no signature");
+    };
+    // A function of the prelude has no inferred parts: its signature is
+    // its declaration.
+    if def.decl.body.is_none() || def.is_std {
+        return from_signature(prog, f, &def.sig, decl, tys, false);
+    }
+    let sig = &def.sig;
+    let mut inf = Inferred::of_signature(sig, decl, tys);
+    body_worst_case(prog, sig, decl, tys, &mut inf);
+    let mut s = build(prog, sig, decl, tys, &inf);
+    s.only_self = false;
+    Ok(s)
+}
+
+/// The worst case of a body that the analysis does not see (plan stage
+/// R0b). The parts that the stated row gives are in `inf` already.
+///
+/// - With no stated row, the body can change each place that a parameter
+///   reaches, also each `rc` object that it reaches ([`reached_groups`]),
+///   and it can perform each effect of the program.
+/// - It can abort (a failure of the runtime, a failed `assert`), resume
+///   more than once, give a place of its frame to an operation, and drop or
+///   hold a value of each type parameter.
+/// - It runs each function value of each parameter many times, also as a
+///   task on another thread, at the same time as the others and while it
+///   changes and reads each place that it gets; it can store each argument
+///   in each place that it can change, and give back each function value
+///   (as [`foreign_fn_parts`]). The task is not `foreign`: the facts of the
+///   run node give its accesses, so a closure that changes places is an
+///   error at the call (W0403, W0405), not a reason to use the old
+///   pipeline.
+///
+/// A program in scope of the `ir` pipeline with such a body always reports
+/// an error for it (`crate::irbuild::Entry::reported`), so this part only
+/// keeps the facts of the callers sound; it does not need to be precise.
+fn body_worst_case(
+    prog: &crate::Program,
+    sig: &FnSig,
+    decl: &FnDecl,
+    tys: &TyTable,
+    inf: &mut Inferred,
+) {
+    let u = u32_of;
+    if !sig.declared {
+        for (i, &t) in decl.params.iter().enumerate() {
+            let receiver = i == 0 && sig.params.first().is_some_and(|p| p.name == "self");
+            let root = sig_root(sig, i);
+            if is_ref(tys, t) || byval_refs(tys, t) || receiver {
+                inf.muts.push((IPlace::wild(IRoot::Param(u(i))), root));
+            }
+            if super::apply::pointee_refs(tys, t) || byval_refs(tys, t) {
+                inf.muts.push((IPlace::wild(IRoot::Held(u(i))), root));
+            }
+        }
+        for a in reached_groups(tys, &decl.params) {
+            let sema = crate::AdtId(a.index());
+            inf.muts
+                .push((IPlace::wild(IRoot::Group(a)), roots::group(sema)));
+            foreign_group_puts(decl, tys, a, inf);
+        }
+        inf.muts.sort();
+        inf.muts.dedup();
+        inf.named = prog
+            .effect_ids()
+            .map(|e| crate::effects::identity(prog, e))
+            .collect();
+    }
+    inf.raises = true;
+    inf.assert = true;
+    inf.multi = true;
+    inf.gives_frame = true;
+    inf.drops = (0..decl.generics).collect();
+    inf.holds = (0..decl.generics).collect();
+    inf.forks = (0..decl.generics).collect();
+    foreign_fn_parts(decl, tys, inf);
+    for r in &mut inf.runs {
+        r.how.foreign = false;
+        r.how.thread = true;
+    }
+}
+
+/// The types of the `rc` objects that a value of a type of `ts` can reach:
+/// the target of each `rc` pointer in the types, also through the fields of
+/// a struct or an enum and through the type arguments.
+fn reached_groups(tys: &TyTable, ts: &[TyId]) -> BTreeSet<weft_ir::AdtId> {
+    use weft_ir::ty::{AdtKind, ExternDeref};
+    let mut out = BTreeSet::new();
+    let mut seen: BTreeSet<TyId> = BTreeSet::new();
+    let mut work: Vec<TyId> = ts.to_vec();
+    while let Some(t) = work.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        match tys.try_get(t) {
+            Some(Ty::Ref(x) | Ty::Slice(x) | Ty::Array(x, _) | Ty::Iter(x)) => work.push(*x),
+            Some(Ty::Tuple(xs)) => work.extend(xs.iter().copied()),
+            Some(Ty::Adt(a, args)) => {
+                work.extend(args.iter().copied());
+                match tys.adts().get(a.index()).map(|d| &d.kind) {
+                    Some(AdtKind::Extern {
+                        deref: Some(ExternDeref::Group),
+                        ..
+                    }) => {
+                        if let Some(Ty::Adt(b, _)) = args.first().and_then(|x| tys.try_get(*x)) {
+                            out.insert(*b);
+                        }
+                    }
+                    Some(AdtKind::Struct(fs)) => work.extend(fs.iter().map(|f| f.ty)),
+                    Some(AdtKind::Enum(vs)) => {
+                        work.extend(vs.iter().flat_map(|v| v.fields.iter().copied()));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The summary of the intrinsic `i` with the declaration `decl`

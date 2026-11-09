@@ -296,22 +296,6 @@ fn unsupported(e: &alpha::AlphaError) -> Unsupported {
     }
 }
 
-/// True if body `b` is inside a closure body: a parent (or the maker of a
-/// closure on the way) is a closure body.
-fn in_closure(p: &weft_ir::Program, b: weft_ir::BodyId) -> bool {
-    let mut at = p.bodies.get(b.index()).and_then(|x| x.parent);
-    for _ in 0..=p.bodies.len() {
-        let Some(x) = at.and_then(|x| p.bodies.get(x.index())) else {
-            return false;
-        };
-        if matches!(x.kind, weft_ir::BodyKind::Closure(_)) {
-            return true;
-        }
-        at = x.parent;
-    }
-    false
-}
-
 /// Checks that the fact generator supports each construct of the component
 /// `comp`: function and test bodies, the statements, the terminators that
 /// run no other body (stage F4), and the calls of the functions that have a
@@ -336,15 +320,15 @@ fn check_supported(
         match b.kind {
             // A closure body is a component of its own in the facts of its
             // function (stage F11). A closure that a clause makes starts from
-            // the states of the clause (plan stage F16).
-            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Closure(_) => {}
-            BodyKind::Clause(..) | BodyKind::Handled(_) => {
-                // A handler in a closure body: its clauses run where the
-                // closure runs (later).
-                if in_closure(p, bid) {
-                    return no(Group::D, "a handler in a closure body (stage F16)");
-                }
-            }
+            // the states of the clause (plan stage F16). A handler in a
+            // closure body: its handled body splices into the closure body,
+            // and its clauses are components of the facts of the closure
+            // (stage R0d).
+            BodyKind::Fn(_)
+            | BodyKind::Test(_)
+            | BodyKind::Closure(_)
+            | BodyKind::Clause(..)
+            | BodyKind::Handled(_) => {}
             // A scope body splices into its site (plan stage F18), if the
             // site is a function or a test body, or a body that splices
             // into one.
@@ -630,13 +614,18 @@ pub fn emit_parts(
         .copied()
         .filter(|&b| p.closure_of(b).is_some())
         .collect();
+    // The bodies of each closure: the closure body, and the handled bodies,
+    // the clauses and the scope bodies inside it (stage R0d). They splice
+    // into the closure body, as those of a function body splice into it.
+    let units = closure_units(p, &comp);
     let with_closures;
     let sums: &crate::analysis::Summaries = if closures.is_empty() {
         sums
     } else {
         let mut all = sums.clone();
         for &cb in closures.iter().rev() {
-            let s = closure_summary(a, built, &all, cb)?;
+            let unit = units.get(&cb).map_or(&[][..], Vec::as_slice);
+            let s = closure_summary(a, built, &all, (cb, unit))?;
             if let Some((c, _)) = p.closure_of(cb) {
                 all.insert_closure(c, s);
             }
@@ -652,7 +641,7 @@ pub fn emit_parts(
     let framed: Vec<weft_ir::BodyId> = comp
         .iter()
         .copied()
-        .filter(|&b| p.closure_of(b).is_none())
+        .filter(|&b| alpha::unit_closure(p, b).is_none())
         .collect();
     let frames = frames::Frames::of_bodies(p, &tys, sums, &framed);
     // The entry node: the parameters bind there. It is node `n0`, as in the
@@ -872,12 +861,15 @@ pub fn emit_parts(
     let task_ids_all = hx.task_ids.clone();
     let mut clause_entries = Vec::new();
     let mut clause_stored: Vec<(weft_ir::BodyId, templates::Stored)> = Vec::new();
+    // A clause inside a closure body is a part of the facts of the closure
+    // (stage R0d, [`emit_closure`]).
     let mut clause_bodies: Vec<weft_ir::BodyId> = comp
         .iter()
         .copied()
         .filter(|&b| {
             p.body(b)
                 .is_some_and(|x| matches!(x.kind, weft_ir::BodyKind::Clause(..)))
+                && alpha::unit_closure(p, b).is_none()
         })
         .collect();
     clause_bodies.sort();
@@ -920,7 +912,8 @@ pub fn emit_parts(
     }
     let escapes = hx.escapes.clone();
     for &cb in &closures {
-        let (n, st) = emit_closure(
+        let unit = units.get(&cb).map_or(&[][..], Vec::as_slice);
+        let (n, st, inner) = emit_closure(
             &ClosureCx {
                 a,
                 p,
@@ -949,11 +942,19 @@ pub fn emit_parts(
                 task_ends: &mut task_end_list,
                 task_frames: &mut task_frames,
             },
-            cb,
+            (cb, unit),
+            &mut hx,
         )
         .map_err(|e| unsupported(&e))?;
         closure_entries.push((cb, n));
         unions.insert(cb, st);
+        // The clauses inside the closure body: a closure that a clause makes
+        // starts from the states of the clause.
+        for c in inner {
+            clause_entries.push((c.body, c.entry));
+            clause_stored.extend(c.stored.into_iter().map(|x| (c.body, x)));
+            unions.insert(c.body, c.union);
+        }
     }
     hx.runs.append(&mut closure_runs);
     templates::task_end_lends(facts, &task_end_list, &task_frames);
@@ -990,7 +991,7 @@ pub fn emit_parts(
     let held = holders.held().to_vec();
     let (parts, slots) = holders.finish(facts);
     let handled_entries = handled_entries(p, &comp, &table);
-    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored)?;
+    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored);
     diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     let mut escapes = hx.escapes.clone();
     for e in closure_escapes {
@@ -1057,6 +1058,17 @@ pub fn emit_parts(
         generic::Found::default()
     };
     facts.normalize();
+    // The entry node of each clause names the capability of its handler in
+    // its detail (`c3`), as the old lowering: a diagnostic finds the reads of
+    // the clause from a node that performs through the capability.
+    for &(cb, en) in &clause_entries {
+        let Some(weft_ir::BodyKind::Clause(h, _)) = p.body(cb).map(|b| b.kind) else {
+            continue;
+        };
+        if let (Some(&(_, c)), Some(n)) = (hx.ids.get(&h), facts.nodes.get_mut(en.index())) {
+            n.detail = format!("c{}", c.0);
+        }
+    }
     let handler_caps = hx.ids.iter().map(|(&h, &(_, c))| (h, c)).collect();
     Ok(Emitted {
         drops: found.drops,
@@ -1417,6 +1429,23 @@ fn env_value(
                 }
                 Tree::leaf(v)
             }
+            // A captured capability (stage R0d): the field of the
+            // environment stands for it, so a closure that the body makes
+            // and that captures it again performs through this capture
+            // (`clause::env_cap_of`).
+            (CaptureMode::Cap, _) => {
+                let Some(&env) = p.body(cb).and_then(|b| b.params.first()) else {
+                    continue;
+                };
+                let q = weft_ir::Place {
+                    local: env,
+                    proj: vec![weft_ir::Proj::Field(weft_ir::FieldIdx(k32))],
+                };
+                let a = alpha::alpha(p, cx.tys, cx.facts, cx.roots, cb, &q)?;
+                let mut v = AbsVal::plain();
+                v.caps.extend(a.places);
+                Tree::leaf(v)
+            }
             _ => continue,
         };
         let mut v = v;
@@ -1445,16 +1474,24 @@ fn closure_summary(
     a: &Analysis,
     built: &Built,
     sums: &crate::analysis::Summaries,
-    cb: weft_ir::BodyId,
+    (cb, unit): (weft_ir::BodyId, &[weft_ir::BodyId]),
 ) -> Result<crate::analysis::Summary, Unsupported> {
     let p = &built.program;
     let mut tys = built.tys.clone();
     let mut facts = FnFacts::default();
-    let comp = [cb];
+    // A closure body with handlers inside (stage R0d): its handled bodies
+    // splice into it, and its clauses are components of the facts of the
+    // summary, as for a function body.
+    let nested = unit.len() > 1;
+    let comp: Vec<weft_ir::BodyId> = if nested { unit.to_vec() } else { vec![cb] };
     let vars = vars::Vars::build(p, &mut tys, &mut facts, &comp);
     let mut roots = alpha::Roots::default();
     roots.set_field_places(&a.program);
-    let frames = frames::Frames::of_body(p, &tys, sums, cb);
+    let frames = if nested {
+        frames::Frames::of_bodies(p, &tys, sums, &comp)
+    } else {
+        frames::Frames::of_body(p, &tys, sums, cb)
+    };
     let body = p
         .bodies
         .get(cb.index())
@@ -1465,20 +1502,35 @@ fn closure_summary(
     };
     let en = facts.add_ir_node(sp, "closure entry", "closure entry", "");
     let mut table = nodes::NodeTable::default();
-    table.add_body(p, &tys, cb, &mut facts, &frames);
+    let splices = handlers::Splices::new(p, &comp);
+    let spliced = if nested { splices.of(cb) } else { vec![cb] };
+    for &b in &spliced {
+        table.add_body(p, &tys, b, &mut facts, &frames);
+    }
+    if nested {
+        for &b in &spliced {
+            table.splice(p, &mut facts, b, &frames);
+        }
+    }
     if let Some(first) = table.first(cb, body.entry, nodes::NORMAL) {
         facts.cfg_edge.push((en, first));
     }
     let params = decls::closure_params(p, &mut tys, &mut facts, &mut roots, cb)
         .map_err(|e| unsupported(&e))?;
     let mut cycles = crate::analysis::widen::Cycles::of(p, &comp);
+    if nested {
+        cycles.add_handlers(p, &comp, &frames);
+    }
     cycles.add_rows(p, &tys, sums, &comp);
     cycles.add_captured(p, &tys, &comp);
-    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
-        frames::row_multi_nodes(p, &tys, sums, cb)
-            .into_iter()
-            .map(|x| (cb, x))
-            .collect();
+    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> = spliced
+        .iter()
+        .flat_map(|&b| {
+            frames::row_multi_nodes(p, &tys, sums, b)
+                .into_iter()
+                .map(move |x| (b, x))
+        })
+        .collect();
     table.row_reentry_edges(
         p,
         &mut facts,
@@ -1610,6 +1662,93 @@ fn closure_summary(
         )
     };
     let mut runs = runs;
+    // The clauses inside the closure body (stage R0d): their facts, then the
+    // code of each clause at the nodes that run it, as in [`emit_parts`].
+    if nested {
+        let tasks = std::collections::BTreeMap::new();
+        let mut clauses: Vec<weft_ir::BodyId> = comp
+            .iter()
+            .copied()
+            .filter(|&b| {
+                p.body(b)
+                    .is_some_and(|x| matches!(x.kind, weft_ir::BodyKind::Clause(..)))
+            })
+            .collect();
+        clauses.sort();
+        let (mut stored, mut cruns, mut escs) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut w0314, mut ends, mut frames_of) = (Vec::new(), Vec::new(), Vec::new());
+        for c in clauses {
+            let (_, _, _, r) = emit_clause(
+                &ClosureCx {
+                    a,
+                    p,
+                    sums,
+                    cycles: &cycles,
+                    seed: crate::analysis::State::new(),
+                    escapes: &[],
+                    task_ids: &tasks,
+                },
+                &mut ClosureOut {
+                    tys: &mut tys,
+                    facts: &mut facts,
+                    roots: &mut roots,
+                    vars: &vars,
+                    holders: &mut holders,
+                    uniq: &mut uniq,
+                    table: &mut table,
+                    stored: &mut stored,
+                    runs: &mut cruns,
+                    escapes: &mut escs,
+                    w0314: &mut w0314,
+                    task_ends: &mut ends,
+                    task_frames: &mut frames_of,
+                },
+                (&mut hx, &frames, &splices),
+                c,
+            )
+            .map_err(|e| unsupported(&e))?;
+            // A run of a value of the interface in a clause is `many`: the
+            // clause runs at each perform of its operation.
+            runs.extend(r);
+        }
+        // The clauses of the handlers outside the closure run at the node
+        // that runs the closure: not in these facts.
+        hx.runs.retain(|r| comp.contains(&r.clause));
+        let late = handlers::project(
+            &handlers::Tables {
+                p,
+                tys: &tys,
+                roots: &roots,
+                vars: &vars,
+                table: &table,
+            },
+            &mut facts,
+            &hx,
+        );
+        let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
+            .local_roots()
+            .filter_map(|(k, r)| vars.get(&vars::VarKey::S(k.0, k.1)).map(|v| (r, v)))
+            .chain(
+                roots
+                    .cell_roots()
+                    .filter_map(|(k, r)| vars.get(&vars::VarKey::C(k.0, k.1)).map(|v| (r, v))),
+            )
+            .collect();
+        facts.owner.extend(owners);
+        handlers::continuations(
+            &handlers::Tables {
+                p,
+                tys: &tys,
+                roots: &roots,
+                vars: &vars,
+                table: &table,
+            },
+            &mut facts,
+            &hx,
+        )
+        .map_err(|e| unsupported(&e))?;
+        handlers::late_uses(&mut facts, &late);
+    }
     runs_after(&mut runs, &cycles);
     let rebind_nodes = rebind_nodes(p, &table, cb);
     let joins = crate::analysis::tasks::must_joins(
@@ -1629,6 +1768,7 @@ fn closure_summary(
     let ret_linear = crate::analysis::summarize::ret_linear(p, &tys, &returns, cb);
     let mut sum = crate::analysis::summarize::closure(
         p,
+        &tys,
         sums,
         &facts,
         &roots,
@@ -1644,6 +1784,7 @@ fn closure_summary(
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
             cap_performs: &hx.cap_performs,
+            cap_callers: &hx.cap_callers,
             joins: &joins,
             abort_joins: &abort_joins,
             then_runs: &closure_then,
@@ -1754,15 +1895,24 @@ fn rebind_nodes(
 fn emit_closure(
     cx: &ClosureCx<'_>,
     out: &mut ClosureOut<'_, '_>,
-    cb: weft_ir::BodyId,
-) -> Result<(weft_facts::NodeId, crate::analysis::State), alpha::AlphaError> {
+    (cb, unit): (weft_ir::BodyId, &[weft_ir::BodyId]),
+    fhx: &mut crate::analysis::clause::Handlers,
+) -> Result<(weft_facts::NodeId, crate::analysis::State, Vec<InnerClause>), alpha::AlphaError> {
     let p = cx.p;
     out.roots.instantiate(cb);
     let body = p
         .bodies
         .get(cb.index())
         .ok_or_else(|| alpha::AlphaError::BadPlace("no body".to_string()))?;
-    let frames = frames::Frames::of_body(p, out.tys, cx.sums, cb);
+    // A closure body with handlers inside (stage R0d): its handled bodies
+    // splice into it, and its clauses are components of its facts, as for
+    // a function body.
+    let nested = unit.len() > 1;
+    let frames = if nested {
+        frames::Frames::of_bodies(p, out.tys, cx.sums, unit)
+    } else {
+        frames::Frames::of_body(p, out.tys, cx.sums, cb)
+    };
     let sp = weft_facts::Span {
         lo: body.origin.span.lo,
         hi: body.origin.span.hi,
@@ -1770,21 +1920,36 @@ fn emit_closure(
     let en = out
         .facts
         .add_ir_node(sp, "closure entry", "closure entry", "");
-    out.table.add_body(p, out.tys, cb, out.facts, &frames);
+    let splices = handlers::Splices::new(p, unit);
+    let spliced = if nested { splices.of(cb) } else { vec![cb] };
+    for &b in &spliced {
+        out.table.add_body(p, out.tys, b, out.facts, &frames);
+    }
+    if nested {
+        for &b in &spliced {
+            out.table.splice(p, out.facts, b, &frames);
+        }
+    }
     if let Some(first) = out.table.first(cb, body.entry, nodes::NORMAL) {
         out.facts.cfg_edge.push((en, first));
     }
-    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> =
-        frames::row_multi_nodes(p, out.tys, cx.sums, cb)
-            .into_iter()
-            .map(|x| (cb, x))
-            .collect();
+    let mut known: std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)> = spliced
+        .iter()
+        .flat_map(|&b| {
+            frames::row_multi_nodes(p, out.tys, cx.sums, b)
+                .into_iter()
+                .map(move |x| (b, x))
+        })
+        .collect();
     out.table
         .row_reentry_edges(p, out.facts, cb, &known.iter().copied().collect::<Vec<_>>());
     let params = decls::closure_params(p, out.tys, out.facts, out.roots, cb)?;
     let mut hx = crate::analysis::clause::Handlers::default();
     hx.escapes = cx.escapes.to_vec();
     let mut cycles = cx.cycles.clone();
+    if nested {
+        cycles.add_handlers(p, unit, &frames);
+    }
     let (env, states) = loop {
         let r = {
             let mut acx = crate::analysis::Cx {
@@ -1808,11 +1973,12 @@ fn emit_closure(
             (env, states)
         };
         let new = new_rows(&hx, &mut known);
+        let rows_comp: &[weft_ir::BodyId] = if nested { unit } else { &[cb] };
         if new.is_empty() {
-            real_row_cycles(&mut cycles, p, &[cb], &hx);
+            real_row_cycles(&mut cycles, p, rows_comp, &hx);
             break r;
         }
-        row_cycles(&mut cycles, p, &[cb], &hx, &new);
+        row_cycles(&mut cycles, p, rows_comp, &hx, &new);
         out.table.row_reentry_edges(p, out.facts, cb, &new);
         hx = fresh_handlers(&mut hx);
     };
@@ -1872,18 +2038,120 @@ fn emit_closure(
     out.task_frames.append(&mut em.task_frames);
     out.stored.append(&mut em.stored);
     let union = em.union.take().unwrap_or_default();
+    // The clauses of the handlers inside the closure body (stage R0d), from
+    // the states of the analysis of the closure body. A clause has a lower
+    // id than the clauses inside it.
+    let mut inner = Vec::new();
+    if nested {
+        let mut clauses: Vec<weft_ir::BodyId> = unit
+            .iter()
+            .copied()
+            .filter(|&b| {
+                p.body(b)
+                    .is_some_and(|x| matches!(x.kind, weft_ir::BodyKind::Clause(..)))
+            })
+            .collect();
+        clauses.sort();
+        for c in clauses {
+            let ccx = ClosureCx {
+                a: cx.a,
+                p,
+                sums: cx.sums,
+                cycles: &cycles,
+                seed: crate::analysis::State::new(),
+                escapes: &[],
+                task_ids: cx.task_ids,
+            };
+            let (entry, stored, union, _runs) =
+                emit_clause(&ccx, out, (&mut hx, &frames, &splices), c)?;
+            inner.push(InnerClause {
+                body: c,
+                entry,
+                stored,
+                union,
+            });
+        }
+    }
     // The runs of clauses at the performs of the body through a captured
     // capability (plan stage F16): `handlers::project` of the component
     // gives them the code of the clause.
     out.runs.append(&mut hx.runs);
     // The capabilities that leave their handler that this body found (W0313
     // at the `handle`).
-    for e in hx.escapes {
+    for e in std::mem::take(&mut hx.escapes) {
         if !cx.escapes.contains(&e) && !out.escapes.contains(&e) {
             out.escapes.push(e);
         }
     }
-    Ok((en, union))
+    if nested {
+        merge_handlers(fhx, hx);
+    }
+    Ok((en, union, inner))
+}
+
+/// A clause inside a closure body (stage R0d): what [`emit_closure`] gives
+/// back for it.
+struct InnerClause {
+    /// The clause body.
+    body: weft_ir::BodyId,
+    /// Its entry node.
+    entry: weft_facts::NodeId,
+    /// Its stores (`handlers::map_stored`).
+    stored: Vec<templates::Stored>,
+    /// The join of its states: the seed of the closures that it makes.
+    union: crate::analysis::State,
+}
+
+/// Adds the tables of the handlers inside a closure body (`from`, stage
+/// R0d) to the tables of the handlers of the function (`into`): the passes
+/// over the clauses of the component (`handlers::project`,
+/// `handlers::continuations`, `handlers::map_stored`) read them. A handler
+/// has one id in the facts: an id that `into` has stays.
+fn merge_handlers(
+    into: &mut crate::analysis::clause::Handlers,
+    mut from: crate::analysis::clause::Handlers,
+) {
+    into.runs.append(&mut from.runs);
+    into.resumes.append(&mut from.resumes);
+    for (h, x) in std::mem::take(&mut from.ids) {
+        into.ids.entry(h).or_insert(x);
+    }
+    into.ends.append(&mut from.ends);
+    into.landings.append(&mut from.landings);
+    into.wait_copies.append(&mut from.wait_copies);
+    into.wait_tasks.append(&mut from.wait_tasks);
+    into.w0314_bodies.append(&mut from.w0314_bodies);
+    into.cap_performs.append(&mut from.cap_performs);
+    into.cap_callers.append(&mut from.cap_callers);
+}
+
+/// The bodies of each closure body of the component `comp` (stage R0d):
+/// the closure body first, then each handled body, clause and scope body
+/// whose [`alpha::unit_root`] is the closure body, in the order of their
+/// ids.
+fn closure_units(
+    p: &weft_ir::Program,
+    comp: &[weft_ir::BodyId],
+) -> std::collections::BTreeMap<weft_ir::BodyId, Vec<weft_ir::BodyId>> {
+    let mut out: std::collections::BTreeMap<weft_ir::BodyId, Vec<weft_ir::BodyId>> = comp
+        .iter()
+        .copied()
+        .filter(|&b| p.closure_of(b).is_some())
+        .map(|b| (b, vec![b]))
+        .collect();
+    let mut rest: Vec<weft_ir::BodyId> = comp
+        .iter()
+        .copied()
+        .filter(|&b| p.closure_of(b).is_none())
+        .collect();
+    rest.sort();
+    rest.dedup();
+    for b in rest {
+        if let Some(v) = alpha::unit_closure(p, b).and_then(|cb| out.get_mut(&cb)) {
+            v.push(b);
+        }
+    }
+    out
 }
 
 /// What [`emit_clause`] gives back: the entry node of the clause, its
@@ -2129,11 +2397,11 @@ pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsuppo
 /// reference and each local, at the span of the node, as the old lowering
 /// (`check_stored_behind`).
 ///
-/// # Errors
-///
-/// Returns [`Unsupported`] for a reference through a whole local handle that
-/// can be a copy of a handle of the object that gets it
-/// (`templates::Stored::maybe_same`).
+/// A reference through a whole local handle that can be a copy of a handle
+/// of the object that gets it (`templates::Stored::maybe_same`, `let d =
+/// c.clone()`) is W0204 too (stage R0c): the facts cannot tell if the two
+/// handles are handles of the same object, and the object of the local
+/// handle can go away at the return.
 fn stored_behind(
     p: &weft_ir::Program,
     tys: &weft_ir::TyTable,
@@ -2141,7 +2409,7 @@ fn stored_behind(
     roots: &alpha::Roots,
     body: &weft_ir::Body,
     stored: &[templates::Stored],
-) -> Result<Vec<Diagnostic>, Unsupported> {
+) -> Vec<Diagnostic> {
     use weft_syntax::diag::Code;
     let mut out = Vec::new();
     let mut seen: Vec<(String, weft_facts::RootId)> = Vec::new();
@@ -2173,13 +2441,10 @@ fn stored_behind(
                 continue;
             }
             // A whole local handle that can be a copy of a handle of the
-            // object: the facts cannot tell if the object is the same.
-            if st.maybe_same.contains(&r) {
-                return Err(Unsupported {
-                    group: Group::A,
-                    reason: "a reference through a copy of an `rc` handle goes into an `rc` object of the same type".to_string(),
-                });
-            }
+            // object: the facts cannot tell if the object is the same, so
+            // the check reports it as a handle of another object (stage
+            // R0c).
+            let copy = st.maybe_same.contains(&r);
             // A reference into a local, or into the cell of a local that a
             // closure captures `ByRef` (a closure that captures the local,
             // stage F13).
@@ -2232,6 +2497,11 @@ fn stored_behind(
                     "`{}` puts a closure that captures `{name}` {into}: {what} goes out of scope at the return",
                     facts.name
                 )
+            } else if copy {
+                format!(
+                    "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return, and the checker cannot tell if `{name}` is a handle of that object",
+                    facts.name
+                )
             } else {
                 format!(
                     "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return",
@@ -2247,7 +2517,7 @@ fn stored_behind(
             out.push(diag);
         }
     }
-    Ok(out)
+    out
 }
 
 /// The W0204 check of the `Kept` captures of a closure that leaves the
@@ -2774,6 +3044,15 @@ fn emit_block(
             match cap {
                 weft_ir::CapOperand::Local(c)
                     if crate::analysis::clause::captured_cap(em.p, em.tys, bid, c).is_some() =>
+                {
+                    templates::perform(em, &nodes, &st, &blk.term.kind)?;
+                }
+                // A handler with no clause for the operation passes it on to
+                // a caller (stage R0d): a perform through the row.
+                weft_ir::CapOperand::Local(c)
+                    if matches!(&blk.term.kind, weft_ir::TermKind::Perform { op, .. }
+                        if crate::analysis::clause::passes_to_caller(em.p, bid, c, *op).is_some()
+                            || crate::analysis::clause::passes_to_capture(em.p, bid, c, *op).is_some()) =>
                 {
                     templates::perform(em, &nodes, &st, &blk.term.kind)?;
                 }

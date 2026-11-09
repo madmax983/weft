@@ -1,0 +1,14 @@
+// Stage R0d fix: as pm1 through an inner closure (W0502, W0503).
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in {
+        let v = [1]
+        let g = || take(v)
+        let h = || { handle P2 { fn other() { resume(1) } } in { let k = || pk(); if k() { print(1) } }; g() }
+        h()
+    }
+}

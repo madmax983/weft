@@ -1297,7 +1297,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // An `on abort` function: the summary of the function at the node,
         // with the root handlers (plan stage F7).
         // The `UnwindValue` of the `ScopeCap` local of a scope body cancels
-        // and joins the tasks of the scope (V084, plan stage F18).
+        // and joins the tasks of the scope (V084, plan stage F18). The frames
+        // of the callees of a task end where the task ends
+        // (`templates::task_end_lends`, plan stage F19; corpus 185, plan
+        // stage R0c).
         "unwind value" => (
             &[
                 "cfg_edge",
@@ -1306,6 +1309,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "mutates_at",
                 "lends_mut",
                 "task",
+                "scope_end",
             ],
             &[],
         ),
@@ -1435,6 +1439,14 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "escapes_at",
                 // A closure that runs again starts its tasks again (F19).
                 "task",
+                // A call that a `multi` resume runs again runs the clauses
+                // of the other handlers that its callee reaches at `Ret`
+                // too (stage R0d): the rows of the code of a clause.
+                "unset_at",
+                "call_mut",
+                "releases_at",
+                "performs_at",
+                "may_abort",
             ],
             &[],
         ),
@@ -1513,7 +1525,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // The scope ends its tasks; the `TaskResult` locals get the results;
-        // a child failure runs the `fail` clause of a local handler.
+        // a child failure runs the `fail` clause of a local handler. The
+        // frames of the callees of a task end where the task ends
+        // (`templates::task_end_lends`, plan stage F19): a task that calls a
+        // function (corpus 185, plan stage R0c).
         "scope wait" => (
             &[
                 "cfg_edge",
@@ -1525,6 +1540,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "empty_at",
                 "performs_at",
                 "releases_at",
+                "scope_end",
             ],
             &[],
         ),
@@ -1583,7 +1599,8 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // A `join`: the handle moves (the machine takes the task out of its
-        // place), the tasks that only it holds end.
+        // place), the tasks that only it holds end, with the frames of their
+        // callees (`templates::task_end_lends`).
         "join" => (
             &[
                 "cfg_edge",
@@ -1597,6 +1614,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "may_abort",
                 "performs_at",
                 "releases_at",
+                "scope_end",
             ],
             &[],
         ),
@@ -2347,14 +2365,16 @@ fn a_held_argument_moves_at_main_and_a_held_value_is_live_across_a_node_of_its_o
     assert!(f.vars[v.0 as usize].linear);
     assert!(has(&f.uses, v, r) && has(&f.moved_at, v, r));
     // `keep` can drop a value of its type parameter: a linear type argument
-    // goes away at the call (W0601).
+    // goes away at the call (W0601). The variable has the name of the
+    // argument `t`, as the old lowering: the diagnostic names it.
     let dropped: Vec<VarId> = (0..f.vars.len())
-        .filter(|&i| f.vars[i].kind == weft_facts::VarKind::Dropped)
         .map(|i| VarId(id(i)))
+        .filter(|&v| has(&f.rebound_at, v, main) && has(&f.scope_end, v, ret))
         .collect();
     assert_eq!(dropped.len(), 1, "{:?}", f.vars);
-    assert!(has(&f.rebound_at, dropped[0], main));
-    assert!(has(&f.scope_end, dropped[0], ret));
+    let info = &f.vars[dropped[0].0 as usize];
+    assert_eq!(info.name, "t", "{info:?}");
+    assert!(info.linear, "{info:?}");
 }
 
 #[test]

@@ -1,0 +1,14 @@
+// Stage R0d (a capability captured again, review holes of a05_nested_closure.wf and a29_nested_closure_in_closure_rowfn.wf): as rc1 for a clause that clears `v` while `r` is live (W0301).
+effect Log { fn log(m: i64) }
+fn apply(f: fn()) { f() }
+fn k(v: &Vec<i64>) / mut(v) {
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let f = || { let r = &v[0]; let g = || log(1); apply(g); print(r + 1) }
+        f()
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    k(&v)
+}

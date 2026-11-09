@@ -1,0 +1,124 @@
+// An operation that a handler with no clause passes on, performed through a
+// callee, a function value or an inner closure (plan stage R0d, the fix of
+// its review). A call does not name the operation, so the node runs the
+// clauses of each handler that serves an operation of the effect
+// (`clause::serving_paths`); an operation that passes on out of the closure
+// is a perform through its capture, and one that passes on to a caller
+// leaves the function.
+
+effect Two {
+    fn a() -> u64
+    fn b() -> u64
+}
+effect P2 {
+    multi fn pk() -> bool
+    fn other() -> u64
+}
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn helper() -> u64 / Two { a() }
+fn chooser() -> bool / P2 { pk() }
+fn take(v: Vec<u64>) { print(v.len()) }
+fn show(v: &Vec<u64>) { print(v.len()) }
+
+// The bad cases. An inner closure performs `a` through a handler with no
+// clause for it; the outer clause of `a` fails while `l` is live.
+fn value_pass_on() {
+    handle Fail { fn fail(m) { print(m) } } in {
+        let l = Lk { id: 1 }
+        handle Two { fn a() { fail("x"); resume(0) } fn b() { resume(1) } } in {
+            let f = || handle Two { fn b() { resume(2) } } in { let g = || a(); g() }
+            print(f())   //~ W0602
+        }
+        unlock(l)
+    }
+}
+
+// A callee performs `a`; the outer handler of the closure serves it and
+// pushes to `v` while `r` points into it.
+fn callee_pass_on() {
+    let v = [1, 2]
+    let r = &v[0]
+    let f = || handle Two { fn a() { v.push(3); resume(0) } fn b() { resume(1) } } in {
+        handle Two { fn b() { resume(2) } } in { helper() }
+    }
+    print(f())
+    print(r)   //~ W0301
+}
+
+// The same in a function body. The old pipeline misses it.
+// R0d: the default marker is the ir result; old: is the old pipeline: class `fixed` (the oracle faults: a read of a freed cell), stage R0d
+fn callee_pass_on_fn() {
+    let v = [1, 2]
+    let r = &v[0]
+    let x = handle Two { fn a() { v.push(3); resume(0) } fn b() { resume(1) } } in {
+        handle Two { fn b() { resume(2) } } in { helper() }
+    }
+    print(x)
+    print(r)   //~ W0301 old:
+}
+
+// A callee performs a `multi` operation that the handler of the closure
+// passes on out of the closure: the `once` capture `g` runs twice. The
+// `ir` pipeline gives W0502 and W0503 at the run of `h` (as for
+// `cap_nested.wf` of stage C1.5), the old pipeline W0503 inside `h`.
+fn multi_pass_on() {
+    handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in {
+        let v = [1]
+        let g = || take(v)
+        let h = || { handle P2 { fn other() { resume(1) } } in { if chooser() { print(1) } }; g() }   //~ old: W0503
+        h()   //~ W0502 W0503 old:
+    }
+}
+
+// A callee in a closure performs a `multi` operation that the handler of
+// the closure and the handler of the function pass on to a caller: the run
+// of the closure can resume more than once, and the `once` closure `t` is
+// live across it.
+fn caller_multi_pass_on() / P2 {
+    let v = [1]
+    let t = || take(v)
+    handle P2 { fn other() { resume(0) } } in {
+        let f = || handle P2 { fn other() { resume(1) } } in { chooser() }
+        print(f())   //~ W0503
+    }
+    t()
+}
+
+// The clean cases.
+fn callee_pass_on_ok() {
+    let v = [1, 2]
+    let f = || handle Two { fn a() { v.push(3); resume(0) } fn b() { resume(1) } } in {
+        handle Two { fn b() { resume(2) } } in { helper() }
+    }
+    print(f())
+    let r = &v[0]
+    print(r)
+}
+
+fn multi_pass_on_ok() {
+    handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in {
+        let v = [1]
+        let g = || show(&v)
+        let h = || { handle P2 { fn other() { resume(1) } } in { if chooser() { print(1) } }; g() }
+        h()
+    }
+}
+
+fn caller_multi_pass_on_ok() / P2 {
+    let v = [1]
+    let t = || show(&v)
+    handle P2 { fn other() { resume(0) } } in {
+        let f = || handle P2 { fn other() { resume(1) } } in { chooser() }
+        print(f())
+    }
+    t()
+}
+
+fn main() {
+    callee_pass_on_ok()
+    multi_pass_on_ok()
+    handle P2 { fn pk() { resume(true); resume(false) } fn other() { resume(0) } } in {
+        caller_multi_pass_on_ok()
+    }
+}

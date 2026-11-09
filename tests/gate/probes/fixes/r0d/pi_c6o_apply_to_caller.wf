@@ -1,0 +1,22 @@
+// Stage R0d fix (review of R0d, probe c6o_apply_to_caller): an operation that a handler with no clause passes on, performed through a callee, a function value or an inner closure.
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn apply(f: fn()) { f() }
+effect Log2 {
+    fn info(m: String)
+    fn warn(m: String)
+}
+fn f() / Log2 {
+    let l = Lk { id: 1 }
+    let c = || handle Log2 { fn info(m) { resume(()) } } in {
+        apply(|| warn("x"))
+    }
+    c()
+    unlock(l)
+}
+fn main() {
+    handle Log2 {
+        fn info(m) { resume(()) }
+        fn warn(m) { print("stop") }
+    } in f()
+}

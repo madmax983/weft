@@ -1,0 +1,21 @@
+// Stage R0d: the handler that serves `ask` ends with no `resume`, so `l` is not consumed (W0602). The ir pipeline of R0c misses it (R0b took the inner handler).
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+effect Ask {
+    fn ask() -> u64
+    fn other() -> u64
+}
+fn main() {
+    let n = handle Ask {
+        fn ask() { 7 }
+        fn other() { resume(1) }
+    } in {
+        handle Ask { fn other() { resume(2) } } in {
+            let l = Lk { id: 1 }
+            let x = ask()
+            unlock(l)
+            x
+        }
+    }
+    print(n)
+}

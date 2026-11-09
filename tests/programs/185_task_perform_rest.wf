@@ -1,0 +1,63 @@
+// A task performs through a handler of this task (plan stage R0c): W0314,
+// from the part `tasks` of the facts. The clause of the handler would run
+// on another task, so the rest of the handled body does not run after the
+// perform: the continuation of the `resume` of the clause has no node of
+// the task. The facts give the region of the `resume` from the runs on
+// this task only.
+
+effect Tick { fn tick() }
+
+fn worker() / Tick, async { tick() }
+
+// The bad cases: a task of the scope performs through the handler outside
+// the scope, and a closure runs on this task and as a task.
+fn spawned() / async {
+    let n = 0
+    handle Tick { fn tick() { n += 1; resume(()) } } in {
+        scope { s =>
+            s.spawn(|| worker())   //~ W0314
+            print(0)
+        }
+    }
+    print(n)
+}
+
+fn both() / async {
+    let n = 0
+    handle Tick { fn tick() { n += 1; resume(()) } } in {
+        let f = || tick()
+        f()
+        scope { s =>
+            s.spawn(f)   //~ W0314
+            print(0)
+        }
+    }
+    print(n)
+}
+
+fn forked() / par {
+    let n = 0
+    handle Tick { fn tick() { n += 1; resume(()) } } in fork(|| tick(), || print(2))   //~ W0314
+    print(n)
+}
+
+// The clean case: the handled body performs on this task, and the task
+// performs no operation of the handler.
+fn clean() / async {
+    let n = 0
+    handle Tick { fn tick() { n += 1; resume(()) } } in {
+        tick()
+        scope { s =>
+            s.spawn(|| print(1))
+            print(0)
+        }
+        tick()
+    }
+    print(n)
+}
+
+// `main` runs the clean case only: a run of a bad case ends with no handler
+// for `Tick.tick` on the task.
+fn main() / async, par {
+    clean()
+}

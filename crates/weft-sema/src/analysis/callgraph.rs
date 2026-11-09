@@ -42,7 +42,6 @@ use weft_syntax::diag::Diagnostic;
 use super::sig::{self, Inferred};
 use super::summary::{IRoot, Summaries, Summary};
 use crate::factgen::{self, Unsupported};
-use crate::irbuild::scope::Group;
 use crate::irbuild::{Built, Outcome};
 use crate::program::{EffectSig, FnSig};
 use crate::Analysis;
@@ -87,20 +86,6 @@ struct Node {
     comp: Vec<BodyId>,
     /// The nodes whose summaries it reads.
     callees: BTreeSet<usize>,
-}
-
-/// The reason of a function whose body the fact generator does not support,
-/// for its callers: a fixed text for each group, so `factgen` finds the
-/// group of the caller again.
-const fn failed(g: Group) -> &'static str {
-    match g {
-        Group::A => "a call of a function whose body the fact generator does not support yet",
-        Group::B => "a call of a function with a loop or an iterator (stage F10)",
-        Group::C => "a call of a function with a closure or a function value (stage F11)",
-        Group::D => "a call of a function with a handler or a continuation (stage F14)",
-        Group::E => "a call of a function with a task or a scope (stage F18)",
-        Group::F => "a call of a function with a type parameter (stage F20)",
-    }
 }
 
 /// The strongly connected components of the graph `succ`, each one after
@@ -353,8 +338,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
     let mut fns: Vec<(&crate::FnId, &weft_ir::FnId)> = built.fns.iter().collect();
     fns.sort();
     for (&sema, &f) in fns {
-        let (Some(sig), Some(decl)) = (a.sigs.get(sema.index()), built.program.fns.get(f.index()))
-        else {
+        let Some(decl) = built.program.fns.get(f.index()) else {
             continue;
         };
         if let Some(i) = decl.intrinsic {
@@ -369,10 +353,10 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                     _ => None,
                 });
         let Some((index, body)) = entry else {
-            // An extern function, or a body with no IR (a type error): the
-            // summary of its signature, with the parts of the old inference.
+            // An extern function, or a body with no IR (a type error,
+            // W0303): the worst case of its declaration (stage R0b).
             out.sums
-                .insert(f, sig::from_signature(prog, sema, sig, decl, tys, false));
+                .insert(f, sig::from_declaration(prog, sema, decl, tys));
             continue;
         };
         nodes.push(Node {
@@ -533,6 +517,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 rebind_nodes: &[],
                                 lends: &e.own_lends,
                                 cap_performs: &[],
+                                cap_callers: &[],
                                 joins: &e.joins,
                                 abort_joins: &e.abort_joins,
                                 then_runs: &e.then_runs,
@@ -572,14 +557,13 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                             *x = false;
                         }
                         grew = true;
-                        let s = if sig.declared {
-                            // The summary of stage F5: the signature, with
-                            // the parts of the old inference.
-                            sig::from_signature(prog, n.sema, sig, decl, tys, false)
-                        } else {
-                            Err(failed(u.group))
-                        };
-                        out.sums.insert(n.f, s);
+                        // The program goes to the old pipeline for this
+                        // body. Its callers get the worst case of its
+                        // declaration (stage R0b): so the note of the
+                        // fallback names the reason of this body, not a
+                        // call of it.
+                        out.sums
+                            .insert(n.f, sig::from_declaration(prog, n.sema, decl, tys));
                         out.facts.insert(n.index, Err(u));
                     }
                 }

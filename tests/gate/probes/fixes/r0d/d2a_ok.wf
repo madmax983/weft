@@ -1,0 +1,14 @@
+// The same with a `many` capture: no error.
+effect Pick { multi fn pick() -> bool }
+fn show(v: &Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = [1]
+    let g = || show(&v)
+    let h = || {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+            g()
+        }
+    }
+    h()
+}

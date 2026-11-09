@@ -40,7 +40,7 @@ mod late;
 pub mod loops;
 mod oprefs;
 mod repeat;
-pub(crate) mod roots;
+pub mod roots;
 mod stmt;
 mod tasks;
 
