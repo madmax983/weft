@@ -83,7 +83,7 @@ fn resume_in_closure() {
         fn peek(e) {
             let k = || resume(())
             k()
-            print(e.hp)   //~ W0301
+            print(e.hp)   //~ old: W0301
         }
     } in {
         let local = Entity { hp: 1 }
@@ -94,7 +94,7 @@ fn resume_in_callee() {
     handle Peek {
         fn peek(e) {
             call_it(|| resume(()))
-            print(e.hp)   //~ W0301
+            print(e.hp)   //~ old: W0301
         }
     } in {
         let local = Entity { hp: 1 }
@@ -110,7 +110,7 @@ fn moved_in_closure() {
             let r = &world.entities[0]
             let k = || resume(())
             k()
-            print(r.hp)   //~ W0301
+            print(r.hp)   //~ old: W0301
         }
     } in {
         note(1)
@@ -123,7 +123,7 @@ fn cleared_in_closure(world: &World) / mut(world.entities) {
             let r = &world.entities[0]
             let k = || resume(())
             k()
-            print(r.hp)   //~ W0301
+            print(r.hp)   //~ old: W0301
         }
     } in {
         note(1)

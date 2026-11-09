@@ -499,10 +499,20 @@ fn analyze_bounded(
             old: old_rows,
             no_runtime: opts.no_runtime,
         };
-        let (scope, ir) = factgen::run(&a, opts.ir_groups, emit, kept, on_abort);
+        let (mut scope, ir) = factgen::run(&a, opts.ir_groups, emit, kept, on_abort);
+        // A program that the `ir` pipeline checks only if it rejects it
+        // keeps both views (stage R0g): `weft_check::check_analysis`
+        // decides.
+        let pending = match scope.pending.as_mut() {
+            Some(p) => {
+                p.ir_view = opts.facts == FactGen::Ir;
+                true
+            }
+            None => false,
+        };
         a.ir_scope = Some(scope);
         a.ir_facts = ir;
-        if opts.facts == FactGen::Ir {
+        if opts.facts == FactGen::Ir && !pending {
             a = a.ir_view();
         }
     }

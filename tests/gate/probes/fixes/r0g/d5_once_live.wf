@@ -1,0 +1,10 @@
+// A clause performs a `multi` operation of a handler of a caller while its
+// `once` continuation is live (W0503).
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+fn at_clause() / Choice {
+    handle Log { fn log(m) { let b = choose(); resume(()) } } in log("x")
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in at_clause()
+}

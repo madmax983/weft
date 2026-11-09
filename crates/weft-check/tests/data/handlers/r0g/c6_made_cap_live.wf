@@ -1,0 +1,15 @@
+// A closure that a closure makes in the handled body captures the capability
+// again (a `Made` value). Its run performs `log`, whose clause clears `v` while
+// `r` points into it.
+effect Log { fn log(m: String) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let mk = || (|| log("x"))
+        let g = mk()
+        g()
+    }
+    print(r + 1)
+}

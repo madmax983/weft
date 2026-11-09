@@ -1090,13 +1090,40 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
         return Err(AlphaError::BadPlace("not a resume".to_string()));
     };
     let body = em.body;
-    let (h, cb, multi) = clause::kont_handler(em.p, body, kont)
-        .ok_or(AlphaError::Later("a captured continuation (stage F16)"))?;
-    if cb != body {
-        return Err(AlphaError::Later(
-            "a `resume` in a body inside the clause (stage F16)",
-        ));
-    }
+    let own = clause::kont_handler(em.p, body, kont).filter(|&(_, cb, _)| cb == body);
+    let Some((h, cb, multi)) = own else {
+        // A continuation in a closure or in a body inside the clause (stage
+        // R0g): the facts do not model the resume point
+        // (`clause::KONT_CAPTURED`). The node moves its argument and uses
+        // the continuation, and its result is a plain value.
+        clause::note_pending(crate::factgen::Unsupported {
+            group: crate::irbuild::scope::Group::D,
+            reason: clause::KONT_CAPTURED.to_string(),
+        });
+        let n = nodes.main;
+        operand_moves(em, n, st, arg, false, true)?;
+        operand_moves(
+            em,
+            n,
+            st,
+            &weft_ir::Operand::Copy(kont.clone()),
+            false,
+            false,
+        )?;
+        if nodes.may_abort {
+            em.facts.may_abort.push(n);
+        }
+        if let Some(r) = nodes.ret {
+            bind_dest(
+                em,
+                r,
+                st,
+                dest,
+                &Tree::leaf(crate::analysis::AbsVal::plain()),
+            )?;
+        }
+        return Ok(());
+    };
     let n = nodes.main;
     operand_moves(em, n, st, arg, false, true)?;
     // The `resume` reads the continuation, and a `once` continuation moves

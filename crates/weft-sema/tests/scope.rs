@@ -228,8 +228,13 @@ fn plain(n: u64) -> u64 { n + 1 }
 /// A program that the fact generator does not support with each group on:
 /// a `resume` of a captured continuation (follow-up F16.1). Stage F17 put
 /// the W0313 escape of `ESCAPE` in scope.
-const KONT: &str = "effect Ask { fn ask() -> u64 }
-fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }
+// A program that the fact generator does not support: a clause gives a
+// function value back to the callee (stage R0g put the `resume` in a closure,
+// the form of this program before, in scope for a program that the `ir`
+// pipeline rejects).
+const KONT: &str = "effect Get { fn get() -> fn() }
+fn get_it() -> fn() / Get { get() }
+fn kont() { handle Get { fn get() { resume(|| print(1)) } } in { let f = get_it(); f() } }
 fn typo() -> u64 { nope }
 fn plain(n: u64) -> u64 { n + 1 }
 ";
@@ -627,11 +632,12 @@ fn the_note_of_a_fallback_names_the_body_that_the_fact_generator_does_not_suppor
     // Plan stage R0b: the callers of a body that the fact generator does not
     // support get the worst case of its declaration, so the note gives the
     // reason of that body, not "a call of a function with ...".
-    let src = "effect Ask { fn ask() -> u64 }
-        fn first() -> u64 { kont() }
-        fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }";
+    let src = "effect Get { fn get() -> fn() }
+        fn get_it() -> fn() / Get { get() }
+        fn first() { kont() }
+        fn kont() { handle Get { fn get() { resume(|| print(1)) } } in { let f = get_it(); f() } }";
     let why = fallback(src).expect("out of scope");
-    assert!(why.contains("captured continuation"), "{why}");
+    assert!(why.contains("gives a function value"), "{why}");
 }
 
 #[test]
@@ -771,4 +777,24 @@ fn a_loop_that_builds_a_recursive_value_ends() {
     // The checker reports W0301 for `deep` (corpus
     // `186_recursive_list_loop.wf`).
     assert_eq!(fallback(deep), None);
+}
+
+#[test]
+fn a_construct_with_no_full_facts_keeps_both_views_for_the_check() {
+    // Stage R0g: a `resume` in a closure has no full facts. The program is
+    // pending: the scope names the reason, and the analysis keeps the facts
+    // of the old lowering and those of the `ir` pipeline, also in the `ir`
+    // mode. `weft_check::check_analysis` decides.
+    let src = "effect Ask { fn ask() -> u64 }
+        fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }";
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(scope.fallback, None);
+    let p = scope.pending.as_ref().expect("pending");
+    assert!(p.reason.contains("captured continuation"), "{}", p.reason);
+    assert!(p.ir_view);
+    assert!(a.ir_facts.is_some(), "both views");
+    let both = analyze(src, opts(FactGen::Both, Groups::ALL));
+    let p = both.ir_scope.and_then(|s| s.pending).expect("pending");
+    assert!(!p.ir_view);
 }

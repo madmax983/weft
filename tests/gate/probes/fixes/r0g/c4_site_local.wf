@@ -1,0 +1,12 @@
+// A clause puts a closure that runs its parameter into a local of the site;
+// the parameter performs through the inner handler, so the run after the
+// `handle` is a run outside the handler (W0313).
+effect Note { fn note(x: u64) }
+effect Reg { fn reg(f: fn()) }
+fn main() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Reg { fn reg(f) { keep = || f(); resume(()) } } in reg(|| note(3))
+    }
+    keep()
+}

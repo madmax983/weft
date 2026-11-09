@@ -2982,6 +2982,53 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   (E2), a task that runs a variable that gets a new value (E4), and a task of code that the
   body does not follow (E5) stay with the old pipeline.
 
+As built (plan stage R0g: continuations and capabilities in closures):
+
+- A program that the facts do not model whole. Some constructs have no complete
+  template yet: a `resume` in a closure or in a body inside the clause (no resume point
+  of the clause), a `multi` operation of a handler of a caller in a clause and a `multi`
+  resume of a node in a clause or a closure inside the handled body (no re-entry of a
+  clause frame, the design note of plan stage R0d), and a run of a closure whose
+  captured capability left its handler where no W0313 of that handler is found. The fact
+  generator notes each one (`analysis::clause::note_pending`) and goes on with a weak
+  form: the `resume` moves its argument, uses the continuation and gives a plain value;
+  the clause has no re-entry; the run applies no clause. The scope of the program then
+  has `Scope::pending`, and the analysis keeps the facts of both pipelines.
+  `weft_check::check_analysis` checks the facts of the `ir` pipeline first. If they give
+  an error, the `ir` pipeline rejects the program, and its result is final. A rejected
+  program does not run, so the facts that are not whole cannot let a fault through
+  (the errors that they show can be fewer or more than the old pipeline shows; the gate
+  counts them). If they give no error, the old pipeline checks the program, with the
+  reason of the first construct as the note of the fallback. So the facts that do not
+  model a program never accept it.
+- A closure that a clause gives to the handled body (through `resume` or a place of the
+  site) or to the site (the value of the clause): the states where it runs have no
+  values of the locals of the clause, so σ of its run takes the environment from the
+  closure value, as for a closure that a callee made (`apply::closure_sigma` calls
+  `made_sigma`; C4). A `ByRef` capture of a local of the clause points into the cell of
+  that local, so a run after the end of the clause is W0301.
+- A captured capability of a closure that a callee or a closure made (`made_sigma`, C6):
+  σ maps the capture to the capability of the handler that the capture names through the
+  makers (`clause::capture_handler`), if the handled body of the handler runs at the node
+  (the state has its `Cap` local; `apply::live_cap`), else to nothing. A run with no
+  capability is a run outside the handler (`transfer::check_cap_apps`): W0313 of that
+  handler must reject the program (also a W0313 of another function, for a closure that a
+  callee made, `factgen::emit`), else the program is pending (above). A run of a closure
+  whose handler runs but whose clause the node does not run (a task runs the closure)
+  needs that W0313 or a W0314 (D4).
+- An abort to a local handler `g` outside handler `h` leaves the locals outside the
+  handled body of `g` with their values at the abort (`clause::note_past`, at each abort
+  edge with a destination of `frames::destinations`): a closure there that performs
+  through `h` leaves `h` (W0313, "the local `f` keeps it"), as the old lowering checks
+  on the abort paths (`check_local_keeps`).
+- W0313 for a continuation (`clause::check_kont_escape`, `Escape::Kont`): a closure that
+  can resume the continuation of a clause (it captures it, through the makers, or holds
+  such a closure in a capture, `clause::resumes_kont`) leaves the clause if it is in the
+  value of the clause, in a local outside the `handle` or in a heap slot where the
+  clause ends (also after its `resume`), or in the argument of a `resume` of the clause.
+  The span is the clause, and the texts are those of the old lowering
+  (`check_cont_escape`, `cont_to_body`).
+
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
 
@@ -4732,10 +4779,10 @@ that it rebinds a weak update (class D-REBIND of stage F17: `maybe(c, || { f = .
 kept only the new value of `f`, so a closure with the capability that `f` held was
 lost). The facts have no capability root yet: no `error` of the spec has a capability
 root as its evidence free, so nothing folds into the W0313 diagnostic. W0313 for a
-continuation stays with the old pipeline: a closure that captures a continuation is
-not in scope (follow-up F16.1), and the corpus programs 83 and 122 use other
-constructs that are not in scope (a function value that an operation gives to a
-handler of a caller, group E).
+continuation stayed with the old pipeline until plan stage R0g (6.4, "As built (plan
+stage R0g)"): the analysis checks it at each end of a clause and at each `resume` of
+the clause (`clause::check_kont_escape`). A program with a `resume` in a closure is in
+scope only if the `ir` pipeline rejects it (`Scope::pending`).
 
 The `error` of the spec for a returned reference into a by-value parameter that the
 signature states has the W0204 of the signature check: the diagnosis gives a fold

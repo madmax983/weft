@@ -1028,16 +1028,19 @@ fn oracle_turns_on_the_strict_run_time_checks() {
 #[test]
 fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     // Each group is on by default (stage F20, plan §2.6): a program with a
-    // construct that the fact generator does not support yet (a `multi`
-    // operation of a handler of a caller in a clause, a fallback of stage
-    // F16; a handler in a closure body is in scope from stage R0d) goes to
-    // the old pipeline, and the command says why on standard error.
+    // construct that the fact generator does not support yet (a clause that
+    // gives a function value back to the callee, a fallback of stage F16; a
+    // handler in a closure body is in scope from stage R0d) goes to the old
+    // pipeline, and the command says why on standard error. A clean program
+    // with a `multi` operation of a handler of a caller in a clause
+    // (`nested_run.wf`) falls back too (stage R0g: the `ir` pipeline checks
+    // such a program only if it rejects it).
     let dir = scratch(
         "fallback",
         &[
             (
                 "nested_bad.wf",
-                "effect Choice { multi fn choose() -> bool }\neffect Log { fn log(n: u64) }\nfn quiet() / Choice { handle Log { fn log(n) { resume(()); let b = choose() } } in log(1) }\nfn bad() / Choice {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { handle Choice { fn choose() { resume(true) } } in bad() }\n",
+                "effect Get { fn get() -> fn() }\nfn get_it() -> fn() / Get { get() }\nfn quiet() { handle Get { fn get() { resume(|| print(1)) } } in { let f = get_it(); f() } }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
             ),
             (
                 "nested_run.wf",

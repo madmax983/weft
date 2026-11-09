@@ -722,8 +722,15 @@ fn stage_codes(dir: &str, name: &str) -> (Vec<(String, usize)>, Option<String>, 
     };
     let a = analyze_source(&src, opts)
         .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
-    let fallback = a.ir_scope.as_ref().and_then(|s| s.fallback.clone());
-    let mut got: Vec<(String, usize)> = check_analysis(a, &[])
+    // The check decides the scope of a program with a construct that the
+    // facts do not model (stage R0g).
+    let c = check_analysis(a, &[]);
+    let fallback = c
+        .analysis
+        .ir_scope
+        .as_ref()
+        .and_then(|s| s.fallback.clone());
+    let mut got: Vec<(String, usize)> = c
         .diags
         .iter()
         .map(|d| (format!("{:?}", d.code), line_of(&src, d.span.lo)))
@@ -738,6 +745,17 @@ fn c15_check(name: &str) {
     let (got, fallback, src) = c15_codes(name);
     assert!(fallback.is_none(), "{name}: {fallback:?}");
     assert_eq!(got, markers(&src), "{name}");
+}
+
+/// Checks program `name` of `tests/data/handlers/c15/`: it is in scope, and
+/// the `ir` pipeline rejects it with the codes and lines `want` (stage R0g:
+/// a construct that the facts do not model, in a program that the `ir`
+/// pipeline rejects).
+fn c15_rejects(name: &str, want: &[(&str, usize)]) {
+    let (got, fallback, _) = c15_codes(name);
+    assert!(fallback.is_none(), "{name}: {fallback:?}");
+    let want: Vec<(String, usize)> = want.iter().map(|&(c, l)| (c.to_string(), l)).collect();
+    assert_eq!(got, want, "{name}");
 }
 
 /// Checks program `name` of `tests/data/handlers/c15/`: the `ir` pipeline
@@ -902,13 +920,19 @@ fn the_review_programs_of_stage_c15_keep_their_errors() {
 #[test]
 fn the_rows_of_clauses_stay_with_the_old_pipeline() {
     let clause = "a `multi` operation of a handler of a caller in a clause";
-    c15_fallback("clause_m.wf", clause);
-    c15_fallback("clause_after.wf", clause);
+    // From stage R0g a program with a row in a clause is in scope if the
+    // `ir` pipeline rejects it (W0503 for the `once` continuation, or W0502),
+    // and else it falls back (`clause_after_m.wf`: the facts of the `ir`
+    // pipeline give no error there).
+    c15_rejects("clause_m.wf", &[("W0503", 6)]);
+    c15_rejects("clause_after.wf", &[("W0502", 12), ("W0503", 12)]);
     c15_fallback("clause_after_m.wf", clause);
     c15_check("cap_nested.wf");
     c15_check("h4_nested.wf");
     c15_check("h4_scope.wf");
-    c15_fallback("dedup_key.wf", "a capability that leaves its handler");
+    // A run outside the handler with no W0313: in scope, because the `ir`
+    // pipeline rejects the program (stage R0g).
+    c15_rejects("dedup_key.wf", &[("W0502", 10), ("W0503", 10)]);
     // From plan stage R0f the value that code of a caller can run on
     // another thread is a task of the call: `gen_k.wf` is in scope. The
     // `ir` pipeline also gives W0405 there (the move of the `once` value at
@@ -1007,5 +1031,53 @@ fn a_callee_gives_a_once_argument_out_again_after_a_late_run() {
         "hc_value_ok.wf",
     ] {
         c16_check(name);
+    }
+}
+
+/// The codes and lines of program `name` of `tests/data/handlers/r0g/` with
+/// the `ir` pipeline, and the reason of a fallback (stage R0g).
+fn r0g_codes(name: &str) -> (Vec<(String, usize)>, Option<String>) {
+    let (got, fallback, _) = stage_codes("r0g", name);
+    (got, fallback)
+}
+
+/// Stage R0g: a `resume` in a closure and a `multi` operation of a caller in
+/// a clause have no full facts. Such a program is in scope only if the `ir`
+/// pipeline rejects it (`Scope::pending`): W0313 for a continuation that
+/// leaves its clause, W0502 for a `once` closure that resumes two times,
+/// W0503 for a `once` continuation that is live across the operation. A
+/// clean program of these forms falls back. The forms with full facts (a
+/// closure that a clause gives to the site, a capability of a closure that a
+/// closure made, an escape through an abort past the handler) are in scope.
+#[test]
+fn a_construct_with_no_full_facts_is_in_scope_only_if_the_ir_pipeline_rejects_it() {
+    let check = |name: &str, want: &[(&str, usize)]| {
+        let (got, fallback) = r0g_codes(name);
+        assert!(fallback.is_none(), "{name}: {fallback:?}");
+        let want: Vec<(String, usize)> = want.iter().map(|&(c, l)| (c.to_string(), l)).collect();
+        assert_eq!(got, want, "{name}");
+    };
+    check("d1_kont_local.wf", &[("W0313", 6)]);
+    check("d1_kont_twice.wf", &[("W0502", 4)]);
+    check("d5_once_live.wf", &[("W0503", 6)]);
+    check("d4_abort_past.wf", &[("W0313", 8)]);
+    check("c6_made_cap_live.wf", &[("W0301", 14)]);
+    check("c4_value_dangling.wf", &[("W0301", 6), ("W0301", 7)]);
+    for (name, why) in [
+        (
+            "d1_kont_once_ok.wf",
+            "a `resume` of a captured continuation",
+        ),
+        (
+            "d5_after_resume_ok.wf",
+            "a `multi` operation of a handler of a caller in a clause",
+        ),
+    ] {
+        let (got, fallback) = r0g_codes(name);
+        assert!(
+            fallback.as_deref().is_some_and(|f| f.contains(why)),
+            "{name}: {fallback:?}"
+        );
+        assert!(got.is_empty(), "{name}: {got:?}");
     }
 }

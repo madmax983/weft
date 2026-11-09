@@ -1,0 +1,7 @@
+// The clean twin: the closure runs one time. The facts do not model the
+// resume point: the old pipeline checks the program.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let n = handle Ask { fn ask() { let k = || resume(1); k() } } in { ask() + 1 }
+    print(n)
+}

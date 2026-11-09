@@ -1806,7 +1806,20 @@ fn check_cap_apps(
                 if !cx.hx.escapes.is_empty() {
                     continue;
                 }
-                return Err(later);
+                // The run is a run outside the handler of the capture (stage
+                // R0g). W0313 must reject the program: a closure that leaves
+                // the handler must show in a component of the program (also
+                // in a component of another function, for a closure that a
+                // callee made). `factgen::emit` checks it at the end, and
+                // else the old pipeline checks the program.
+                let Some(h) = a
+                    .closure
+                    .and_then(|c| super::clause::capture_handler(cx.p, c, k))
+                else {
+                    return Err(later);
+                };
+                super::clause::note_pending_escape(h, false);
+                continue;
             }
             let Some(t) =
                 cx.p.body(body)
@@ -1851,7 +1864,13 @@ fn check_cap_apps(
                     if !cx.hx.escapes.is_empty() {
                         continue;
                     }
-                    return Err(later);
+                    // The node does not run the clause (a task runs the
+                    // closure, or the handler ended): W0313 or W0314 must
+                    // reject the program (stage R0g, `factgen::emit`).
+                    let Some(h) = h else {
+                        return Err(later);
+                    };
+                    super::clause::note_pending_escape(h, true);
                 }
             }
         }

@@ -3202,6 +3202,11 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
         if !ir.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope) {
             continue;
         }
+        // A program with a construct that the facts do not model (stage
+        // R0g) has no components: the fact oracle checks nothing there.
+        if ir.ir_scope.as_ref().is_some_and(|s| s.pending.is_some()) {
+            continue;
+        }
         let built = irbuild::build(&old);
         let comps = weft_sema::factgen::components(&old, &built)
             .unwrap_or_else(|u| panic!("{}: {u}", f.display()));

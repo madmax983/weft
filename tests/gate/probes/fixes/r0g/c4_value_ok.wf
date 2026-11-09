@@ -1,0 +1,6 @@
+// The clean twin: the closure of the clause captures nothing of the clause.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let f = handle Ask { fn ask() { || print(7) } } in { let k = ask(); || print(k) }
+    f()
+}

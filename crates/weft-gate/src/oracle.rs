@@ -974,8 +974,12 @@ pub fn run_fact_configs(
         opts.ir_groups = g;
     }
     let analysis = weft_sema::analyze(&pkg.units, opts);
-    let fallback = analysis.ir_scope.as_ref().and_then(|s| s.fallback.clone());
     let checked = weft_check::check_analysis(analysis, &pkg.files);
+    let fallback = checked
+        .analysis
+        .ir_scope
+        .as_ref()
+        .and_then(|s| s.fallback.clone());
     let Some(ir) = &checked.ir else {
         let why = fallback.unwrap_or_else(|| "no scope".to_string());
         emit(Step::NotRunnable(format!("{FACT_SKIP}out of scope: {why}")));

@@ -1100,7 +1100,9 @@ pub fn alpha_with(
             // environment too: a closure that the body makes captures it
             // again (stage R0d). Its handler comes from the captures of the
             // makers (`clause::capture_handler`), not from this place.
-            CaptureMode::ByRef | CaptureMode::ByMove | CaptureMode::Cap => {
+            // A captured continuation too (stage R0g; the facts do not
+            // model its `resume`, `clause::KONT_CAPTURED`).
+            CaptureMode::ByRef | CaptureMode::ByMove | CaptureMode::Cap | CaptureMode::Kont => {
                 let env = roots.local(p, tys, facts, body, place.local)?;
                 let step = Step {
                     kind: StepKind::Field { id: k },
@@ -1129,11 +1131,6 @@ pub fn alpha_with(
                 places: vec![roots.capture(facts, cb, k, &name)],
                 ..Alpha::default()
             },
-            CaptureMode::Kont => {
-                return Err(AlphaError::Later(
-                    "a capability or a continuation in a closure (stage F14)",
-                ))
-            }
         };
         (out, At::Ty(t), 1)
     } else {

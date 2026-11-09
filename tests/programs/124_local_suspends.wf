@@ -96,7 +96,7 @@ fn clause_capture() {
         5
     }
     print(n)
-}
+}   //~ W0601 old:
 
 fn main() {
     inline_abort()

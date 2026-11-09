@@ -184,7 +184,21 @@ pub fn check(base: &Path, entry: &Entry, groups: Groups) -> Outcome {
     let mut opts = pkg.options(weft_cli::package::Profile::default());
     opts.facts = FactGen::Both;
     opts.ir_groups = groups;
-    let a = weft_sema::analyze(&pkg.units, opts);
+    let mut a = weft_sema::analyze(&pkg.units, opts);
+    // A program that the `ir` pipeline checks only if it rejects it (stage
+    // R0g): the check decides if it is in scope.
+    if a.ir_scope.as_ref().is_some_and(|s| s.pending.is_some()) {
+        let c = weft_check::check_analysis(a, &pkg.files);
+        let Some(ir) = c.ir else {
+            return Outcome::default();
+        };
+        a = c.analysis;
+        a.ir_facts = Some(weft_sema::factgen::IrFacts {
+            bodies: ir.analysis.bodies,
+            diags: ir.analysis.diags,
+            sigs: ir.analysis.sigs,
+        });
+    }
     let Some(ir) = a.ir_facts.as_ref() else {
         return Outcome::default();
     };

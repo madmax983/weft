@@ -1,0 +1,7 @@
+// The clean twin: the parameter performs nothing.
+effect Reg { fn reg(f: fn()) }
+fn main() {
+    let keep = || print(0)
+    handle Reg { fn reg(f) { keep = || f(); resume(()) } } in reg(|| print(3))
+    keep()
+}

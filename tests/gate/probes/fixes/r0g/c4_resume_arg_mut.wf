@@ -1,0 +1,20 @@
+// A clause gives the handled body a closure that changes a local of the
+// clause, through `resume`. The clause keeps a reference into the local
+// across the `resume`: the handled body runs the closure, so the reference
+// is invalid after the `resume`.
+effect Get { fn get() -> fn() }
+fn main() {
+    handle Get {
+        fn get() {
+            let v = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            let n = resume(|| v.clear())
+            print(r + 1)
+            n
+        }
+    } in {
+        let f = get()
+        f()
+    }
+}

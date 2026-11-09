@@ -9979,3 +9979,154 @@ files = ["verify/s5/S5c/mut/progs/m00897_48_lend_alias.wf"]
 codes = ["W0301"]
 reason = "stage R0f fix: a mutant of `tests/programs/48_lend_alias.wf`. The `ir` pipeline now gives the W0405 of the old pipeline at `g(|| print(r.hp), world)` (code of a caller that gets `world` can change it while it runs the reader as a task, B1 of the review of R0f); the W0301 at the closure of `lend_and_read` is on the line of the call in the `ir` pipeline (as at C3). Rejected in both"
 stage = "R0f fix"
+
+# Stage R0g: continuations and capabilities in closures. A closure that a
+# clause gives to the handled body or to the site, a captured capability of a
+# closure that a callee or a closure made, an escape through an abort past the
+# handler, and W0313 for a continuation. A `resume` in a closure, a `multi`
+# operation in a clause and a run outside a handler with no W0313 have no full
+# facts: such a program is in scope only if the `ir` pipeline rejects it
+# (`Scope::pending`). Each program below was a fallback at R0f, and both
+# pipelines reject it.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/123_resume_scope_ends.wf"]
+codes = ["W0301"]
+reason = "stage R0g: the program is in scope (a `resume` in a body inside the clause; the `ir` pipeline rejects it). The facts of the `ir` pipeline have no resume point in a scope body of the clause, so the reads of `e` and `r` after the `resume` in `scope_body_resume` and `nested_handle_resume` are not W0301 there (`old:` markers); the other W0301 of both pipelines stay. Rejected in both"
+stage = "R0g"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/124_local_suspends.wf"]
+codes = ["W0601"]
+reason = "stage R0g: the program is in scope (a `multi` operation of a handler of a caller in a clause; the `ir` pipeline rejects it with the W0503 of both pipelines). The `ir` pipeline gives W0601 for the linear value at the end of the function, not at the line of the closure. Rejected in both"
+stage = "R0g"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/195_closure_conts.wf"]
+codes = ["W0301"]
+reason = "stage R0g: the corpus file of continuations and capabilities in closures. Both pipelines give W0301, W0313, W0502 and W0503 at the marked lines; the `ir` pipeline also gives W0301 at the run of the closure that the clause gave (the read of the dead local of the clause). Rejected in both"
+stage = "R0g"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/71_closure_modes.wf"]
+codes = ["W0401", "W0503", "W0601"]
+reason = "stage R0g: the program is in scope (a `resume` in a closure; the `ir` pipeline rejects it). The `ir` pipeline gives W0401 for each closure of a `fork` that captures an `Rc` (two at one line), W0503 at the run node and at the `choose` (two at one line), and W0601 at the end of the function in place of the line of the closure. Rejected in both"
+stage = "R0g"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_clean.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v2_ref_param_store.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v6_multi_body_outer_rc.wf",
+    "tests/gate/probes/fixes/r0g/c4_value_dangling.wf",
+    "tests/gate/probes/fixes/r0g/c6_made_cap_callee.wf",
+    "tests/gate/probes/fixes/r0g/d5_after_resume_move.wf",
+    "tests/gate/probes/r2/oracle/probes/i2_resume_stored.wf",
+    "tests/gate/probes/r2/oracle/probes/i3c.wf",
+    "tests/gate/probes/r2/redteam/p/g_kescape2.wf",
+    "tests/gate/probes/r2/redteam/p/w_susp.wf",
+    "tests/gate/probes/r3/redteam/p/e1_multi.wf",
+    "tests/gate/probes/r3/redteam/p/f1_kesc.wf",
+    "tests/gate/probes/r3/redteam/p/g1_cap.wf",
+    "tests/gate/probes/r3/redteam/p/v1_resume.wf",
+    "tests/gate/probes/r3/redteam/p/w2_oprefs.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT4_resume_closure_param.wf",
+    "tests/gate/probes/verify/partb/S3/p/eff2.wf",
+    "tests/gate/probes/verify/partb/S3/p/rt16.wf",
+    "tests/gate/probes/verify/partb/S3/p/rt16b.wf",
+    "tests/gate/probes/verify/partb/p/a3_pair.wf",
+    "tests/gate/probes/verify/partb/p/g3_resume_leak.wf",
+    "tests/gate/probes/verify/s5/R2c/p/o3.wf",
+    "tests/gate/probes/verify/s5/R2c/p/o5.wf",
+    "tests/gate/probes/verify/s5/R3a/p/closuretail.wf",
+]
+codes = ["W0301", "W0302", "W0312", "W0313", "W0314", "W0501", "W0502", "W0503", "W0602", "W0702", "W0805"]
+reason = "stage R0g: each program comes into scope (a `resume` in a closure or in a body inside a clause, a `multi` operation in a clause, a closure that a clause gives, a captured capability of a made closure, a run outside a handler) and the `ir` pipeline rejects it, as the old pipeline does. The codes differ: W0313 for a continuation and for a capability at the span of the clause or of the `handle`; W0805 next to W0313 for a perform through a capability that left its handler; no W0313 of the old pipeline where W0502, W0301 or W0314 rejects the program; the facts with no resume point of a closure or of a nested body give fewer W0301, W0302 and W0501; the facts with no re-entry of a clause give W0503 and W0602 at other lines. Rejected in both"
+stage = "R0g"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/or9_v2_multi_body_task.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v10_multi_outer_local.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v11_dbg.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v12_multi_value_fault.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v13_multi_body_storing_callee.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v1_multi_handle_value.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v9_multi_return_dangling.wf",
+    "tests/gate/probes/fixes/r0g/d1_kont_resumed.wf",
+    "tests/gate/probes/r2/redteam/p/g_kescape.wf",
+    "tests/gate/probes/r2/redteam/repro/RR3_continuation_escape.wf",
+    "tests/gate/probes/verify/s5/diff/p/c89.wf",
+]
+codes = ["W0304", "W0313", "W0503"]
+reason = "stage R0g: each program comes into scope and the `ir` pipeline rejects it with the codes of the old pipeline at other lines: W0313 for a continuation at the span of the clause (the old pipeline gives the line of the closure), W0313 for a capability at the span of the `handle`, W0503 and W0304 at the node of the facts. Rejected in both"
+stage = "R0g"
+
+[[entry]]
+class = "sig"
+files = [
+    "tests/gate/probes/fixes/r0g/c6_made_cap_callee.wf",
+    "tests/gate/probes/fixes/r0g/d1_kont_resumed.wf",
+    "tests/gate/probes/r2/redteam/p/w_susp.wf",
+    "tests/gate/probes/r3/redteam/p/g1_cap.wf",
+    "tests/gate/probes/verify/partb/S3/p/rt16b.wf",
+    "tests/gate/probes/verify/partb/p/a3_pair.wf",
+    "tests/gate/probes/verify/partb/p/g3_resume_leak.wf",
+    "tests/gate/probes/verify/s5/R2c/p/i1.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/or9_v2_multi_body_task.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_clean.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v10_multi_outer_local.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v11_dbg.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v12_multi_value_fault.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v13_multi_body_storing_callee.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v1_multi_handle_value.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v6_multi_body_outer_rc.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v9_multi_return_dangling.wf",
+    "tests/gate/probes/verify/s5/R3a/p/closuretail.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/c1_wrap_value.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/k5_generic.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/k5_variants.wf",
+    "tests/programs/121_fail_resume.wf",
+    "tests/programs/195_closure_conts.wf",
+    "tests/programs/71_closure_modes.wf",
+]
+reason = "stage R0g: each program comes into scope, and the `ir` pipeline rejects it. The signatures differ where the facts are not whole (a `resume` in a closure has no resume point, so no `multi` and no `reaches` of the code of the handled body; a clause has no re-entry; a scope in a clause raises no failure of a resume), and where a closure performs through a capability that left its handler (the perform goes to the row of the function: `named`, and `ret` and `ret_refs` of the closure value)"
+stage = "R0g"
+
+# Stage R0g, tier 2: programs that come into scope; both pipelines reject each one.
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/sweep3/ask__task_outlives.wf",
+    "r3/oracle/sweep3/ask__task_result.wf",
+    "r3/oracle/sweep3/note__task_outlives.wf",
+    "r3/oracle/sweep3/note__task_result.wf",
+    "r3/quality/fuzzcorp/123_resume_scope_ends.wf",
+    "r3/quality/fuzzcorp/124_local_suspends.wf",
+    "verify/s5/S5a/c1_clause_value_struct.wf",
+    "verify/s5/S5c/mut/progs/m01170_71_closure_modes.wf",
+    "verify/s5/S5c/mut/progs/m01412_71_closure_modes.wf",
+    "verify/s5/S5c/mut/progs/m02256_71_closure_modes.wf",
+    "verify/s5/S5c/mut/progs/m02313_71_closure_modes.wf",
+]
+codes = ["W0301", "W0314", "W0401", "W0405", "W0503", "W0601", "W0805"]
+reason = "stage R0g (tier 2): each program comes into scope and the `ir` pipeline rejects it, as the old pipeline does. Copies and mutants of the corpus files 71, 123 and 124 (the codes of their ledger entries of R0g), W0805 next to W0313 for a perform through a capability that left its handler, and a task that runs a closure of a handler that ends: W0314 or W0313 of both pipelines, with no W0405 or W0314 of the old pipeline beside it. Rejected in both"
+stage = "R0g"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/S5c/mut/progs/m01405_124_local_suspends.wf",
+    "verify/s5/S5c/mut/progs/m02115_124_local_suspends.wf",
+    "verify/s5/S5c/mut/progs/m02673_89_abort_paths.wf",
+]
+codes = ["W0304", "W0601"]
+reason = "stage R0g (tier 2): each program comes into scope and the `ir` pipeline rejects it with the codes of the old pipeline at other lines (W0601 at the end of the function, W0304 at the node of the facts). Rejected in both"
+stage = "R0g"

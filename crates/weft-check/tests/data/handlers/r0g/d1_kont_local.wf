@@ -1,0 +1,8 @@
+// A closure that resumes the continuation leaves the clause in a local of the
+// site (W0313).
+effect Note { fn note(x: u64) }
+fn main() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = || resume(()) } } in note(1)
+    k()
+}

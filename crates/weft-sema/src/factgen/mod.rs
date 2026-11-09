@@ -138,6 +138,7 @@ pub type Emit = fn(&Input<'_>, &mut [FnFacts]) -> Result<(), Unsupported>;
 /// Returns [`Unsupported`] for the first body with a construct that the
 /// fact generator does not support yet.
 pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported> {
+    let _ = crate::analysis::clause::take_pending_escapes();
     let mut inf = crate::analysis::callgraph::infer(input.analysis, input.built, None);
     for (i, e) in input.built.entries.iter().enumerate() {
         let Outcome::Built(entry) = e.outcome else {
@@ -155,6 +156,35 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
             None => emit_body(input.analysis, input.built, &inf.sums, i, entry, f)?,
         };
         input.diags.borrow_mut().extend(ds);
+    }
+    // A closure that runs outside the handler of its capability (stage
+    // R0g): W0313 for that handler must reject the program, else the old
+    // pipeline checks it.
+    let pending = crate::analysis::clause::take_pending_escapes();
+    if !pending.is_empty() {
+        // A run outside a handler whose W0313 (or W0314) the fact
+        // generator does not give: the check decides.
+        let diags = input.diags.borrow();
+        let w0314 = diags
+            .iter()
+            .any(|d| d.code == weft_syntax::diag::Code::W0314);
+        let reported = |(h, task): (weft_ir::HandlerId, bool)| {
+            (task && w0314)
+                || checks::handle_span(&input.built.program, h).is_some_and(|sp| {
+                    diags.iter().any(|d| {
+                        d.code == weft_syntax::diag::Code::W0313
+                            && d.unit == sp.unit as usize
+                            && d.span.lo == sp.lo
+                            && d.span.hi == sp.hi
+                    })
+                })
+        };
+        if !pending.into_iter().all(reported) {
+            crate::analysis::clause::note_pending(Unsupported {
+                group: Group::D,
+                reason: "a capability that leaves its handler (stage F17)".to_string(),
+            });
+        }
     }
     *input.on_abort.borrow_mut() = Some(checks::on_abort_rows(
         input.analysis,
@@ -402,15 +432,17 @@ fn check_supported(
                         );
                     }
                 }
+                // A `resume` in a closure or in a body inside the clause: the
+                // facts do not model it (no resume point of the clause), so
+                // the program is in scope only if the `ir` pipeline rejects
+                // it (stage R0g).
                 TermKind::Resume { kont, .. } => {
                     match crate::analysis::clause::kont_handler(p, bid, kont) {
                         Some((_, c, _)) if c == bid => {}
-                        _ => {
-                            return no(
-                                Group::D,
-                                "a `resume` of a captured continuation (stage F16)",
-                            )
-                        }
+                        _ => crate::analysis::clause::note_pending(Unsupported {
+                            group: Group::D,
+                            reason: crate::analysis::clause::KONT_CAPTURED.to_string(),
+                        }),
                     }
                 }
                 // The task terminators of a body that splices into a
@@ -1040,7 +1072,10 @@ pub fn emit_parts(
     diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     let mut escapes = hx.escapes.clone();
     for e in closure_escapes {
-        if !escapes.iter().any(|(h, _)| *h == e.0) {
+        if !escapes
+            .iter()
+            .any(|x| crate::analysis::clause::Escape::same_report(x, &e))
+        {
             escapes.push(e);
         }
     }
@@ -2556,6 +2591,28 @@ pub struct Component {
 /// Returns [`Unsupported`] for the first body that the fact generator does
 /// not support (the program is not in scope).
 pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
+    let _ = crate::analysis::clause::take_pending();
+    let _ = crate::analysis::clause::take_pending_escapes();
+    let out = components_of(a, built);
+    // A construct that the facts do not model (stage R0g): the fact oracle
+    // checks nothing.
+    let pending = crate::analysis::clause::take_pending();
+    let escapes = crate::analysis::clause::take_pending_escapes();
+    let out = out?;
+    if let Some(u) = pending.into_iter().next() {
+        return Err(u);
+    }
+    if !escapes.is_empty() {
+        return Err(Unsupported {
+            group: Group::D,
+            reason: "a capability that leaves its handler (stage F17)".to_string(),
+        });
+    }
+    Ok(out)
+}
+
+/// The components of [`components`].
+fn components_of(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
     let inf = crate::analysis::callgraph::infer(a, built, None);
     let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
     let mut tables = Vec::new();
@@ -3777,6 +3834,24 @@ pub struct Scope {
     /// Why the old pipeline checks the program, or `None` if the program is
     /// in scope.
     pub fallback: Option<String>,
+    /// A program with a construct that the facts do not model (stage R0g):
+    /// the `ir` pipeline checks it only if it rejects it. Else the old
+    /// pipeline checks it, for this reason (`weft_check::check_analysis`).
+    pub pending: Option<Pending>,
+}
+
+/// A program that the `ir` pipeline checks only if it rejects it (stage
+/// R0g, [`Scope::pending`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Pending {
+    /// Why the facts are not whole: the reason of the fallback if the `ir`
+    /// pipeline finds no error.
+    pub reason: String,
+    /// The analysis keeps the facts of the old lowering in
+    /// [`Analysis::bodies`] and those of the `ir` pipeline in
+    /// [`Analysis::ir_facts`]. True if the pipeline is [`crate::FactGen::Ir`]:
+    /// the check then gives the `ir` view alone.
+    pub ir_view: bool,
 }
 
 impl Scope {
@@ -3838,6 +3913,7 @@ pub(crate) fn run(
         bodies,
         used,
         fallback: None,
+        pending: None,
     };
     if let Some(e) = built.entries.iter().find_map(|e| match &e.outcome {
         Outcome::Unsupported(u) => Some((e, *u)),
@@ -3892,9 +3968,19 @@ pub(crate) fn run(
         no_runtime: rows.no_runtime,
         on_abort: &on_abort,
     };
+    let _ = crate::analysis::clause::take_pending();
     if let Err(u) = emit(&input, &mut facts) {
+        let _ = crate::analysis::clause::take_pending();
         s.fallback = Some(u.to_string());
         return (s, None);
+    }
+    // A construct that the facts do not model: the check decides (stage
+    // R0g).
+    if let Some(u) = crate::analysis::clause::take_pending().first() {
+        s.pending = Some(Pending {
+            reason: u.to_string(),
+            ir_view: false,
+        });
     }
     exports::fill(a, &built, &mut facts);
     // The rows that no rule reads go (stage C1.4).

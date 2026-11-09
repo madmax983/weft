@@ -400,9 +400,11 @@ pub fn closure_sigma(
         .get(c.index())
         .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
     if !super::clause::runs_with_maker(p, decl.maker, body) {
-        return Err(AlphaError::Later(
-            "a closure that a clause gives to the handled body (stage F16)",
-        ));
+        // A closure that a clause gives to the handled body, or to the site
+        // (stage R0g): the states there have no values of the locals of the
+        // clause, so the value of the closure holds its environment, as for
+        // a closure that a callee made.
+        return made_sigma(cx, body, st, c, (callee, callee_body), given, inst);
     }
     let cb = p
         .bodies
@@ -462,10 +464,17 @@ pub fn closure_sigma(
                 s.cap_helds.push(Vec::new());
                 s.cap_deeps.push(Vec::new());
             }
+            // A captured continuation (stage R0g): no place. The facts do
+            // not model its `resume`, so the program is in scope only if
+            // the `ir` pipeline rejects it.
             weft_ir::CaptureMode::Kont => {
-                return Err(AlphaError::Later(
-                    "a closure that captures a continuation (stage F16)",
-                ))
+                super::clause::note_pending(crate::factgen::Unsupported {
+                    group: crate::irbuild::scope::Group::D,
+                    reason: super::clause::KONT_CAPTURED.to_string(),
+                });
+                s.captures.push(Vec::new());
+                s.cap_helds.push(Vec::new());
+                s.cap_deeps.push(Vec::new());
             }
         }
     }
@@ -554,13 +563,25 @@ pub fn made_sigma(
     deep.sort();
     deep.dedup();
     for (k, cap) in decl.captures.iter().enumerate() {
-        if matches!(
-            cap.mode,
-            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
-        ) {
-            return Err(AlphaError::Later(
-                "a closure that captures a capability or a continuation (stage F14)",
-            ));
+        if cap.mode == weft_ir::CaptureMode::Kont {
+            super::clause::note_pending(crate::factgen::Unsupported {
+                group: crate::irbuild::scope::Group::D,
+                reason: super::clause::KONT_CAPTURED.to_string(),
+            });
+            s.captures.push(Vec::new());
+            s.cap_helds.push(Vec::new());
+            s.cap_deeps.push(Vec::new());
+            continue;
+        }
+        // A captured capability (stage R0g): the capability of the local
+        // handler that the capture names (through the makers), if its
+        // handled body runs at the node; else none, and the run is a run
+        // outside the handler (`transfer::check_cap_apps`, W0313).
+        if cap.mode == weft_ir::CaptureMode::Cap {
+            s.captures.push(live_cap(cx, st, c, k));
+            s.cap_helds.push(Vec::new());
+            s.cap_deeps.push(Vec::new());
+            continue;
         }
         // A `Kept` or `ByRef` capture whose variable is a variable of this
         // body (through the `Kept` and `ByRef` captures of the makers) is
@@ -609,6 +630,34 @@ pub fn made_sigma(
         s.cap_deeps.push(deep.clone());
     }
     Ok(s)
+}
+
+/// The capability roots of the local handler whose capability capture `k`
+/// of closure `c` holds (`clause::capture_handler`), in state `st`: none if
+/// the handled body of the handler does not run there (stage R0g).
+fn live_cap(cx: &Cx<'_>, st: &State, c: weft_ir::ClosureId, k: usize) -> Vec<PlaceId> {
+    let p = cx.p;
+    let Some(h) = u32::try_from(k)
+        .ok()
+        .and_then(|k| super::clause::capture_handler(p, c, k))
+    else {
+        return Vec::new();
+    };
+    let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+        return Vec::new();
+    };
+    let Some(b) = p.body(hb) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PlaceId> = b
+        .caps
+        .iter()
+        .filter_map(|&(_, l)| st.tree((hb, l)))
+        .flat_map(|t| t.flat().caps)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// True if the function body that makes `maker` (the body itself, or the

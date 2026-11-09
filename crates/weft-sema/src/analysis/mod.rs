@@ -118,6 +118,7 @@ pub fn edges(
         // abort edge too, unless the callee joins it on each path of an
         // abort (follow-up F19.3, E-1).
         transfer::lose_given(cx, body, &mut s, term, true);
+        clause::note_past(cx, body, term, &s);
         out.push((u, s));
     }
     // A perform whose clause has no `resume` does not go on (plan stage
@@ -279,9 +280,16 @@ fn run_rows(
                 .iter()
                 .any(|r| crate::factgen::handlers::splice_root(p, r.0) != body)
         {
-            return Err(AlphaError::Later(
-                "a `multi` operation of a handler of a caller in a clause (stage F16)",
-            ));
+            // The facts have no re-entry of a clause (the design note of
+            // stage R0d): the program is in scope only if the `ir` pipeline
+            // rejects it (stage R0g), as the old pipeline does with W0503
+            // for a `once` continuation that is live across the operation.
+            clause::note_pending(crate::factgen::Unsupported {
+                group: crate::irbuild::scope::Group::D,
+                reason: "a `multi` operation of a handler of a caller in a clause (stage F16)"
+                    .to_string(),
+            });
+            return Ok(states);
         }
         let mut ret: Option<State> = None;
         for s in ends.returns.values() {
