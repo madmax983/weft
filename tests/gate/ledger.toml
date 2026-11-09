@@ -9970,7 +9970,7 @@ stage = "R0f fix"
 class = "lost-clean"
 files = ["tests/gate/probes/fixes/r0f/rv1_h07_callee_task_and_via_plain_ok.wf"]
 reason = "stage R0f fix (the clean twin of B2 `h07`): the callee joins its task before it gives `h` to the code of the caller, which runs it as plain code (`via_plain`): no task runs while `h` writes. The old pipeline gives W0403 and W0405 (the worst way of code of a caller). The interpreter runs it with no fault"
-signed_by = "UNSIGNED: the author of stage R0f; the independent review of R0f must sign this row or reject it"
+signed_by = "reviewer R0f round 2: mid joins the task of f before it gives h to the code, which runs h one time as plain code; no task runs while h writes; ev.sh gives nofault and the IR 0 errors; the old W0403 and W0405 are the worst way"
 stage = "R0f fix"
 
 [[entry]]
