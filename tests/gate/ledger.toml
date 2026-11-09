@@ -9710,7 +9710,7 @@ files = [
     "tests/gate/probes/fixes/r0e/h19_two_values_ok.wf",
 ]
 reason = "stage R0e fix 3 (H19): the clean twins of the probes of the fix. The old pipeline gives W0502: a callee gives the `once` closure to code of a caller. The `ir` pipeline accepts them, as at R0e fix 2: the caller knows `g` and counts the runs of the argument in its summary. `g` runs it one time (`h19_once_ok`, `h19_item_once_ok`), does not run it (`h19_g_ignores_ok`), runs only its other argument (`h19_second_arg_ok`), or gets the closure in one of its two runs (`h19_two_values_ok`). The interpreter runs each program with no fault (seeds 1 to 3, both engines, `ereview/ev.sh`)"
-signed_by = "UNSIGNED: the author of R0e fix 3; the independent review must sign this row or reject it"
+signed_by = "reviewer R0e round 3: the caller knows g and the summary counts one run of the argument; clean variants a06_ok, a07_ok, a22_ok, g03_ok, a13_ok accepted; fault variants held; no fault seeds 1-12, both engines"
 stage = "R0e fix 3"
 
 # Stage R0e fix 4: R2-B1 of the review of R0e, round 2, and three older
@@ -9745,7 +9745,7 @@ files = [
     "tests/gate/probes/fixes/r0e/rv2_b27_ok.wf",
 ]
 reason = "stage R0e fix 4 (the clean twins of R2-B1): the clause joins the task of the outer scope on each path before its `resume` (`b01_ok`, `b27_ok`: `handlers::joined_in_clause`), or the write is after the end of the scope (`b16_ok`). The old pipeline gives W0405 at the line of the clause or at the write. The interpreter runs each with no fault (seeds 1 to 3, both engines)"
-signed_by = "UNSIGNED: the author of R0e fix 4; the independent review must sign this row or reject it"
+signed_by = "reviewer R0e round 3: the clause joins on each path before resume (b01_ok, b27_ok) or the write is after the scope (b16_ok); fault variants b01, b04-b08, b12, b15, f06, f16, f17, f19, i01-i04 held; no fault seeds 1-12, both engines"
 stage = "R0e fix 4"
 
 [[entry]]
@@ -9756,5 +9756,5 @@ files = [
     "tests/gate/probes/fixes/r0e/rv2_a35_clause_inner_runs_ok.wf",
 ]
 reason = "stage R0e fix 4 (the clean twins of the older holes a15, a31, a35): the task of the callee only reads `v`, and the value only reads `w`, so no access of the value conflicts with the task. The old pipeline gives W0312 (a callee that can change the place of the reference argument while the value points into it). The interpreter runs each with no fault (seeds 1 to 3, both engines)"
-signed_by = "UNSIGNED: the author of R0e fix 4; the independent review must sign this row or reject it"
+signed_by = "reviewer R0e round 3: the task only reads v and the value only reads w; fault variants d01-d10, e01-e14, h02, h04, k03, k04 held; clean twins e02, e03, e06, e11, e13, e15, k01, k02 accepted; no fault seeds 1-12, both engines"
 stage = "R0e fix 4"
