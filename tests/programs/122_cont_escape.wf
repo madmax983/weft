@@ -33,8 +33,8 @@ fn to_option() {
 }
 fn as_handle_value() {
     let g = handle Ask {
-        fn ask() { || { let n = resume(5)
- print(n) } }   //~ W0313
+        fn ask() { || { let n = resume(5)   //~ W0313 old:
+ print(n) } }   //~ old: W0313
     } in {
         let n = ask()
         || print(n)
@@ -42,10 +42,10 @@ fn as_handle_value() {
     g()
 }
 fn to_storing_callee(s: &Slot) / mut(s) {
-    handle Note { fn note(x) { stash(s, || resume(())) } } in note(1)   //~ W0313 W0502
+    handle Note { fn note(x) { stash(s, || resume(())) } } in note(1)   //~ W0313 old: W0313 W0502
 }
 fn to_outer_operation() / Keep {
-    handle Note { fn note(x) { keep(|| resume(())) } } in note(1)   //~ W0313 W0502
+    handle Note { fn note(x) { keep(|| resume(())) } } in note(1)   //~ W0502 old: W0313 W0502
 }
 // A `resume` gives the closure to the handled body, which keeps it.
 effect Get { multi fn get() -> fn() }
@@ -63,9 +63,9 @@ effect Give { multi fn give() -> fn() -> u64 }
 fn hold(v: &Vec<fn() -> u64>, f: fn() -> u64) / mut(v) { v.push(f) }
 fn resume_value_returned() -> (fn() -> u64, u64) {
     handle Give {
-        fn give() {
+        fn give() {   //~ W0313 old:
             let k = || { let (h, s) = resume(|| 7); h() + s }
-            resume(k)   //~ W0313
+            resume(k)   //~ old: W0313
         }
     } in {
         let f = give()
@@ -74,9 +74,9 @@ fn resume_value_returned() -> (fn() -> u64, u64) {
 }
 fn resume_value_stored(v: &Vec<fn() -> u64>) / mut(v) {
     handle Give {
-        fn give() {
+        fn give() {   //~ W0313 old:
             let k = || { resume(|| 7); 0 }
-            resume(k)   //~ W0313
+            resume(k)   //~ old: W0313
         }
     } in {
         let f = give()
@@ -85,9 +85,9 @@ fn resume_value_stored(v: &Vec<fn() -> u64>) / mut(v) {
 }
 fn resume_value_in_task() / async {
     let r = handle Give {
-        fn give() {
+        fn give() {   //~ W0313 old:
             let k = || { let x = resume(|| 7); x }
-            resume(k)   //~ W0313
+            resume(k)   //~ old: W0313
         }
     } in {
         let f = give()
@@ -98,7 +98,7 @@ fn resume_value_in_task() / async {
 }
 fn in_a_task() {
     handle Note { fn note(x) { print(x); resume(()) } } in {
-        handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); print("clause") } } } in {   //~ W0314
+        handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); print("clause") } } } in {   //~ old: W0314
             let a = ask()
             note(a)
         }
@@ -106,13 +106,13 @@ fn in_a_task() {
 }
 fn race() {
     let c = C { k: 0 }
-    handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); c.k += 1 } } } in {   //~ W0314
+    handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); c.k += 1 } } } in {   //~ old: W0314
         c.k += ask()
     }
     print(c.k)
 }
 fn in_a_fork_branch() / par {
-    handle Ask { fn ask() { let (a, b) = fork(|| resume(1), || 2); a } } in {   //~ W0314
+    handle Ask { fn ask() { let (a, b) = fork(|| resume(1), || 2); a } } in {   //~ old: W0314
         ask() + 1
     }
 }

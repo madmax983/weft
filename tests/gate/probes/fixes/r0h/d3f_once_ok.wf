@@ -1,0 +1,10 @@
+// The twin of `d3f_once.wf`: the callee does not run the closure, and the
+// clause gives a reader.
+effect Get { fn get() -> fn() }
+fn run_twice() / Get { let g = get(); g(); g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| print(v.len())) } } in { run_twice() }
+    print(v.len())
+}

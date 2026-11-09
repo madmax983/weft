@@ -702,6 +702,15 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
             bind_handle(em, *av, st, h, &v)?;
         }
     }
+    // The callee can read through a reference that a clause gives back to
+    // it (stage R0h, D3 form R): the places of `Handlers::back`. The
+    // summary of a function has no reads of the places of its callers.
+    let inst = crate::analysis::transfer::run_inst(body, block);
+    if let Some(back) = em.hx.back.get(&inst) {
+        for &q in back {
+            em.facts.reads_at.push((n, q));
+        }
+    }
     let hs = clause::run_handlers(&em.cx(), body, block, t);
     // A node that a `multi` resume runs again (its `Copy` node goes on at
     // `Ret`): the callee runs again from the operation that resumed, and

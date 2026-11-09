@@ -296,6 +296,11 @@ pub fn preview(a: &Analysis, built: &Built, index: usize) -> Result<FnFacts, Uns
 /// support, from the text of the reason.
 fn later_group(why: &str) -> Group {
     let has = |w: &str| why.contains(w);
+    // A clause of a local handler that gives a value back (stage R0h): the
+    // analysis refuses it, and its group stays D.
+    if why == crate::analysis::clause::GIVES_BACK {
+        return Group::D;
+    }
     if has("loop") || has("iterator") {
         Group::B
     } else if has("closure") || has("function value") || has("environment") {
@@ -379,16 +384,11 @@ fn check_supported(
                 }
             }
             // A call that can perform through a local handler or fail to a
-            // local `Fail` handler runs a clause there: the fact generator
-            // supports it when the clauses give no function value and no
-            // reference back to the callee (plan stages F14, F15).
-            if matches!(blk.term.kind, TermKind::Call { .. })
-                && frames::clause_handlers(p, tys, sums, bid, &blk.term.kind)
-                    .iter()
-                    .any(|h| !crate::analysis::clause::given_ops(p, tys, *h))
-            {
-                return no(Group::D, crate::analysis::clause::GIVES_BACK);
-            }
+            // local `Fail` handler runs a clause there (plan stages F14,
+            // F15). A clause that gives a function value or a reference back
+            // to the callee is in scope too (stage R0h): the analysis
+            // refuses only a function value that can race
+            // (`clause::call_clauses`).
             match &blk.term.kind {
                 // A `handle` (stage F14).
                 TermKind::Handle { .. }
@@ -3280,12 +3280,19 @@ fn emit_block(
             };
             templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
+            templates::given_back_runs(em, &nodes, &st, block, blk.term.origin.span)?;
             templates::call_joins(em, &nodes, &st, &blk.term.kind)?;
             templates::wait_tasks(em, n, blk.term.origin.span);
             em.wait_nodes.clear();
             em.abort_starts.clear();
         }
         weft_ir::TermKind::Perform { cap, .. } => {
+            // The task nodes of the code of a clause of a handler of a caller
+            // that runs a function value of an argument as a task (stage R0h).
+            let runs = frames.run_task_nodes(bid, block);
+            em.task_nodes = (1..=runs)
+                .filter_map(|i| table.get(at(Phase::Task(i), NORMAL)))
+                .collect();
             let nodes = templates::CallNodes {
                 main: n,
                 ret: table.get(at(Phase::Ret, NORMAL)),

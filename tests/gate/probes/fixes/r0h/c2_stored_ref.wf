@@ -1,0 +1,18 @@
+// The clause keeps the closure in a field of the site and runs it after the
+// callee cleared the vector that a captured reference points into.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    run(|| print(r))
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g; resume(()) } } in { f(&v) }
+    let x = h.f
+    x()
+}

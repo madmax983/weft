@@ -236,6 +236,14 @@ pub fn summarize(
         let base = facts.wild_base(m).unwrap_or(m);
         if let Some(mp) = interface_place(facts, roots, entry, sig, &owned, base) {
             changed.muts.push(mp);
+        } else if facts
+            .places
+            .get(base.index())
+            .is_some_and(|i| matches!(roots.role(i.root), Some(Role::Caller)))
+        {
+            // A change through a reference of the result of an operation of
+            // a caller (stage R0h, D3 form R).
+            changed.caller_muts = true;
         }
     }
     changed.muts.sort();

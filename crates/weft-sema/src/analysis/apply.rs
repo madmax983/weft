@@ -546,7 +546,13 @@ pub fn made_sigma(
             refs.dedup();
             (a.places, refs)
         }
-        Operand::Const(_) => (Vec::new(), Vec::new()),
+        // A closure that a clause gives back to the callee has no operand at
+        // the call: its value points into the places of the record (stage
+        // R0h, D3 form F).
+        Operand::Const(_) => (
+            Vec::new(),
+            cx.hx.given_refs.get(&inst).cloned().unwrap_or_default(),
+        ),
     };
     // The cell of a variable that the closure captures `ByRef` stands for
     // the current value of the variable (hole N1 of the second review of the
@@ -817,7 +823,14 @@ fn places(
         // A place of a caller of the callee is a place of a caller of the
         // run node, or a place of the run node that it cannot name: the
         // places of the caller of the run node.
-        IRoot::Caller => vec![cx.roots.caller(cx.facts)],
+        // A clause of a local handler of the run node can give the callee a
+        // reference into a place of the node (stage R0h, D3 form R): such a
+        // place is a place of a caller of the callee too.
+        IRoot::Caller => {
+            let mut v = vec![cx.roots.caller(cx.facts)];
+            v.extend(cx.hx.back.get(&s.inst).into_iter().flatten().copied());
+            v
+        }
         IRoot::Capture(k) => get(&s.captures, k),
         IRoot::CaptureHeld(k) => get(&s.cap_helds, k),
         IRoot::CaptureDeep(k) => get(&s.cap_deeps, k),
@@ -1314,6 +1327,13 @@ pub fn main(
         }
     }
     let changed = muts(cx, sum, s)?;
+    // A callee that changes a place of a caller can change each place that a
+    // local clause gives back to it (stage R0h, D3 form R).
+    if sum.caller_muts {
+        if let Some(back) = cx.hx.back.get(&s.inst) {
+            cx.facts.mutates_at.extend(back.iter().map(|&q| (n, q)));
+        }
+    }
     for &(p, idx) in &changed {
         cx.facts.mutates_at.push((n, p));
         if item || run {

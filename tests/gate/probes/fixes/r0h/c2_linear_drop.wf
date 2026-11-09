@@ -1,0 +1,12 @@
+// The closure moves a linear value, and the clause of the caller drops it
+// with no run.
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print(id) }
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let t = Tx { id: 1 }
+    run(|| commit(t))
+}
+fn main() {
+    handle Run { fn run(g) { resume(()) } } in { f() }
+}

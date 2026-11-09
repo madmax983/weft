@@ -1,0 +1,14 @@
+// The clause gives the closure back as the result of the operation; the
+// callee runs the result after it cleared the vector of a captured reference.
+effect Run { fn run(g: fn()) -> fn() }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    let k = run(|| print(r))
+    v.clear()
+    k()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { resume(g) } } in { f(&v) }
+}

@@ -1,0 +1,10 @@
+// The clause gives the callee a closure that reads through a reference into
+// a vector; the callee clears the vector, then runs the closure.
+effect Get { fn get() -> fn() }
+fn run_after(v: &Vec<u64>) / Get, mut(v) { let g = get(); v.clear(); g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Get { fn get() { resume(|| print(r)) } } in { run_after(&v) }
+}

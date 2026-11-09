@@ -203,6 +203,8 @@ pub fn code_of_caller(
     // The code can give a place that it gets to an operation (plan stage
     // F15).
     s.gives_frame = true;
+    // It can change a place that a local clause gives back to it (stage R0h).
+    s.caller_muts = true;
     // A stated row: the code performs its effects (with no row the effects
     // of the value pass through, ADR 0005).
     for e in row.unwrap_or(&[]) {

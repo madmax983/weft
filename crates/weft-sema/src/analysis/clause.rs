@@ -43,7 +43,7 @@
 //! node, with the locals of the handled body as at the node (their copies)
 //! and the locals of the site as at the later `resume` ([`handle_run`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use weft_ir::{BlockId, BodyId, BodyKind, HandlerId, LocalKind, Operand, Place, Program, TermKind};
 
@@ -202,6 +202,30 @@ pub struct Handlers {
     /// continuation of its `resume` has no node of the handled body
     /// (`crate::factgen::handlers`, `Region::starts`).
     pub w0314_bodies: std::collections::BTreeSet<BodyId>,
+    /// The places that the clauses of the local handlers of a call can give
+    /// back to the callee in a reference result of their operation, by the
+    /// run node of the call (stage R0h, D3 form R, [`back_places`]): σ of
+    /// `Caller` at the call has them too (`super::apply`).
+    pub back: BTreeMap<u32, Vec<weft_facts::PlaceId>>,
+    /// The function values that the clauses of the local handlers of a call
+    /// give back to the callee with `resume`, and the places that their
+    /// values point into, by the body and the block of the call (stage R0h,
+    /// D3 form F, [`call_clauses`]): a join over the runs of the call. The
+    /// call node runs them as code of a caller runs a value.
+    pub given_back: BTreeMap<(BodyId, BlockId), (BTreeSet<super::FnVal>, Vec<weft_facts::PlaceId>)>,
+    /// The places that the values of [`Self::given_back`] point into, by the
+    /// run node: the environment of a closure of a clause that has no
+    /// operand at the call (`super::apply::made_sigma`).
+    pub given_refs: BTreeMap<u32, Vec<weft_facts::PlaceId>>,
+    /// [`back_places`] runs: the run nodes that it reads ([`given`]) do not
+    /// look for their own back places again.
+    pub back_busy: bool,
+    /// What the values that the clauses of the local handlers of a call give
+    /// to `resume` point into, for an operation with a reference result, by
+    /// the body and the block of the call (stage R0h, D3 form R): a join
+    /// over the runs of the call. [`back_places`] adds them (a reference
+    /// into a local of a clause, too).
+    pub back_refs: BTreeMap<(BodyId, BlockId), BTreeSet<weft_facts::PlaceId>>,
 }
 
 /// How a closure that captures the capability of a handler leaves the
@@ -2520,7 +2544,18 @@ impl Given {
                 let refs = b
                     .local(l)
                     .is_some_and(|d| crate::props::ir_props(cx.tys, d.ty).holds_refs);
-                if refs {
+                // A function value of the callee (stage R0h, D3 form P): in the
+                // clause it is code of a caller whose environment is the
+                // places that the call gives, so a run of it lends them.
+                let fns = b.local(l).is_some_and(|d| {
+                    crate::props::ir_props(cx.tys, d.ty).callable
+                        || crate::props::ir_has_fns(cx.tys, d.ty)
+                });
+                if fns {
+                    let mut v = AbsVal::refs(self.places.iter().copied());
+                    v.fns.insert(super::FnVal::Unknown);
+                    Tree::leaf(v)
+                } else if refs {
                     Tree::leaf(AbsVal::refs(self.places.iter().copied()))
                 } else {
                     Tree::leaf(AbsVal::plain())
@@ -2637,20 +2672,38 @@ pub fn call_clauses(
         }
     }
     let mut abort: Option<State> = None;
+    // The function values that the clauses give back to the callee with
+    // `resume` (stage R0h, D3 form F), and what their values point into.
+    let mut back_fns: BTreeSet<super::FnVal> = BTreeSet::new();
+    let mut back_refs: BTreeSet<weft_facts::PlaceId> = BTreeSet::new();
     for h in hs {
         handler(p, h)?;
-        if !given_ops(p, cx.tys, h) {
-            return Err(AlphaError::Later(GIVES_BACK));
-        }
-        let clauses: Vec<BodyId> = p
+        let clauses: Vec<(weft_ir::OpIdx, BodyId)> = p
             .handlers
             .get(h.index())
-            .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
+            .map(|d| d.clauses.clone())
             .unwrap_or_default();
         let s0 = gv.state(&start);
-        for cb in clauses {
+        for (op, cb) in clauses {
             let vals = gv.values(cx, cb)?;
             let run = run_clause(cx, h, cb, (&s0, gv.frame.map(|f| (f, body))), &vals)?;
+            if op_gives_refs(p, cx.tys, h, op) {
+                let refs = run.value.flat().refs;
+                if !refs.is_empty() {
+                    cx.hx
+                        .back_refs
+                        .entry((body, block))
+                        .or_default()
+                        .extend(refs);
+                }
+            }
+            if op_gives_fns(p, cx.tys, h, op)
+                && call_performs(cx, body, before.unwrap_or(&start), t, h)?
+            {
+                let v = run.value.flat();
+                back_fns.extend(v.fns.iter().cloned());
+                back_refs.extend(v.refs.iter().copied());
+            }
             if let Some(a) = run.after {
                 st.join(&a);
             }
@@ -2664,10 +2717,256 @@ pub fn call_clauses(
             }
         }
     }
+    // The callee runs each value that a clause gives back as code of a
+    // caller runs a value: more than once, at `Main` and at `Ret`, on some
+    // paths only. A value that can race needs the task nodes of the worst
+    // way, which the call does not have: the old pipeline checks the program
+    // (stage R0h).
+    back_fns.remove(&super::FnVal::Unknown);
+    if !back_fns.is_empty() {
+        let key = (body, block);
+        let rec = cx.hx.given_back.entry(key).or_default();
+        rec.0.extend(back_fns.iter().cloned());
+        rec.1.extend(back_refs.iter().copied());
+        rec.1.sort();
+        rec.1.dedup();
+        let (fns, refs) = rec.clone();
+        // The callee can also keep a value in a place that it gets, and the
+        // facts have no part for that (`transfer::kept_value_risk`); and a
+        // `once` value has no operand at the call that a second run uses.
+        for g in &fns {
+            if transfer::can_race(cx, g)
+                || transfer::kept_value_risk(cx, g)
+                || transfer::once_value(p, g)
+            {
+                return Err(AlphaError::Later(GIVES_BACK));
+            }
+        }
+        let inst = transfer::run_inst(body, block);
+        cx.hx.given_refs.insert(inst, refs.clone());
+        let from = before.cloned().unwrap_or_else(|| st.clone());
+        let multi = transfer::callee_multi(cx, t);
+        let apps = transfer::given_back_apps(cx, (body, block), &from, &fns, &gv.places, multi)?;
+        transfer::apply_given_back(cx, (body, block), st, &apps, t, (&fns, &refs))?;
+    }
     // The abort edge of the call: the state before it, and the states of
     // the clauses where they abort.
     cx.hx.abort_edge = abort.map(AbortEdge::Join);
     Ok(())
+}
+
+/// True if call `t` of body `body` can perform an operation of the effect of
+/// handler `h` in state `st` (stage R0h): a callee or a closure whose
+/// summary performs it or runs a function value, a callee with no summary,
+/// and a function value that the analysis does not know. Else the clauses of
+/// `h` do not run at the call, and they give the callee nothing.
+///
+/// # Errors
+///
+/// The errors of α.
+fn call_performs(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    t: &TermKind,
+    h: HandlerId,
+) -> Result<bool, AlphaError> {
+    let Some(effect) =
+        cx.p.handlers
+            .get(h.index())
+            .and_then(|d| cx.tys.effects().get(d.effect.index()))
+            .map(|e| e.identity.clone())
+    else {
+        return Ok(true);
+    };
+    let does = |s: &super::summary::Summary| {
+        !s.runs.is_empty() || s.performs.iter().any(|pf| pf.effect == effect)
+    };
+    match t {
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, _),
+            ..
+        } => Ok(cx.sums.get(*f).map_or(true, does)),
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(v),
+            ..
+        } => {
+            let fns = transfer::reach_fns(cx, body, st, v)?;
+            if fns.is_empty() {
+                return Ok(true);
+            }
+            for g in &fns {
+                let sum = match g {
+                    super::FnVal::Closure(c) | super::FnVal::Made(c) => cx.sums.closure(*c).ok(),
+                    super::FnVal::Item(f, _) => cx.sums.get(*f).ok(),
+                    _ => None,
+                };
+                if sum.is_none_or(does) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        _ => Ok(true),
+    }
+}
+
+/// True if operation `op` of the effect of handler `h` gives a function
+/// value back to the callee in its result (stage R0h, D3 form F).
+pub fn op_gives_fns(p: &Program, tys: &weft_ir::TyTable, h: HandlerId, op: weft_ir::OpIdx) -> bool {
+    let Some(e) = p
+        .handlers
+        .get(h.index())
+        .and_then(|hd| tys.effects().get(hd.effect.index()))
+    else {
+        return false;
+    };
+    e.ops.get(op.index()).is_some_and(|o| {
+        let pr = crate::props::ir_props(tys, o.ret);
+        pr.callable || crate::props::ir_has_fns(tys, o.ret)
+    })
+}
+
+/// True if operation `op` of the effect of handler `h` gives a reference
+/// back to the callee in its result (stage R0h, D3 form R).
+fn op_gives_refs(p: &Program, tys: &weft_ir::TyTable, h: HandlerId, op: weft_ir::OpIdx) -> bool {
+    p.handlers
+        .get(h.index())
+        .and_then(|hd| tys.effects().get(hd.effect.index()))
+        .and_then(|e| e.ops.get(op.index()))
+        .is_some_and(|o| crate::props::ir_props(tys, o.ret).holds_refs)
+}
+
+/// True if a clause of handler `h` can give a reference back to the callee:
+/// the result of its operation holds a reference and the clause resumes
+/// (stage R0h, D3 form R).
+pub fn gives_refs_back(p: &Program, tys: &weft_ir::TyTable, h: HandlerId) -> bool {
+    let Some(hd) = p.handlers.get(h.index()) else {
+        return false;
+    };
+    let Some(e) = tys.effects().get(hd.effect.index()) else {
+        return false;
+    };
+    hd.clauses.iter().any(|&(op, c)| {
+        e.ops.get(op.index()).is_some_and(|o| {
+            let pr = crate::props::ir_props(tys, o.ret);
+            pr.holds_refs && has_resume(p, c)
+        })
+    })
+}
+
+/// The places that the clauses of the local handlers of call `t` of block
+/// `block` of body `body` can give back to the callee in a reference result
+/// of their operation (stage R0h, D3 form R).
+///
+/// From the state `st` before the call: each wildcard place that a clause
+/// can name. These are the places
+/// that the call gives ([`given`]), and for each local of a site that a
+/// clause or a body inside it names (an upvar local): its place, what its
+/// references point into (also behind them), and the `rc` groups of its
+/// type. A reference into a local of the clause lives while the handled body
+/// runs. `None` if a clause names a local whose frame the call does not run
+/// in (a call in a closure body inside the handled body).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn back_places(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    st: &State,
+    t: &TermKind,
+) -> Result<Option<Vec<weft_facts::PlaceId>>, AlphaError> {
+    let p = cx.p;
+    let hs: Vec<HandlerId> = call_handlers(cx, body, t)
+        .into_iter()
+        .filter(|&h| gives_refs_back(p, cx.tys, h))
+        .collect();
+    if hs.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
+    cx.hx.back_busy = true;
+    let gv = given(cx, body, block, st, t);
+    cx.hx.back_busy = false;
+    let mut out: Vec<weft_facts::PlaceId> = gv?.places;
+    let unit = crate::factgen::alpha::unit_root(p, body);
+    let mut keys: BTreeSet<super::Key> = BTreeSet::new();
+    for h in hs {
+        let clauses: Vec<BodyId> = p
+            .handlers
+            .get(h.index())
+            .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
+            .unwrap_or_default();
+        for cb in clauses {
+            for (bi, b) in p.bodies.iter().enumerate() {
+                let bid = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
+                if !inside(p, bid, cb) {
+                    continue;
+                }
+                for (li, d) in b.locals.iter().enumerate() {
+                    if !matches!(d.kind, weft_ir::LocalKind::Upvar(_)) {
+                        continue;
+                    }
+                    let l = weft_ir::LocalId(u32::try_from(li).unwrap_or(u32::MAX));
+                    let k = transfer::key(p, bid, l)?;
+                    if inside(p, k.0, cb) {
+                        continue;
+                    }
+                    if crate::factgen::alpha::unit_root(p, k.0) != unit {
+                        return Ok(None);
+                    }
+                    keys.insert(k);
+                }
+            }
+        }
+    }
+    for (ob, ol) in keys {
+        let place = Place {
+            local: ol,
+            proj: Vec::new(),
+        };
+        for q in transfer::alpha(cx, ob, st, &place)?.places {
+            out.push(cx.facts.wildcard(q));
+        }
+        let refs: Vec<weft_facts::PlaceId> = transfer::place_value(cx, ob, st, &place)?
+            .flat()
+            .refs
+            .into_iter()
+            .collect();
+        for &q in &refs {
+            out.push(cx.facts.wildcard(q));
+            for d in transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None)? {
+                out.push(cx.facts.wildcard(d));
+            }
+        }
+        if let Some(ty) = p
+            .bodies
+            .get(ob.index())
+            .and_then(|b| b.locals.get(ol.index()))
+            .map(|d| d.ty)
+        {
+            for inner in transfer::rc_inners(cx.tys, ty) {
+                let g = cx.roots.group(cx.tys, cx.facts, inner);
+                out.push(cx.facts.wildcard(g));
+            }
+        }
+    }
+    // What the values of the clauses at `resume` point into (the runs of
+    // the call so far): a local of a clause too.
+    let recorded: Vec<weft_facts::PlaceId> = cx
+        .hx
+        .back_refs
+        .get(&(body, block))
+        .into_iter()
+        .flatten()
+        .copied()
+        .collect();
+    for q in recorded {
+        out.push(cx.facts.wildcard(q));
+    }
+    out.sort();
+    out.dedup();
+    Ok(Some(out))
 }
 
 /// Why the facts do not model a `resume` in a closure or in a body inside

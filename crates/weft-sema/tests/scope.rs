@@ -228,13 +228,13 @@ fn plain(n: u64) -> u64 { n + 1 }
 /// A program that the fact generator does not support with each group on:
 /// a `resume` of a captured continuation (follow-up F16.1). Stage F17 put
 /// the W0313 escape of `ESCAPE` in scope.
-// A program that the fact generator does not support: a clause gives a
-// function value back to the callee (stage R0g put the `resume` in a closure,
-// the form of this program before, in scope for a program that the `ir`
-// pipeline rejects).
+// A program that the fact generator does not support: a clause gives the
+// callee a function value that can race (stage R0g put the `resume` in a
+// closure, the form of this program before, in scope for a program that the
+// `ir` pipeline rejects; stage R0h put a value that cannot race in scope).
 const KONT: &str = "effect Get { fn get() -> fn() }
-fn get_it() -> fn() / Get { get() }
-fn kont() { handle Get { fn get() { resume(|| print(1)) } } in { let f = get_it(); f() } }
+fn run_it() / Get { let g = get(); g() }
+fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }
 fn typo() -> u64 { nope }
 fn plain(n: u64) -> u64 { n + 1 }
 ";
@@ -633,9 +633,9 @@ fn the_note_of_a_fallback_names_the_body_that_the_fact_generator_does_not_suppor
     // support get the worst case of its declaration, so the note gives the
     // reason of that body, not "a call of a function with ...".
     let src = "effect Get { fn get() -> fn() }
-        fn get_it() -> fn() / Get { get() }
+        fn run_it() / Get { let g = get(); g() }
         fn first() { kont() }
-        fn kont() { handle Get { fn get() { resume(|| print(1)) } } in { let f = get_it(); f() } }";
+        fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }";
     let why = fallback(src).expect("out of scope");
     assert!(why.contains("gives a function value"), "{why}");
 }
@@ -797,4 +797,40 @@ fn a_construct_with_no_full_facts_keeps_both_views_for_the_check() {
     let both = analyze(src, opts(FactGen::Both, Groups::ALL));
     let p = both.ir_scope.and_then(|s| s.pending).expect("pending");
     assert!(!p.ir_view);
+}
+
+#[test]
+fn function_values_and_references_across_operations_are_in_scope() {
+    // Plan stage R0h. C2: a function value in an argument of an operation of
+    // a handler of a caller. D3: a callee gives a function value to a clause
+    // of a local handler, and a clause gives a reference or a function value
+    // that cannot race back to the callee.
+    let in_scope = [
+        "effect Run { fn run(g: fn()) }
+        fn f() / Run { let n = 5; run(|| print(n)) }",
+        "effect Run { fn run(g: fn()) }
+        fn f() / Run { let n = 5; run(|| print(n)) }
+        fn main() { handle Run { fn run(g) { g(); resume(()) } } in { f() } }",
+        "effect Pick { fn pick() -> &u64 }
+        fn user() / Pick { let r = pick(); print(r) }
+        fn main() { let v = Vec.new(); v.push(1); handle Pick { fn pick() { resume(&v[0]) } } in user() }",
+        "effect Get { fn get() -> fn() }
+        fn run_it() / Get { let g = get(); g() }
+        fn main() { handle Get { fn get() { resume(|| print(1)) } } in { run_it() } }",
+    ];
+    for src in in_scope {
+        assert_eq!(fallback(src), None, "{src}");
+    }
+    // A value that the clause can keep with a reference in it, and a value
+    // that a clause gives back and that can race, keep the old pipeline.
+    let out = [
+        "effect Run { fn run(g: fn()) }
+        fn f(v: &Vec<u64>) / Run { let r = &v[0]; run(|| print(r)) }",
+        "effect Get { fn get() -> fn() }
+        fn run_it() / Get { let g = get(); g() }
+        fn main() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }",
+    ];
+    for src in out {
+        assert!(fallback(src).is_some(), "{src}");
+    }
 }

@@ -1,0 +1,99 @@
+// Stage R0h: function values and references across operations. An operation
+// of a handler of a caller gets a function value (the clause is code of a
+// caller), a callee gives a function value to a clause of a local handler of
+// its caller, and a clause gives a reference or a function value back to the
+// callee with `resume`.
+struct Stats { count: u64 }
+struct Counter { items: Vec<u64> }
+effect Run { fn run(g: fn()) }
+effect Pick { fn pick() -> &u64 }
+effect PickC { fn pick_c() -> &Counter }
+effect Get { fn get() -> fn() }
+
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn eat(v: Vec<u64>) { print(v.len()) }
+
+// The clause of a caller can run the closure on another task while the
+// callee reads the local that the closure changes.
+fn op_mut_local() / Run {
+    let st = Stats { count: 0 }
+    run(|| { st.count += 1 })   //~ W0403 W0405
+    print(st.count)
+}
+fn op_reader() / Run {
+    let n = 5
+    run(|| print(n))
+    print(n)
+}
+// The clause of a caller can run a `once` closure two times.
+fn op_once() / Run {
+    let v = mk_v()
+    run(|| eat(v))   //~ W0502
+}
+
+// A callee gives a `once` closure to a clause of a local handler of its
+// caller, and the clause runs it two times.
+fn local_runs_twice() {
+    handle Run { fn run(g) { g(); g(); resume(()) } } in { op_once() }
+}
+fn local_runs_reader() {
+    handle Run { fn run(g) { g(); g(); resume(()) } } in { op_reader() }
+}
+
+// The clause gives the callee a reference into a local of the site; the
+// callee changes the place through it.
+fn clear_picked() / PickC {
+    let r = pick_c()
+    r.items.clear()
+}
+fn count_picked() / PickC {
+    let r = pick_c()
+    print(r.items.len())
+}
+fn ref_back_changed() {
+    let c = Counter { items: mk_v() }
+    let first = &c.items[0]
+    handle PickC { fn pick_c() { resume(&c) } } in clear_picked()
+    print(first)   //~ W0301 old:
+}
+fn ref_back_read() {
+    let c = Counter { items: mk_v() }
+    let first = &c.items[0]
+    handle PickC { fn pick_c() { resume(&c) } } in count_picked()
+    print(first)
+}
+// The callee performs two times; the second clause clears the vector that
+// the first reference points into.
+fn picks_twice() / Pick {
+    let r = pick()
+    let r2 = pick()
+    print(r)   //~ W0301
+}
+fn ref_back_twice() {
+    let v = mk_v()
+    handle Pick { fn pick() { v.clear(); v.push(2); resume(&v[0]) } } in picks_twice()
+}
+// A reference into a local of the clause lives while the handled body runs.
+fn give_local() / Pick {
+    let r = pick()
+    print(r)
+}
+fn ref_back_clause_local() {
+    handle Pick { fn pick() { let x = 5; resume(&x) } } in { give_local() }
+}
+
+// The clause gives the callee a closure with no capture; the callee runs it
+// and gives it back.
+fn get_it() -> fn() / Get { get() }
+fn run_twice() / Get { let g = get(); g(); g() }
+fn fn_back() {
+    handle Get { fn get() { resume(|| print(1)) } } in { run_twice() }
+    handle Get { fn get() { resume(|| print(2)) } } in { let f = get_it(); f() }
+}
+
+fn main() {
+    local_runs_reader()
+    ref_back_read()
+    ref_back_clause_local()
+    fn_back()
+}

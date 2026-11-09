@@ -51,13 +51,9 @@
 # and `map-N2` are N1 and N2 of `docs/plan/core-ir-inputs/map_lowering.md`
 # (`docs/ir.md` section 10.2 has both lists).
 
-[[entry]]
-class = "edge"
-issue = 48
-files = ["tests/gate/probes/ir/work/map/opres.wf"]
-finding = "map-N1"
-reason = "dangling read: the result of an operation of a handler of a caller has no places. Stage C1: the program stays with the old pipeline (the clause gives a reference back to the callee, GIVES_BACK, follow-up F16.3), and the old pipeline misses it; issue #48 (F16.3)."
-stage = "G6"
+# Stage R0h removed the `edge` entry of `opres.wf` (map-N1, issue #48): the
+# program is in scope, and the `ir` pipeline rejects it (`fixed`, W0301 in the
+# callee).
 
 # Stage F13 removed the entries of j5_kept_borrow.wf (J5),
 # j5d_maker_borrow.wf (J5d), fnres2.wf (map-N2) and the four RR7 programs
@@ -3924,17 +3920,9 @@ finding = "F3-6"
 reason = "unwinder fault (tier 2, as entry of fk4/tk6): `bad_ctx_fork_tx` forks two linear `Tx` results in a scope whose other task fails; the failure ends the scope while the results are live, and the runtime drops them. The old pipeline misses it too. Each group of the program is on from stage F20 (`--groups ABCDEF`). Stage C1: the verdict of F3-6 in docs/ir.md 10.3 is \"stays\"."
 stage = "F20"
 
-[[entry]]
-class = "edge"
-issue = 48
-files = [
-    "verify/s5/S5a/d1_callee_mut.wf",
-    "verify/s5/S5a/d1_callee_mut3.wf",
-    "verify/s5/S5a/d1_callee_mut6.wf",
-]
-finding = "unclassified"
-reason = "dangling read (tier 2, follow-up F16.3): the clause of a local handler resumes with a reference into a place of the site (`resume(c)`), and the callee clears it; the reference of the site into the place is stale after the call. The `ir` pipeline keeps these programs with the old pipeline (fallback `GIVES_BACK` of F16.3), and the old pipeline misses them. The groups of the programs are all on from stage F20. Stage C1: issue #48 (F16.3, GIVES_BACK fallback)."
-stage = "F20"
+# Stage R0h removed the `edge` entry of `d1_callee_mut.wf`, `d1_callee_mut3.wf`
+# and `d1_callee_mut6.wf` (tier 2, issue #48): the programs are in scope, and
+# the `ir` pipeline rejects them (`fixed`, W0301 at the site).
 
 [[entry]]
 class = "new-fp"
@@ -10187,3 +10175,201 @@ files = [
 ]
 reason = "stage R0g fix: a scope body that starts no task and runs a closure that a closure made. The row of the IR has no `raises`: no child task can fail (as for a closure of the site in the same scope body). The old inference gives `raises` for each scope"
 stage = "R0g fix"
+
+# Stage R0h: function values and references across operations (C2, D3). An
+# operation of a handler of a caller with a function value in an argument is
+# code of a caller that gets the value (the worst way); a clause of a local
+# handler gets a function value of the callee as code of a caller; a reference
+# that a clause gives back to the callee is a place of a caller at the call
+# (`Handlers::back`); a function value that a clause gives back runs at the
+# call as code of a caller runs it. A value that the code can keep with a
+# reference in it, and a value that a clause gives back and that can race,
+# keep the old pipeline. Each program below was a fallback at R0g fix.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/197_fn_values_across_ops.wf"]
+codes = ["W0301"]
+reason = "stage R0h: the corpus file of C2 and D3. Both pipelines give W0403, W0405 and W0502 for the values that an operation of a caller gets, and W0301 for the reference that the second clause makes invalid (`picks_twice`). The `ir` pipeline also gives W0301 in `ref_back_changed`: the callee clears the vector of the site through the reference that the clause gives back, and the old pipeline misses it (`old:` marker; the run faults). Rejected in both"
+stage = "R0h"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/86_op_refs.wf",
+    "tests/programs/143_arg_roots.wf",
+    "tests/programs/122_cont_escape.wf",
+    "tests/programs/137_task_values.wf",
+    "tests/programs/63_suspension.wf",
+    "tests/gate/probes/partb/probes/h_escape.wf",
+    "tests/gate/probes/r3/redteam/p/w3_opfn.wf",
+    "tests/gate/probes/verify/partb/S4/p/c8_once.wf",
+    "tests/gate/probes/verify/s5/S5c/p/r13_perform_cb.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_in_closure.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_second_arg.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee_perform.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0312", "W0313", "W0314", "W0403", "W0405", "W0502", "W0503", "W0703"]
+reason = "stage R0h: each program comes into scope (a function value of an operation of a caller, or a clause that gives a reference or a function value back) and the `ir` pipeline rejects it, as the old pipeline does. The differences are of classes that earlier entries give for programs in scope: W0301 at the read of the value in place of the `match` line (86 `picks_opt`, `picks_through_callee`); W0301 at the clause and at the read of a reference into a local of the clause in place of W0204 at the `handle` (86 `picks_clause_local`); one W0703 for the change through the reference of the clause (86 `mutates_undeclared`); W0312 and W0204 where the old pipeline gives W0301 (143 `stored_callback_and_keep`, `hof_runs_other`, w3_opfn); W0314 in place of W0313 for a closure of a handler that code of a caller gets (h_escape, the v1c files, open item 4 of R0f); W0302 and W0502 at other lines for a `once` closure that code of a caller gets (c8_once); W0312 and W0405 next to the errors of both pipelines for a closure of an operation of a caller that a local clause spawns (r13_perform_cb); the facts with no resume point of a closure and no re-entry of a clause (`Scope::pending`, R0g) give fewer W0301, W0313, W0314, W0502 and W0503 (122, 63, w3_opfn); one W0405 for a task of a local clause where the old pipeline gives two (137 `clause_after_resume`). Rejected in both"
+stage = "R0h"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0h/d3p_site_ref.wf"]
+codes = ["W0301", "W0312", "W0405"]
+reason = "stage R0h (D3 form P): a callee gives a clause of a local handler a closure that clears a vector of the site. Both pipelines give W0403 and W0405 at the operation in the callee. The `ir` pipeline also gives W0301 for the read of `r` in the clause after the run of the closure (the run faults there), W0312 and W0405 at that line (the clause runs code of a caller that lends the places of the call). Rejected in both"
+stage = "R0h"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/programs/89_abort_paths.wf",
+    "tests/gate/probes/fixes/r0g/c4_resume_arg_mut.wf",
+    "tests/gate/probes/fixes/r0g/rv1_c4_scope_direct.wf",
+]
+codes = ["W0301", "W0304"]
+reason = "stage R0h: each program comes into scope (the value call in the handled body does not perform the operation of the handler, so its clause gives the call nothing back: `clause::call_performs`) and the `ir` pipeline rejects it with the codes of the old pipeline at other lines: W0301 at the read of the reference after the run of the closure that the clause gave (the old pipeline gives the line of the use of the closure), W0304 at the node of the facts. Rejected in both"
+stage = "R0h"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0g/c4_resume_arg_ok.wf",
+    "tests/gate/probes/partb/s3fix/p/dbg2.wf",
+]
+reason = "stage R0h: the program comes into scope. `c4_resume_arg_ok`: the clause gives the handled body a closure that reads a vector of the clause; the clause frame lives while the handled body runs, so the old W0301 (`v` goes out of scope when `get` returns) is a false positive. `dbg2`: the clause gives back a closure that performs nothing; the old W0313 at the `handle` of `a` is a false positive (the old pipeline does not give it for `b`, the same closure with a direct perform). The `ir` pipeline gives no error; the interpreter runs both with no fault"
+signed_by = "UNSIGNED: the author of stage R0h; the independent review of R0h must sign this row or reject it"
+stage = "R0h"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0h/c2_result.wf",
+    "tests/gate/probes/fixes/r0h/c2_stored_ref.wf",
+    "tests/gate/probes/fixes/r0h/c2_task.wf",
+    "tests/gate/probes/fixes/r0h/d3f_dangling.wf",
+    "tests/gate/probes/fixes/r0h/d3f_mut_race.wf",
+    "tests/gate/probes/fixes/r0h/d3f_once.wf",
+]
+finding = "R0h-STAYS"
+reason = "stage R0h: the forms that keep the old pipeline, and the old pipeline misses each fault. A value with a reference in it that code of a caller (the clause of an operation) can keep and run after a change (`c2_result`, `c2_stored_ref`; the facts of code of a caller have no part for a value that it keeps, R0f open item 1), a closure of an operation that a callee spawns (`c2_task`, reason E5 of the callee), and a value that a clause gives back to the callee and that holds a reference, can race or is `once` (`d3f_dangling`, `d3f_mut_race`, `d3f_once`)"
+stage = "R0h"
+
+[[entry]]
+class = "sig"
+files = [
+    "tests/gate/probes/verify/s5/diff/p/v1c.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_in_closure.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_second_arg.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee_perform.wf",
+]
+parts = ["task_runs", "op_fns", "repeats"]
+reason = "stage R0h (C2): the function gives a closure to an operation of a handler of a caller. The old inference keeps it in the part `op_fns`; the `ir` pipeline applies it at the perform as code of a caller runs it (more than once, as a task in the worst way, `transfer::op_value_out`), so the parts `task_runs` and `repeats` have it and `op_fns` does not"
+stage = "R0h"
+
+[[entry]]
+class = "sig"
+files = [
+    "tests/gate/probes/fixes/r0h/c2_mut_local.wf",
+    "tests/gate/probes/fixes/r0h/d3p_site_ref.wf",
+    "tests/gate/probes/verify/s5/S5c/p/r13_perform_cb.wf",
+]
+parts = ["pins"]
+reason = "stage R0h (class F19-SIG-PINS): the clause of an operation of a caller is code of a caller that can run a closure of the arguments on another thread (the worst way); the closure writes through a capture, so the task is pinned (`summarize::task_pins`). The pin is conservative. The old inference does not pin it"
+stage = "R0h"
+
+[[entry]]
+class = "sig"
+files = [
+    "tests/gate/probes/r3/oracle/probes/p3_opref_caller.wf",
+    "tests/gate/probes/r3/oracle/probes/p7_opref_caller_local.wf",
+    "tests/gate/probes/r3/oracle/probes/p8_opref_store_caller.wf",
+]
+parts = ["muts"]
+reason = "stage R0h: the program comes into scope (a clause gives a reference back to the callee). Class F19-SIG-MUTS (stage F19): a `join` of a handle in a parameter changes the place of the handle (`join_it`, C5 of the fact oracle), so the row has `mut(t)`"
+stage = "R0h"
+
+[[entry]]
+class = "sig"
+files = [
+    "tests/gate/probes/verify/s5/diff/p/v1d.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1d2.wf",
+    "tests/programs/86_op_refs.wf",
+]
+parts = ["muts", "passthrough", "lent"]
+reason = "stage R0h (D3 form R): the clause gives the handled body a reference parameter of the function back (`resume(v)`), and the body gives it to code of a caller (`k(r)`), which can change it. The `ir` pipeline gives the function `mut(v, *v)` and the lend; the old inference does not see the reference through the operation"
+stage = "R0h"
+
+[[entry]]
+class = "sig"
+files = [
+    "tests/programs/122_cont_escape.wf",
+    "tests/programs/63_suspension.wf",
+    "tests/gate/probes/fixes/r0g/rv1_c4_scope_direct.wf",
+]
+reason = "stage R0h: the program comes into scope (a function value of an operation of a caller, or a clause that gives a value back), and the `ir` pipeline rejects it. The signatures differ as in the `sig` entries of R0g: a `resume` in a closure has no resume point, so no `multi` and no `reaches` of the code of the handled body; a clause has no re-entry (`drops` of `hold_across`); a scope body with no task raises no failure (R0g fix)"
+stage = "R0h"
+
+# Stage R0h, tier 2: programs that come into scope; both pipelines reject each one.
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/122_cont_escape.wf",
+    "r3/quality/fuzzcorp/137_task_values.wf",
+    "r3/quality/fuzzcorp/143_arg_roots.wf",
+    "r3/quality/fuzzcorp/86_op_refs.wf",
+    "verify/partb/S4/run/cv.wf",
+    "verify/s5/S5a/d1_callee_mut2.wf",
+    "verify/s5/S5a/d1_callee_mut4.wf",
+    "verify/s5/S5a/d1_callee_mut5.wf",
+    "verify/s5/S5c/mut/progs/m00190_63_suspension.wf",
+    "verify/s5/S5c/mut/progs/m00257_63_suspension.wf",
+    "verify/s5/S5c/mut/progs/m00475_122_cont_escape.wf",
+    "verify/s5/S5c/mut/progs/m00481_137_task_values.wf",
+    "verify/s5/S5c/mut/progs/m00661_86_op_refs.wf",
+    "verify/s5/S5c/mut/progs/m01016_63_suspension.wf",
+    "verify/s5/S5c/mut/progs/m01266_63_suspension.wf",
+    "verify/s5/S5c/mut/progs/m01435_86_op_refs.wf",
+    "verify/s5/S5c/mut/progs/m01588_86_op_refs.wf",
+    "verify/s5/S5c/mut/progs/m02064_122_cont_escape.wf",
+    "verify/s5/S5c/mut/progs/m02109_86_op_refs.wf",
+    "verify/s5/S5c/mut/progs/m02606_86_op_refs.wf",
+    "verify/s5/S5c/mut/progs/m02610_122_cont_escape.wf",
+    "verify/s5/S5c/mut/progs/m02632_63_suspension.wf",
+    "verify/s5/S5c/mut/progs/m02655_86_op_refs.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0312", "W0313", "W0314", "W0401", "W0405", "W0502", "W0503", "W0601", "W0703"]
+reason = "stage R0h (tier 2): each program comes into scope (a function value of an operation of a caller, or a clause that gives a reference or a function value back) and the `ir` pipeline rejects it, as the old pipeline does. Copies and mutants of the corpus files 63, 86, 122, 137 and 143 (the codes of their ledger entry of R0h); `d1_callee_mut2`, `4`, `5`: the callee changes the place of the site through the reference that the clause gives back, W0301 at the site next to the W0703 of both pipelines; `cv.wf`: no W0601 of the old pipeline where both give W0502 for a linear closure that a value runs two times. Rejected in both"
+stage = "R0h"
+
+[[entry]]
+class = "moved"
+files = [
+    "r3/quality/fuzzcorp/89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m00207_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m00237_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m00263_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m00699_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01139_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01150_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01176_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01333_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01362_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01618_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01627_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01803_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m01815_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m02398_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m02427_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m02605_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m02805_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m02835_89_abort_paths.wf",
+    "verify/s5/S5c/mut/progs/m02981_89_abort_paths.wf",
+]
+codes = ["W0304"]
+reason = "stage R0h (tier 2): copies and mutants of the corpus file 89 that come into scope; the `ir` pipeline gives W0304 at the node of the facts (the entry of R0h for 89). Rejected in both"
+stage = "R0h"

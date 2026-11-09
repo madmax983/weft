@@ -1,0 +1,10 @@
+// The clause gives the callee a reference into a local of the clause: it
+// lives while the handled body runs.
+effect Give { fn give() -> &u64 }
+fn user() / Give {
+    let r = give()
+    print(r)
+}
+fn main() {
+    handle Give { fn give() { let x = 5; resume(&x) } } in { user() }
+}

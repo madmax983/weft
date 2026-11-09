@@ -35,8 +35,8 @@ fn picks_opt() {
     handle PickOpt { fn pick_opt() { resume(Some(&v[0])) } } in {
         let r = pick_opt()
         v.clear()
-        match r {   //~ W0301
-            Some(x) => print(x),
+        match r {   //~ old: W0301
+            Some(x) => print(x),   //~ W0301 old:
             None => print(0),
         }
     }
@@ -47,8 +47,8 @@ fn picks_through_callee() {
     handle PickOpt { fn pick_opt() { resume(Some(&v[0])) } } in {
         let r = pick_some()
         v.clear()
-        match r {   //~ W0301
-            Some(x) => print(x),
+        match r {   //~ old: W0301
+            Some(x) => print(x),   //~ W0301 old:
             None => print(0),
         }
     }
@@ -70,12 +70,12 @@ fn picks_out_of_handle() {
     print(r)   //~ W0301
 }
 fn picks_clause_local() {
-    let r = handle Pick { fn pick() {   //~ W0204
+    let r = handle Pick { fn pick() {   //~ old: W0204
         let w = Vec.new()
         w.push(4)
-        resume(&w[0])
+        resume(&w[0])   //~ W0301 old:
     } } in pick()
-    print(r)
+    print(r)   //~ W0301 old:
 }
 fn picks_from_caller(v: &Vec<u64>) / mut(v), Pick {
     let r = pick()
@@ -133,7 +133,7 @@ fn mutates_through(c: &Counter) / mut(c) {
     print(first)   //~ W0301
 }
 fn mutates_undeclared(c: &Counter) / async {
-    handle PickC { fn pick_c() { resume(c) } } in {   //~ W0703
+    handle PickC { fn pick_c() { resume(c) } } in {   //~ old: W0703
         let r = pick_c()
         r.items.clear()   //~ W0703
     }

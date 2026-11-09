@@ -183,6 +183,7 @@ fn stated(
     out.put_fns.clone_from(&body.put_fns);
     out.lends.clone_from(&body.lends);
     out.gives_frame = body.gives_frame;
+    out.caller_muts = body.caller_muts;
     out.pins = body.pins;
     out.joins.clone_from(&body.joins);
     out.abort_joins.clone_from(&body.abort_joins);
@@ -230,6 +231,7 @@ fn summary_of(
             }
             sig::put_parts(&mut sum, inf);
             sum.gives_frame = inf.gives_frame;
+            sum.caller_muts = inf.caller_muts;
             sum.pins = inf.pins || sig.effects.pins;
             sum.joins.clone_from(&inf.joins);
             sum.abort_joins.clone_from(&inf.abort_joins);

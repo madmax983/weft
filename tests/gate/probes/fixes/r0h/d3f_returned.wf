@@ -1,0 +1,14 @@
+// The callee gives back the closure of the clause; the site clears the
+// vector and runs the closure, which reads through a reference into it.
+effect Get { fn get() -> fn() }
+fn get_it() -> fn() / Get { get() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Get { fn get() { resume(|| print(r)) } } in {
+        let f = get_it()
+        v.clear()
+        f()
+    }
+}

@@ -1106,3 +1106,47 @@ fn a_task_of_a_closure_whose_value_holds_its_environment_changes_the_environment
         assert_eq!(got, want, "{name}");
     }
 }
+
+/// Stage R0h: a function value in an argument of an operation of a handler of
+/// a caller (C2), and a clause of a local handler of a caller that gets a
+/// function value of the callee or gives a reference back to it (D3). The
+/// clause of a caller is code of a caller: it runs the value more than once,
+/// as a task in the worst way if the value can race. A reference that a
+/// clause gives back is a place of a caller of the callee at the call: a
+/// change through it changes the place there. A value that the code can keep
+/// with a reference in it, and a value that a clause gives back and that can
+/// race, keep the old pipeline.
+#[test]
+fn function_values_and_references_across_operations_have_full_facts() {
+    for (name, want) in [
+        ("c2_mut_local.wf", vec![("W0403", 8), ("W0405", 8)]),
+        ("c2_mut_local_ok.wf", vec![]),
+        ("c2_once_twice.wf", vec![("W0502", 8)]),
+        ("d3p_callee_fn.wf", vec![("W0502", 8)]),
+        ("d3p_callee_fn_ok.wf", vec![]),
+        ("d3r_callee_mut.wf", vec![("W0301", 14)]),
+        ("d3r_callee_mut_ok.wf", vec![]),
+        ("d3r_twice.wf", vec![("W0301", 7)]),
+        ("d3r_clause_local_ok.wf", vec![]),
+    ] {
+        let (got, fallback, _) = stage_codes("r0h", name);
+        assert!(fallback.is_none(), "{name}: {fallback:?}");
+        let want: Vec<(String, usize)> = want.iter().map(|&(c, l)| (c.to_string(), l)).collect();
+        assert_eq!(got, want, "{name}");
+    }
+    for (name, why) in [
+        ("c2_stored_ref.wf", "an operation gives to a handler"),
+        (
+            "d3f_mut_race.wf",
+            "gives a function value or a reference back",
+        ),
+        (
+            "d3f_reader_ok.wf",
+            "gives a function value or a reference back",
+        ),
+    ] {
+        let (_, fallback, _) = stage_codes("r0h", name);
+        let fallback = fallback.unwrap_or_default();
+        assert!(fallback.contains(why), "{name}: {fallback}");
+    }
+}

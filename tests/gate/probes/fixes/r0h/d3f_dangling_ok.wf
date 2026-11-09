@@ -1,0 +1,10 @@
+// The twin of `d3f_dangling.wf`: the callee runs the closure before the
+// change.
+effect Get { fn get() -> fn() }
+fn run_before(v: &Vec<u64>) / Get, mut(v) { let g = get(); g(); v.clear() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Get { fn get() { resume(|| print(r)) } } in { run_before(&v) }
+}

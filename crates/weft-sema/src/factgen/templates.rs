@@ -4427,6 +4427,101 @@ fn call_value(
 ) -> R {
     let body = em.body;
     let out = transfer::value_out(&mut em.cx(), body, block, st, callee, args, dest)?;
+    // The parameter types of the function type of the callee (W0705).
+    let fn_params = match callee {
+        Operand::Copy(q) | Operand::Move(q) => em
+            .place_ty(q)
+            .and_then(|t| match em.tys.try_get(t) {
+                Some(weft_ir::Ty::Fn(f)) => Some(f.params.clone()),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        Operand::Const(_) => Vec::new(),
+    };
+    let ret = out.ret.clone();
+    value_run(
+        em,
+        nodes,
+        st,
+        block,
+        (&out, &ret),
+        Some(callee),
+        &fn_params,
+        (args, dest, origin),
+    )
+}
+
+/// The runs of the function values that the clauses of the local handlers
+/// of the call of block `block` give back to the callee with `resume`
+/// (stage R0h, D3 form F).
+///
+/// `clause::call_clauses` keeps them in `Handlers::given_back`. The callee runs each one as code of a caller
+/// runs a value that it gets (`transfer::given_back_apps`): at `Main` and at
+/// `Ret`, on some paths only, with the places that the call gives. No such
+/// value can race (the analysis refuses one), so the runs have no task
+/// nodes.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn given_back_runs(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    origin: weft_ir::Span,
+) -> R {
+    let body = em.body;
+    let Some((fns, refs)) = em.hx.given_back.get(&(body, block)).cloned() else {
+        return Ok(());
+    };
+    let Some(t) =
+        em.p.body(body)
+            .and_then(|b| b.blocks.get(block.index()))
+            .map(|b| b.term.kind.clone())
+    else {
+        return Ok(());
+    };
+    let gv = crate::analysis::clause::given(&mut em.cx(), body, block, st, &t)?;
+    let multi = transfer::callee_multi(&em.cx(), &t);
+    let inst = transfer::run_inst(body, block);
+    em.hx.given_refs.insert(inst, refs);
+    let apps = transfer::given_back_apps(&mut em.cx(), (body, block), st, &fns, &gv.places, multi)?;
+    let at = span(origin);
+    let tasks = std::mem::take(&mut em.task_nodes);
+    let frames = emit_apps(em, nodes, st, block, &[], &apps, at, &[], &[]);
+    em.task_nodes = tasks;
+    let frames = frames?;
+    if let Some(r) = nodes.ret {
+        apps_at_ret(em, r, st, &apps, at)?;
+    }
+    end_frames(em, nodes, &frames);
+    Ok(())
+}
+
+/// The facts of a run node of a function value (`call_value`), or of the
+/// code of a clause of a handler of a caller that runs the function values
+/// of the arguments of a perform (stage R0h, `callee` is `None`): the
+/// summaries `out` of the values, the result `ret`, the parameter types
+/// `fn_params` of the function type.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a value that runs a value of its
+/// arguments as a task where the node has no task nodes, and the errors of
+/// α.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn value_run(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    (out, ret): (&transfer::ValueOut, &Tree),
+    callee: Option<&Operand>,
+    fn_params: &[TyId],
+    (args, dest, origin): (&[Operand], &Place, weft_ir::Span),
+) -> R {
+    let body = em.body;
     // A function value whose code runs a value of its arguments as a task:
     // the values apply at the task nodes of the call, one slot for each
     // argument that can hold a function value (stage R0f). With no task
@@ -4445,10 +4540,12 @@ fn call_value(
     };
     let main = nodes.main;
     let at = span(origin);
-    operand_moves(em, main, st, callee, false, true)?;
-    if let (Operand::Copy(q) | Operand::Move(q), true) = (callee, out.once) {
-        if let Some(v) = em.base_var(body, q)? {
-            em.facts.moved_at.push((v, main));
+    if let Some(callee) = callee {
+        operand_moves(em, main, st, callee, false, true)?;
+        if let (Operand::Copy(q) | Operand::Move(q), true) = (callee, out.once) {
+            if let Some(v) = em.base_var(body, q)? {
+                em.facts.moved_at.push((v, main));
+            }
         }
     }
     let mut spans = Vec::new();
@@ -4507,18 +4604,7 @@ fn call_value(
         }
         None => emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?,
     };
-    // The parameter types of the function type of the callee (W0705).
-    let fn_params = match callee {
-        Operand::Copy(q) | Operand::Move(q) => em
-            .place_ty(q)
-            .and_then(|t| match em.tys.try_get(t) {
-                Some(weft_ir::Ty::Fn(f)) => Some(f.params.clone()),
-                _ => None,
-            })
-            .unwrap_or_default(),
-        Operand::Const(_) => Vec::new(),
-    };
-    fn_arg_effects(em, main, st, &fn_params, args, &spans)?;
+    fn_arg_effects(em, main, st, fn_params, args, &spans)?;
     // The label of the node names the callee (`nodes::callee_names`).
     let name = em
         .facts
@@ -4538,14 +4624,14 @@ fn call_value(
             continue;
         }
         given_out(em, st, nodes, (&app.summary, &[]), args, (at, &name))?;
-        if let Some(c) = app.closure {
+        if let (Some(c), Some(callee)) = (app.closure, callee) {
             captures_given_out(em, st, nodes, (c, &app.summary), callee, (at, &name))?;
         }
     }
-    let drops = dropped_fn_args(em, (main, at, &name), st, &fn_params, args, &out.apps)?;
+    let drops = dropped_fn_args(em, (main, at, &name), st, fn_params, args, &out.apps)?;
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
-        bind_dest(em, r, st, dest, &out.ret)?;
+        bind_dest(em, r, st, dest, ret)?;
         let changed: Vec<PlaceId> = out
             .apps
             .iter()
@@ -5603,14 +5689,13 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
             }
         }
     };
-    // A handler can run a function value of an argument, drop it or run it
-    // more than once: the facts of a clause are stage F14.
-    for a in args {
-        if !transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
-            return Err(AlphaError::Later(
-                "a function value that an operation gives to a handler (stage F14)",
-            ));
-        }
+    // A handler of a caller can run a function value of an argument, drop
+    // it, keep it or run it more than once: the clause is code of a caller
+    // that gets the arguments (stage R0h, C2). A clause of a local handler
+    // that a captured capability runs in the closure keeps the old pipeline.
+    let code = transfer::op_fn_args(&mut em.cx(), body, st, (e, *op), args)?;
+    if code.is_some() && captured.is_some() {
+        return Err(AlphaError::Later(OP_FN_ARGS));
     }
     let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, e, *op, args)?;
     let n = nodes.main;
@@ -5619,12 +5704,15 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     if let weft_ir::CapOperand::Local(c) = cap {
         operand_moves(em, n, st, &Operand::Copy(c.clone()), false, false)?;
     }
-    for op in args {
-        operand_moves(em, n, st, op, false, true)?;
-        // The handler can read through the argument (hole N1).
-        let v = transfer::operand(&mut em.cx(), body, st, op)?;
-        let refs = named_refs(em, v.flat().refs);
-        deep_uses(em, n, st, op, &refs)?;
+    // The run of the code of the clause moves the arguments itself.
+    if code.is_none() {
+        for op in args {
+            operand_moves(em, n, st, op, false, true)?;
+            // The handler can read through the argument (hole N1).
+            let v = transfer::operand(&mut em.cx(), body, st, op)?;
+            let refs = named_refs(em, v.flat().refs);
+            deep_uses(em, n, st, op, &refs)?;
+        }
     }
     for (i, ps) in out.args.iter().enumerate() {
         let root = crate::body::roots::param(i);
@@ -5659,12 +5747,42 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     if let Some(k) = captured {
         clause_run_in_closure(em, n, st, k, (*op, args))?;
     }
-    if let Some(r) = nodes.ret {
-        held_refs(em, r, st, args)?;
-        bind_dest(em, r, st, dest, &out.ret)?;
+    match code {
+        // The code of the clause runs the values of the arguments; the
+        // result is the result of the operation or one of the values.
+        Some(ty) => {
+            let block = em.at.0;
+            let v = transfer::op_value_out(&mut em.cx(), (body, block), st, &ty, args)?;
+            let ret = Tree::leaf(out.ret.flat().joined(&v.ret.flat()));
+            let origin =
+                em.p.body(body)
+                    .and_then(|b| b.blocks.get(block.index()))
+                    .map_or_else(weft_ir::Span::default, |b| b.term.origin.span);
+            value_run(
+                em,
+                nodes,
+                st,
+                block,
+                (&v, &ret),
+                None,
+                &ty.params,
+                (args, dest, origin),
+            )?;
+        }
+        None => {
+            if let Some(r) = nodes.ret {
+                held_refs(em, r, st, args)?;
+                bind_dest(em, r, st, dest, &out.ret)?;
+            }
+        }
     }
     Ok(())
 }
+
+/// Why a perform through a captured capability of a local handler with a
+/// function value in an argument is not in scope (stage R0h: the clause runs
+/// in the closure, `clause_run_in_closure`, with no function values).
+const OP_FN_ARGS: &str = "a function value that an operation gives to a handler (stage F14)";
 
 /// The type parameters that make the closures of the value `v` linear in a
 /// generic body (`crate::props::GenericBody`, `docs/ir.md` 6.7): empty if

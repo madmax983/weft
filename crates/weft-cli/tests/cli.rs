@@ -1029,7 +1029,8 @@ fn oracle_turns_on_the_strict_run_time_checks() {
 fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     // Each group is on by default (stage F20, plan §2.6): a program with a
     // construct that the fact generator does not support yet (a clause that
-    // gives a function value back to the callee, a fallback of stage F16; a
+    // gives the callee a function value that can race, a fallback of stage
+    // F16 that stage R0h keeps; a
     // handler in a closure body is in scope from stage R0d) goes to the old
     // pipeline, and the command says why on standard error. A clean program
     // with a `multi` operation of a handler of a caller in a clause
@@ -1040,7 +1041,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         &[
             (
                 "nested_bad.wf",
-                "effect Get { fn get() -> fn() }\nfn get_it() -> fn() / Get { get() }\nfn quiet() { handle Get { fn get() { resume(|| print(1)) } } in { let f = get_it(); f() } }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
+                "effect Get { fn get() -> fn() }\nfn run_it() / Get { let g = get(); g() }\nfn quiet() { let u = Vec.new(); u.push(1); handle Get { fn get() { resume(|| u.clear()) } } in { run_it() } }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
             ),
             (
                 "nested_run.wf",

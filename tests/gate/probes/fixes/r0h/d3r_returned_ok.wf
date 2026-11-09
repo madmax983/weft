@@ -1,0 +1,13 @@
+// The twin of `d3r_returned.wf`: the site reads the reference before the
+// change.
+effect Pick { fn pick() -> &u64 }
+fn pass() -> &u64 / Pick { pick() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = pass()
+        print(r)
+        v.clear()
+    }
+}

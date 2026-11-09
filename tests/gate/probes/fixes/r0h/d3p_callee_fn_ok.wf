@@ -1,0 +1,11 @@
+// The twin of `d3p_callee_fn.wf`: the clause runs a reader of the callee.
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let n = 3
+    run(|| print(n))
+}
+fn main() {
+    let total = 0
+    handle Run { fn run(g) { g(); total += 1; resume(()) } } in { f() }
+    print(total)
+}

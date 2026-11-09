@@ -1,0 +1,15 @@
+// The twin of `d3r_callee_mut.wf`: the callee only reads through the
+// reference.
+struct Counter { items: Vec<u64> }
+effect PickC { fn pick_c() -> &Counter }
+fn count_picked() / PickC {
+    let r = pick_c()
+    print(r.items.len())
+}
+fn main() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(5)
+    let first = &c.items[0]
+    handle PickC { fn pick_c() { resume(&c) } } in count_picked()
+    print(first)
+}

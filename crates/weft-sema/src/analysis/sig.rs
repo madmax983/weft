@@ -359,6 +359,7 @@ fn body_worst_case(
     inf.assert = true;
     inf.multi = true;
     inf.gives_frame = true;
+    inf.caller_muts = true;
     inf.drops = (0..decl.generics).collect();
     inf.holds = (0..decl.generics).collect();
     inf.forks = (0..decl.generics).collect();
@@ -543,6 +544,9 @@ pub struct Inferred {
     /// The body can give a place of its own frame to an operation of a
     /// caller (`Summary::gives_frame`, plan stage F15).
     pub gives_frame: bool,
+    /// The body changes a place of a caller (`Summary::caller_muts`, stage
+    /// R0h).
+    pub caller_muts: bool,
     /// The body can start a pinned task (`Summary::pins`, plan stage F18).
     pub pins: bool,
     /// The task handle parameters that the body joins on each path
@@ -724,6 +728,10 @@ impl Inferred {
         }
         if o.gives_frame && !self.gives_frame {
             self.gives_frame = true;
+            grew = true;
+        }
+        if o.caller_muts && !self.caller_muts {
+            self.caller_muts = true;
             grew = true;
         }
         if o.pins && !self.pins {
@@ -978,6 +986,7 @@ pub fn from_signature(
         // A function with no body that performs can give a place of its
         // frame to an operation (plan stage F15).
         inf.gives_frame = !inf.named.is_empty();
+        inf.caller_muts = !inf.named.is_empty();
     }
     // A foreign function that changes an `rc` object can put each argument
     // there (stage F13, as `Lower::group_stores_of`).
@@ -1100,6 +1109,7 @@ pub fn build(
     }
     put_parts(&mut s, inf);
     s.gives_frame = inf.gives_frame;
+    s.caller_muts = inf.caller_muts;
     s.pins = inf.pins;
     s.joins.clone_from(&inf.joins);
     s.abort_joins.clone_from(&inf.abort_joins);

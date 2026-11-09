@@ -3038,6 +3038,57 @@ As built (plan stage R0g: continuations and capabilities in closures):
   The span is the clause, and the texts are those of the old lowering
   (`check_cont_escape`, `cont_to_body`).
 
+As built (plan stage R0h: function values and references across operations):
+
+- A function value in an argument of an operation of a handler of a caller (C2,
+  `templates::perform`). The body does not know the clause, so the clause is code of a
+  caller that gets the arguments: the perform node applies `FnVal::Unknown` with
+  `Given::Args` and the types of the operation (`transfer::op_value_out`, `OpTy`; no row,
+  no environment, `multi` only for a `multi` operation). So each value of the arguments
+  runs more than once, also after the other ones, and a value that can race
+  (`task_unsafe`) is a task of the node in the worst way (W0401, W0403, W0405), as for a
+  call of a function value. A perform to a caller gets task nodes for each argument that
+  can hold a function value (`frames::perform_to_caller`, `nodes::phases_with`). The
+  result of the operation joins the result of the code (the clause can resume with one
+  of the values). The facts of the perform itself do not change. `templates::value_run`
+  is the part of `call_value` that both use.
+- A value that the code of a caller can keep and run after a change that the facts do
+  not see stays with the old pipeline: a closure that does not race and that has a
+  capture whose type holds a reference or a function value (`transfer::kept_value_risk`).
+  The facts of code of a caller have no part for a value that it keeps (plan stage R0f,
+  open item 1). A value that races is no risk: the worst way rejects it. A perform
+  through a captured capability of a local handler keeps the reason too (its clause runs
+  in the closure, `clause_run_in_closure`, with no function values).
+- A clause of a local handler that a call runs (D3, `clause::call_clauses`; before,
+  `clause::given_ops` sent each such call to the old pipeline):
+  - a parameter of the operation that holds a function value: the value is a value of
+    the callee. In the clause it is code of a caller whose environment is the places that
+    the call gives (`clause::Given::values`): a run of it lends them. The callee checks
+    its own value as the code of a caller of its perform (C2).
+  - a reference result: σ(`Caller`) of the call also names the places that the clauses
+    can give to `resume` (`clause::back_places`, kept in `Handlers::back` by run node):
+    the wildcard places of each local of the site that a clause names, what their
+    references point into, their `rc` groups, the places that the call gives, and what
+    the values of the clauses at `resume` pointed into in the runs so far
+    (`Handlers::back_refs`, also a local of a clause). The summary part `caller_muts`
+    (the body changes a place of a caller) changes each such place at the call, the call
+    reads them (`handlers::call_clauses`), and the result of the call can point into
+    them (`transfer::back_ret`): a signature cannot name such a place. A call in a closure
+    body whose clause names a local of another frame keeps the reason.
+  - a function value result: the call runs each value that a clause gives to `resume`
+    as code of a caller runs a value that it gets (`transfer::given_back_apps`): at
+    `Main` and at `Ret`, on some paths only, with the places that the call gives, and the
+    result of the call can be one of them (`Handlers::given_back`,
+    `templates::given_back_runs`). A closure of a clause has no operand at the call: its
+    environment is what the values point into (`Handlers::given_refs`, `made_sigma`). A
+    value that can race, that the callee could keep with a reference in it, or that is
+    `once` keeps the reason: the call has no task nodes for the worst way, no part for a
+    kept value, and no operand that a second run uses. Only a call that can perform the
+    operation counts (`clause::call_performs`: a known closure or item whose summary does
+    not perform the effect and runs no value gives the clause nothing).
+- The stub of the fallback tests (`scope.rs`, `cli.rs`) is now a clause that gives the
+  callee a closure that can race.
+
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
 

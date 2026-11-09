@@ -361,7 +361,15 @@ pub fn phases_with(t: &TermKind, tasks: u32) -> Vec<Phase> {
             v.push(Ret);
             v
         }
-        TermKind::Perform { .. } | TermKind::Join { .. } => vec![Main, Ret],
+        // The code of a clause of a handler of a caller can run a function
+        // value of an argument as a task (stage R0h).
+        TermKind::Perform { .. } => {
+            let mut v = vec![Main];
+            v.extend((1..=tasks).map(Task));
+            v.push(Ret);
+            v
+        }
+        TermKind::Join { .. } => vec![Main, Ret],
         TermKind::Handle { .. } => vec![Main, Exit, Post],
         TermKind::Scope { .. } => vec![Main, Exit, FrameEnd],
         _ => vec![Main],

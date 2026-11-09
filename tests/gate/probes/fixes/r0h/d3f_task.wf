@@ -1,0 +1,10 @@
+// The callee runs the closure of the clause on a task, while the site
+// changes the vector that the closure reads.
+effect Get { fn get() -> fn() }
+fn spawn_it() / Get, async { let g = get(); scope { s => s.spawn(g) } }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| print(v.len())) } } in { spawn_it() }
+    v.clear()
+}
