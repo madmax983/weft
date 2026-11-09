@@ -2006,6 +2006,13 @@ pub struct Applied {
     /// (`factgen::templates::deep_uses`, class C-RR of the self-attack of
     /// stage F16).
     pub deep: Vec<PlaceId>,
+    /// The places that the tasks of a callee change while the callee runs
+    /// the value (`Run::during` of the callee, stage R0e fix, OR7). The run
+    /// node checks the places of the value against them (W0312), and a
+    /// value of the interface gives them to the part `runs` of the body.
+    pub during_writes: Vec<PlaceId>,
+    /// The places that the tasks of the callee read while it runs the value.
+    pub during_reads: Vec<PlaceId>,
 }
 
 /// The places that the references of the captures of closure `decl` point
@@ -2800,6 +2807,25 @@ type RunSource = (BTreeSet<FnVal>, Operand, BodyId);
 type RunValues<'a> =
     dyn FnMut(&mut Cx<'_>, &super::summary::Run) -> Result<Option<RunSource>, AlphaError> + 'a;
 
+/// The places that σ `sigma` gives to the interface places `ips`, sorted.
+///
+/// # Errors
+///
+/// The errors of σ.
+fn all_iplaces(
+    cx: &mut Cx<'_>,
+    sigma: &super::apply::Sigma,
+    ips: &[super::summary::IPlace],
+) -> Result<Vec<PlaceId>, AlphaError> {
+    let mut out = Vec::new();
+    for ip in ips {
+        out.extend(super::apply::iplaces(cx, sigma, ip)?);
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// Applies the runs `runs` of a summary with σ `sigma` at run node `r`
 /// (part `runs`): each function value that the parameter or the capture
 /// holds applies its summary with the places of the run (`run.args`). `of`
@@ -2871,6 +2897,10 @@ fn apply_runs(
         }
         others.sort();
         others.dedup();
+        // The places of the tasks of the callee that run while it runs the
+        // value (`Run::during`, stage R0e fix, OR7).
+        let during_writes = all_iplaces(cx, sigma, &run.during.writes)?;
+        let during_reads = all_iplaces(cx, sigma, &run.during.reads)?;
         let env: Vec<PlaceId> = sigma
             .cap_helds
             .iter()
@@ -2912,6 +2942,14 @@ fn apply_runs(
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
                 a.then |= run.then;
+                for (have, more) in [
+                    (&mut a.during_writes, &during_writes),
+                    (&mut a.during_reads, &during_reads),
+                ] {
+                    have.extend(more.iter().copied());
+                    have.sort();
+                    have.dedup();
+                }
                 // The callee runs the value as a task: the run node applies
                 // it at its task nodes (plan stage F19). A value that a value
                 // of the callee runs as a task (a closure with a scope that
@@ -3374,6 +3412,8 @@ fn apply_value(
                 task_run: None,
                 callee_param: None,
                 closure: None,
+                during_writes: Vec::new(),
+                during_reads: Vec::new(),
             });
             let places = match given {
                 Given::Args(args) => {
@@ -3496,6 +3536,8 @@ fn apply_value(
                 task_run: None,
                 callee_param: None,
                 closure: None,
+                during_writes: Vec::new(),
+                during_reads: Vec::new(),
             });
             apply_runs(
                 cx,
@@ -3703,6 +3745,8 @@ fn apply_value(
                 task_run: None,
                 callee_param: None,
                 closure: Some(*c),
+                during_writes: Vec::new(),
+                during_reads: Vec::new(),
             });
             // A closure that a callee made holds the values that it runs in
             // its own value: a run of a capture runs each value of the callee

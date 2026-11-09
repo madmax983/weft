@@ -1,0 +1,17 @@
+// OR7 fix: the caller captures a reference parameter; the callee clears `v`, then runs the value, with no task (no race).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v
+}
+fn call_with(f: fn(), v: &Vec<u64>) / mut(v) {
+    v.clear()
+    f()
+}
+fn rd(w: &Vec<u64>) {
+    call_with(|| print(w.len()), w)
+}
+fn main() {
+    let w = mk_v()
+    rd(&w)
+}

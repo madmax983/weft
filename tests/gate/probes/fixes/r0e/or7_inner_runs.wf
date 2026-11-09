@@ -1,0 +1,18 @@
+// OR7 fix: the callee spawns the task; an inner callee runs the value (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn run(f: fn()) { f() }
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        run(f)
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}

@@ -2821,6 +2821,34 @@ scope):
   the scope. A drop pair at the terminator (`vars.rs`, as for `detach`) gives W0601 for a
   linear result (the old pipeline misses this: `fixes/r0e/u04_linear_result.wf`).
 
+As built (stage R0e fix, OR7: a task of a callee and a function value that the callee
+runs). The alias check of a call (W0312) compares the places of the arguments. A closure
+that captures a local of the caller by reference gives the call only the place of its
+environment, not the local: the run of the value at the call (part `runs`) checks what
+the value accesses, in the order of the code of the callee. That order does not hold
+when a task of the callee runs while the callee runs the value: before the fix the
+caller missed the race (`fixes/r0e/or7_local_ref.wf`; the old pipeline gives W0312, and a
+reference parameter that the closure captures gave W0312 in the `ir` pipeline too). The
+new field `Run::during` of the part `runs` (6.7) has the interface places that the tasks
+of the body change and read while the body runs the value as plain code: the tasks that
+are active at a node of `run_at` (`tasks::run_during`, computed when the facts of the
+component are whole; the two tasks of a `WaitTask` do not count), and σ of the part
+`during` of each callee that runs the value (`Applied::during_writes`,
+`Applied::during_reads`, `Em::run_during`). A call that applies a value that the body
+knows (`templates::during_check`): if a task changes a place, each place that the value
+accesses (but the places that the callee gives to the run) is a `call_arg` of the call
+with the root of the function value argument (`roots::fn_arg`); if a task reads a place,
+each place that the value changes is a `call_mut` with that root. So a change of the
+callee that overlaps a place of the value is W0312 at the call, as in the old pipeline.
+A clause of a local handler of an effect that the value performs runs while the tasks
+run too: the call gives their places to the tasks of `wait_tasks` (as the part `waits`
+does, W0405). A task that ends before the run, or a run with no task, stays clean
+(`or7_local_ref_ok.wf`, `or7_seq_ok.wf`). Precision losses: a call where a task runs
+during the run compares each place of the value with each change of the callee, also a
+change before the task starts; a closure of the callee that spawns on a scope of the
+callee and joins the task before it runs the value (`or7_maker_scope_ok.wf`): the
+summary of the closure does not order the spawn, the join and the run.
+
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
 
@@ -3831,7 +3859,7 @@ the body that leaves it), `Caller` (a place of a caller), `Group(adt)`.
 | `performs` | the operations and their capability interface, with their arguments | `performs`, `op_args`, `cap_runs`, `callee_ops` |
 | `aborts` | the abort destinations (by capability interface), `assert`, failures (`raises`) | `abortive`, `abortive_local`, `raises` |
 | `multi` | the capability interfaces through which the body can resume more than once | `multi`, `reach_repeats` |
-| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), and if the body can perform or abort after the run (`then`, follow-up F19.4) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
+| `runs` | each function value of the interface that the body runs: once or many, as a task or not, with which places (and, for a task, the places that the body writes and reads while it runs), if the body can perform or abort after the run (`then`, follow-up F19.4), and the places that the tasks of the body write and read while it runs the value as plain code (`during`, stage R0e fix) | `lent`, `repeats`, `task_runs`, `op_fns`, `held_run` |
 | `waits` | for each effect: the places that the tasks that can run while the body waits at an operation of the effect for a handler of a caller change and read (follow-up F19.5, 6.4). A key with no places: such a task runs, but it touches no place of the interface | none (the old pipeline misses R3-1 and R3-2) |
 | `tasks` | the footprints of the tasks that the body starts in a scope that it does not own, and the capabilities that they hold; the task handles of the interface (parameters, captures) that the body joins on each normal path (a must part: `joined_at` at the run node, O3-9), and those of them that it joins on each path of an abort too (`abort_joins`, a must part, follow-up F19.3: else `joined_at` at `Ret` of the run node) | `spawns`, `tasks`, `task_effects`, `pins` |
 | `ret` | the abstract value of `_0`: places, closures (their environment in interface terms), capabilities, tasks (`ret.tasks`, follow-up F19.3: the spawn sites of the part `tasks` whose handle `_0` holds at each `Return`, and no other value), results of code of a caller | `ret`, `RetFn`, `ret_refs` |

@@ -905,6 +905,126 @@ pub fn task_hows(
     out.into_values().collect()
 }
 
+/// The places of the tasks that run while a body runs one function value of
+/// its interface as code that is not a task.
+///
+/// The places are places of the facts of the body: the part
+/// `super::summary::Run::during` before the interface map (stage R0e fix,
+/// OR7).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RawDuring {
+    /// The parameter, or the capture of a closure body.
+    pub param: u32,
+    /// True for a capture.
+    pub capture: bool,
+    /// The places that the tasks change.
+    pub writes: BTreeSet<weft_facts::PlaceId>,
+    /// The places that the tasks read.
+    pub reads: BTreeSet<weft_facts::PlaceId>,
+}
+
+/// The entry of the value `param` (a capture with `capture`) of `out`.
+fn during_entry(
+    out: &mut std::collections::BTreeMap<(u32, bool), RawDuring>,
+    param: u32,
+    capture: bool,
+) -> &mut RawDuring {
+    out.entry((param, capture)).or_insert_with(|| RawDuring {
+        param,
+        capture,
+        ..RawDuring::default()
+    })
+}
+
+/// The places of the tasks that run while the body of the facts `facts`
+/// runs each function value of its interface as code that is not a task
+/// (part `runs`, `Run::during`; stage R0e fix, OR7).
+///
+/// `run_at` has each node that runs such a value (the parameter or
+/// capture, true for a capture, the node). A task is active at a node from
+/// the nodes after its `spawned_at` node to its `joined_at` nodes (the rule
+/// `active` of the spec). The changes and reads of each task that is active
+/// at a run node of a value (`task_writes`, `task_reads`) are the places of
+/// the value. The tasks of `skip` do not count (the tasks that stand for
+/// the code of a clause, `factgen::templates::WaitTask`). `inherited` has
+/// the places that a callee gives for a value that it runs while its own
+/// tasks run (the value, true for a capture, the place, true for a
+/// change).
+pub fn run_during(
+    facts: &weft_facts::FnFacts,
+    run_at: &[(u32, bool, weft_facts::NodeId)],
+    inherited: &[(u32, bool, weft_facts::PlaceId, bool)],
+    skip: &BTreeSet<weft_facts::TaskId>,
+) -> Vec<RawDuring> {
+    use std::collections::{BTreeMap, HashMap};
+    use weft_facts::{NodeId, TaskId};
+    let mut out: BTreeMap<(u32, bool), RawDuring> = BTreeMap::new();
+    for &(param, capture, q, write) in inherited {
+        let d = during_entry(&mut out, param, capture);
+        if write {
+            d.writes.insert(q);
+        } else {
+            d.reads.insert(q);
+        }
+    }
+    if !run_at.is_empty() && !facts.spawned_at.is_empty() {
+        let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+        for &(a, b) in &facts.cfg_edge {
+            succ.entry(a).or_default().push(b);
+        }
+        let mut ends: HashMap<TaskId, BTreeSet<NodeId>> = HashMap::new();
+        for &(t, n) in &facts.joined_at {
+            ends.entry(t).or_default().insert(n);
+        }
+        let mut starts: BTreeMap<TaskId, Vec<NodeId>> = BTreeMap::new();
+        for &(t, n) in &facts.spawned_at {
+            if !skip.contains(&t) {
+                starts.entry(t).or_default().push(n);
+            }
+        }
+        let runs: BTreeSet<NodeId> = run_at.iter().map(|&(_, _, n)| n).collect();
+        // The tasks that are active at each run node.
+        let mut on: HashMap<NodeId, Vec<TaskId>> = HashMap::new();
+        for (&t, ss) in &starts {
+            let none = BTreeSet::new();
+            let end = ends.get(&t).unwrap_or(&none);
+            let mut seen: BTreeSet<NodeId> = BTreeSet::new();
+            let mut work: Vec<NodeId> = ss
+                .iter()
+                .flat_map(|n| succ.get(n).into_iter().flatten().copied())
+                .collect();
+            while let Some(q) = work.pop() {
+                if !seen.insert(q) || end.contains(&q) {
+                    continue;
+                }
+                if runs.contains(&q) {
+                    on.entry(q).or_default().push(t);
+                }
+                work.extend(succ.get(&q).into_iter().flatten().copied());
+            }
+        }
+        for &(param, capture, n) in run_at {
+            let Some(ts) = on.get(&n) else {
+                continue;
+            };
+            let d = during_entry(&mut out, param, capture);
+            for &(t, q) in &facts.task_writes {
+                if ts.contains(&t) {
+                    d.writes.insert(q);
+                }
+            }
+            for &(t, q) in &facts.task_reads {
+                if ts.contains(&t) {
+                    d.reads.insert(q);
+                }
+            }
+        }
+    }
+    out.into_values()
+        .filter(|d| !d.writes.is_empty() || !d.reads.is_empty())
+        .collect()
+}
+
 /// The facts of the part `waits` that the fact generator records at the
 /// nodes of a body (follow-up F19.5, issue #50).
 #[derive(Clone, Debug, Default)]

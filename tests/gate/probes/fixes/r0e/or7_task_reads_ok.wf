@@ -1,0 +1,18 @@
+// OR7 fix: the task that reads `v` ends before the value pushes to `w` (clean).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn call_with(f: fn(), v: &Vec<u64>) / async {
+    scope { s =>
+        let t = s.spawn(|| print(v[0]))
+        t.join()
+    }
+    f()
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(|| w.push(3), &w)
+}

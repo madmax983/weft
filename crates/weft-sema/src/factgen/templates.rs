@@ -127,6 +127,11 @@ pub struct Em<'a> {
     /// node of the body and after whose run the callee can perform or abort
     /// (`Run::then` of the callee, follow-up F19.4).
     pub then_runs: Vec<(u32, bool)>,
+    /// The places that the tasks of a callee change (`true`) and read while
+    /// it runs a function value of the interface of the body (index,
+    /// capture): the part `during` of the runs of the callee (`Run::during`,
+    /// stage R0e fix, OR7). The body gives them to its own runs.
+    pub run_during: Vec<(u32, bool, PlaceId, bool)>,
     /// The task whose run `emit_apps` emits now, and if it is a `fork`
     /// branch: a run of a function value of the interface there is a run
     /// as a task (`task_runs`).
@@ -3725,6 +3730,93 @@ fn places_since(
     (writes, reads)
 }
 
+/// The check of a value that a callee runs while tasks of the callee run
+/// (`Applied::during_writes`, `Applied::during_reads`; stage R0e fix, OR7).
+///
+/// The facts from the marks `marks` (the lengths of `mutates_at`,
+/// `lends_mut` and `reads_at` before the facts of the run of `app`) on are
+/// the places that the value accesses. The places that the callee gives to
+/// the run (its arguments) are the places of the callee: its body checks
+/// them.
+///
+/// - A value of the interface of the body (`Applied::run`, code of a
+///   caller): the body gives the places of the tasks to its part `runs`
+///   (`Em::run_during`). The caller that gives the value checks it.
+/// - A value that the body knows: if a task changes a place, each place
+///   that the value accesses is an argument of the call (`call_arg`); if a
+///   task reads a place, each place that the value changes is a change of
+///   the call (`call_mut`). The root of these places is the root of the
+///   function value argument (`roots::fn_arg`), so a change of the callee
+///   (`call_mut` of a parameter, also the change of the task) that overlaps
+///   a place of the value is W0312, as for a value that points into an
+///   argument that the callee changes. The value runs while the tasks run,
+///   so the order of the code of the callee does not protect it.
+/// - A clause of a local handler of an effect that the value performs runs
+///   while the tasks run: the call gives their places to the tasks of
+///   [`wait_tasks`] (`Em::waits`), as the part `waits` does.
+fn during_check(
+    em: &mut Em<'_>,
+    main: NodeId,
+    app: &transfer::Applied,
+    marks: (usize, usize, usize),
+) {
+    if app.during_writes.is_empty() && app.during_reads.is_empty() {
+        return;
+    }
+    if let Some(r) = &app.run {
+        for (ps, write) in [(&app.during_writes, true), (&app.during_reads, false)] {
+            em.run_during
+                .extend(ps.iter().map(|&q| (r.param, r.capture, q, write)));
+        }
+    }
+    if app.code {
+        return;
+    }
+    let given: std::collections::BTreeSet<PlaceId> =
+        app.sigma.args.iter().flatten().copied().collect();
+    let roots = &*em.roots;
+    let facts = &*em.facts;
+    let keep = |q: PlaceId| {
+        !given.contains(&q)
+            && facts.places.get(q.index()).is_none_or(|i| {
+                !matches!(
+                    roots.role(i.root),
+                    Some(super::alpha::Role::Caller | super::alpha::Role::Frame(_))
+                )
+            })
+    };
+    let (writes, reads) = places_since(facts, marks, keep);
+    let root = crate::body::roots::fn_arg(app.callee_param.map_or(0, |j| j as usize));
+    if !app.during_writes.is_empty() {
+        let mut all: Vec<PlaceId> = writes.iter().chain(&reads).copied().collect();
+        all.sort();
+        all.dedup();
+        em.facts
+            .call_arg
+            .extend(all.into_iter().map(|q| (main, q, root)));
+    }
+    if !app.during_reads.is_empty() {
+        em.facts
+            .call_mut
+            .extend(writes.iter().map(|&q| (main, q, root)));
+    }
+    let effects: std::collections::BTreeSet<&str> = app
+        .summary
+        .performs
+        .iter()
+        .map(|pf| pf.effect.as_str())
+        .filter(|&e| e != ASYNC)
+        .collect();
+    for e in effects {
+        em.waits.places.push((main, e.to_string(), None, true));
+        for (ps, write) in [(&app.during_writes, true), (&app.during_reads, false)] {
+            em.waits
+                .places
+                .extend(ps.iter().map(|&q| (main, e.to_string(), Some(q), write)));
+        }
+    }
+}
+
 /// The part `waits` of a summary that node `main` applies with σ `sigma`
 /// (follow-up F19.5): for each effect, the places that σ gives there
 /// (`Em::waits`). A node of a task does not wait for a handler of this
@@ -4463,6 +4555,7 @@ fn emit_apps(
             if first {
                 waits_at(em, main, &app.summary.waits, &app.sigma)?;
             }
+            let mutated = em.facts.mutates_at.len();
             let lent = em.facts.lends_mut.len();
             let read = em.facts.reads_at.len();
             let multi = em.facts.multi_at.len();
@@ -4537,6 +4630,11 @@ fn emit_apps(
                         *at = main;
                     }
                 }
+            }
+            // The tasks of the callee that run while it runs the value
+            // (`Run::during`, stage R0e fix, OR7).
+            if first && em.in_task.is_none() {
+                during_check(em, main, app, (mutated, lent, read));
             }
             // The caller of the body does not apply this value again (no
             // entry of `runs`): its lends go into the summary of the body

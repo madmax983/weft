@@ -9596,3 +9596,39 @@ files = [
 ]
 reason = "stage R0e: programs with a scope or a `fork` in a closure body, or with a spawn that does not name its scope, come into scope. task_effects (class F19-SIG-TASKEFF): a standard effect of a task in a closure body goes to the root handlers of the task (the run prints the root `Log`, `r0e/t/te3.wf`), so the summary of the closure has no part `task_effects`; pins: the old inference pins a task whose closure a closure made, the `ir` pipeline follows the closure (`u09`, `a08`, `f3_6`), and pins a task that runs code of a caller (`plain_callee`); raises, named, muts: a closure that no one runs gives nothing to its maker (`W0314_p3243`, `W0405_p43090` `h1`), and a scope with no task in a closure does not raise (`l9`, stage C1.5: as a scope with no task in a function body); multi: the `multi` of a scope capability across a `multi` operation in a closure (`e2_tuple`); passthrough, tasks, task_runs, holds, drops, repeats: the run of a closure that the result gives back runs its tasks (`spawn_drop`, `detach_drop`, `c10.wf`, `param_in_sim`); muts of `join_it`: a `join` changes the place of the handle (C5 of the fact oracle)"
 stage = "R0e"
+
+# Stage R0e fix (OR7): a task of a callee runs while the callee runs a
+# function value that captures a local of the caller (Run::during). The
+# lost-clean rows wait for the independent review of the R0e fix.
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/191_value_runs_with_tasks.wf"]
+codes = ["W0312", "W0405"]
+reason = "stage R0e fix (OR7): the corpus file of a value that a callee runs while a task of the callee runs. Both pipelines give W0312 at the calls where the task clears the vector that the value reads (`local_capture`, `field_capture`, `through_callee`, `in_struct`, `in_sim`). The old pipeline also gives W0312 at the calls where the task ends before the run, where the callee has no task, and where the value reads another field (`local_capture_joined`, `local_capture_no_task`, `other_field`): no race, the `ir` pipeline accepts them (its precision of C3). The `ir` pipeline gives W0405 in `clause_reads`: the clause of the local handler runs while the task clears the vector that the clause reads (`fixes/r0e/or7_handler_value.wf` faults at run time); the old pipeline misses it. Rejected in both"
+stage = "R0e fix"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/or7_fork.wf",
+    "tests/gate/probes/fixes/r0e/or7_fork_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_with_task.wf",
+    "tests/gate/probes/fixes/r0e/or7_with_task_direct.wf",
+    "tests/gate/probes/fixes/r0e/or7_maker_scope_runner.wf",
+]
+codes = ["W0312", "W0405"]
+reason = "stage R0e fix (OR7): the value runs as a task of the callee, or the task of a closure of the callee races with the closure body. The codes of the `ir` pipeline at R0e: W0405 at the `fork` or at the call of the runner (`TaskHow::with`), W0403 as the old pipeline; the old pipeline gives W0312 at the call of the caller in place of (or with) W0405. `or7_maker_scope_runner` gets W0312 at the call too (the fix: a task of the callee runs while the callee runs the value). The oracle finds the race in `or7_fork`, `or7_with_task`, `or7_with_task_direct` and `or7_maker_scope_runner`; `or7_fork_ok` has no fault and both pipelines reject it (W0403). Rejected in both"
+stage = "R0e fix"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0e/or7_local_ref_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_seq_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_two_values_ok.wf",
+    "tests/gate/probes/fixes/r0e/or7_field_ok.wf",
+]
+reason = "stage R0e fix (OR7): the clean twins of the probes of the fix. The old pipeline gives W0312: the closure argument captures the local that the callee changes through a reference argument. The `ir` pipeline accepts them, as at R0e (its precision since C3): the task ends before the run (`or7_local_ref_ok`), the callee has no task (`or7_seq_ok`), the value that reads the local runs before the task starts (`or7_two_values_ok`), or the value reads another field than the task changes (`or7_field_ok`). The interpreter runs each program with no fault (seeds 1 to 3, both engines, `ereview/ev.sh`)"
+signed_by = "UNSIGNED: the author of the R0e fix; the independent review must sign this row or reject it"
+stage = "R0e fix"

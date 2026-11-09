@@ -1,0 +1,13 @@
+// OR7 fix: a callee task changes an `rc` object while the value reads it through another handle (W0312 or W0405).
+struct Box2 { data: Vec<u64> }
+fn call_with(f: fn(), b: Rc<Box2>) / async, mut(Box2.data) {
+    scope { s =>
+        s.spawn(|| b.data.clear())
+        f()
+    }
+}
+fn main() / async, mut(Box2.data) {
+    let b = Rc.new(Box2 { data: [1, 2] })
+    let c = b.clone()
+    call_with(|| print(c.data[0]), b)
+}

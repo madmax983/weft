@@ -1,0 +1,13 @@
+// OR7 fix: the analog for a handler: the task ends before the value fails (clean).
+struct Stats { count: u64 }
+fn work(f: fn(), r: &Stats) / fail, async, clock, mut(r) {
+    scope { s =>
+        let t = s.spawn(|| r.count += 1)
+        t.join()
+    }
+    f()
+}
+fn main() / async, clock {
+    let st = Stats { count: 0 }
+    handle Fail { fn fail(m) { print(st.count) } } in { work(|| fail("x"), &st) }
+}

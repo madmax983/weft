@@ -1,0 +1,18 @@
+// OR7 fix: the caller is a closure that captures the local (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        f()
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    let k = || call_with(|| print(w[0]), &w)
+    k()
+}

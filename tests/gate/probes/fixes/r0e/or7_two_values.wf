@@ -1,0 +1,18 @@
+// OR7 fix: the callee runs one value before the task and one value while it runs (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn call_with(f: fn(), g: fn(), v: &Vec<u64>) / async, mut(v) {
+    f()
+    scope { s =>
+        s.spawn(|| v.clear())
+        g()
+    }
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(|| print(w.len()), || print(w[0]), &w)
+}

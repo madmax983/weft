@@ -1,0 +1,144 @@
+// Stage R0e fix (OR7): a callee runs a function value while a task of the
+// callee runs. The value reads a local of the caller through a capture, and
+// the task changes the same place through a reference argument: W0312 at the
+// call, as for a value that points into an argument that the callee changes.
+// A task that ends before the run, or a run with no task, is clean in the ir
+// pipeline (the old pipeline rejects each call). A clause of a local handler
+// that the value runs through a perform runs while the task runs too (W0405).
+struct W { a: Vec<u64>, b: Vec<u64> }
+struct J { f: fn() }
+effect Note { fn note() }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// The task clears `v` while the callee runs `f`.
+fn clear_while(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        f()
+    }
+}
+
+// The task ends before the callee runs `f`.
+fn clear_then(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        t.join()
+    }
+    f()
+}
+
+// No task: the callee clears `v`, then runs `f`.
+fn clear_no_task(f: fn(), v: &Vec<u64>) / mut(v) {
+    v.clear()
+    f()
+}
+
+// The task only reads `v`.
+fn read_while(f: fn(), v: &Vec<u64>) / async {
+    scope { s =>
+        s.spawn(|| print(v[0]))
+        f()
+    }
+}
+
+// The callee gives the value to a callee with the task.
+fn pass_on(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    clear_while(f, v)
+}
+
+// The value is in a struct field.
+fn clear_while_j(j: J, v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        let g = j.f
+        g()
+    }
+}
+
+// The scope is in a `sim.run` block.
+fn clear_in_sim(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    sim.run(seed: 1) {
+        scope { s =>
+            s.spawn(|| v.clear())
+            f()
+        }
+    }
+}
+
+// The value performs `Note` while the task runs.
+fn note_while(f: fn(), v: &Vec<u64>) / Note, async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        f()
+    }
+}
+
+// The task ends before the value performs `Note`.
+fn note_then(f: fn(), v: &Vec<u64>) / Note, async, mut(v) {
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        t.join()
+    }
+    f()
+}
+
+fn local_capture() / async {
+    let w = mk_v()
+    clear_while(|| print(w[0]), &w)   //~ W0312
+}
+
+fn local_capture_joined() / async {
+    let w = mk_v()
+    clear_then(|| print(w.len()), &w)   //~ old: W0312
+}
+
+fn local_capture_no_task() {
+    let w = mk_v()
+    clear_no_task(|| print(w.len()), &w)   //~ old: W0312
+}
+
+fn both_read() / async {
+    let w = mk_v()
+    read_while(|| print(w[1]), &w)
+}
+
+fn field_capture() / async {
+    let w = W { a: [1, 2], b: [3, 4] }
+    clear_while(|| print(w.a[0]), &w.a)   //~ W0312
+}
+
+fn other_field() / async {
+    let w = W { a: [1, 2], b: [3, 4] }
+    clear_while(|| print(w.b[0]), &w.a)   //~ old: W0312
+}
+
+fn through_callee() / async {
+    let w = mk_v()
+    pass_on(|| print(w[0]), &w)   //~ W0312
+}
+
+fn in_struct() / async {
+    let w = mk_v()
+    clear_while_j(J { f: || print(w[0]) }, &w)   //~ W0312
+}
+
+fn in_sim() / async {
+    let w = mk_v()
+    clear_in_sim(|| print(w[0]), &w)   //~ W0312
+}
+
+fn clause_reads() / async {
+    let w = mk_v()
+    handle Note { fn note() { print(w[0]); resume(()) } } in { note_while(|| note(), &w) }   //~ W0405 old:
+}
+
+fn clause_reads_after() / async {
+    let w = mk_v()
+    handle Note { fn note() { print(w.len()); resume(()) } } in { note_then(|| note(), &w) }
+}

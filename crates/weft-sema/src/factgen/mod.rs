@@ -568,6 +568,10 @@ pub struct Emitted {
     /// How the entry body runs each function value of the interface that it
     /// runs as a task (part `runs`, plan stage F19).
     pub task_hows: Vec<crate::analysis::tasks::RawHow>,
+    /// The places of the tasks that run while the entry body runs each
+    /// function value of the interface as code that is not a task
+    /// (`Run::during`, stage R0e fix, OR7).
+    pub run_during: Vec<crate::analysis::tasks::RawDuring>,
     /// The tasks that are `opaque` only because they run code of a caller.
     pub code_opaque: Vec<weft_facts::TaskId>,
     /// The effects that a task of the entry body performs through a
@@ -754,6 +758,8 @@ pub fn emit_parts(
     let abort_joins: Vec<u32>;
     let fn_then: Vec<(u32, bool)>;
     let task_hows: Vec<crate::analysis::tasks::RawHow>;
+    let fn_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
+    let fn_inherited: Vec<(u32, bool, PlaceId, bool)>;
     let task_effects: std::collections::BTreeSet<String>;
     let fn_waits: crate::analysis::tasks::WaitRaw;
     let mut w0314: Vec<(weft_ir::Span, String)>;
@@ -787,6 +793,7 @@ pub fn emit_parts(
             task_runs: Vec::new(),
             run_at: Vec::new(),
             then_runs: Vec::new(),
+            run_during: Vec::new(),
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
@@ -810,7 +817,9 @@ pub fn emit_parts(
             templates::task_ends(&mut em);
         }
         task_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
-        fn_then = then_runs(em.facts, &em.run_at, &em.then_runs);
+        fn_run_at = std::mem::take(&mut em.run_at);
+        fn_inherited = std::mem::take(&mut em.run_during);
+        fn_then = then_runs(em.facts, &fn_run_at, &em.then_runs);
         code_opaque = std::mem::take(&mut em.code_opaque);
         task_effects = std::mem::take(&mut em.task_effects);
         fn_waits = std::mem::take(&mut em.waits);
@@ -974,6 +983,14 @@ pub fn emit_parts(
     facts.task_reads.dedup();
     facts.task_writes.sort();
     facts.task_writes.dedup();
+    // The tasks that run while the entry body runs a value of its interface
+    // (`Run::during`, stage R0e fix): the places of each task are whole now.
+    let fn_during = crate::analysis::tasks::run_during(
+        facts,
+        &fn_run_at,
+        &fn_inherited,
+        &clause_task_ids(&hx.wait_tasks),
+    );
     let late = handlers::project(
         &handlers::Tables {
             p,
@@ -1114,6 +1131,7 @@ pub fn emit_parts(
         abort_joins,
         then_runs: fn_then,
         task_hows,
+        run_during: fn_during,
         code_opaque,
         task_effects,
         waits: fn_waits,
@@ -1656,6 +1674,8 @@ fn closure_summary(
     let closure_waits: crate::analysis::tasks::WaitRaw;
     let run_multi: Vec<weft_facts::NodeId>;
     let closure_hows: Vec<crate::analysis::tasks::RawHow>;
+    let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
+    let closure_inherited: Vec<(u32, bool, PlaceId, bool)>;
     let closure_opaque: Vec<weft_facts::TaskId>;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
@@ -1684,6 +1704,7 @@ fn closure_summary(
             task_runs: Vec::new(),
             run_at: Vec::new(),
             then_runs: Vec::new(),
+            run_during: Vec::new(),
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
@@ -1707,6 +1728,8 @@ fn closure_summary(
             templates::task_ends(&mut em);
         }
         closure_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        closure_run_at = em.run_at.clone();
+        closure_inherited = std::mem::take(&mut em.run_during);
         closure_opaque = std::mem::take(&mut em.code_opaque);
         closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         closure_waits = std::mem::take(&mut em.waits);
@@ -1833,6 +1856,14 @@ fn closure_summary(
         &hx.iface_joins,
         true,
     );
+    // The tasks that run while the closure body runs a value of its
+    // interface (`Run::during`, stage R0e fix).
+    let closure_during = crate::analysis::tasks::run_during(
+        &facts,
+        &closure_run_at,
+        &closure_inherited,
+        &clause_task_ids(&hx.wait_tasks),
+    );
     let ret_linear = crate::analysis::summarize::ret_linear(p, &tys, &returns, cb);
     let mut sum = crate::analysis::summarize::closure(
         p,
@@ -1857,6 +1888,7 @@ fn closure_summary(
             abort_joins: &abort_joins,
             then_runs: &closure_then,
             task_hows: &closure_hows,
+            during: &closure_during,
             code_opaque: &closure_opaque,
             task_effects: &closure_task_effects,
             waits: &closure_waits,
@@ -2085,6 +2117,7 @@ fn emit_closure(
         task_runs: Vec::new(),
         run_at: Vec::new(),
         then_runs: Vec::new(),
+        run_during: Vec::new(),
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
@@ -2381,6 +2414,7 @@ fn emit_clause(
         task_runs: Vec::new(),
         run_at: Vec::new(),
         then_runs: Vec::new(),
+        run_during: Vec::new(),
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
@@ -3426,6 +3460,15 @@ fn return_nodes(
             })
         })
         .collect()
+}
+
+/// The tasks of the calls that stand for the code of a clause of a local
+/// handler (`templates::WaitTask`): they are no tasks of the body that run
+/// while it runs a value of its interface (`Run::during`).
+fn clause_task_ids(
+    waits: &[templates::WaitTask],
+) -> std::collections::BTreeSet<weft_facts::TaskId> {
+    waits.iter().flat_map(|w| [w.task, w.back]).collect()
 }
 
 /// The values of the interface (index, capture) after whose run the body

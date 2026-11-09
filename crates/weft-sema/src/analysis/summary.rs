@@ -209,6 +209,12 @@ pub struct Run {
     /// hole C1-H1 of stage C1.1). If the caller gives such a value that can
     /// resume more than once, this run happens again (`many`).
     pub after: std::collections::BTreeSet<RunKey>,
+    /// The interface places that the tasks of the body (and of its callees)
+    /// change and read while the body runs the value as code that is not a
+    /// task (stage R0e fix, OR7). A caller compares them with the places
+    /// that the value it gives accesses: a task of the callee that changes a
+    /// place while the value reads it is a race (W0312).
+    pub during: Wait,
 }
 
 /// How a body runs a function value of its interface as a task.
@@ -237,8 +243,9 @@ pub struct TaskHow {
 }
 
 /// The places of the tasks that can run while a body waits at an operation
-/// of one effect (part `waits`, follow-up F19.5).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// of one effect (part `waits`, follow-up F19.5), or while it runs a
+/// function value of its interface (`Run::during`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Wait {
     /// The interface places that the tasks change.
     pub writes: Vec<IPlace>,

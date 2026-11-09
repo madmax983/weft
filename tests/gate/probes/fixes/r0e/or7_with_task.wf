@@ -1,0 +1,20 @@
+// OR7 fix: the callee gives a writer closure and the value to a runner that spawns the writer and runs the value (W0312 or W0405).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn cw(f: fn(), g: fn()) / async {
+    scope { s =>
+        s.spawn(g)
+        f()
+    }
+}
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    cw(f, || v.clear())
+}
+fn main() / async {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}

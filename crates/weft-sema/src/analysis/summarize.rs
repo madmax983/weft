@@ -192,6 +192,12 @@ pub fn summarize(
     // an unknown function value reaches, `task` with no task of the body):
     // the worst way, as a foreign function.
     apply_hows(&mut runs, fv.task_hows, &iface);
+    // The tasks that run while the body runs a value of its interface as
+    // plain code (stage R0e fix, OR7): the places of a parameter and of an
+    // `rc` group (a caller gives the others).
+    apply_during(&mut runs, fv.during, &|q: &PlaceId| {
+        place(*q).filter(|ip| matches!(ip.root, IRoot::Param(_) | IRoot::Held(_) | IRoot::Group(_)))
+    });
     changed.multi |= fv.code_multi;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
@@ -388,6 +394,33 @@ fn apply_hows(
     }
 }
 
+/// The part `during` of each plain run of `runs` from the tasks of the body
+/// that run at its run nodes (`during`, stage R0e fix, OR7); `iface` maps a
+/// place of the facts to the interface. A place with no interface place is
+/// a place of the body only: a caller cannot give it to the value. A run of
+/// a result of the value gets the places too.
+fn apply_during(
+    runs: &mut [super::summary::Run],
+    during: &[crate::analysis::tasks::RawDuring],
+    iface: &dyn Fn(&PlaceId) -> Option<IPlace>,
+) {
+    for d in during {
+        for r in runs
+            .iter_mut()
+            .filter(|r| r.param == d.param && r.capture == d.capture)
+        {
+            for (have, more) in [
+                (&mut r.during.writes, &d.writes),
+                (&mut r.during.reads, &d.reads),
+            ] {
+                have.extend(more.iter().filter_map(iface));
+                have.sort();
+                have.dedup();
+            }
+        }
+    }
+}
+
 /// True if a task of the facts `facts` is pinned for a reason in the body.
 ///
 /// The rule `pinned` of `spec/weft.dl` (plan stage F18): a task captures a nonportable value, writes
@@ -523,6 +556,9 @@ pub struct FnParts<'a> {
     pub then_runs: &'a [(u32, bool)],
     /// How the body runs values of its interface as tasks (plan stage F19).
     pub task_hows: &'a [crate::analysis::tasks::RawHow],
+    /// The places of the tasks that run while the body runs values of its
+    /// interface as code that is not a task (`Run::during`, stage R0e fix).
+    pub during: &'a [crate::analysis::tasks::RawDuring],
     /// The tasks that are `opaque` only because they run code of a caller:
     /// they do not make the body pin.
     pub code_opaque: &'a [weft_facts::TaskId],
@@ -575,6 +611,7 @@ fn runs_of(
             maybe: body.is_none_or(|b| returns_without(b, &blocks)),
             then: false,
             after: r.after.clone(),
+            during: super::summary::Wait::default(),
         };
         // A second run node of the value runs it again.
         if let Some(x) = out
@@ -1528,6 +1565,15 @@ pub fn closure(
                 })
         };
         apply_hows(&mut out.runs, fv.task_hows, &iface);
+        // The tasks that run while the body runs a value of its interface
+        // as plain code (stage R0e fix, OR7), as in [`summarize`].
+        apply_during(&mut out.runs, fv.during, &|q: &PlaceId| {
+            iface(q).or_else(|| {
+                closure_place(ir, facts, roots, body, *q, false)
+                    .map(|x| x.0)
+                    .filter(|ip| matches!(ip.root, IRoot::Group(_)))
+            })
+        });
     }
     out.uses = decl
         .captures

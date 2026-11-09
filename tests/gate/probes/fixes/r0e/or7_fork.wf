@@ -1,0 +1,14 @@
+// OR7 fix: a fork branch clears `v` while the other branch runs the value (W0312 or W0405).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn call_with(f: fn(), v: &Vec<u64>) / async, par, mut(v) {
+    fork(|| v.clear(), || f())
+}
+fn main() / async, par {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}

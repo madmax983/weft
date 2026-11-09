@@ -522,6 +522,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 abort_joins: &e.abort_joins,
                                 then_runs: &e.then_runs,
                                 task_hows: &e.task_hows,
+                                during: &e.run_during,
                                 code_opaque: &e.code_opaque,
                                 task_effects: &e.task_effects,
                                 waits: &e.waits,

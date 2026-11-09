@@ -1,0 +1,19 @@
+// OR7 fix: the scope is in a `with_timeout` block (W0312).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn call_with(f: fn(), v: &Vec<u64>) / async, fail, mut(v) {
+    with_timeout(1.s) {
+        scope { s =>
+            s.spawn(|| v.clear())
+            f()
+        }
+    }
+}
+fn main() / async, fail {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}
