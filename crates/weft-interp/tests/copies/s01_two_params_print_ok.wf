@@ -1,0 +1,17 @@
+// D3 with two parameters of the same type. The callee prints both, so a
+// copy that swaps the parameters prints them in the other order.
+struct D { n: u64 }
+effect Get { fn get() -> fn() }
+fn show(a: &D, b: &D) / Get {
+    let g = get()
+    g()
+    print(a.n)
+    print(b.n)
+}
+fn main() {
+    let x = D { n: 7 }
+    let y = D { n: 3 }
+    let w = Vec.new()
+    w.push(1)
+    handle Get { fn get() { resume(|| w.clear()) } } in { show(&x, &y) }
+}

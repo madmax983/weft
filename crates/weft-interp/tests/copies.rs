@@ -6,7 +6,10 @@
 //! oracle check the wrong program. This test runs each probe of the stages
 //! R0h and R0k with `fn main` on the IR engine two times, the program as the
 //! builder gives it and the program with the copies, and compares the
-//! output and the fault of the two runs.
+//! output and the fault of the two runs. The files in `tests/copies` add
+//! the forms that a wrong copy of the parameters shows: two parameters of
+//! the same type, named arguments in the other order, `self`, a struct that
+//! holds a reference, and an abort path.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
@@ -17,12 +20,18 @@ use weft_check::check_source;
 use weft_interp::{run_main, run_main_copied, RunOptions, RuntimeError};
 use weft_sema::Options;
 
-/// The probes of the stages that the copies are for.
+/// The probes of the stages that the copies are for, and the files in
+/// `tests/copies`.
 fn probes() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes");
+    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixes = here.join("../../tests/gate/probes/fixes");
     let mut out = Vec::new();
-    for dir in ["r0h", "r0k"] {
-        let Ok(rd) = fs::read_dir(root.join(dir)) else {
+    for dir in [
+        fixes.join("r0h"),
+        fixes.join("r0k"),
+        here.join("tests/copies"),
+    ] {
+        let Ok(rd) = fs::read_dir(&dir) else {
             continue;
         };
         for e in rd.flatten() {
@@ -57,6 +66,7 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
         ..RunOptions::default()
     };
     let mut copied = 0;
+    let mut local = 0;
     for p in probes() {
         let src = fs::read_to_string(&p).unwrap();
         if !src.contains("fn main") {
@@ -69,9 +79,13 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
             continue;
         }
         copied += 1;
+        if p.parent().is_some_and(|d| d.ends_with("copies")) {
+            local += 1;
+        }
         let a = seen(run_main(&c, &opts));
         let b = seen(run_main_copied(&c, &opts));
         assert_eq!(a, b, "{name}: the run of the copy differs");
     }
     assert!(copied >= 40, "only {copied} probes have copies");
+    assert_eq!(local, 7, "each file in tests/copies must get a copy");
 }

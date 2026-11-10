@@ -10720,7 +10720,7 @@ files = [
     "tests/gate/probes/fixes/r0h/d3f_returned_ok.wf",
 ]
 reason = "stage R0k-a: the program comes into scope with a copy of the callee at the call (D3). The site runs the given-back closure before it clears `v`; the old W0301 is a false positive of the old pipeline. The `ir` pipeline gives no error, the interpreter runs it with no fault (ev.sh nofault), and the fact oracle passes"
-signed_by = "UNSIGNED: waits for the review of R0k-a"
+signed_by = "reviewer R0k-a round 1: r is taken after the push and the site runs f before v.clear(); the old W0301 names the push before the borrow; the copy gives no error, and the run and the fact oracle are clean"
 stage = "R0k"
 
 [[entry]]

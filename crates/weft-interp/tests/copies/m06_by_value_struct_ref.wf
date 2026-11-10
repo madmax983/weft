@@ -1,0 +1,12 @@
+// D3 copy: the callee gets a struct by value that holds a reference; the given-back closure clears the referent
+struct R<T> { r: T }
+effect Get { fn get() -> fn() }
+fn use_r(x: R<&u64>) / Get { let g = get()
+    g()
+    let R(p) = x
+    print(p) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| v.clear()) } } in { use_r(R { r: &v[0] }) }
+}

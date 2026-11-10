@@ -1,0 +1,16 @@
+// D3 copy of a method: self is the param; the given-back closure clears self.v while the method holds a loan
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+impl C {
+    fn run_ref(self) / Get {
+        let r = &self.v[0]
+        let g = get()
+        g()
+        print(r)
+    }
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { c.run_ref() }
+}
