@@ -1,0 +1,12 @@
+// Plan stage R0k (D3, a `once` value): the clause gives back a closure that
+// moves a vector; the callee runs it two times (W0502).
+effect Get { fn get() -> fn() }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn run_twice() / Get { let g = get()
+ g()
+ g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| eat(v)) } } in { run_twice() }
+}

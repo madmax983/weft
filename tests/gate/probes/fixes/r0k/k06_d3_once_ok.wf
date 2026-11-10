@@ -1,0 +1,11 @@
+// Plan stage R0k: the clean twin of k06. The callee runs the closure one
+// time.
+effect Get { fn get() -> fn() }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn run_once() / Get { let g = get()
+ g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| eat(v)) } } in { run_once() }
+}

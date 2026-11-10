@@ -1,0 +1,14 @@
+// Plan stage R0k: the clean twin of k02. The clause runs the closure before
+// the callee clears `v`.
+effect Run { fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    run(|| print(r))
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { g()
+ resume(()) } } in { f(&v) }
+}

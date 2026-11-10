@@ -1,0 +1,13 @@
+// Plan stage R0k (D3, a closure that captures a reference): the clause gives
+// back a closure that reads through `r`; the callee clears `v`, then runs
+// it. This form stays with the old pipeline (R0k design note).
+effect Get { fn get() -> fn() }
+fn run_after(v: &Vec<u64>) / Get, mut(v) { let g = get()
+ v.clear()
+ g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Get { fn get() { resume(|| print(r)) } } in { run_after(&v) }
+}

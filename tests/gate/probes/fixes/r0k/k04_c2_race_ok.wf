@@ -1,0 +1,12 @@
+// Plan stage R0k: the clean twin of k04. The closure only prints.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let st = Stats { count: 0 }
+    run(|| print(1))
+    print(st.count)
+}
+fn main() / async {
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+ resume(()) } } } in { f() }
+}

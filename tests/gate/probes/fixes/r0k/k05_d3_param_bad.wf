@@ -1,0 +1,21 @@
+// Plan stage R0k (D3, a parameter of the site): the clause gives back the
+// parameter `k`; the callee keeps it in a field of the site, and `main`
+// runs it while `r` points into `v` (W0301).
+struct H { f: fn() }
+fn noop() {}
+effect Get { fn get() -> fn() }
+fn keep(h: &H) / Get, mut(h) { h.f = get() }
+fn s(k: fn()) -> H {
+    let h = H { f: noop }
+    handle Get { fn get() { resume(k) } } in { keep(&h) }
+    h
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = s(|| v.clear())
+    let r = &v[0]
+    let x = h.f
+    x()
+    print(r)
+}

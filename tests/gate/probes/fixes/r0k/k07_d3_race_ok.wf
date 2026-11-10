@@ -1,0 +1,15 @@
+// Plan stage R0k: the clean twin of k07. The callee uses `r` before it runs
+// the closure.
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn run_ref(c: &C) / Get {
+    let r = &c.v[0]
+    print(r)
+    let g = get()
+    g()
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+}

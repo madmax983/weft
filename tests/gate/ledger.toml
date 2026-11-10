@@ -10695,3 +10695,15 @@ files = [
 codes = ["W0301"]
 reason = "stage R0j (tier 2, a mutant of corpus 114): the program comes into scope by the pending rule (a task that runs a callback more than once), and the `ir` pipeline rejects it. The `ir` pipeline does not give the W0301 of the task that has no full facts (as the `old:` marker in corpus 114), and gives its W0301 at another line"
 stage = "R0j"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0k/k02_c2_capture_bad.wf",
+    "tests/gate/probes/fixes/r0k/k06_d3_once_bad.wf",
+    "tests/gate/probes/fixes/r0k/k07_d3_race_bad.wf",
+    "tests/gate/probes/fixes/r0k/k08_d3_kept_bad.wf",
+]
+finding = "R0h-STAYS"
+reason = "stage R0k (probes of the forms of R0h-STAYS): the forms C2 and D3 keep the old pipeline, and the old pipeline misses each fault. `k02_c2_capture_bad`: the clause of a caller keeps a closure with a captured reference and runs it after the callee clears the vector (as `c2_stored_ref`); `k06_d3_once_bad`: a `once` value that a clause gives back runs two times (as `d3f_once`); `k07_d3_race_bad`: a given-back value that clears a vector runs while the callee holds a reference into it; `k08_d3_kept_bad`: a given-back closure that holds a reference runs after a change (as `d3f_dangling`). Stages R0k-a1 (C2) and R0k-a2 (D3) give these forms full facts (R0k design note)"
+stage = "R0k"

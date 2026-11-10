@@ -1,0 +1,13 @@
+// Plan stage R0k (C2, a parameter): the callee gives its parameter `g` to
+// an operation, and the clause of `main` runs it. `g` clears `v` while `r`
+// points into it (W0301).
+effect Run { fn run(g: fn()) }
+fn f(g: fn()) / Run { run(g) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+ resume(()) } } in { f(|| v.clear()) }
+    print(r)
+}

@@ -1,0 +1,19 @@
+// Plan stage R0k (C2, a capture): the closure captures a reference into
+// `v`; the clause keeps it and runs it after the callee clears `v`.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    run(|| print(r))
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+ resume(()) } } in { f(&v) }
+    let x = h.f
+    x()
+}

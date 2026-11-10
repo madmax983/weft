@@ -1,0 +1,13 @@
+// Plan stage R0k (C2, a value that can race): the clause runs the closure
+// on a task while the callee writes the local that it changes (W0405).
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let st = Stats { count: 0 }
+    run(|| { st.count += 1 })
+    print(st.count)
+}
+fn main() / async {
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+ resume(()) } } } in { f() }
+}

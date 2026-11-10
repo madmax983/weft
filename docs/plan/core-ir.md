@@ -1924,6 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (this stage) |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note; D4, A and the task forms stay, R0k design note), R0k-a1 (C2, full facts), R0k-a2 (D3, full facts), R0k-c (D1, D5, C8: resume points and copied clause frames) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b: this stage |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -3613,6 +3614,66 @@ R0j as built:
   `fixes/r0i/u04_item_task_extern.wf` FP-IR (its fault is the stub of an extern function,
   "a task needs a closure", which `ev.sh` does not count; the gate row is `fixed`). No
   HOLE.
+
+R0k design note: full facts for C2, D3 and the re-entry forms (91 fallbacks of tier 1
+with `weft-r0j1`: C2 21, D3 18, D1 18, D5 6, F18 6, E2 5, R0e fix 2 5, E4 4, A 3, D4 2,
+E5 1, C8 1, `VALUE_TASKS` 1):
+
+- The pending rule does not apply to C2 and D3. Its weak forms reject clean programs:
+  for C2 the clause of a caller is code of a caller that runs each function value of
+  the arguments more than once and as a task in the worst way (`fixes/r0k/k01_c2_param_ok`
+  W0301, W0312, W0405; `k02_c2_capture_ok` W0312); for D3 the callee runs each value
+  that a clause gives back at `Main` and at `Ret` of the call (`fixes/r0h/d3f_dangling_ok`
+  W0301 at `Ret`). A pending rule only for the values with no captured reference and no
+  `once` move is no help: a C2 fallback always has a value that the analysis does not
+  know or that captures a reference or a function value (`transfer::op_fn_args`), and of
+  the 18 D3 programs that rule takes one into scope (`d3f_mut_race`).
+- C2, full facts (stage R0k-a1, size L). A new part of a summary, `op_values`: for each
+  perform of an operation of a handler of a caller, the operation, the node of the
+  perform in the order of the body (below), and each function value of the arguments
+  in the terms of the interface (`FnVal::Made` with its environment mapped through σ, as
+  a returned closure, `ret`), with the captures that the body changes or ends after the
+  perform (`after_muts`, `after_ends`). The caller applies the part where the handler is
+  local: it runs the clause of the operation with these values as the arguments, as for a
+  perform of a local handler (`clause::given_ops`), so a store of a value in a place of
+  the site (`h.f = g`) is a store of the made value, and a later run in the caller is a
+  plain run of it. A captured reference whose place is in `after_ends` or `after_muts`
+  is a loan that ends or changes at `Ret` of the call: a later run reads through it
+  (W0301, as `ret_refs` of a returned reference). Where no caller has the handler (the
+  row), the part stays the worst way of today.
+- D3, full facts (stage R0k-a2, size L). The order part of a callee summary: the
+  summary splits the changes, the ends and the runs of the body at each perform of an
+  operation whose result can hold a function value or a reference: `before(o)` and
+  `after(o)` (the nodes that can run before or after the perform `o`, from the CFG of the
+  body). The caller applies the changes of `before(o)`, then the run of the value that the
+  clause gives back, then the changes of `after(o)`, at three nodes of the call (`Main`,
+  a new `Back(o)` node for each such perform, `Ret`). A value that the callee keeps in a
+  place (`put_values`) runs in the caller from that place with the made value, not with
+  code of a caller. A `once` value moves at each run of `runs`, so a second run is W0502.
+- The spec. The parts are inputs of the fact generator: the facts that they give are
+  the facts of today (`run_at`, `mutates_at`, `invalidated_at` of a plain run, a store
+  and a loan), so no rule of `spec/weft.dl` changes, and ADR 0002 needs no new step. A
+  new node `Back(o)` is a node of `nodes.rs` with the `cfg_edge` facts of today.
+- D1, D5 and C8 (stage R0k-c, two parts of size L): D1 needs a resume point of the clause
+  at the run node of a closure that resumes a captured continuation (the summary part
+  "resumes the continuation of capture `k`", which splits the clause at that node). D5
+  and C8 need a copied clause frame: a `multi` operation of a handler of a caller in a
+  clause, and a `multi` resume of a node in a clause, run the rest of the clause again
+  from that node (the D-COPY-WAIT region of `handlers.rs` for a frame of a caller).
+- The task leftovers, D4 and A (after R0k-a2). E2 (a task that runs a callback more than
+  once) needs a second node of the run at the spawn; E4 (a function variable that gets
+  a new value) needs the values of the cell at each statement that gives it a whole
+  value, from the spawn to the join; R0e fix 2 and `VALUE_TASKS` need the task nodes of
+  a value that a value runs as a task; F18 (`TASK_RUN`) needs the places of the other
+  tasks of the callee in the worst way of a foreign task. D4 (`d4_reassigned_ok`,
+  `e1_fp`) needs a strong update of a local that the handled body gives a new value
+  after a `resume`; A needs the starts of the region of a `resume` for a clause run that
+  maps to no node of the handled body (`handlers.rs` `of`). Each one is size M; the
+  probes of R0j (`fixes/r0j/`) and R0k (`fixes/r0k/`) are their tests.
+- Probes: `tests/gate/probes/fixes/r0k/` (a bad form and a clean twin of each risky
+  form of C2 and D3: a parameter, a capture, a `once` value, a value that can race or
+  changes places, a value with a reference). The old pipeline misses the fault of
+  `k02`, `k06`, `k07` and `k08` (open-old R0h-STAYS).
 
 #### R1 Standalone `typeck`, part 1
 
