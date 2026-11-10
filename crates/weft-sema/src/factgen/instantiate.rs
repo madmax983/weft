@@ -159,32 +159,40 @@ fn env_binds(p: &Program, env: CapEnvId, e: EffectId) -> bool {
 /// The function of each body: the function whose body is the body or a
 /// lexical parent of it.
 fn body_fns(p: &Program) -> Vec<Option<FnId>> {
-    let mut out: Vec<Option<FnId>> = vec![None; p.bodies.len()];
-    for (i, b) in p.bodies.iter().enumerate() {
-        let f = match b.kind {
-            BodyKind::Fn(f) => Some(f),
-            _ => b.parent.and_then(|q| out.get(q.index()).copied().flatten()),
-        };
-        if let Some(slot) = out.get_mut(i) {
-            *slot = f;
-        }
-    }
-    out
+    // Follow the parent chain of each body. This does not use the order of
+    // the body ids: a copy can append a body after the bodies inside it.
+    p.bodies
+        .iter()
+        .map(|b| {
+            let mut at = Some(b);
+            for _ in 0..=p.bodies.len() {
+                let x = at?;
+                if let BodyKind::Fn(f) = x.kind {
+                    return Some(f);
+                }
+                at = x.parent.and_then(|q| p.body(q));
+            }
+            None
+        })
+        .collect()
 }
 
 /// The bodies inside body `root` (not `root`), in the order of their ids.
 fn inner_bodies(p: &Program, root: BodyId) -> Vec<BodyId> {
-    let mut inside = vec![false; p.bodies.len()];
+    // Follow the parent chain of each body. This does not use the order of
+    // the body ids: a copy can append a body after the bodies inside it.
     let mut out = Vec::new();
     for (i, b) in p.bodies.iter().enumerate() {
-        let yes = b
-            .parent
-            .is_some_and(|q| q == root || inside.get(q.index()).copied().unwrap_or(false));
-        if yes {
-            if let Some(s) = inside.get_mut(i) {
-                *s = true;
+        let mut at = b.parent;
+        for _ in 0..p.bodies.len() {
+            match at {
+                Some(q) if q == root => {
+                    out.push(BodyId(u32::try_from(i).unwrap_or(u32::MAX)));
+                    break;
+                }
+                Some(q) => at = p.body(q).and_then(|x| x.parent),
+                None => break,
             }
-            out.push(BodyId(u32::try_from(i).unwrap_or(u32::MAX)));
         }
     }
     out
@@ -2468,4 +2476,50 @@ fn nested_writes(p: &Program, b: BodyId, l: LocalId) -> bool {
                 .any(|q| cell_of(p, x, q) == Some((b, l)))
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A program with a closure inside a closure inside `main`.
+    fn nested() -> Program {
+        let src = "fn main() {\n    let a = 1;\n    let f = || {\n        let g = || { print(a); };\n        g();\n    };\n    f();\n}\n";
+        let a = crate::analyze_source(src, crate::Options::default())
+            .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+        crate::irbuild::build(&a).program
+    }
+
+    #[test]
+    fn inner_bodies_and_body_fns_do_not_use_the_order_of_the_ids() {
+        let mut p = nested();
+        let main = p
+            .bodies
+            .iter()
+            .position(|b| matches!(b.kind, BodyKind::Fn(_)) && b.parent.is_none())
+            .map(|i| BodyId(u32::try_from(i).unwrap_or(u32::MAX)));
+        let main = main.unwrap_or_else(|| panic!("no body for `main`"));
+        let before = inner_bodies(&p, main);
+        assert!(before.len() >= 2, "two closures inside main: {before:?}");
+        let fns = body_fns(&p);
+        // Append a copy of the first inner body, and make it the parent of
+        // that body: the parent now has a higher id than the child.
+        let first = before[0];
+        let Some(copy) = p.body(first).cloned() else {
+            panic!("no body {first:?}");
+        };
+        let new = BodyId(u32::try_from(p.bodies.len()).unwrap_or(u32::MAX));
+        p.bodies.push(copy);
+        if let Some(b) = p.bodies.get_mut(first.index()) {
+            b.parent = Some(new);
+        }
+        let after = inner_bodies(&p, main);
+        for x in &before {
+            assert!(after.contains(x), "{x:?} is still inside main: {after:?}");
+        }
+        assert!(after.contains(&new));
+        let fns2 = body_fns(&p);
+        assert_eq!(fns2.get(first.index()), fns.get(first.index()));
+        assert_eq!(fns2.get(new.index()), fns.get(first.index()));
+    }
 }
