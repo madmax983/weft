@@ -1843,7 +1843,9 @@ body c (Closure):  params _1 = env, _2 = p; _0
   `ClosureDecl::once`; an assignment, an aggregate, a reference, a call with the
   arguments for the parameters that its result can be, a write behind a reference, a
   callee with no body that can keep an argument behind a reference argument, a clause
-  parameter, a `resume`, a `handle`, a `scope` and an upvar pass them on), and the
+  parameter, a `resume` (the value of the handled body), a task (its handle names the
+  site; a `join` gets the result of a run of the value of the task), a `fork` (the
+  results of the branches), a `handle`, a `scope` and an upvar pass them on), and the
   builder runs again with them until they do not change (`irbuild::build`). A closure
   that captures a `@ uniq` value (the analysis gives the mode) is not `many`: the fact
   generator marks each variable that can hold it (`factgen::not_many`, W0503). A function parameter

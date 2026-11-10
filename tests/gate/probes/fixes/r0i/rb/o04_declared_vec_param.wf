@@ -1,0 +1,13 @@
+// a once closure pushed into a Vec<fn()> that a callee with a stated param calls twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn twice(fs: &Vec<fn()>) { let g = fs[0]
+    g()
+    let h = fs[0]
+    h() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| eat(v))
+    twice(&fs)
+}

@@ -1,0 +1,10 @@
+// a closure that captures a once closure and calls it, called twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || eat(v)
+    let d = || c()
+    d()
+    d()
+}

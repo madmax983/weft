@@ -1,0 +1,11 @@
+// as q01, a scope task runs it
+fn main() {
+    let r = Rc.new(0)
+    let fs = Vec.new()
+    fs.push(|| { let y = r.clone() })
+    let f = match fs.pop() { Some(g) => g, None => || print(0) }
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

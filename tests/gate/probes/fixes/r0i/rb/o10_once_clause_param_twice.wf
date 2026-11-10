@@ -1,0 +1,10 @@
+// a once closure given to a clause that calls it twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+effect Q { fn q(k: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Q { fn q(k) { k()
+        k()
+        resume(()) } } in q(|| eat(v))
+}

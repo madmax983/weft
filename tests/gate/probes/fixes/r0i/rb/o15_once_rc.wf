@@ -1,0 +1,12 @@
+// a once closure in an rc object (inferred type), copied twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+struct W<T> { f: T }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = Rc.new(W { f: || eat(v) })
+    let g = r.f
+    g()
+    let h = r.f
+    h()
+}

@@ -1922,7 +1922,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0g | Continuations and capabilities in closures; a construct with no full facts is in scope only if the `ir` pipeline rejects the program | D1, D4, C4, C6, D5, C8 (D1 15/49, D4 1/2, D5 5/5 stay: R0g as built) | done (5aea3a8) |
 | R0h | Function values across operations: an operation of a caller gets a function value; a clause gets a function value of the callee, or gives a reference or a function value back to it | C2, D3 (after the fix of R0h C2 17/68, D3 1/1 stay; E2, E4, E5, C7, E7 stay: R0h as built, R0h fix as built) | done (c9da6d3) |
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
-| R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built) | | done (this stage) |
+| R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -3475,6 +3475,71 @@ R0i-b as built (the old value flow and the move diagnostics; the review of R0i, 
   engine runs `d6` clean (seeds 1 to 3) and the fact oracle passes; only the AST engine
   faults, when it runs the `on abort` of `tx` that the closure kept by the clause owns
   (the AST compiler goes in stage R4). The lost-clean row is UNSIGNED for the review.
+
+R0i-b fix as built (the review of R0i-b, round 1: a blocker of one root cause):
+
+- The blocker. `irbuild::values` had no rule for the terminators `Spawn`, `Join`, `Fork`
+  and `Resume`, though each one gives its destination a value. A linear closure that
+  came back from `t.join()`, from a `fork` branch or as the value of `resume(..)` in a
+  clause was not linear in the IR, so the cleanup gave the local no `UnwindValue`, and
+  on an abort the `on abort` of the captured value did not run (the IR engine: "a live
+  linear value is left after the cleanup chain"; `fixes/r0i/rb/a16_task_join`, `a21`,
+  `a22`, `a23_fork_result`, `a28_resume_dest`).
+- The fix: a task handle names its spawn site (`Val::tasks`), and the result of each
+  site is the result of a run of the value of the task (`Flow::tasks`, also for a branch
+  of a `fork` and for the `TaskResult` local of a task that the scope keeps); a `join`
+  gives the result of each site of the handle, a `fork` the results of its branches,
+  and `resume` the value `_0` of the handled body of its clause (`Flow::handled_of`, also
+  from a closure of the clause). Each terminator that gives a destination a value has a
+  rule now. The probes give `rollback 1` on the IR engine, as with `weft-r0ifix1`, and
+  `a07`, `a09`, `a11`, `a19` (HOLE with `weft-r0ifix1`) stay closed.
+- A capture of a type with a function part in a field (`Holder { cb: fn() }`) takes
+  the value of the flow (`props::ir_has_fns`, not `TyTable::mentions_fn`, which sees
+  only the type arguments); `the_values_of_the_bindings_come_from_the_ir` checks that
+  such a struct holds a linear closure.
+- Not fixed: `a25_join_dropped`, `a27_fork_dropped` (a linear closure from a `join` or a
+  `fork` that the program drops: no W0601 in any binary of the `ir` pipeline; the old
+  pipeline rejects them). The IR has the value now (the local is linear and its cleanup
+  runs), but the analysis of the facts gives the run of a task the result
+  `FnVal::Unknown` with no linear flag (`tasks::task_result`, `handle_value`), so no
+  W0601 at the end of the local. The fix needs the result of a task in the domain of the
+  analysis (a part for the values of a task); it is larger than this fix, and the two
+  probes, which are `lost-fault`, are not in the probe set (scratchpad
+  `r0i/rb-excluded/`). `n06_resume_fork` (W0401 of a nonportable closure that comes back
+  from an operation and a `fork` branch runs; the oracle does not check it, so the
+  gate class is new-fp, which the 0.1 % rule of tier 1 has no room for; FP-IR also with
+  `weft-r0ifix1`) is not in the set either, and neither are `a07_resume` and
+  `n06_resume_spawn`: the summary oracle (A3) fails on them with each binary
+  (`weft-r0ifix1` too; a read of a value that a clause gave to the handled body is at
+  the node `handle post`, the open item of R0h fix), so they would be the first
+  failures of the fact oracle of tier 1; `a07` (a HOLE of `weft-r0ifix1`) runs clean
+  on the IR engine with the fix.
+- Probes: the 127 other probes of the review in `tests/gate/probes/fixes/r0i/rb/`; the
+  test `analysis_units.rs`
+  `a_linear_closure_from_a_task_a_fork_or_resume_is_linear` (the five blockers). The
+  reviewer signed the two lost-clean rows of R0i-b (`d6_closure_via_clause`,
+  `verify/s5/R3t/w0303.wf`). New ledger rows: 12 lost-clean probes of the review that the
+  `ir` pipeline accepts and the IR engine runs clean (UNSIGNED), 28 `changed` and 1
+  `moved` (both pipelines reject), three `sig` entries.
+- Gates (binaries `r0i/bin/weft-b2`, `weft-gate-b2`): tier 1 0 blockers (5080; 3847 same,
+  15 open, 285 fixed, 1 new-fp, 0 lost-fault, 152 lost-clean, 146 moved, 634 changed:
+  the 127 probes are 79 same, 2 fixed, 12 lost-clean, 1 moved, 33 changed; the other
+  rows as at R0i-b). The manifest, the oracle caches and the baseline of tier 1 get the
+  127 rows, and no old record changes. Tier 2 (2 workers) 0 blockers, each row as at
+  R0i-b (40045 same, 6 open, 92 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3446
+  lost-clean, 1857 moved, 11935 changed; 5 timeouts, one more than R0i-b on a loaded
+  machine). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, 1350 pass). Sigdiff
+  tier 1 0 rows with no entry.
+- The diagnostics of `weft check` on `tests/programs`, `tests/gate/probes` and the
+  review probes against `weft-r0ib1`: only `rb/n04_holder_whole_fork` and
+  `rb/n13_holder_callee_fork` (W0401 a second time on the line of the `fork`: the holder
+  holds the nonportable closure, `ir_has_fns`). Against `weft-r0ifix1`: the changes of
+  R0i-b and these two. `ereview/ev.sh` (2 at one time) with the three binaries on the
+  36 files that change, and on the five blockers and `a07`, `a09`, `a11`, `a19`: the
+  blockers HOLE (with `weft-r0ib1`) to no fault (as with `weft-r0ifix1`); `a07`, `a09`,
+  `a11`, `a19` no fault (HOLE with `weft-r0ifix1`); each other verdict as with
+  `weft-r0ib1` (`n06_resume_fork` FP-IR with each binary, `d6` HOLE(AST-only), signed);
+  `a25`, `a27` HOLE with each binary (above).
 
 #### R1 Standalone `typeck`, part 1
 

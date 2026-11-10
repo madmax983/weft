@@ -1,0 +1,8 @@
+// a nonportable closure pushed and popped from a Vec; a fork branch runs it
+fn main() {
+    let r = Rc.new(0)
+    let fs = Vec.new()
+    fs.push(|| { let y = r.clone() })
+    let f = match fs.pop() { Some(g) => g, None => || print(0) }
+    fork(|| f(), || print(1))
+}

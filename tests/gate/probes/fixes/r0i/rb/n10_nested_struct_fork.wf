@@ -1,0 +1,10 @@
+// nonportable closure through: a struct in a struct with a fn field; fork branch runs it (W0401 expected)
+struct In { cb: fn() }
+struct Out { i: In, n: u64 }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let o = Out { i: In { cb: c }, n: 1 }
+    let f = o.i.cb
+    fork(|| f(), || print(1))
+}

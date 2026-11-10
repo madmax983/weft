@@ -1,0 +1,13 @@
+// a once closure assigned to a field of declared fn type, then two copies called
+fn eat(v: Vec<u64>) { print(v.len()) }
+struct H { f: fn() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: || print(0) }
+    h.f = || eat(v)
+    let g = h.f
+    g()
+    let k = h.f
+    k()
+}

@@ -1,0 +1,9 @@
+// a generic linear struct part of type T captured by a closure that is dropped; caller gives Tx
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print(i) }
+fn keep<T>(x: T) -> T { x }
+linear struct G<T> { x: T }
+fn g<T>(v: G<T>) { let G(x) = v
+    let c = || keep(x) }
+fn main() { g(G { x: Tx { id: 1 } }) }

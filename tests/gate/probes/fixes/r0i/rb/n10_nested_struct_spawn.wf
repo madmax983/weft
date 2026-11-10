@@ -1,0 +1,13 @@
+// nonportable closure through: a struct in a struct with a fn field; a scope task runs it (must be pinned)
+struct In { cb: fn() }
+struct Out { i: In, n: u64 }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let o = Out { i: In { cb: c }, n: 1 }
+    let f = o.i.cb
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

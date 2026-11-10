@@ -1,0 +1,23 @@
+struct H { f: fn() }
+fn a(h: &H) { let g = h.f; g() }
+fn b(h: &Vec<fn()>) { let g = h[0]; g() }
+fn c() {
+    let fs = Vec.new()
+    fs.push(|| print(1))
+    let p = &fs
+    let g = p[0]
+    g()
+}
+fn d() {
+    let fs = Vec.new()
+    fs.push(|| print(1))
+    let p = &fs
+    let t = || { let g = p[0]; g() }
+    t()
+}
+fn e() {
+    let h = H { f: || print(1) }
+    let p = &h
+    let t = || { let g = p.f; g() }
+    t()
+}

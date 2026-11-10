@@ -10482,7 +10482,7 @@ stage = "R0i-b"
 class = "lost-clean"
 files = ["tests/gate/probes/verify/s5/p/d6_closure_via_clause.wf"]
 reason = "stage R0i-b: the properties of the values come from the IR. `r = handle Give { fn give(f) { Some(f) } } in { .. give(f); None }` gets the linear closure that the clause gives back, so `r` is linear in the IR and each arm of the `match` consumes it (`Some(f) => f()`, `None` holds no value). The old W0601 of the `ir` pipeline at the end of `main` (`r` dropped) was a false positive of the value flow of the old lowering, which did not see the linear closure in `r`. The IR engine runs the program clean (commit 1, end) and the fact oracle passes. The AST engine faults (`a value is used after it was moved`, after `rollback 1`): it runs the `on abort` of `tx` when the handled body ends, although the closure that the clause keeps owns `tx` (ev.sh: HOLE(AST-only); the AST compiler goes in stage R4). The old pipeline gives W0502 and W0601 at line 11"
-signed_by = "UNSIGNED: the author of stage R0i-b; the independent review of R0i-b must sign this row or reject it"
+signed_by = "reviewer R0i-b: tx moves into the closure (ByMove capture) and the closure moves into the perform, so the handled body owns no linear value when the clause ends it. Each arm of the match consumes r. The IR engine is right (commit 1, end, seeds 1-3; fact oracle passes). The AST engine is wrong: its unwinder rolls back tx from the cell of the frame and then the kept closure commits it (use after move). The variants that drop the closure (Some(f) => {}, r not matched, a copy in the clause) still get W0601"
 stage = "R0i-b"
 
 [[entry]]
@@ -10503,7 +10503,7 @@ stage = "R0i-b"
 class = "lost-clean"
 files = ["verify/s5/R3t/w0303.wf"]
 reason = "stage R0i-b (tier 2): W0303 comes from the builder. The old lowering gave W0303 for a copy of a closure out of a place behind a reference when the type of the place came from the closure (`fs = Vec.new(); fs.push(|| print(1)); let g = (&fs)[0]`): its type kept the closure summary, so the value was no plain data. The closures here move no capture, so a copy of them is valid; the `ir` pipeline gives W0303 only for a closure that moves a capture (`irbuild::values::once_reads`). The program has no `main`; each function only reads and calls the closures"
-signed_by = "UNSIGNED: the author of stage R0i-b; the independent review of R0i-b must sign this row or reject it"
+signed_by = "reviewer R0i-b: the closures capture nothing, so a copy out of &fs or &h is a copy of plain data, as a() and b() with declared types do. The old W0303 depended only on how the type was inferred. A once closure copied out of a reference or an rc object still gets W0303 (probes o01, o02, o15)"
 stage = "R0i-b"
 
 [[entry]]
@@ -10511,4 +10511,110 @@ class = "changed"
 files = ["verify/s5/R3t/o35vv.wf"]
 codes = ["W0302", "W0303", "W0403"]
 reason = "stage R0i-b (tier 2): the old W0303 at line 8 (a copy of `|| v.push(2)` out of `(&h)[0]`, a type that keeps the closure summary in the old lowering) goes: the closure moves no capture, so the copy is valid (`irbuild::values::once_reads`). The `ir` pipeline rejects the program with W0403 and W0405 (the closure changes `v` on a task while `main` reads it), as before; the old W0302 and the `ir` W0403 were the difference before R0i-b"
+stage = "R0i-b"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0i/rb/a04_closure_ret.wf",
+    "tests/gate/probes/fixes/r0i/rb/a09_item.wf",
+    "tests/gate/probes/fixes/r0i/rb/a11_clause_giveback.wf",
+    "tests/gate/probes/fixes/r0i/rb/a16_task_join.wf",
+    "tests/gate/probes/fixes/r0i/rb/a19_clause_param_resume.wf",
+    "tests/gate/probes/fixes/r0i/rb/a21_task_makes_closure.wf",
+    "tests/gate/probes/fixes/r0i/rb/a22_join_in_scope_abort.wf",
+    "tests/gate/probes/fixes/r0i/rb/a23_fork_result.wf",
+    "tests/gate/probes/fixes/r0i/rb/a24_join_clean.wf",
+    "tests/gate/probes/fixes/r0i/rb/a28_resume_dest.wf",
+    "tests/gate/probes/fixes/r0i/rb/k03_generic_closure_ret_clean.wf",
+    "tests/gate/probes/fixes/r0i/rb/t2_w0303.wf",
+]
+reason = "stage R0i-b fix (probes of the review of R0i-b, round 1): a linear closure goes through a closure result, `resume`, a function item, a clause that gives it back, a task `join`, a `fork` branch or a callee, and the program calls it or aborts. The `ir` pipeline accepts each one, and the IR engine runs it clean: on an abort the cleanup runs the `on abort` of the captured value (`rollback 1`), because the value flow of the IR (`irbuild::values`, with the rules for `Spawn`, `Join`, `Fork` and `Resume` of the fix) makes the local linear. The old pipeline gives W0302, W0601, W0301 or W0204 for the same programs (its value flow loses the closure, or it reports a call after a move that the program does not make). `t2_w0303` is the copy of `verify/s5/R3t/w0303.wf` (a copy of a closure that moves no capture)"
+signed_by = "UNSIGNED: the author of the fix of stage R0i-b; the independent review must sign this row or reject it"
+stage = "R0i-b"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0i/rb/a20_two_level_closure_ret.wf",
+    "tests/gate/probes/fixes/r0i/rb/d6a_arm_drops.wf",
+    "tests/gate/probes/fixes/r0i/rb/d6b_r_dropped.wf",
+    "tests/gate/probes/fixes/r0i/rb/d6c_clause_copy_drop.wf",
+    "tests/gate/probes/fixes/r0i/rb/k02_generic_closure_ret.wf",
+    "tests/gate/probes/fixes/r0i/rb/l07_resume_value.wf",
+    "tests/gate/probes/fixes/r0i/rb/l08_clause_param.wf",
+    "tests/gate/probes/fixes/r0i/rb/l11_task_join.wf",
+    "tests/gate/probes/fixes/r0i/rb/l12_item_maker.wf",
+    "tests/gate/probes/fixes/r0i/rb/l16_task_result_made.wf",
+    "tests/gate/probes/fixes/r0i/rb/n02_generic_id_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n03_holder_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n04_holder_whole_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n05_closure_ret_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n07_vec_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n08_tuple_field_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n10_nested_struct_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n12_ref_holder_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n13_holder_callee_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n15_holder_callee_direct_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/o03_declared_field_once.wf",
+    "tests/gate/probes/fixes/r0i/rb/o04_declared_vec_param.wf",
+    "tests/gate/probes/fixes/r0i/rb/o05_assign_field_once.wf",
+    "tests/gate/probes/fixes/r0i/rb/o09_once_resume_twice.wf",
+    "tests/gate/probes/fixes/r0i/rb/o12_once_item_ret.wf",
+    "tests/gate/probes/fixes/r0i/rb/q07_linear_pop.wf",
+    "tests/gate/probes/fixes/r0i/rb/v01_index_assign_twice.wf",
+    "tests/gate/probes/fixes/r0i/rb/v02_index_assign_callee_twice.wf",
+]
+codes = ["W0204", "W0301", "W0302", "W0401", "W0502", "W0601", "W0602"]
+reason = "stage R0i-b fix (probes of the review of R0i-b, round 1): both pipelines reject each program, at other lines or with other codes. The `ir` pipeline reports the error where its facts see it: W0601 or W0602 of a linear closure that the value flow of the IR follows through a callee, a clause, `resume`, a task or a generic function (the old pipeline gives W0204, W0302 or W0502 at the maker); W0401 a second time on the line of the `fork` (each captured value that is nonportable); W0302 at the second call of a `once` closure in a place of a declared type (the old pipeline gives W0502 at the store)"
+stage = "R0i-b"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/r0i/rb/o10_once_clause_param_twice.wf",
+]
+codes = ["W0502"]
+reason = "stage R0i-b fix (probe of the review of R0i-b, round 1): W0502 of a `once` closure that a clause parameter gets and runs two times; the `ir` pipeline reports the first run (line 8), the old pipeline the second (line 9)"
+stage = "R0i-b"
+
+[[entry]]
+class = "sig"
+parts = ["named", "multi", "raises"]
+files = [
+    "tests/gate/probes/fixes/r0i/rb/m01_field_let.wf",
+    "tests/gate/probes/fixes/r0i/rb/m02_field_arg.wf",
+    "tests/gate/probes/fixes/r0i/rb/m03_field_ret.wf",
+    "tests/gate/probes/fixes/r0i/rb/m04_destructure_deref.wf",
+    "tests/gate/probes/fixes/r0i/rb/m05_match_ref_binding.wf",
+    "tests/gate/probes/fixes/r0i/rb/m06_closure_move_from_ref.wf",
+    "tests/gate/probes/fixes/r0i/rb/m07_index_move.wf",
+    "tests/gate/probes/fixes/r0i/rb/m08_tuple_ref.wf",
+    "tests/gate/probes/fixes/r0i/rb/m10_linear_from_ref.wf",
+    "tests/gate/probes/fixes/r0i/rb/m12_method_by_value.wf",
+    "tests/gate/probes/fixes/r0i/rb/m15_generic_ref.wf",
+]
+reason = "stage R0i-b fix (probes of the review of R0i-b, round 1): `main` calls a function whose body moves a value out of a borrowed place (W0303), so that body has no IR and the call applies the worst case of its declaration (stage R0b): the row of `main` has each effect of the program, `raises` and `multi`. Each program has the W0303 error"
+stage = "R0i-b"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/fixes/r0i/rb/a08_scope.wf",
+    "tests/gate/probes/fixes/r0i/rb/l09_scope_result.wf",
+]
+reason = "stage R0i-b fix (probes of the review of R0i-b, round 1): class F19-SIG-RAISES: a scope whose failure a local `Fail` handler (the handler of `Stop` around the call aborts the scope, and the scope body handles the failure) catches raises nothing in the IR summary; the old inference gives `raises`"
+stage = "R0i-b"
+
+[[entry]]
+class = "sig"
+parts = ["reaches", "pins"]
+files = [
+    "tests/gate/probes/fixes/r0i/rb/n13_holder_callee_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n14_holder_callee_spawn.wf",
+    "tests/gate/probes/fixes/r0i/rb/n15_holder_callee_direct_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/n16_holder_callee_direct_spawn.wf",
+]
+reason = "stage R0i-b fix (probes of the review of R0i-b, round 1): the old parts `reaches` and `pins` of a function that runs a value of a holder or of an operation on a task or a fork branch: class F19-SIG-PINS (the IR `pins` comes from the facts of the body) and the old `reaches` that has no IR part"
 stage = "R0i-b"

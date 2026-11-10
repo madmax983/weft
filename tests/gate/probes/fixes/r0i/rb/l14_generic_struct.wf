@@ -1,0 +1,11 @@
+// a linear closure in a generic struct, read back and dropped
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+struct W<T> { x: T }
+fn main() {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let w = W { x: c }
+    let W(f) = w
+}

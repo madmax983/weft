@@ -1,0 +1,8 @@
+// return a Vec field of a reference param
+struct W { items: Vec<u64>, n: u64 }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(r: &W) -> Vec<u64> { r.items }
+fn main() { let w = W { items: Vec.new(), n: 1 }
+    let v = f(&w)
+    eat(v)
+    eat(w.items) }

@@ -1,0 +1,8 @@
+// a nonportable closure read back with Vec.get; fork branch runs it
+fn main() {
+    let r = Rc.new(0)
+    let fs = Vec.new()
+    fs.push(|| { let y = r.clone() })
+    let f = match fs.get(0) { Some(g) => g, None => || print(0) }
+    fork(|| f(), || print(1))
+}

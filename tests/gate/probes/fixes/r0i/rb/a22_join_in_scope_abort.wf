@@ -1,0 +1,22 @@
+// abort inside the scope after a join that gives back a linear closure
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+    print("rollback {i}") }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Stop { fn stop() }
+fn body() / Stop, async {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    scope { s =>
+        let t = s.spawn(|| c)
+        let f = t.join()
+        stop()
+        f()
+    }
+}
+fn main() / async {
+    handle Stop { fn stop() { () } } in body()
+    print("end")
+}

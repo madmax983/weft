@@ -1,0 +1,23 @@
+// abort with a linear closure held through: a callee that returns one of two params (the unwinder must roll back tx)
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+    print("rollback {i}") }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Stop { fn stop() }
+fn id<T>(x: T) -> T { x }
+fn pick<T>(a: T, b: T, k: bool) -> T { if k { a } else { b } }
+fn body() / Stop {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let tx2 = Tx { id: 2 }
+    let d = || commit(tx2)
+    let f = pick(c, d, true)
+    stop()
+    f()
+}
+fn main() {
+    handle Stop { fn stop() { () } } in body()
+    print("end")
+}

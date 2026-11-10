@@ -1,0 +1,12 @@
+// nonportable closure through: a tuple field; a scope task runs it (must be pinned)
+
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let p = (c, 1)
+    let f = p.0
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

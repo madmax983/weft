@@ -1,0 +1,8 @@
+// as k02, the caller calls the result and commits (clean)
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print(i) }
+fn keep<T>(x: T) -> T { x }
+fn g<T>(x: T) -> fn() -> T { || keep(x) }
+fn main() { let f = g(Tx { id: 1 })
+    commit(f()) }

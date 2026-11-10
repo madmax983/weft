@@ -1,0 +1,13 @@
+// a once closure assigned into a Vec<fn()> element; a callee with a stated param calls two copies
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn twice(fs: &Vec<fn()>) { let g = fs[0]
+    g()
+    let h = fs[0]
+    h() }
+fn main() {
+    let v = [1]
+    let xs: Vec<fn()> = Vec.new()
+    xs.push(|| print(0))
+    xs[0] = || print(take_v(v))
+    twice(&xs)
+}

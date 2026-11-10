@@ -1,0 +1,10 @@
+// a callee gets a Holder whose closure captures an Rc and forks with it
+struct Holder { cb: fn() }
+fn go(h: Holder) {
+    fork(|| { let g = h.cb
+        g() }, || print(1))
+}
+fn main() {
+    let r = Rc.new(0)
+    go(Holder { cb: || { let y = r.clone() } })
+}

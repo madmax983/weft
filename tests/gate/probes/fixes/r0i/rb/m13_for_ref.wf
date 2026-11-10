@@ -1,0 +1,7 @@
+// iterate by value over a Vec of Vecs behind a reference
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(r: &Vec<Vec<u64>>) { for v in r { eat(v) } }
+fn main() { let vs = Vec.new()
+    vs.push(Vec.new())
+    f(&vs)
+    for v in vs { eat(v) } }

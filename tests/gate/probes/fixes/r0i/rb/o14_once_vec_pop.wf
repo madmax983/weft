@@ -1,0 +1,10 @@
+// a once closure pushed into a local Vec and popped; called twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let fs = Vec.new()
+    fs.push(|| eat(v))
+    match fs.pop() { Some(f) => { f()
+        f() }, None => {} }
+}

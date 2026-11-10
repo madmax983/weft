@@ -1,0 +1,13 @@
+// a once closure (moves a Vec) in a local Vec, copied twice out of a reference and called
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let fs = Vec.new()
+    fs.push(|| eat(v))
+    let p = &fs
+    let g = p[0]
+    g()
+    let h = p[0]
+    h()
+}

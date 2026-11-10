@@ -1,0 +1,8 @@
+// nonportable closure through: a function item that returns a closure capturing its Rc param; fork branch runs it (W0401 expected)
+fn mk(r: Rc<u64>) -> fn() { || { let y = r.clone() } }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let f = mk(r)
+    fork(|| f(), || print(1))
+}

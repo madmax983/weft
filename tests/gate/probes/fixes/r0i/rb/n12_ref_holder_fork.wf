@@ -1,0 +1,10 @@
+// nonportable closure through: a reference to a holder struct; fork branch runs it (W0401 expected)
+struct Holder { cb: fn() }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let h = Holder { cb: c }
+    let hr = &h
+    let f = hr.cb
+    fork(|| f(), || print(1))
+}

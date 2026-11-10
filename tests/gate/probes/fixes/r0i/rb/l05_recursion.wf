@@ -1,0 +1,10 @@
+// a linear closure through a recursive generic callee, dropped
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+fn r<T>(n: u64, x: T) -> T { if n == 0 { x } else { r(n - 1, x) } }
+fn main() {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let f = r(3, c)
+}

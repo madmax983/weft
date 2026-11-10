@@ -1,0 +1,12 @@
+// a task gives back a linear closure by join; the result is dropped
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+fn main() {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    scope { s =>
+        let t = s.spawn(|| c)
+        let f = t.join()
+    }
+}

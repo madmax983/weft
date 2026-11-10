@@ -1,0 +1,13 @@
+// nonportable closure through: a non-generic struct with a fn field, captured whole; a scope task runs it (must be pinned)
+struct Holder { cb: fn() }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let h = Holder { cb: c }
+    let f = || { let g = h.cb
+        g() }
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

@@ -1,0 +1,11 @@
+// a task returns a Holder with a nonportable closure; fork runs it
+struct Holder { cb: fn() }
+fn main() {
+    let r = Rc.new(0)
+    let h = scope { s =>
+        let t = s.spawn(|| Holder { cb: || { let y = r.clone() } })
+        t.join()
+    }
+    fork(|| { let g = h.cb
+        g() }, || print(1))
+}

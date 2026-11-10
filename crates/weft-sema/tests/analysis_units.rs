@@ -1470,10 +1470,12 @@ fn the_values_of_the_bindings_come_from_the_ir() {
     // function type that the type does not show.
     let src = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\n\
                linear struct Tx { id: u64 }\nfn commit(t: Tx) { let Tx(i) = t }\n\
+               struct Holder { cb: fn() }\n\
                fn mk(f: fn()) -> fn() { f }\n\
                fn main() {\n    let b = Buf { items: Vec.new() }\n    let c = || eat(b)\n\
                let g = mk(c)\n    let t = Tx { id: 1 }\n    let l = || commit(t)\n\
-               let k = l\n    g()\n    k()\n}\n";
+               let k = l\n    let t2 = Tx { id: 2 }\n    let h = Holder { cb: || commit(t2) }\n\
+               let m = || { let Holder(cb) = h\n cb() }\n    g()\n    k()\n    m()\n}\n";
     let a = weft_sema::analyze_source(src, weft_sema::Options::default())
         .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
     let built = weft_sema::irbuild::build(&a);
@@ -1494,7 +1496,59 @@ fn the_values_of_the_bindings_come_from_the_ir() {
     };
     // The result of `mk(c)` is the argument: a `once` closure.
     assert!(value("g").once);
+    // A struct of a type with no type argument whose field holds a linear
+    // closure holds a linear value (the type has a function part in a field:
+    // `props::ir_has_fns`, not `TyTable::mentions_fn`, which sees only the
+    // type arguments).
+    assert!(value("h").linear);
     // A copy of a linear closure is linear.
     assert!(value("k").linear);
     assert!(!value("g").linear);
+}
+
+#[test]
+fn a_linear_closure_from_a_task_a_fork_or_resume_is_linear() {
+    // The blockers of the review of R0i-b, round 1 (plan stage R0i-b fix):
+    // the value flow of the IR gives a `join`, a `fork` and `resume` the
+    // value of the task, of the branches and of the handled body. So the
+    // local that gets a linear closure there is linear, and the cleanup
+    // runs the `on abort` of its capture on an abort.
+    for (src, name) in [
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a16_task_join.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a21_task_makes_closure.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a22_join_in_scope_abort.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a23_fork_result.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a28_resume_dest.wf"),
+            "g",
+        ),
+    ] {
+        let a = weft_sema::analyze_source(src, weft_sema::Options::default())
+            .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+        let built = weft_sema::irbuild::build(&a);
+        let linear = a.thir.iter().enumerate().any(|(i, t)| {
+            t.bindings.iter().enumerate().any(|(k, b)| {
+                let id = weft_sema::thir::BindingId(u32::try_from(k).unwrap_or(u32::MAX));
+                b.name == name
+                    && built
+                        .binding_values
+                        .get(i)
+                        .and_then(|m| m.get(&id))
+                        .is_some_and(|v| v.linear)
+            })
+        });
+        assert!(linear, "`{name}` is not linear in {src}");
+    }
 }

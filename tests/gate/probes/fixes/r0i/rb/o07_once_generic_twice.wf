@@ -1,0 +1,10 @@
+// a once closure through a generic identity, then called twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = id(|| eat(v))
+    c()
+    c()
+}

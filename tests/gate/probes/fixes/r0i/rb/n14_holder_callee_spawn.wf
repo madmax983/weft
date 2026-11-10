@@ -1,0 +1,15 @@
+// as n13, a scope task runs the closure (the task must be pinned)
+struct Holder { cb: fn() }
+fn mkh() -> Holder {
+    let r = Rc.new(0)
+    Holder { cb: || { let y = r.clone() } }
+}
+fn main() {
+    let h = mkh()
+    let f = || { let g = h.cb
+        g() }
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

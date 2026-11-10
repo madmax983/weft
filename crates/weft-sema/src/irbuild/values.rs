@@ -21,6 +21,9 @@
 //!   of a call of a function value can be;
 //! - a perform gives each argument to the parameter of each clause of its
 //!   operation, and its result gets the argument of each `resume` there;
+//! - a task handle names its spawn site, and a `join` gets the result of a
+//!   run of the value of the task; a `fork` gets the results of its
+//!   branches; `resume` gets `_0` of the handled body of its clause;
 //! - a `handle` and a `scope` get `_0` of their bodies; an upvar local and
 //!   its local in the parent share their properties; the environment of a
 //!   closure body gets the captures of each closure value of the body.
@@ -63,6 +66,9 @@ struct Val {
     params: BTreeSet<(BodyId, usize)>,
     /// The locals that a reference of the value can point to.
     refs: BTreeSet<(BodyId, LocalId)>,
+    /// The spawn sites of the tasks whose handle the value can be: a `join`
+    /// gives the result of the task (`Flow::tasks`).
+    tasks: BTreeSet<weft_ir::SpawnId>,
 }
 
 impl Val {
@@ -74,6 +80,7 @@ impl Val {
             self.items.len(),
             self.params.len(),
             self.refs.len(),
+            self.tasks.len(),
         );
         self.props.linear |= o.props.linear;
         self.props.no_on_abort |= o.props.no_on_abort;
@@ -83,6 +90,7 @@ impl Val {
         self.items.extend(o.items.iter().copied());
         self.params.extend(o.params.iter().copied());
         self.refs.extend(o.refs.iter().copied());
+        self.tasks.extend(o.tasks.iter().copied());
         before
             != (
                 self.props,
@@ -90,6 +98,7 @@ impl Val {
                 self.items.len(),
                 self.params.len(),
                 self.refs.len(),
+                self.tasks.len(),
             )
     }
 }
@@ -106,6 +115,9 @@ struct Flow<'a> {
     /// writes it, with the arguments for the parameters, into the locals
     /// that the argument points to.
     writes: HashMap<(BodyId, usize), Val>,
+    /// The result of the task of each spawn site and of each branch of a
+    /// `fork`: the result of a run of its value (plan stage R0i-b fix).
+    tasks: HashMap<weft_ir::SpawnId, Val>,
     /// The values grew in this pass.
     grew: bool,
 }
@@ -230,7 +242,7 @@ impl Flow<'_> {
                 .body(d.maker)
                 .and_then(|x| x.locals.get(cap.source.local.index()))
             {
-                if !self.tys.mentions_fn(sd.ty) {
+                if !crate::props::ir_has_fns(self.tys, sd.ty) {
                     src.props = decl_props(sd);
                 }
             }
@@ -295,6 +307,29 @@ impl Flow<'_> {
         let mut out = self.subst(b, callee, &r, args);
         out.refs.clear();
         out
+    }
+
+    /// Joins `v` into the result of the task of spawn site `site`.
+    fn put_task(&mut self, site: weft_ir::SpawnId, v: &Val) {
+        let grew = self.tasks.entry(site).or_default().join(v);
+        self.grew |= grew;
+    }
+
+    /// The handled body of the clause that body `b` is, or is in (a closure
+    /// of a clause): `resume` gives its value.
+    fn handled_of(&self, b: BodyId) -> Option<BodyId> {
+        let mut at = b;
+        for _ in 0..=self.p.bodies.len() {
+            let body = self.p.body(at)?;
+            if let weft_ir::BodyKind::Clause(h, _) = body.kind {
+                return self.p.handlers.get(h.index()).map(|d| d.handled);
+            }
+            at = match self.p.closure_of(at) {
+                Some((_, d)) => d.maker,
+                None => body.parent?,
+            };
+        }
+        None
     }
 
     /// The value of `_0` of body `b`.
@@ -397,6 +432,7 @@ fn run<'a>(p: &'a Program, tys: &'a TyTable) -> Flow<'a> {
         tys,
         vals: HashMap::new(),
         writes: HashMap::new(),
+        tasks: HashMap::new(),
         grew: true,
     };
     for (i, body) in p.bodies.iter().enumerate() {
@@ -693,6 +729,13 @@ fn pass_body(
             }
         }
     }
+    // The result of a task that the scope keeps (`LocalKind::TaskResult`).
+    for (j, d) in body.locals.iter().enumerate() {
+        if let LocalKind::TaskResult(site) = d.kind {
+            let v = f.tasks.get(&site).cloned().unwrap_or_default();
+            f.put(b, LocalId(super::id_of(j)), &v);
+        }
+    }
     // The environment of a closure body holds the captures of each closure
     // value of the body.
     if let (Some((_, d)), Some(&env)) = (p.closure_of(b), body.params.first()) {
@@ -824,6 +867,57 @@ fn pass_body(
             TermKind::IterNext { iter, dest, .. } => {
                 let v = f.get(b, base(iter));
                 f.put(b, base(dest), &v);
+            }
+            // A task gives the result of a run of its value: the handle
+            // names the site, and a `join` gives the result; a `fork` gives
+            // the results of its branches; `resume` gives the value of the
+            // handled body (plan stage R0i-b fix).
+            TermKind::Spawn {
+                site, task, dest, ..
+            } => {
+                let t = f.operand(b, task);
+                let r = f.run_result(b, &t, &[]);
+                f.put_task(*site, &r);
+                if let Some(dest) = dest {
+                    let h = Val {
+                        tasks: BTreeSet::from([*site]),
+                        ..Val::default()
+                    };
+                    f.put(b, base(dest), &h);
+                }
+            }
+            TermKind::Join { task, dest, .. } => {
+                let t = f.operand(b, task);
+                let mut v = Val::default();
+                for site in &t.tasks {
+                    if let Some(r) = f.tasks.get(site) {
+                        v.join(r);
+                    }
+                }
+                f.put(b, base(dest), &v);
+            }
+            TermKind::Fork {
+                sites,
+                branches,
+                dest,
+                ..
+            } => {
+                let mut v = Val::default();
+                for (k, br) in branches.iter().enumerate() {
+                    let t = f.operand(b, br);
+                    let r = f.run_result(b, &t, &[]);
+                    if let Some(&site) = sites.get(k) {
+                        f.put_task(site, &r);
+                    }
+                    v.join(&r);
+                }
+                f.put(b, base(dest), &v);
+            }
+            TermKind::Resume { dest, .. } => {
+                if let Some(h) = f.handled_of(b) {
+                    let v = f.ret_of(h);
+                    f.put(b, base(dest), &v);
+                }
             }
             _ => {}
         }

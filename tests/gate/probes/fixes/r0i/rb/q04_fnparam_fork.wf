@@ -1,0 +1,8 @@
+// a callee gets a fn value that captures an Rc and forks with it
+fn go(f: fn()) {
+    fork(|| f(), || print(1))
+}
+fn main() {
+    let r = Rc.new(0)
+    go(|| { let y = r.clone() })
+}

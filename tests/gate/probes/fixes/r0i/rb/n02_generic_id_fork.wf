@@ -1,0 +1,8 @@
+// nonportable closure through: a generic identity; fork branch runs it (W0401 expected)
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let f = id(c)
+    fork(|| f(), || print(1))
+}

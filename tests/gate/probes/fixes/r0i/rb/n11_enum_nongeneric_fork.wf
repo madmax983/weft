@@ -1,0 +1,9 @@
+// nonportable closure through: a non-generic enum payload with a fn field; fork branch runs it (W0401 expected)
+enum Act { Go(fn()), No }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let a = Go(c)
+    let f = match a { Go(g) => g, No => || print(0) }
+    fork(|| f(), || print(1))
+}

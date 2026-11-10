@@ -1,0 +1,12 @@
+// a once closure called in a loop
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || eat(v)
+    let n = 0
+    while n < 2 {
+        c()
+        n = n + 1
+    }
+}

@@ -1,0 +1,10 @@
+// a linear closure in Some, taken out by match and dropped
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+fn main() {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let o = Some(c)
+    match o { Some(f) => {}, None => {} }
+}

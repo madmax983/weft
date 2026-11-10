@@ -1,0 +1,6 @@
+// match a reference to an Option<Vec> and bind by value
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(o: &Option<Vec<u64>>) { match o { Some(v) => eat(v), None => {} } }
+fn main() { let o = Some(Vec.new())
+    f(&o)
+    match o { Some(v) => eat(v), None => {} } }
