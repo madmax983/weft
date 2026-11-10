@@ -2806,7 +2806,21 @@ pub fn op_fn_args(
         for g in &fns {
             let known = matches!(g, FnVal::Closure(_) | FnVal::Made(_) | FnVal::Item(..));
             if !known || (!task_unsafe(cx, g) && kept_value_risk(cx, g)) {
-                return Err(AlphaError::Later(OP_KEPT));
+                if !weak_row_ops() {
+                    return Err(AlphaError::Later(OP_KEPT));
+                }
+                // The weak form: the summary of the function of the body
+                // must apply at no call where a local handler serves the
+                // effect (`note_weak_call`).
+                let effect = cx
+                    .tys
+                    .effects()
+                    .get(e.index())
+                    .map(|d| d.identity.clone())
+                    .unwrap_or_default();
+                if let Some(f) = fn_of_body(cx.p, body) {
+                    note_weak(f, &effect);
+                }
             }
         }
         any |= !fns.is_empty();
@@ -2832,7 +2846,119 @@ pub fn op_fn_args(
 
 /// Why a perform of an operation of a handler of a caller with a function
 /// value that the clause can keep is not in scope ([`op_fn_args`]).
-const OP_KEPT: &str = "a function value that an operation gives to a handler (stage F14)";
+pub const OP_KEPT: &str = "a function value that an operation gives to a handler (stage F14)";
+
+thread_local! {
+    /// The weak form of a perform through the row is on ([`WeakRowOps`]).
+    static WEAK_ROW_OPS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// True while a [`WeakRowOps`] is live on this thread.
+pub fn weak_row_ops() -> bool {
+    WEAK_ROW_OPS.with(std::cell::Cell::get)
+}
+
+/// The weak form of a perform through the row is on while a value of this
+/// type is live (stage R0k-a).
+///
+/// A perform with a function value that the clause can keep uses the weak
+/// form: the clause is code of a caller that runs the values
+/// ([`op_value_out`]), and the program stays in scope. It is sound only for
+/// a program in which no
+/// call that a local handler serves applies the summary of such a body
+/// (`factgen::instantiate::Instantiated::weak_ok`).
+#[derive(Debug)]
+pub struct WeakRowOps {
+    old: bool,
+}
+
+impl WeakRowOps {
+    /// Turns the weak form on until the value drops.
+    pub fn enter() -> Self {
+        let old = WEAK_ROW_OPS.with(|c| c.replace(true));
+        WEAK_FNS.with(|w| w.borrow_mut().clear());
+        Self { old }
+    }
+}
+
+impl Drop for WeakRowOps {
+    fn drop(&mut self) {
+        WEAK_ROW_OPS.with(|c| c.set(self.old));
+        WEAK_FNS.with(|w| w.borrow_mut().clear());
+    }
+}
+
+thread_local! {
+    /// The functions whose summaries use the weak form of a perform through
+    /// the row, with the identities of the effects ([`WeakRowOps`]).
+    static WEAK_FNS: std::cell::RefCell<BTreeMap<weft_ir::FnId, BTreeSet<String>>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+
+/// Notes that the summary of function `f` uses the weak form for `effect`.
+fn note_weak(f: weft_ir::FnId, effect: &str) {
+    WEAK_FNS.with(|w| {
+        w.borrow_mut()
+            .entry(f)
+            .or_default()
+            .insert(effect.to_string());
+    });
+}
+
+/// The function whose body is body `b` or a lexical parent of it.
+fn fn_of_body(p: &Program, b: BodyId) -> Option<weft_ir::FnId> {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let body = p.bodies.get(at.index())?;
+        match body.kind {
+            weft_ir::BodyKind::Fn(f) => return Some(f),
+            _ => at = body.parent?,
+        }
+    }
+    None
+}
+
+/// The guard of the weak form (stage R0k-a).
+///
+/// It checks the invariant of `factgen::instantiate::Instantiated::weak_ok`
+/// at a call in body `body` that runs the summaries of the functions
+/// `callees` with the local handlers of the effects `served`.
+///
+/// A summary with the weak form does not say what a clause does with a
+/// function value that the callee gives to it. So if a local handler serves
+/// an effect of the weak form of such a summary, the program keeps the old
+/// pipeline. Else the effect passes on to a caller: the summary of the
+/// function of `body` gets the weak form for it too.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] if a local handler serves such an effect.
+pub fn note_weak_call(
+    p: &Program,
+    body: BodyId,
+    callees: &[weft_ir::FnId],
+    served: &BTreeSet<String>,
+) -> Result<(), AlphaError> {
+    if !weak_row_ops() {
+        return Ok(());
+    }
+    let mut pass: BTreeSet<String> = BTreeSet::new();
+    for f in callees {
+        let w = WEAK_FNS.with(|m| m.borrow().get(f).cloned().unwrap_or_default());
+        for e in w {
+            if served.contains(&e) {
+                return Err(AlphaError::Later(OP_KEPT));
+            }
+            pass.insert(e);
+        }
+    }
+    if let Some(g) = fn_of_body(p, body) {
+        for e in &pass {
+            note_weak(g, e);
+        }
+    }
+    Ok(())
+}
 
 /// True if a call of the function value `fv` moves it: a closure that is
 /// `once` (it moves a capture that is not plain data, or it holds a `once`

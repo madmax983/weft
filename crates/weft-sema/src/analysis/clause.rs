@@ -138,6 +138,12 @@ pub struct Handlers {
     /// the handler), and the local `Fail` handler of the call (code of a
     /// caller, or a summary that can fail). [`run_handlers`] reads it.
     pub cap_active: std::collections::BTreeSet<(BodyId, BlockId, HandlerId)>,
+    /// The call of a function value at each block, with each local handler
+    /// whose clauses the call cannot run (stage R0k-a): the analysis knows
+    /// each value that the call runs, and no one performs the effect of the
+    /// handler or runs a function value. [`call_clauses`] notes it, and
+    /// [`run_handlers`] reads it.
+    pub no_clause: std::collections::BTreeSet<(BodyId, BlockId, HandlerId)>,
     /// The `Main` node of each perform of a closure body through a captured
     /// capability, with the index of the capture and the identity of the
     /// effect (plan stage F16): the summary of the closure performs through
@@ -2160,6 +2166,7 @@ pub fn run_handlers(cx: &Cx<'_>, body: BodyId, block: BlockId, t: &TermKind) -> 
     let own = crate::factgen::frames::own_clause_handlers(cx.p, cx.tys, cx.sums, body, t);
     let mut hs = call_handlers(cx, body, t);
     hs.retain(|h| own.contains(h) || cx.hx.cap_active.contains(&(body, block, *h)));
+    hs.retain(|h| !cx.hx.no_clause.contains(&(body, block, *h)));
     hs
 }
 
@@ -2669,7 +2676,67 @@ pub fn call_clauses(
     t: &TermKind,
 ) -> R {
     let p = cx.p;
-    let hs = call_handlers(cx, body, t);
+    let mut hs = call_handlers(cx, body, t);
+    // The guard of the weak form of a perform through the row (stage
+    // R0k-a, `transfer::note_weak_call`).
+    if transfer::weak_row_ops() {
+        let served: BTreeSet<String> = hs
+            .iter()
+            .filter_map(|h| p.handlers.get(h.index()))
+            .filter_map(|d| cx.tys.effects().get(d.effect.index()))
+            .map(|e| e.identity.clone())
+            .collect();
+        let callees: Vec<weft_ir::FnId> = match t {
+            TermKind::Call {
+                callee: weft_ir::Callee::Fn(f, _),
+                ..
+            } => vec![*f],
+            TermKind::Call {
+                callee: weft_ir::Callee::Value(v),
+                ..
+            } => {
+                let from = before.cloned().unwrap_or_else(|| st.clone());
+                transfer::reach_fns(cx, body, &from, v)?
+                    .into_iter()
+                    .filter_map(|g| match g {
+                        super::FnVal::Item(f, _) => Some(f),
+                        _ => None,
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        transfer::note_weak_call(p, body, &callees, &served)?;
+    }
+    // A call of a function value runs no clause of a local handler when each
+    // value that it can run is known and none performs the effect of the
+    // handler or runs a function value (stage R0k-a: a closure that a clause
+    // gives back with `resume`, `k06_d3_once_ok`). A `Fail` handler stays: a
+    // value can fail with no perform.
+    if matches!(
+        t,
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(_),
+            ..
+        }
+    ) {
+        let from = before.cloned().unwrap_or_else(|| st.clone());
+        let mut keep = Vec::new();
+        for h in hs {
+            let fail = p
+                .handlers
+                .get(h.index())
+                .and_then(|d| cx.tys.effects().get(d.effect.index()))
+                .is_some_and(|e| e.identity == crate::factgen::frames::FAIL);
+            if fail || call_performs(cx, body, &from, t, h)? {
+                cx.hx.no_clause.remove(&(body, block, h));
+                keep.push(h);
+            } else {
+                cx.hx.no_clause.insert((body, block, h));
+            }
+        }
+        hs = keep;
+    }
     if hs.is_empty() {
         return Ok(());
     }
@@ -2714,6 +2781,12 @@ pub fn call_clauses(
             if op_gives_fns(p, cx.tys, h, op)
                 && call_performs(cx, body, before.unwrap_or(&start), t, h)?
             {
+                // The run of the clause stops at its first `resume`: the
+                // values of a later `resume` of a `multi` operation are not in
+                // it (the review of R0k: `rv_p09_d3_multi`).
+                if op_multi(p, cx.tys, h, op) {
+                    return Err(AlphaError::Later(GIVES_BACK));
+                }
                 let v = run.value.flat();
                 back_fns.extend(v.fns.iter().cloned());
                 back_refs.extend(v.refs.iter().copied());
@@ -2851,6 +2924,16 @@ pub fn op_gives_fns(p: &Program, tys: &weft_ir::TyTable, h: HandlerId, op: weft_
         let pr = crate::props::ir_props(tys, o.ret);
         pr.callable || crate::props::ir_has_fns(tys, o.ret)
     })
+}
+
+/// True if operation `op` of the effect of handler `h` is `multi`: its
+/// clause can resume more than once.
+fn op_multi(p: &Program, tys: &weft_ir::TyTable, h: HandlerId, op: weft_ir::OpIdx) -> bool {
+    p.handlers
+        .get(h.index())
+        .and_then(|hd| tys.effects().get(hd.effect.index()))
+        .and_then(|e| e.ops.get(op.index()))
+        .is_some_and(|o| o.multi)
 }
 
 /// True if operation `op` of the effect of handler `h` gives a reference

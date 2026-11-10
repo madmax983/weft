@@ -1,0 +1,12 @@
+// The clean twin of rv_p12: the task of the callee only reads `st`.
+struct S { n: u64 }
+effect Run { fn run(g: fn()) }
+fn f() / Run, async {
+    let st = S { n: 0 }
+    run(|| print(st.n))
+    scope { s => s.spawn(|| print(st.n)) }
+}
+fn main() / async {
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in { f() }
+}

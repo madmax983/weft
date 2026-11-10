@@ -1,0 +1,15 @@
+// Plan stage R0k-a: the clean twin of k11. The value only reads the vector.
+// The fact oracle checks the read of `c` at the node of the perform.
+effect Get { fn get() -> fn() }
+fn run_ref(v: &Vec<u64>) / Get {
+    let r = &v[0]
+    let g = get()
+    g()
+    print(r)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || print(v.len())
+    handle Get { fn get() { resume(c) } } in { run_ref(&v) }
+}

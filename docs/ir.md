@@ -2269,6 +2269,50 @@ order. A closure and a clause can run at many nodes, so their effects reach each
 node through their summary. The components share the tables of roots, places and
 variables of the `FnFacts`.
 
+As built (plan stage R0k-a, call-site copies, `factgen/instantiate.rs`): a summary
+of a callee cannot tell what the clause of a local handler does with a function
+value that the callee gives to an operation (C2), or when the callee runs a value
+that the clause gives back (D3). So for such a program the fact generator works on
+a copy of the IR in which each such call is the code of the callee. A call gets a
+copy when the capability environment of the call binds an effect that the callee
+performs through its row (also through its callees) with a function value or a
+reference in an argument or in the result, the call has no type arguments, the
+callee has a body and is not recursive, the chain of copies is at most 8 calls
+deep, and the copies add at most 6000 blocks. The copy of the code of the callee
+in the site body:
+
+- each local of the callee is a new local of the site: a parameter is a variable of
+  the source, `_0` a temporary;
+- a new block gives each parameter the operand of the call and goes to the entry of
+  the callee; a `Return` gives `_0` to the destination of the call and goes to its
+  next block; the `UnwindExit` of the callee goes to the cleanup block of the call;
+- each body inside the callee (closure, handled body, clause, scope body) gets a copy
+  with new ids of its declarations, spawn sites and capability environments; the
+  root environment of the callee is the environment of the call;
+- a perform through the row that the environment of the call serves goes to the
+  capability of the serving handler (through new upvar locals in a body inside the
+  copy); a closure of the callee gets a `Cap` capture for each such effect that its
+  code can use, as the builder gives a closure of the site.
+
+Then the perform is a perform of a local handler, and the rules of a handled body
+apply (the clause at the node of the perform, the resume regions, the `multi`
+re-entry, the abort edges). The copies change no other program: `factgen::run` makes
+them only if the program falls back with C2 or D3 without them, and the program keeps
+its fallback if the copies bring in a construct with no full facts
+(`Scope::pending`). The verifier checks the copy (V16, the order of a cleanup chain,
+is not checked in a body with a copy: the chain of the callee ends before the chain
+of the site, as in the machine). The fact oracle runs the copy (`components_built`),
+and the test `copies.rs` of `weft-interp` runs each copied probe with and without
+the copies and compares the runs.
+
+In the facts of the callee itself (its own diagnostics and its summary), a perform
+through the row of a value that the clause can keep has the weak form of R0h (code
+of a caller runs the values). This holds only if no call that a local handler
+serves applies that summary (`Instantiated::weak_ok`: each such call has a copy,
+and no closure, function item value, `main` or test can run such a callee). The
+analysis checks the invariant (`transfer::note_weak_call`): a served call of a
+summary with the weak form, also through a callee, keeps the old pipeline.
+
 ### 6.2 Nodes and phases
 
 Each statement is one node. Each terminator is one node (phase `Main`), and some

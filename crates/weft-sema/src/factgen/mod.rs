@@ -50,6 +50,7 @@ pub mod frames;
 pub mod generic;
 pub mod handlers;
 pub mod holders;
+pub mod instantiate;
 pub mod kernel;
 pub mod nodes;
 pub mod prune;
@@ -2626,6 +2627,39 @@ pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsuppo
     Ok(out)
 }
 
+/// The program that the `ir` pipeline checks, and the facts of each of its
+/// components (as [`components`]).
+///
+/// For a program that needs copies of callees at their calls (stage R0k-a,
+/// [`instantiate`]), it is the program with the copies. The fact oracle
+/// runs that program.
+///
+/// # Errors
+///
+/// As [`components`], for the program that it gives.
+pub fn components_built(
+    a: &Analysis,
+    built: Built,
+) -> (Built, Result<Vec<Component>, Unsupported>) {
+    let first = components(a, &built);
+    let Err(u) = &first else {
+        return (built, first);
+    };
+    let Some(inst) = instantiate::wanted(u)
+        .then(|| instantiate::instantiate(&built))
+        .flatten()
+    else {
+        return (built, first);
+    };
+    let second = {
+        let _weak = inst
+            .weak_ok
+            .then(crate::analysis::transfer::WeakRowOps::enter);
+        components(a, &inst.built)
+    };
+    (inst.built, second)
+}
+
 /// The components of [`components`].
 fn components_of(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
     let inf = crate::analysis::callgraph::infer(a, built, None);
@@ -3989,23 +4023,67 @@ pub(crate) fn run(
         return (s, None);
     }
     let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
-    let emitted = std::cell::RefCell::new(Vec::new());
-    let effects = std::cell::RefCell::new(Vec::new());
-    let on_abort = std::cell::RefCell::new(None);
-    let input = Input {
-        analysis: a,
-        built: &built,
-        scope: &s,
-        diags: &emitted,
-        effects: &effects,
-        no_runtime,
-        on_abort: &on_abort,
-    };
+    let mut emitted = std::cell::RefCell::new(Vec::new());
+    let mut effects = std::cell::RefCell::new(Vec::new());
+    let mut on_abort = std::cell::RefCell::new(None);
     let _ = crate::analysis::clause::take_pending();
-    if let Err(u) = emit(&input, &mut facts) {
+    let first = {
+        let input = Input {
+            analysis: a,
+            built: &built,
+            scope: &s,
+            diags: &emitted,
+            effects: &effects,
+            no_runtime,
+            on_abort: &on_abort,
+        };
+        emit(&input, &mut facts)
+    };
+    let mut built = built;
+    if let Err(u) = first {
         let _ = crate::analysis::clause::take_pending();
-        s.fallback = Some(u.to_string());
-        return (s, None);
+        // A call that a local handler serves with a function value or a
+        // reference: the callee gets a copy at the call (stage R0k-a).
+        let inst = instantiate::wanted(&u)
+            .then(|| instantiate::instantiate(&built))
+            .flatten();
+        let Some(inst) = inst else {
+            s.fallback = Some(u.to_string());
+            return (s, None);
+        };
+        facts = a.decls.iter().map(seed).collect();
+        emitted = std::cell::RefCell::new(Vec::new());
+        effects = std::cell::RefCell::new(Vec::new());
+        on_abort = std::cell::RefCell::new(None);
+        let second = {
+            let input = Input {
+                analysis: a,
+                built: &inst.built,
+                scope: &s,
+                diags: &emitted,
+                effects: &effects,
+                no_runtime,
+                on_abort: &on_abort,
+            };
+            let _weak = inst
+                .weak_ok
+                .then(crate::analysis::transfer::WeakRowOps::enter);
+            emit(&input, &mut facts)
+        };
+        if let Err(u2) = second {
+            let _ = crate::analysis::clause::take_pending();
+            s.fallback = Some(u2.to_string());
+            return (s, None);
+        }
+        // A copy that brings in a construct with no full facts (stage R0g,
+        // `Scope::pending`): the weak form of that construct can reject a
+        // clean program (`rv_p04_c2_multi_ok`, D5). The copy does not apply,
+        // and the program keeps its fallback.
+        if let Some(p2) = crate::analysis::clause::take_pending().first() {
+            s.fallback = Some(format!("{u} (with the copies of the callees: {p2})"));
+            return (s, None);
+        }
+        built = inst.built;
     }
     // A construct that the facts do not model: the check decides (stage
     // R0g).

@@ -1,0 +1,16 @@
+// Plan stage R0k-a (D3, a value of the site that the clause gives back as
+// the first thing it does): the callee runs it while it holds a reference
+// into the vector that the value clears (W0301).
+effect Get { fn get() -> fn() }
+fn run_ref(v: &Vec<u64>) / Get {
+    let r = &v[0]
+    let g = get()
+    g()
+    print(r)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || v.clear()
+    handle Get { fn get() { resume(c) } } in { run_ref(&v) }
+}

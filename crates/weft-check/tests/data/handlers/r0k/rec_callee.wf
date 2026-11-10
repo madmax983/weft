@@ -1,0 +1,19 @@
+// Stage R0k-a: a recursive callee gets no copy at its call, so the D3 form
+// keeps the old pipeline.
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn run_ref(n: u64, c: &C) / Get {
+    if n > 0 {
+        run_ref(n - 1, c)
+    } else {
+        let r = &c.v[0]
+        let g = get()
+        g()
+        print(r)
+    }
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(1, &c) }
+}

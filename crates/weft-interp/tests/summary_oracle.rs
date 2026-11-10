@@ -516,3 +516,49 @@ fn a_clause_run_from_a_node_that_sends_the_effect_past_fails_the_clause_cover() 
     assert!(m.starts_with("clause oracle (A5)"), "{m}");
     assert!(m.contains("`with_buffer`"), "{m}");
 }
+
+/// A clause that resumes with a local of the site at its first location
+/// (stage R0k-a): the read of the operand is code before the resume point,
+/// so it runs at the node of the perform, not at `Post` of the `handle`.
+/// The facts of the generator pass, and with the read of `k` gone from the
+/// perform node the run fails.
+#[test]
+fn a_clause_that_resumes_with_a_site_local_reads_it_at_the_perform_node() {
+    let src = "effect Get { fn get() -> u64 }\n\
+        fn main() {\n\
+        let k = 5\n\
+        let h = handle Get { fn get() { resume(k) } } in { get() }\n\
+        print(h)\n\
+        }\n";
+    let opts_d = Options {
+        facts: FactGen::Both,
+        ..Options::default()
+    };
+    let c = check_source("test.wf", src, opts_d);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let ok = run_main_with_facts(&c, &opts(), |_| {});
+    let report = match ok {
+        Ok(o) => o.fact_oracle.expect("a fact oracle report"),
+        Err(e) => panic!("{}", e.message),
+    };
+    assert!(report.summary > 0, "the summary oracle checked nothing");
+    let broken = run_main_with_facts(&c, &opts(), |f| {
+        let ns = run_nodes(f, "get");
+        let drop: Vec<(weft_facts::NodeId, weft_facts::PlaceId)> = f
+            .reads_at
+            .iter()
+            .filter(|&&(n, q)| ns.contains(&n) && f.place(q).display == "k")
+            .copied()
+            .collect();
+        assert!(!drop.is_empty(), "no read of `k` at the perform node");
+        f.reads_at.retain(|x| !drop.contains(x));
+    });
+    match broken {
+        Ok(_) => panic!("the broken facts pass"),
+        Err(e) => assert!(
+            e.message.starts_with("summary oracle (A3)"),
+            "{}",
+            e.message
+        ),
+    }
+}

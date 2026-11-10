@@ -245,6 +245,31 @@ pub fn run_main(checked: &Checked, opts: &RunOptions) -> Result<RunOutcome, Runt
     })
 }
 
+/// Runs `fn main` of a checked program as [`run_main`] does, on the program
+/// with the copies of the callees at their calls (stage R0k-a).
+///
+/// A call gets a copy of its callee if a local handler serves an operation
+/// of the callee with a function value or a reference
+/// (`weft_sema::factgen::instantiate`). The IR engine runs the program; with
+/// no such call, it runs the program as it is. A test compares the two
+/// runs: the copies must not change what the program does.
+pub fn run_main_copied(checked: &Checked, opts: &RunOptions) -> Result<RunOutcome, RuntimeError> {
+    weft_sema::on_large_stack(|| {
+        let analysis = &checked.analysis;
+        let (prog, sigs) = (&analysis.program, analysis.sigs.as_slice());
+        let built = weft_sema::irbuild::build(analysis);
+        let built = weft_sema::factgen::instantiate::instantiate(&built).map_or(built, |i| i.built);
+        let rt = match compile_ir::compile_ir(prog, &built) {
+            Ok(code) => Runtime::with_code(prog, sigs, stealable_spans(checked), code),
+            Err(f) => {
+                let rt = Runtime::new(prog, sigs, stealable_spans(checked), &exports(analysis));
+                return with_fallback(run_main_with(&rt, opts), Some(f.to_string()));
+            }
+        };
+        with_fallback(run_main_with(&rt, opts), None)
+    })
+}
+
 /// Runs `fn main` of an analysis that the checker did not see. No task is
 /// stealable. The run is on a large stack ([`weft_sema::on_large_stack`]).
 pub fn run_analysis_main(
@@ -291,13 +316,22 @@ fn runtime<'a>(
 ) -> (Runtime<'a>, Option<String>) {
     let (prog, sigs) = (&analysis.program, analysis.sigs.as_slice());
     if opts.engine == Engine::Ir || opts.fact_oracle {
-        let built = weft_sema::irbuild::build(analysis);
+        let mut built = weft_sema::irbuild::build(analysis);
+        // The fact oracle runs the program that the `ir` pipeline checks: with
+        // the copies of the callees at their calls, if it needs them (stage
+        // R0k-a).
+        let comps = if opts.fact_oracle {
+            let (b, c) = weft_sema::factgen::components_built(analysis, built);
+            built = b;
+            Some(c)
+        } else {
+            None
+        };
         match compile_ir::compile_ir(prog, &built) {
             Ok(code) => {
                 let mut rt = Runtime::with_code(prog, sigs, stealable, code);
-                if opts.fact_oracle {
-                    let mut comps = weft_sema::factgen::components(analysis, &built)
-                        .map_err(|u| format!("the program is not in scope: {u}"));
+                if let Some(comps) = comps {
+                    let mut comps = comps.map_err(|u| format!("the program is not in scope: {u}"));
                     if let (Ok(cs), Some(edit)) = (&mut comps, edit) {
                         for c in cs {
                             edit(&mut c.facts);

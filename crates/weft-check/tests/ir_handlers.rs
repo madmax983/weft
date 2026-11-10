@@ -1128,26 +1128,31 @@ fn function_values_and_references_across_operations_have_full_facts() {
         ("d3r_callee_mut_ok.wf", vec![]),
         ("d3r_twice.wf", vec![("W0301", 7)]),
         ("d3r_clause_local_ok.wf", vec![]),
+        // Stage R0k-a: the forms that kept the old pipeline get a copy of
+        // the callee at the call.
+        ("c2_stored_ref.wf", vec![("W0301", 16), ("W0301", 17)]),
+        ("d3f_mut_race.wf", vec![("W0301", 11)]),
+        ("d3f_reader_ok.wf", vec![]),
     ] {
         let (got, fallback, _) = stage_codes("r0h", name);
         assert!(fallback.is_none(), "{name}: {fallback:?}");
         let want: Vec<(String, usize)> = want.iter().map(|&(c, l)| (c.to_string(), l)).collect();
         assert_eq!(got, want, "{name}");
     }
-    for (name, why) in [
-        ("c2_stored_ref.wf", "an operation gives to a handler"),
-        (
-            "d3f_mut_race.wf",
-            "gives a function value or a reference back",
-        ),
-        (
-            "d3f_reader_ok.wf",
-            "gives a function value or a reference back",
-        ),
-    ] {
-        let (_, fallback, _) = stage_codes("r0h", name);
+}
+
+/// Stage R0k-a: a call that gets no copy keeps the old pipeline for the D3
+/// form: a recursive callee, and a perform in a closure that the callee
+/// makes and runs (the closure-body copies of stage R0k-a2).
+#[test]
+fn a_call_with_no_copy_keeps_the_old_pipeline() {
+    for name in ["rec_callee.wf", "closure_run.wf"] {
+        let (_, fallback, _) = stage_codes("r0k", name);
         let fallback = fallback.unwrap_or_default();
-        assert!(fallback.contains(why), "{name}: {fallback}");
+        assert!(
+            fallback.contains("gives a function value or a reference back"),
+            "{name}: {fallback}"
+        );
     }
 }
 
@@ -1155,26 +1160,23 @@ fn function_values_and_references_across_operations_have_full_facts() {
 /// site that a clause gives back to the callee (`f32`: a parameter that the
 /// callee keeps in a field of the site), or that an operation of a caller
 /// gets (`c13`: a parameter of a helper that the clause keeps), is code of a
-/// caller that no summary follows when it runs later: the old pipeline checks
-/// the program. A change through a reference that a clause gives back, in a
+/// caller that no summary follows when it runs later: the old pipeline
+/// checked the program. From stage R0k-a the callee gets a copy at the call. A change through a reference that a clause gives back, in a
 /// callee of the callee, is a change at the call (`r01`: part `caller_muts`
 /// of the body that passes it on).
 #[test]
 fn a_given_back_value_of_the_interface_keeps_the_old_pipeline() {
-    for (name, why) in [
-        (
-            "rv1_f32_param_back_keep.wf",
-            "gives a function value or a reference back",
-        ),
-        (
-            "rv1_f47_param_back_keep_ok.wf",
-            "gives a function value or a reference back",
-        ),
-        ("rv1_c13_param_fn_vec.wf", "an operation gives to a handler"),
+    // Stage R0k-a: the callee gets a copy at the call, so the value is the
+    // value of the site, and the program is in scope.
+    for (name, want) in [
+        ("rv1_f32_param_back_keep.wf", vec![("W0301", 19)]),
+        ("rv1_f47_param_back_keep_ok.wf", vec![]),
+        ("rv1_c13_param_fn_vec.wf", vec![("W0301", 16)]),
     ] {
-        let (_, fallback, _) = stage_codes("r0h", name);
-        let fallback = fallback.unwrap_or_default();
-        assert!(fallback.contains(why), "{name}: {fallback}");
+        let (got, fallback, _) = stage_codes("r0h", name);
+        assert!(fallback.is_none(), "{name}: {fallback:?}");
+        let want: Vec<(String, usize)> = want.iter().map(|&(c, l)| (c.to_string(), l)).collect();
+        assert_eq!(got, want, "{name}");
     }
     let (got, fallback, _) = stage_codes("r0h", "rv1_r01_two_level_mut.wf");
     assert!(fallback.is_none(), "{fallback:?}");

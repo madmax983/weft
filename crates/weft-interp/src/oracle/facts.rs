@@ -2072,14 +2072,6 @@ impl FactOracle {
         };
         self.last = Some(uid);
         self.light_last = None;
-        // A clause frame that leaves a `resume`: the handled body ended, and
-        // the code after the `resume` runs at `Post` of the `handle` (plan
-        // stage F14).
-        if let Some(comp) = self.comps.get(fr.comp) {
-            if comp.clause && comp.waits(&fr.cur) {
-                fr.site = Some((comp.unit, comp.post.clone()));
-            }
-        }
         let Some(comp) = self.comps.get(fr.comp) else {
             return Ok(false);
         };
@@ -2095,6 +2087,15 @@ impl FactOracle {
         let to = (block, at);
         if fr.at == Some(to) {
             return Ok(false);
+        }
+        // A clause frame that leaves a `resume`: the handled body ended, and
+        // the code after the `resume` runs at `Post` of the `handle` (plan
+        // stage F14). The ops of the `resume` location before it resumes
+        // (the read of its operand) are code before the resume point: they
+        // run at the node of the clause (stage R0k-a, `resume(k)` of a
+        // local of the site as the first location of the clause).
+        if comp.clause && comp.waits(&fr.cur) {
+            fr.site = Some((comp.unit, comp.post.clone()));
         }
         self.report.steps += 1;
         let next = comp.reach(&fr.cur, fr.at, to);

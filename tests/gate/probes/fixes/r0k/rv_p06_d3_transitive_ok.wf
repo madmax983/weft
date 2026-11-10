@@ -1,0 +1,15 @@
+// The clean twin of rv_p06: run_ref uses its loan before the call.
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn inner() / Get { let g = get()
+    g() }
+fn run_ref(c: &C) / Get {
+    let r = &c.v[0]
+    print(r)
+    inner()
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+}

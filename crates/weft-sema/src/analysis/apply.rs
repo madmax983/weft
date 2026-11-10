@@ -755,9 +755,22 @@ pub(crate) fn made_capture_source(
     }
     let (mut maker, mut src) = (decl.maker, cap.source.clone());
     // A maker has a lower id than its closures, so the walk ends.
-    for _ in 0..=p.closures.len() {
+    for _ in 0..=p.closures.len() + p.bodies.len() {
         if maker == body {
             return Some(src);
+        }
+        // An upvar local of a clause, a handled body or a scope body is the
+        // cell of a local of its site (stage R0k-a: a closure that a clause
+        // makes and gives back with `resume` captures a variable of the
+        // site).
+        if let Some(mb) = p.body(maker) {
+            if let Some(weft_ir::LocalKind::Upvar(t)) = mb.local_kind(src.local) {
+                if mb.kind.has_upvars() {
+                    maker = mb.parent?;
+                    src.local = t;
+                    continue;
+                }
+            }
         }
         let (c2, j, mode) = crate::factgen::alpha::env_capture(p, maker, &src)?;
         let rest = match mode {

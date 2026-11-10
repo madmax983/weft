@@ -10241,15 +10241,10 @@ stage = "R0h"
 [[entry]]
 class = "open-old"
 files = [
-    "tests/gate/probes/fixes/r0h/c2_result.wf",
-    "tests/gate/probes/fixes/r0h/c2_stored_ref.wf",
     "tests/gate/probes/fixes/r0h/c2_task.wf",
-    "tests/gate/probes/fixes/r0h/d3f_dangling.wf",
-    "tests/gate/probes/fixes/r0h/d3f_mut_race.wf",
-    "tests/gate/probes/fixes/r0h/d3f_once.wf",
 ]
 finding = "R0h-STAYS"
-reason = "stage R0h: the forms that keep the old pipeline, and the old pipeline misses each fault. A value with a reference in it that code of a caller (the clause of an operation) can keep and run after a change (`c2_result`, `c2_stored_ref`; the facts of code of a caller have no part for a value that it keeps, R0f open item 1), a closure of an operation that a callee spawns (`c2_task`, reason E5 of the callee), and a value that a clause gives back to the callee and that holds a reference, can race or is `once` (`d3f_dangling`, `d3f_mut_race`, `d3f_once`)"
+reason = "stage R0h (from stage R0k-a only `c2_task`: the other files of this entry get call-site copies and the `ir` pipeline rejects them, class `fixed`): the forms that keep the old pipeline, and the old pipeline misses each fault. A value with a reference in it that code of a caller (the clause of an operation) can keep and run after a change (`c2_result`, `c2_stored_ref`; the facts of code of a caller have no part for a value that it keeps, R0f open item 1), a closure of an operation that a callee spawns (`c2_task`, reason E5 of the callee), and a value that a clause gives back to the callee and that holds a reference, can race or is `once` (`d3f_dangling`, `d3f_mut_race`, `d3f_once`)"
 stage = "R0h"
 
 [[entry]]
@@ -10699,39 +10694,69 @@ stage = "R0j"
 [[entry]]
 class = "open-old"
 files = [
-    "tests/gate/probes/fixes/r0k/k02_c2_capture_bad.wf",
-    "tests/gate/probes/fixes/r0k/k06_d3_once_bad.wf",
-    "tests/gate/probes/fixes/r0k/k07_d3_race_bad.wf",
-    "tests/gate/probes/fixes/r0k/k08_d3_kept_bad.wf",
-]
-finding = "R0h-STAYS"
-reason = "stage R0k (probes of the forms of R0h-STAYS): the forms C2 and D3 keep the old pipeline, and the old pipeline misses each fault. `k02_c2_capture_bad`: the clause of a caller keeps a closure with a captured reference and runs it after the callee clears the vector (as `c2_stored_ref`); `k06_d3_once_bad`: a `once` value that a clause gives back runs two times (as `d3f_once`); `k07_d3_race_bad`: a given-back value that clears a vector runs while the callee holds a reference into it; `k08_d3_kept_bad`: a given-back closure that holds a reference runs after a change (as `d3f_dangling`). Stages R0k-a1 (C2) and R0k-a2 (D3) give these forms full facts (R0k design note)"
-stage = "R0k"
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0k/rv_p01_c2_loop_kept.wf",
-    "tests/gate/probes/fixes/r0k/rv_p02_c2_two_performs.wf",
-    "tests/gate/probes/fixes/r0k/rv_p03_c2_resume_then_run.wf",
     "tests/gate/probes/fixes/r0k/rv_p04_c2_multi.wf",
-    "tests/gate/probes/fixes/r0k/rv_p05_d3_two_performs_once.wf",
-    "tests/gate/probes/fixes/r0k/rv_p06_d3_transitive.wf",
     "tests/gate/probes/fixes/r0k/rv_p07_d3_in_closure.wf",
-    "tests/gate/probes/fixes/r0k/rv_p09b_d3_multi_one.wf",
-    "tests/gate/probes/fixes/r0k/rv_p10_d3_abort_path.wf",
-    "tests/gate/probes/fixes/r0k/rv_p11_c2_nested_capture.wf",
     "tests/gate/probes/fixes/r0k/rv_p12_c2_task_after_perform.wf",
 ]
 finding = "R0h-STAYS"
-reason = "stage R0k (probes of the design review of R0k): forms of C2 and D3 that keep the old pipeline, and the old pipeline misses each fault: a perform in a loop, two performs, code of a clause after `resume`, a `multi` clause, a `once` value at two performs, a perform in a callee of the callee or in a closure that the callee runs, a run on an abort path, a captured closure that holds the reference, a task after the perform. They are acceptance tests of the full facts of R0k-a"
+reason = "stage R0k (probes of the design review of R0k; from stage R0k-a the other probes of the review get call-site copies and the `ir` pipeline rejects them, class `fixed`): forms of C2 and D3 that keep the old pipeline, and the old pipeline misses each fault. `rv_p04_c2_multi`: the copy brings in a `multi` operation of a handler of a caller in a clause (D5, no full facts), so the program keeps the fallback (R0k-a as built); `rv_p07_d3_in_closure`: the perform is in a closure that the callee makes and runs, and the copy does not copy the closure body at its run node (stage R0k-a2); `rv_p12_c2_task_after_perform`: a `resume` in a scope body of the clause (D1, stage R0k-c)"
 stage = "R0k"
 
 [[entry]]
-class = "open-old"
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0h/d3f_returned.wf",
+    "tests/gate/probes/fixes/r0h/rv1_f43_param_back_keep_drop.wf",
+    "tests/gate/probes/fixes/r0k/k01_c2_param_bad.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b1_perform_first.wf",
+]
+codes = ["W0301", "W0302", "W0312", "W0403", "W0405"]
+reason = "stage R0k-a: the program comes into scope with a copy of the callee at the call (C2, D3), and both pipelines reject it. `d3f_returned`: one W0301 at the run of the given-back closure (the old pipeline gives two); `rv1_f43_param_back_keep_drop`: W0302 for the kept value that the callee drops (the old pipeline gives W0301 at two lines); `k01_c2_param_bad`: W0301 at the use of `r` after the clause runs the value that clears `v` (the old W0312, W0403 and W0405 come from the worst way of code of a caller, which the copy does not need); `b1_perform_first`: the W0312, W0403 and W0405 of the old pipeline and two W0301 more (the value that the clause runs on a task reads places that the callee changes after the perform, line 12). ev.sh: each one faults, and each one is held"
+stage = "R0k"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0h/d3f_returned_ok.wf",
+]
+reason = "stage R0k-a: the program comes into scope with a copy of the callee at the call (D3). The site runs the given-back closure before it clears `v`; the old W0301 is a false positive of the old pipeline. The `ir` pipeline gives no error, the interpreter runs it with no fault (ev.sh nofault), and the fact oracle passes"
+signed_by = "UNSIGNED: waits for the review of R0k-a"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["task_runs", "op_fns", "repeats"]
+files = [
+    "tests/gate/probes/fixes/r0k/k01_c2_param_bad.wf",
+    "tests/gate/probes/fixes/r0k/k01_c2_param_ok.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_in_closure.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_second_arg.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee.wf",
+    "tests/gate/probes/verify/s5/diff/p/v1c_clause_via_callee_perform.wf",
+]
+reason = "stage R0k-a (the weak C2 summaries): the callee (`f`, `doreg`) gives a function value that the clause can keep (a parameter, code of a caller) to an operation of its row. In the `ir` pipeline its summary has the weak form of R0h (code of a caller runs the values, `WeakRowOps`), and no call that a local handler serves applies it: each such call has a copy of the callee (`Instantiated::weak_ok`, checked again by `transfer::note_weak_call`). The parts of the old inference for the values of the operation (`op_fns`, `task_runs`, `repeats`) come from its own lowering of the perform. No check of the `ir` pipeline reads these parts from the signature"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["pins", "reaches", "reach_repeats", "stores", "repeats", "ret_refs"]
+files = [
+    "tests/gate/probes/fixes/r0k/k01_c2_param_bad.wf",
+    "tests/gate/probes/fixes/r0h/rv1_f44_param_back_put_op.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b1_perform_first.wf",
+]
+reason = "stage R0k-a: the body has the copy of a callee at a call that a local handler serves (C2, D3). Its summary comes from the code of the copy, not from the summary of the callee: the clause runs the values of the copy as a perform of the local handler. The old inference takes the parts of the call (`pins`, `reaches`, `reach_repeats`, `stores`, `repeats`, `ret_refs`) from the signature of the callee, where the clause is code of a caller. Each program is rejected by both pipelines"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "reaches"]
 files = [
     "tests/gate/probes/fixes/r0k/rv_p09_d3_multi.wf",
+    "tests/gate/probes/fixes/r0k/rv_p09_d3_multi_ok.wf",
+    "tests/gate/probes/fixes/r0k/rv_p09b_d3_multi_one.wf",
+    "tests/gate/probes/fixes/r0k/rv_p09c_d3_multi_local.wf",
 ]
-finding = "R0k-P09"
-reason = "stage R0k (design review of R0k): a `multi` operation of a local handler whose result is a function value, used by a callee; the second resume gives a closure that clears the vector while the callee holds a reference into it. The program is in scope (the D3 fallback skips a `multi` operation) and both pipelines accept it; the run reads a freed cell. Routing it to the D3 fallback moves the miss to the old pipeline only. The full facts of R0k-a must reject it (acceptance test); `rv_p09b_d3_multi_one` (no `multi`) and `rv_p09c_d3_multi_local` (the perform in the handled body, W0301 from both pipelines) are its twins"
+reason = "stage R0k (`main` handles a `multi` operation itself): the re-entry of the `multi` clause runs the rest of the handled body of `main` again, inside `main` (a perform of a local handler is no `multi_at` row, O3-8), so no caller of `main` sees a second resume. The old inference marks `main` `multi`. `rv_p09`, `rv_p09_ok` and `rv_p09b` have the copy of the callee at the call (stage R0k-a); `rv_p09c` is the same code in the handled body"
 stage = "R0k"
