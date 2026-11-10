@@ -1,0 +1,12 @@
+// a once closure in a generic struct W<fn()> given to a callee that calls two copies
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+struct W<T> { f: T }
+fn twice(w: &W<fn()>) { let g = w.f
+    g()
+    let h = w.f
+    h() }
+fn main() {
+    let v = [1]
+    let w = W { f: || print(take_v(v)) }
+    twice(&w)
+}

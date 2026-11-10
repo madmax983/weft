@@ -535,6 +535,58 @@ impl SiteScope {
             _ => None,
         }
     }
+
+    /// The scope whose end ends the task (plan stage R0j): the one scope of
+    /// [`Self::one`], or else the outer scope of the scopes that the operand
+    /// can be, if the operand can be no other value and the body of each
+    /// other scope is inside the body of that scope in one unit (through
+    /// scope, handled and clause bodies).
+    ///
+    /// Each scope that the operand can be is live at the spawn, so the
+    /// scopes are nested and the outer scope ends last: the task ends at or
+    /// before the end of the outer scope. The facts end the task there. A
+    /// task that ends at an inner scope runs a longer time in the facts,
+    /// which is sound for each check of a task that runs.
+    pub fn end(&self, p: &weft_ir::Program) -> Option<ScopeId> {
+        if let Some(k) = self.one() {
+            return Some(k);
+        }
+        if self.other || self.scopes.is_empty() {
+            return None;
+        }
+        let body = |k: &ScopeId| p.scopes.get(k.index()).map(|d| d.body);
+        self.scopes.iter().copied().find(|outer| {
+            body(outer).is_some_and(|ob| {
+                self.scopes
+                    .iter()
+                    .all(|k| body(k).is_some_and(|b| unit_inside(p, b, ob)))
+            })
+        })
+    }
+}
+
+/// True if body `b` is body `outer` or is inside it through the parents of
+/// scope, handled and clause bodies (one unit, `factgen::alpha::unit_root`).
+fn unit_inside(p: &weft_ir::Program, b: BodyId, outer: BodyId) -> bool {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        if at == outer {
+            return true;
+        }
+        let Some(x) = p.body(at) else {
+            return false;
+        };
+        match (x.kind, x.parent) {
+            (
+                weft_ir::BodyKind::Handled(_)
+                | weft_ir::BodyKind::Clause(..)
+                | weft_ir::BodyKind::Scope(_),
+                Some(up),
+            ) => at = up,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The scope of the scope capability local whose root is fact place `q`.

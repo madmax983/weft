@@ -1,0 +1,29 @@
+// on abort calls an item that runs an extern result as a task under a caught Fail
+effect Stop { fn stop() }
+extern fn mk() -> fn()
+linear struct T { n: u64 }
+    on abort = undo
+fn go() {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        let f = mk()
+        scope { s =>
+            let k = s.spawn(f)
+            k.join()
+        }
+    }
+}
+fn undo(t: T) {
+    let T(n) = t
+    go()
+}
+fn done(t: T) { let T(n) = t }
+fn par() { scope { s => s.spawn(|| print(1)) } }
+fn body() / Stop {
+    let t = T { n: 1 }
+    stop()
+    done(t)
+}
+fn main() {
+    par()
+    handle Stop { fn stop() { () } } in body()
+}

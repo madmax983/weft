@@ -1,0 +1,21 @@
+// C2 in a loop: the clause keeps g and runs the value of the previous perform; that value reads a local of the last iteration (dangling)
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let i = 0
+    while i < 2 {
+        let v = Vec.new()
+        v.push(i)
+        let r = &v[0]
+        run(|| print(r))
+        i = i + 1
+    }
+}
+fn main() {
+    let h = H { f: noop }
+    handle Run { fn run(g) { let old = h.f
+        old()
+        h.f = g
+        resume(()) } } in { f() }
+}

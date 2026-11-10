@@ -171,9 +171,9 @@ fn resumed_keeps_closure() {
 fn clause_reads_unset() / Op {
     let x: u64
     handle Op { fn op() {
-        print(x)   //~ W0304
+        print(x)   //~ old: W0304
         resume(())
-    } } in op()
+    } } in op()   //~ W0304 old:
 }
 
 // The read in the clause, not the read in another closure. One W0304 for `x`:

@@ -180,7 +180,7 @@ pub fn owned_by_value(
         .is_some_and(|d| !d.fork && d.scope.is_none())
         && site_scopes
             .get(&site)
-            .and_then(crate::analysis::tasks::SiteScope::one)
+            .and_then(|r| r.end(p))
             .and_then(|k| p.scopes.get(k.index()))
             .is_some_and(|d| super::alpha::unit_root(p, d.body) == cb)
 }
@@ -501,7 +501,7 @@ pub fn perform_local(
     let places = op_places(em, out.clause);
     let ins = in_roots(&places, s.args.len());
     for (i, ps) in s.args.iter().enumerate() {
-        let root = crate::body::roots::param(ins.get(i).copied().unwrap_or(i));
+        let root = crate::roots::param(ins.get(i).copied().unwrap_or(i));
         for &q in ps {
             em.facts.reads_at.push((n, q));
             em.facts.call_arg.push((n, q, root));
@@ -515,7 +515,7 @@ pub fn perform_local(
         if transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
             continue;
         }
-        let root = crate::body::roots::fn_arg(i);
+        let root = crate::roots::fn_arg(i);
         let mut refs: Vec<PlaceId> = transfer::operand(&mut em.cx(), body, st, a)?
             .flat()
             .refs
@@ -632,7 +632,7 @@ fn check_in_places(
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| format!("parameter {i}")),
-            root: crate::body::roots::param(i),
+            root: crate::roots::param(i),
             in_place: sp.as_ref().map(crate::analysis::sig::sig_place),
         });
     }
@@ -700,6 +700,15 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
             .find(|(d, _)| *d == super::frames::FIRST_HANDLER.saturating_add(h.0))
         {
             bind_handle(em, *av, st, h, &v)?;
+        }
+    }
+    // The callee can read through a reference that a clause gives back to
+    // it (stage R0h, D3 form R): the places of `Handlers::back`. The
+    // summary of a function has no reads of the places of its callers.
+    let inst = crate::analysis::transfer::run_inst(body, block);
+    if let Some(back) = em.hx.back.get(&inst) {
+        for &q in back {
+            em.facts.reads_at.push((n, q));
         }
     }
     let hs = clause::run_handlers(&em.cx(), body, block, t);
@@ -1090,13 +1099,40 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
         return Err(AlphaError::BadPlace("not a resume".to_string()));
     };
     let body = em.body;
-    let (h, cb, multi) = clause::kont_handler(em.p, body, kont)
-        .ok_or(AlphaError::Later("a captured continuation (stage F16)"))?;
-    if cb != body {
-        return Err(AlphaError::Later(
-            "a `resume` in a body inside the clause (stage F16)",
-        ));
-    }
+    let own = clause::kont_handler(em.p, body, kont).filter(|&(_, cb, _)| cb == body);
+    let Some((h, cb, multi)) = own else {
+        // A continuation in a closure or in a body inside the clause (stage
+        // R0g): the facts do not model the resume point
+        // (`clause::KONT_CAPTURED`). The node moves its argument and uses
+        // the continuation, and its result is a plain value.
+        clause::note_pending(crate::factgen::Unsupported {
+            group: crate::irbuild::scope::Group::D,
+            reason: clause::KONT_CAPTURED.to_string(),
+        });
+        let n = nodes.main;
+        operand_moves(em, n, st, arg, false, true)?;
+        operand_moves(
+            em,
+            n,
+            st,
+            &weft_ir::Operand::Copy(kont.clone()),
+            false,
+            false,
+        )?;
+        if nodes.may_abort {
+            em.facts.may_abort.push(n);
+        }
+        if let Some(r) = nodes.ret {
+            bind_dest(
+                em,
+                r,
+                st,
+                dest,
+                &Tree::leaf(crate::analysis::AbsVal::plain()),
+            )?;
+        }
+        return Ok(());
+    };
     let n = nodes.main;
     operand_moves(em, n, st, arg, false, true)?;
     // The `resume` reads the continuation, and a `once` continuation moves
@@ -1874,11 +1910,9 @@ fn owned_by_clause(p: &Program, hx: &Handlers, site: weft_ir::SpawnId, c: BodyId
             }) && inside(BodyId(u32::try_from(i).unwrap_or(u32::MAX)))
         });
     }
-    let scope = d.scope.or_else(|| {
-        hx.site_scopes
-            .get(&site)
-            .and_then(crate::analysis::tasks::SiteScope::one)
-    });
+    let scope = d
+        .scope
+        .or_else(|| hx.site_scopes.get(&site).and_then(|r| r.end(p)));
     scope
         .and_then(|k| p.scopes.get(k.index()))
         .is_some_and(|sd| inside(sd.body))
@@ -2489,7 +2523,7 @@ fn copy_part(
             .map(|(_, q)| *q)
             .collect()
     };
-    let clause_root = cap.map_or(crate::body::roots::STORED, crate::body::roots::clause);
+    let clause_root = cap.map_or(crate::roots::STORED, crate::roots::clause);
     // A parameter of the clause points into its own root and into the places
     // of the arguments (plan stage F15): a change through it has a row for
     // each. The row of the place of an argument at a node that has a row
@@ -2528,7 +2562,7 @@ fn copy_part(
             Mapped::Param(i, ps) => {
                 let i = i as usize;
                 (
-                    Some(crate::body::roots::param(ins.get(i).copied().unwrap_or(i))),
+                    Some(crate::roots::param(ins.get(i).copied().unwrap_or(i))),
                     ps,
                 )
             }
@@ -2536,7 +2570,7 @@ fn copy_part(
                 let root = m
                     .param_runs
                     .get(&x)
-                    .map_or(clause_root, |&i| crate::body::roots::fn_arg(i as usize));
+                    .map_or(clause_root, |&i| crate::roots::fn_arg(i as usize));
                 (Some(root), vec![q])
             }
             Mapped::Own => continue,

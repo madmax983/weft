@@ -1,0 +1,10 @@
+// a once closure copied to two locals, both called
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || eat(v)
+    let d = c
+    c()
+    d()
+}

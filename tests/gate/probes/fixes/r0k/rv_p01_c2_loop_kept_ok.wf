@@ -1,0 +1,22 @@
+// The clean twin of rv_p01: the values read a vector of the callee that
+// lives across the loop.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let i = 0
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    while i < 2 {
+        run(|| print(r))
+        i = i + 1
+    }
+}
+fn main() {
+    let h = H { f: noop }
+    handle Run { fn run(g) { let old = h.f
+        old()
+        h.f = g
+        resume(()) } } in { f() }
+}

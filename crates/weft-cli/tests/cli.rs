@@ -973,6 +973,22 @@ fn binary_test_writes_each_log_before_its_result() {
 }
 
 #[test]
+fn a_dependency_function_with_no_ir_keeps_its_authority() {
+    // The body has a type error, so it has no IR. Its row in the `ir`
+    // pipeline is the worst case of its declaration, which needs `log` too
+    // (plan stage R0i fix): the authority does not get weaker.
+    let out = cmd(&["deps", "tests/gate/probes/fixes/r0i/pkg1_deps_noir"]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    assert!(
+        out.text
+            .contains("error[W0901]: dependency `lg` function `note` needs"),
+        "{}",
+        out.text
+    );
+    assert!(out.text.contains("log"), "{}", out.text);
+}
+
+#[test]
 fn deps_sees_effects_that_signatures_hide() {
     let out = cmd(&["deps", "tests/packages/hidden"]);
     assert_eq!(out.code, 1, "{}", out.text);
@@ -1028,16 +1044,21 @@ fn oracle_turns_on_the_strict_run_time_checks() {
 #[test]
 fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     // Each group is on by default (stage F20, plan §2.6): a program with a
-    // construct that the fact generator does not support yet (a `multi`
-    // operation of a handler of a caller in a clause, a fallback of stage
-    // F16; a handler in a closure body is in scope from stage R0d) goes to
-    // the old pipeline, and the command says why on standard error.
+    // construct that the fact generator does not support yet (a clause that
+    // gives the callee a function value that can race, a fallback of stage
+    // F16 that stage R0h keeps; from stage R0k-a only in a closure that the
+    // callee runs, which the copy of the callee does not copy; a
+    // handler in a closure body is in scope from stage R0d) goes to the old
+    // pipeline, and the command says why on standard error. A clean program
+    // with a `multi` operation of a handler of a caller in a clause
+    // (`nested_run.wf`) falls back too (stage R0g: the `ir` pipeline checks
+    // such a program only if it rejects it).
     let dir = scratch(
         "fallback",
         &[
             (
                 "nested_bad.wf",
-                "effect Choice { multi fn choose() -> bool }\neffect Log { fn log(n: u64) }\nfn quiet() / Choice { handle Log { fn log(n) { resume(()); let b = choose() } } in log(1) }\nfn bad() / Choice {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { handle Choice { fn choose() { resume(true) } } in bad() }\n",
+                "effect Get { fn get() -> fn() }\nfn run_it() / Get { let k = || { let g = get(); g() }; k() }\nfn quiet() { let u = Vec.new(); u.push(1); handle Get { fn get() { resume(|| u.clear()) } } in { run_it() } }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
             ),
             (
                 "nested_run.wf",

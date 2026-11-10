@@ -1,0 +1,19 @@
+// a fork branch gives back a linear closure; abort after
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+    print("rollback {i}") }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Stop { fn stop() }
+fn body() / Stop, async, par {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let (f, n) = fork(|| c, || 1)
+    stop()
+    f()
+}
+fn main() / async, par {
+    handle Stop { fn stop() { () } } in body()
+    print("end")
+}

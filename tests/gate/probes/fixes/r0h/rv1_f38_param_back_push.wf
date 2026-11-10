@@ -1,0 +1,18 @@
+// The clause gives back a function parameter of the site; the callee
+// pushes it into a vector that the site gives back to main.
+effect Get { fn get() -> fn() }
+fn keep(w: &Vec<fn()>) / Get, mut(w) { w.push(get()) }
+fn s(k: fn()) -> Vec<fn()> {
+    let w = Vec.new()
+    handle Get { fn get() { resume(k) } } in { keep(&w) }
+    w
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = s(|| v.clear())
+    let r = &v[0]
+    let x = w[0]
+    x()
+    print(r)
+}

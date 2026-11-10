@@ -1317,7 +1317,9 @@ fn the_effect_sig_of_each_corpus_function_of_group_a_is_the_one_of_the_old_infer
         programs += 1;
         for g in a.program.fn_ids() {
             let def = &a.program.fns[g];
-            if def.is_std || def.decl.body.is_none() {
+            // A function whose body has no IR has the worst case of its
+            // declaration (plan stage R0i), as `weft-gate sigdiff` says.
+            if def.is_std || def.decl.body.is_none() || ir.no_ir.contains(&g) {
                 continue;
             }
             fns += 1;
@@ -1365,4 +1367,502 @@ fn m(v: Vec<u64>) { k(v) }
     };
     assert_eq!(w0701(&ir.diags), w0701(&a.diags));
     assert_eq!(w0701(&ir.diags).len(), 1);
+}
+
+/// The W0118 lines "calls a function value that it does not know" of each
+/// source.
+fn reaches_lines(src: &str) -> usize {
+    let a = weft_sema::analyze_source(src, weft_sema::Options::from_markers(src))
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    a.diags
+        .iter()
+        .filter(|d| {
+            d.message
+                .contains("calls a function value that it does not know")
+        })
+        .count()
+}
+
+#[test]
+fn an_on_abort_function_that_runs_an_unknown_value_is_w0118() {
+    // Part `reaches` of W0118 from the summary (plan stage R0i fix): a task
+    // run of a value of the parameter under a local `Fail` handler, a call
+    // of an extern result in a program with no `multi` operation, also
+    // through a callee.
+    for src in [
+        include_str!("../../../tests/gate/probes/fixes/r0i/r31_many_field_task_caught.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r34_many_field_spawn_direct.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r40_callee_caught_task.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r16_extern_all_caught.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r05_extern_result.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r18_extern_callee.wf"),
+        // A run of an unknown value in a closure or a clause of the
+        // function, or through an item that they call (plan stage R0i-b).
+        include_str!("../../../tests/gate/probes/fixes/r0i/u06_clause_runs_extern.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u13_closure_caught_inside.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u14_task_closure_caught_inside.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u18_clause_calls_item.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u19_closure_calls_item.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u20_task_calls_item.wf"),
+    ] {
+        assert_eq!(reaches_lines(src), 1, "{src}");
+    }
+    // A task that gives back a value of a type parameter runs no value of a
+    // caller (`verify/s5/R3x/p1/c14_task.wf`), and the worst case of a
+    // callee with no IR runs no value.
+    let task = "linear struct G<T> { x: T }\n    on abort = undo_g\n\
+                fn undo_g<T>(g: G<T>) / async {\n    let G(x) = g\n    \
+                scope { s =>\n        let t = s.spawn(|| x)\n        t.detach()\n    }\n}\n\
+                fn main() / async { let g = G { x: 1 }\n let G(y) = g }\n";
+    assert_eq!(reaches_lines(task), 0);
+    assert_eq!(
+        reaches_lines(include_str!(
+            "../../../tests/gate/probes/fixes/r0i/r28_onabort_calls_noir.wf"
+        )),
+        0
+    );
+}
+
+/// The codes and lines of the errors of the `ir` pipeline for `src`, and
+/// the messages of W0303 and W0502 (plan stage R0i-b).
+fn ir_errors(src: &str) -> Vec<(String, String)> {
+    let a = weft_sema::analyze_source(src, weft_sema::Options::from_markers(src))
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    a.diags
+        .iter()
+        .filter(|d| matches!(format!("{:?}", d.code).as_str(), "W0303" | "W0502"))
+        .map(|d| (format!("{:?}", d.code), d.message.clone()))
+        .collect()
+}
+
+#[test]
+fn the_builder_gives_w0303_and_w0502_of_a_once_closure() {
+    // W0502 from the IR (`irbuild::values::once_into_plain`): a `once`
+    // closure in a field of a stated function type, and in a `Vec` of a
+    // stated type; not in a `Vec` whose type the closure gives, and not a
+    // linear closure (W0601 is the error there).
+    let head = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\nstruct H { f: fn() }\n\
+                linear struct Tx { id: u64 }\nfn commit(t: Tx) { let Tx(i) = t }\n";
+    let field = format!("{head}fn main() {{ let b = Buf {{ items: Vec.new() }}\n let h = H {{ f: || eat(b) }}\n }}\n");
+    let stated = format!("{head}fn main() {{ let b = Buf {{ items: Vec.new() }}\n let v: Vec<fn()> = Vec.new()\n v.push(|| eat(b))\n }}\n");
+    let inferred = format!("{head}fn main() {{ let b = Buf {{ items: Vec.new() }}\n let v = Vec.new()\n v.push(|| eat(b))\n let g = v[0]\n g() }}\n");
+    let linear = format!("{head}fn main() {{ let t = Tx {{ id: 1 }}\n let h = H {{ f: || commit(t) }}\n let g = h.f\n g() }}\n");
+    let w0502 = |src: &str| ir_errors(src).iter().filter(|(c, _)| c == "W0502").count();
+    assert_eq!(w0502(&field), 1, "{:?}", ir_errors(&field));
+    assert_eq!(w0502(&stated), 1, "{:?}", ir_errors(&stated));
+    assert_eq!(w0502(&inferred), 0, "{:?}", ir_errors(&inferred));
+    assert_eq!(w0502(&linear), 0, "{:?}", ir_errors(&linear));
+    // W0303 from the builder: each move through a reference of a body.
+    let two = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\n\
+               fn f(r: &Buf, s: &Buf) {\n    let x = r.items\n    let y = s.items\n}\n";
+    let e = ir_errors(two);
+    assert_eq!(e.len(), 2, "{e:?}");
+    assert!(
+        e.iter()
+            .all(|(c, m)| c == "W0303" && m.contains("`Vec<u64>`")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn the_values_of_the_bindings_come_from_the_ir() {
+    // `irbuild::values` (plan stage R0i-b): the properties of a binding of a
+    // function type that the type does not show.
+    let src = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\n\
+               linear struct Tx { id: u64 }\nfn commit(t: Tx) { let Tx(i) = t }\n\
+               struct Holder { cb: fn() }\n\
+               fn mk(f: fn()) -> fn() { f }\n\
+               fn main() {\n    let b = Buf { items: Vec.new() }\n    let c = || eat(b)\n\
+               let g = mk(c)\n    let t = Tx { id: 1 }\n    let l = || commit(t)\n\
+               let k = l\n    let t2 = Tx { id: 2 }\n    let h = Holder { cb: || commit(t2) }\n\
+               let m = || { let Holder(cb) = h\n cb() }\n    g()\n    k()\n    m()\n}\n";
+    let a = weft_sema::analyze_source(src, weft_sema::Options::default())
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let built = weft_sema::irbuild::build(&a);
+    let main = a.thir.len() - 1;
+    let value = |name: &str| {
+        let t = &a.thir[main];
+        let (k, _) = t
+            .bindings
+            .iter()
+            .enumerate()
+            .find(|(_, b)| b.name == name)
+            .unwrap_or_else(|| panic!("no binding {name}"));
+        let id = weft_sema::thir::BindingId(u32::try_from(k).unwrap_or(u32::MAX));
+        built.binding_values[main]
+            .get(&id)
+            .copied()
+            .unwrap_or_default()
+    };
+    // The result of `mk(c)` is the argument: a `once` closure.
+    assert!(value("g").once);
+    // A struct of a type with no type argument whose field holds a linear
+    // closure holds a linear value (the type has a function part in a field:
+    // `props::ir_has_fns`, not `TyTable::mentions_fn`, which sees only the
+    // type arguments).
+    assert!(value("h").linear);
+    // A copy of a linear closure is linear.
+    assert!(value("k").linear);
+    assert!(!value("g").linear);
+}
+
+#[test]
+fn a_linear_closure_from_a_task_a_fork_or_resume_is_linear() {
+    // The blockers of the review of R0i-b, round 1 (plan stage R0i-b fix):
+    // the value flow of the IR gives a `join`, a `fork` and `resume` the
+    // value of the task, of the branches and of the handled body. So the
+    // local that gets a linear closure there is linear, and the cleanup
+    // runs the `on abort` of its capture on an abort.
+    for (src, name) in [
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a16_task_join.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a21_task_makes_closure.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a22_join_in_scope_abort.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a23_fork_result.wf"),
+            "f",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0i/rb/a28_resume_dest.wf"),
+            "g",
+        ),
+    ] {
+        let a = weft_sema::analyze_source(src, weft_sema::Options::default())
+            .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+        let built = weft_sema::irbuild::build(&a);
+        let linear = a.thir.iter().enumerate().any(|(i, t)| {
+            t.bindings.iter().enumerate().any(|(k, b)| {
+                let id = weft_sema::thir::BindingId(u32::try_from(k).unwrap_or(u32::MAX));
+                b.name == name
+                    && built
+                        .binding_values
+                        .get(i)
+                        .and_then(|m| m.get(&id))
+                        .is_some_and(|v| v.linear)
+            })
+        });
+        assert!(linear, "`{name}` is not linear in {src}");
+    }
+}
+
+#[test]
+fn a_spawn_on_one_of_nested_scopes_ends_its_task_at_the_outer_scope() {
+    // Plan stage R0j: the scope operand of the spawn can be the capability
+    // of `a` or of `t`. The two scopes are live at the spawn, so they are
+    // nested, and the task ends at or before the end of the outer scope `a`.
+    use weft_sema::analysis::tasks::SiteScope;
+    let src = "fn main() / async {
+        let b = true
+        scope { a =>
+            scope { t =>
+                let x = if b { a } else { t }
+                x.spawn(|| print(1))
+            }
+        }
+        scope { u => u.spawn(|| print(2)) }
+    }";
+    let a = weft_sema::analyze_source(src, weft_sema::Options::default())
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let p = weft_sema::irbuild::build(&a).program;
+    assert_eq!(p.scopes.len(), 3, "three scopes");
+    let depth = |k: usize| {
+        let mut at = p.scopes[k].body;
+        let mut d = 0;
+        while let Some(up) = p.bodies[at.index()].parent {
+            at = up;
+            d += 1;
+        }
+        d
+    };
+    // `t`: the deepest scope. `a`: the scope whose body holds the body of
+    // `t`. `u`: the scope after them.
+    let inner = (0..3).max_by_key(|&k| depth(k)).expect("a scope");
+    let holds = |outer: usize| {
+        let mut at = p.scopes[inner].body;
+        while let Some(up) = p.bodies[at.index()].parent {
+            if up == p.scopes[outer].body {
+                return true;
+            }
+            at = up;
+        }
+        false
+    };
+    let outer = (0..3)
+        .find(|&k| k != inner && holds(k))
+        .expect("the outer scope");
+    let other = (0..3)
+        .find(|&k| k != inner && k != outer)
+        .expect("the third scope");
+    let id = |k: usize| weft_ir::ScopeId(u32::try_from(k).unwrap_or(u32::MAX));
+    let nested = SiteScope {
+        scopes: [id(inner), id(outer)].into_iter().collect(),
+        other: false,
+    };
+    assert_eq!(nested.one(), None);
+    assert_eq!(nested.end(&p), Some(id(outer)));
+    // One scope: that scope.
+    let one = SiteScope {
+        scopes: std::iter::once(id(inner)).collect(),
+        other: false,
+    };
+    assert_eq!(one.end(&p), Some(id(inner)));
+    // Scopes that are not nested, or an operand that can be another value:
+    // no scope (the pending rule).
+    let apart = SiteScope {
+        scopes: [id(inner), id(other)].into_iter().collect(),
+        other: false,
+    };
+    assert_eq!(apart.end(&p), None);
+    let open = SiteScope {
+        scopes: [id(inner), id(outer)].into_iter().collect(),
+        other: true,
+    };
+    assert_eq!(open.end(&p), None);
+}
+
+/// The copies of the callees at their calls (plan stage R0k-a,
+/// `weft_sema::factgen::instantiate`), on programs from source.
+mod copies {
+    use weft_ir::{BodyKind, CapOperand, LocalKind, Program, Rvalue, StmtKind, TermKind};
+    use weft_sema::factgen::instantiate::{instantiate, instantiate_with, Bounds};
+    use weft_sema::irbuild::Built;
+
+    /// The IR of `src`.
+    fn built(src: &str) -> (weft_sema::Analysis, Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The handled bodies of `p`.
+    fn handled(p: &Program) -> Vec<&weft_ir::Body> {
+        p.bodies
+            .iter()
+            .filter(|b| matches!(b.kind, BodyKind::Handled(_)))
+            .collect()
+    }
+
+    /// The function of the program named `name`.
+    fn fn_id(p: &Program, name: &str) -> weft_ir::FnId {
+        let i = p
+            .fns
+            .iter()
+            .position(|f| f.name == name)
+            .expect("the function");
+        weft_ir::FnId(u32::try_from(i).expect("an id"))
+    }
+
+    /// True if body `b` calls function `f`.
+    fn calls(b: &weft_ir::Body, f: weft_ir::FnId) -> bool {
+        b.blocks.iter().any(|k| {
+            matches!(&k.term.kind, TermKind::Call { callee: weft_ir::Callee::Fn(g, _), .. } if *g == f)
+        })
+    }
+
+    const C2: &str = "effect Run { fn run(g: fn()) }\n\
+        fn f(g: fn()) -> u64 / Run { run(g)\n 7 }\n\
+        fn main() {\n\
+        let x = handle Run { fn run(g) { g()\n resume(()) } } in { f(|| print(1)) }\n\
+        print(x)\n\
+        }\n";
+
+    #[test]
+    fn a_copy_binds_the_parameters_and_gives_the_result_to_the_destination() {
+        let (_, b) = built(C2);
+        let inst = instantiate(&b).expect("a copy");
+        assert_eq!(inst.calls, 1);
+        let p = &inst.built.program;
+        let f = fn_id(p, "f");
+        let h = handled(p);
+        let hb = h.first().expect("a handled body");
+        assert!(!calls(hb, f), "the call of `f` is gone");
+        // The parameter `g` of `f` is a variable of the handled body, and it
+        // gets the operand of the call.
+        let g = hb
+            .locals
+            .iter()
+            .position(|d| d.name.as_deref() == Some("g") && d.kind == LocalKind::User)
+            .expect("the parameter of the copy");
+        let binds = hb.blocks.iter().flat_map(|k| &k.stmts).any(|s| {
+            matches!(&s.kind, StmtKind::Assign(q, Rvalue::Use(_)) if q.local.index() == g && q.proj.is_empty())
+        });
+        assert!(binds, "the parameter gets the operand");
+        // `_0` of the copy is a temporary that moves into the destination.
+        let gives = hb.blocks.iter().flat_map(|k| &k.stmts).any(|s| {
+            matches!(&s.kind, StmtKind::Assign(q, Rvalue::Use(weft_ir::Operand::Move(r)))
+                if q.local == hb.ret && matches!(hb.local(r.local).map(|d| d.kind), Some(LocalKind::Temp(_))))
+        });
+        assert!(gives, "the result goes to the destination of the call");
+    }
+
+    #[test]
+    fn a_copy_goes_to_the_cleanup_block_of_the_call_on_an_abort() {
+        let (_, b) = built(C2);
+        let inst = instantiate(&b).expect("a copy");
+        for hb in handled(&inst.built.program) {
+            let exits = hb
+                .blocks
+                .iter()
+                .filter(|k| matches!(k.term.kind, TermKind::UnwindExit))
+                .count();
+            assert_eq!(exits, 1, "only the frame of the handled body leaves");
+        }
+    }
+
+    #[test]
+    fn a_perform_through_the_row_of_the_copy_goes_to_the_local_capability() {
+        let (_, b) = built(C2);
+        let inst = instantiate(&b).expect("a copy");
+        let p = &inst.built.program;
+        let hb = handled(p).into_iter().next().expect("a handled body");
+        let mut locals = 0;
+        for k in &hb.blocks {
+            match &k.term.kind {
+                TermKind::Perform {
+                    cap: CapOperand::Row(_),
+                    ..
+                } => panic!("a perform through the row stays"),
+                TermKind::Perform {
+                    cap: CapOperand::Local(q),
+                    ..
+                } => {
+                    assert!(matches!(
+                        hb.local(q.local).map(|d| d.kind),
+                        Some(LocalKind::Cap(_))
+                    ));
+                    locals += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(locals, 1);
+        assert!(weft_ir::verify::verify_program(p, &inst.built.tys)
+            .iter()
+            .all(|x| x.rule == weft_ir::verify::Rule::UnwindOrder));
+    }
+
+    #[test]
+    fn a_callee_of_a_copied_callee_gets_a_copy_too() {
+        let src = "effect Get { fn get() -> fn() }\n\
+            fn inner() / Get { let g = get()\n g() }\n\
+            fn outer() / Get { inner() }\n\
+            fn main() {\n\
+            handle Get { fn get() { resume(|| print(1)) } } in { outer() }\n\
+            }\n";
+        let (_, b) = built(src);
+        let inst = instantiate(&b).expect("a copy");
+        assert_eq!(inst.calls, 2);
+        let p = &inst.built.program;
+        let hb = handled(p).into_iter().next().expect("a handled body");
+        assert!(!calls(hb, fn_id(p, "outer")) && !calls(hb, fn_id(p, "inner")));
+    }
+
+    #[test]
+    fn a_closure_of_a_copy_gets_a_new_declaration_with_the_site_as_its_maker() {
+        let src = "struct C { v: Vec<u64> }\n\
+            effect Get { fn get() -> fn() }\n\
+            fn run_ref(c: &C) / Get {\n\
+            let k = || { let g = get()\n g() }\n\
+            k()\n\
+            }\n\
+            fn main() {\n\
+            let c = C { v: Vec.new() }\n\
+            handle Get { fn get() { resume(|| print(1)) } } in { run_ref(&c) }\n\
+            }\n";
+        let (_, b) = built(src);
+        let before = b.program.closures.len();
+        let inst = instantiate(&b).expect("a copy");
+        let p = &inst.built.program;
+        assert_eq!(p.closures.len(), before + 1);
+        let new = p.closures.last().expect("the new closure");
+        let maker = p.body(new.maker).expect("the maker");
+        assert!(matches!(maker.kind, BodyKind::Handled(_)));
+        let id = weft_ir::ClosureId(u32::try_from(before).expect("an id"));
+        assert_eq!(
+            p.body(new.body).map(|x| x.kind),
+            Some(BodyKind::Closure(id))
+        );
+        // The closure performs through the capability of the site: a new
+        // `Cap` capture.
+        assert!(new
+            .captures
+            .iter()
+            .any(|c| c.mode == weft_ir::CaptureMode::Cap));
+    }
+
+    #[test]
+    fn a_recursive_callee_gets_no_copy() {
+        let src = "effect Run { fn run(g: fn()) }\n\
+            fn f(n: u64, g: fn()) / Run { if n > 0 { f(n - 1, g) } else { run(g) } }\n\
+            fn main() {\n\
+            handle Run { fn run(g) { g()\n resume(()) } } in { f(2, || print(1)) }\n\
+            }\n";
+        let (_, b) = built(src);
+        assert!(instantiate(&b).is_none());
+    }
+
+    #[test]
+    fn a_callee_over_the_bound_gets_no_copy() {
+        let (_, b) = built(C2);
+        let small = Bounds {
+            blocks: 2,
+            ..Bounds::default()
+        };
+        assert!(instantiate_with(&b, small).is_none());
+        let shallow = Bounds {
+            depth: 0,
+            ..Bounds::default()
+        };
+        assert!(instantiate_with(&b, shallow).is_none());
+    }
+
+    /// The invariant of the weak form (`Instantiated::weak_ok`): no call that
+    /// a local handler serves applies a summary with the weak form. With the
+    /// weak form on and no copies, the call of `f` in the handled body of
+    /// `main` applies such a summary, and the guard
+    /// (`analysis::transfer::note_weak_call`) keeps the program out of scope.
+    #[test]
+    fn a_served_call_of_a_summary_with_the_weak_form_keeps_the_old_pipeline() {
+        let src = "effect Run { fn run(g: fn()) }\n\
+            fn f(g: fn()) / Run { run(g) }\n\
+            fn main() {\n\
+            let v = Vec.new()\n\
+            v.push(1)\n\
+            let r = &v[0]\n\
+            handle Run { fn run(g) { g()\n resume(()) } } in { f(|| v.clear()) }\n\
+            print(r)\n\
+            }\n";
+        let (a, b) = built(src);
+        let first = weft_sema::factgen::components(&a, &b);
+        assert!(first.is_err(), "C2 without the weak form");
+        let weak = weft_sema::analysis::transfer::WeakRowOps::enter();
+        let Err(u) = weft_sema::factgen::components(&a, &b) else {
+            panic!("the guard does not refuse the program");
+        };
+        assert_eq!(u.reason, weft_sema::analysis::transfer::OP_KEPT);
+        drop(weak);
+        // With the copies the program is in scope.
+        let inst = instantiate(&b).expect("a copy");
+        assert!(inst.weak_ok);
+        let _weak = weft_sema::analysis::transfer::WeakRowOps::enter();
+        assert!(weft_sema::factgen::components(&a, &inst.built).is_ok());
+    }
 }

@@ -1,0 +1,9 @@
+// nonportable closure through: a tuple field; fork branch runs it (W0401 expected)
+
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let p = (c, 1)
+    let f = p.0
+    fork(|| f(), || print(1))
+}

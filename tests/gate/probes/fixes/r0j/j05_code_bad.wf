@@ -1,0 +1,19 @@
+// Plan stage R0j (E, a task that runs code of a caller): the task runs `g`,
+// a value of an operation of a handler of the caller. The second task
+// writes `c.k` while the scope body writes it (W0405). The program is in
+// scope because the `ir` pipeline rejects it (the pending rule).
+struct C { k: u64 }
+effect Get { fn get() -> fn() }
+fn from_operation(c: &C) / Get, async, mut(c) {
+    let g = get()
+    scope { s =>
+        s.spawn(g)
+        s.spawn(|| c.k += 1)
+        c.k += 2
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    handle Get { fn get() { resume(|| print(1)) } } in { from_operation(&c) }
+    print(c.k)
+}

@@ -1,0 +1,13 @@
+// Plan stage R0k: the clean twin of k08. The callee runs the closure before
+// it clears `v`. The weak form of the pending rule gives W0301 here, so the
+// form stays with the old pipeline.
+effect Get { fn get() -> fn() }
+fn run_before(v: &Vec<u64>) / Get, mut(v) { let g = get()
+ g()
+ v.clear() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Get { fn get() { resume(|| print(r)) } } in { run_before(&v) }
+}

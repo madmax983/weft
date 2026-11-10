@@ -1,0 +1,13 @@
+// a clause resumes with a once closure; the handled body calls it twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+effect Q { fn q() -> fn() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || eat(v)
+    handle Q { fn q() { resume(c) } } in {
+        let f = q()
+        f()
+        f()
+    }
+}

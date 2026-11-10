@@ -1,0 +1,10 @@
+// The clause gives the callee a `once` closure that moves a vector of the
+// site; the callee runs it two times.
+effect Get { fn get() -> fn() }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn run_twice() / Get { let g = get(); g(); g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| eat(v)) } } in { run_twice() }
+}

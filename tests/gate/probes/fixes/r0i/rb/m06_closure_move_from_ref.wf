@@ -1,0 +1,8 @@
+// a closure moves a field out of a reference param
+struct W { items: Vec<u64>, n: u64 }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(r: &W) { let c = || eat(r.items)
+    c() }
+fn main() { let w = W { items: Vec.new(), n: 1 }
+    f(&w)
+    eat(w.items) }

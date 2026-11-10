@@ -95,7 +95,7 @@ Status: accepted. Date: 2026-10-18.
   captures, and a tuple or an `Option` into its references. A perform is a call in the
   same way, and the clause can run a function argument of the operation there.
 - Each place of a call has a root (`call_arg(P, A, I)`, `call_mut(P, M, I)`), and
-  W0312 compares the places of two different roots (`weft_sema::body::roots`). The
+  W0312 compares the places of two different roots (`weft_sema::roots`). The
   kinds are: a parameter (or the parameter that names its place with `in`), what
   function value argument `i` reaches, a value that the call runs and that is not an
   argument (a stored value, the called value, a function value inside an argument

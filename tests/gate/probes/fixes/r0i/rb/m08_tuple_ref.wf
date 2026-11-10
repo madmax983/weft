@@ -1,0 +1,8 @@
+// move a tuple part out of a reference
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(p: &(Vec<u64>, u64)) { let (v, n) = p
+    eat(v) }
+fn main() { let p = (Vec.new(), 1)
+    f(&p)
+    let (v, n) = p
+    eat(v) }

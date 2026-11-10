@@ -1,0 +1,12 @@
+// The clause runs the closure on a task while the callee writes the local
+// that the closure reads.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let st = Stats { count: 0 }
+    run(|| print(st.count))
+    st.count += 1
+}
+fn main() / async {
+    handle Run { fn run(g) { scope { s => s.spawn(g); resume(()) } } } in { f() }
+}

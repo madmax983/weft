@@ -1,0 +1,21 @@
+// a task makes a linear closure and gives it back by join; abort after; unwinder must roll back
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+    print("rollback {i}") }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Stop { fn stop() }
+fn body() / Stop, async {
+    let f = scope { s =>
+        let t = s.spawn(|| { let tx = Tx { id: 1 }
+            || commit(tx) })
+        t.join()
+    }
+    stop()
+    f()
+}
+fn main() / async {
+    handle Stop { fn stop() { () } } in body()
+    print("end")
+}

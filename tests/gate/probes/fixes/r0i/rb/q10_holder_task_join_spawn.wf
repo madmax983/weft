@@ -1,0 +1,14 @@
+// a task returns a Holder whose closure captures an Rc; a second scope task runs it
+struct Holder { cb: fn() }
+fn main() {
+    let r = Rc.new(0)
+    let h = scope { s =>
+        let t = s.spawn(|| Holder { cb: || { let y = r.clone() } })
+        t.join()
+    }
+    scope { s =>
+        let t = s.spawn(|| { let g = h.cb
+            g() })
+        t.join()
+    }
+}

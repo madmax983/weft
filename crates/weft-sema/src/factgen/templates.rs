@@ -100,6 +100,10 @@ pub struct Em<'a> {
     /// A run node of the body runs code of a caller that can resume more
     /// than once (the part `multi` of the summary, as the old inference).
     pub code_multi: bool,
+    /// A run node of the body runs a function value that the body does not
+    /// know, code of a caller that is no value of the interface (the part
+    /// `unknown_runs` of the summary, plan stage R0i fix).
+    pub code_unknown: bool,
     /// The run nodes where code of a caller runs a function value of the
     /// interface (an entry of `runs`): a caller applies the value that it
     /// gives there (no part `lends` of a closure summary).
@@ -3862,7 +3866,7 @@ fn during_check(
             })
     };
     let (writes, reads) = places_since(facts, marks, keep);
-    let root = crate::body::roots::fn_arg(app.callee_param.map_or(0, |j| j as usize));
+    let root = crate::roots::fn_arg(app.callee_param.map_or(0, |j| j as usize));
     if !app.during_writes.is_empty() {
         let mut all: Vec<PlaceId> = writes.iter().chain(&reads).copied().collect();
         all.sort();
@@ -4427,6 +4431,101 @@ fn call_value(
 ) -> R {
     let body = em.body;
     let out = transfer::value_out(&mut em.cx(), body, block, st, callee, args, dest)?;
+    // The parameter types of the function type of the callee (W0705).
+    let fn_params = match callee {
+        Operand::Copy(q) | Operand::Move(q) => em
+            .place_ty(q)
+            .and_then(|t| match em.tys.try_get(t) {
+                Some(weft_ir::Ty::Fn(f)) => Some(f.params.clone()),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        Operand::Const(_) => Vec::new(),
+    };
+    let ret = out.ret.clone();
+    value_run(
+        em,
+        nodes,
+        st,
+        block,
+        (&out, &ret),
+        Some(callee),
+        &fn_params,
+        (args, dest, origin),
+    )
+}
+
+/// The runs of the function values that the clauses of the local handlers
+/// of the call of block `block` give back to the callee with `resume`
+/// (stage R0h, D3 form F).
+///
+/// `clause::call_clauses` keeps them in `Handlers::given_back`. The callee runs each one as code of a caller
+/// runs a value that it gets (`transfer::given_back_apps`): at `Main` and at
+/// `Ret`, on some paths only, with the places that the call gives. No such
+/// value can race (the analysis refuses one), so the runs have no task
+/// nodes.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn given_back_runs(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    origin: weft_ir::Span,
+) -> R {
+    let body = em.body;
+    let Some((fns, refs)) = em.hx.given_back.get(&(body, block)).cloned() else {
+        return Ok(());
+    };
+    let Some(t) =
+        em.p.body(body)
+            .and_then(|b| b.blocks.get(block.index()))
+            .map(|b| b.term.kind.clone())
+    else {
+        return Ok(());
+    };
+    let gv = crate::analysis::clause::given(&mut em.cx(), body, block, st, &t)?;
+    let multi = transfer::callee_multi(&em.cx(), &t);
+    let inst = transfer::run_inst(body, block);
+    em.hx.given_refs.insert(inst, refs);
+    let apps = transfer::given_back_apps(&mut em.cx(), (body, block), st, &fns, &gv.places, multi)?;
+    let at = span(origin);
+    let tasks = std::mem::take(&mut em.task_nodes);
+    let frames = emit_apps(em, nodes, st, block, &[], &apps, at, &[], &[]);
+    em.task_nodes = tasks;
+    let frames = frames?;
+    if let Some(r) = nodes.ret {
+        apps_at_ret(em, r, st, &apps, at)?;
+    }
+    end_frames(em, nodes, &frames);
+    Ok(())
+}
+
+/// The facts of a run node of a function value (`call_value`), or of the
+/// code of a clause of a handler of a caller that runs the function values
+/// of the arguments of a perform (stage R0h, `callee` is `None`): the
+/// summaries `out` of the values, the result `ret`, the parameter types
+/// `fn_params` of the function type.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a value that runs a value of its
+/// arguments as a task where the node has no task nodes, and the errors of
+/// α.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn value_run(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    (out, ret): (&transfer::ValueOut, &Tree),
+    callee: Option<&Operand>,
+    fn_params: &[TyId],
+    (args, dest, origin): (&[Operand], &Place, weft_ir::Span),
+) -> R {
+    let body = em.body;
     // A function value whose code runs a value of its arguments as a task:
     // the values apply at the task nodes of the call, one slot for each
     // argument that can hold a function value (stage R0f). With no task
@@ -4436,7 +4535,14 @@ fn call_value(
         let ks = super::frames::value_task_args(em.p, &*em.tys, body, args);
         match value_slots(&out.apps, &ks) {
             Some(s) if !em.task_nodes.is_empty() => Some(s),
-            _ => return Err(AlphaError::Later(VALUE_TASKS)),
+            // Plan stage R0j: with no task nodes for the value, the run is
+            // a plain run of the call, and the program is in scope only if
+            // the `ir` pipeline rejects it.
+            _ => {
+                pending(crate::irbuild::scope::Group::C, VALUE_TASKS);
+                em.task_nodes.clear();
+                None
+            }
         }
     } else {
         // No value runs as a task: the call is a call with no task nodes.
@@ -4445,10 +4551,12 @@ fn call_value(
     };
     let main = nodes.main;
     let at = span(origin);
-    operand_moves(em, main, st, callee, false, true)?;
-    if let (Operand::Copy(q) | Operand::Move(q), true) = (callee, out.once) {
-        if let Some(v) = em.base_var(body, q)? {
-            em.facts.moved_at.push((v, main));
+    if let Some(callee) = callee {
+        operand_moves(em, main, st, callee, false, true)?;
+        if let (Operand::Copy(q) | Operand::Move(q), true) = (callee, out.once) {
+            if let Some(v) = em.base_var(body, q)? {
+                em.facts.moved_at.push((v, main));
+            }
         }
     }
     let mut spans = Vec::new();
@@ -4507,18 +4615,7 @@ fn call_value(
         }
         None => emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?,
     };
-    // The parameter types of the function type of the callee (W0705).
-    let fn_params = match callee {
-        Operand::Copy(q) | Operand::Move(q) => em
-            .place_ty(q)
-            .and_then(|t| match em.tys.try_get(t) {
-                Some(weft_ir::Ty::Fn(f)) => Some(f.params.clone()),
-                _ => None,
-            })
-            .unwrap_or_default(),
-        Operand::Const(_) => Vec::new(),
-    };
-    fn_arg_effects(em, main, st, &fn_params, args, &spans)?;
+    fn_arg_effects(em, main, st, fn_params, args, &spans)?;
     // The label of the node names the callee (`nodes::callee_names`).
     let name = em
         .facts
@@ -4538,14 +4635,14 @@ fn call_value(
             continue;
         }
         given_out(em, st, nodes, (&app.summary, &[]), args, (at, &name))?;
-        if let Some(c) = app.closure {
+        if let (Some(c), Some(callee)) = (app.closure, callee) {
             captures_given_out(em, st, nodes, (c, &app.summary), callee, (at, &name))?;
         }
     }
-    let drops = dropped_fn_args(em, (main, at, &name), st, &fn_params, args, &out.apps)?;
+    let drops = dropped_fn_args(em, (main, at, &name), st, fn_params, args, &out.apps)?;
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
-        bind_dest(em, r, st, dest, &out.ret)?;
+        bind_dest(em, r, st, dest, ret)?;
         let changed: Vec<PlaceId> = out
             .apps
             .iter()
@@ -5004,6 +5101,7 @@ fn emit_apps(
         // A value of a parameter passes its effects through: the caller
         // applies the value that it gives (part `runs`).
         em.code_multi |= app.code && app.run.is_none() && app.summary.multi;
+        em.code_unknown |= app.code && app.run.is_none();
         abort |= app.summary.can_abort();
         // Code of a caller: the value that the caller gives applies its own
         // aborts where the caller runs it.
@@ -5603,14 +5701,13 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
             }
         }
     };
-    // A handler can run a function value of an argument, drop it or run it
-    // more than once: the facts of a clause are stage F14.
-    for a in args {
-        if !transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
-            return Err(AlphaError::Later(
-                "a function value that an operation gives to a handler (stage F14)",
-            ));
-        }
+    // A handler of a caller can run a function value of an argument, drop
+    // it, keep it or run it more than once: the clause is code of a caller
+    // that gets the arguments (stage R0h, C2). A clause of a local handler
+    // that a captured capability runs in the closure keeps the old pipeline.
+    let code = transfer::op_fn_args(&mut em.cx(), body, st, (e, *op), args)?;
+    if code.is_some() && captured.is_some() {
+        return Err(AlphaError::Later(OP_FN_ARGS));
     }
     let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, e, *op, args)?;
     let n = nodes.main;
@@ -5619,15 +5716,18 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     if let weft_ir::CapOperand::Local(c) = cap {
         operand_moves(em, n, st, &Operand::Copy(c.clone()), false, false)?;
     }
-    for op in args {
-        operand_moves(em, n, st, op, false, true)?;
-        // The handler can read through the argument (hole N1).
-        let v = transfer::operand(&mut em.cx(), body, st, op)?;
-        let refs = named_refs(em, v.flat().refs);
-        deep_uses(em, n, st, op, &refs)?;
+    // The run of the code of the clause moves the arguments itself.
+    if code.is_none() {
+        for op in args {
+            operand_moves(em, n, st, op, false, true)?;
+            // The handler can read through the argument (hole N1).
+            let v = transfer::operand(&mut em.cx(), body, st, op)?;
+            let refs = named_refs(em, v.flat().refs);
+            deep_uses(em, n, st, op, &refs)?;
+        }
     }
     for (i, ps) in out.args.iter().enumerate() {
-        let root = crate::body::roots::param(i);
+        let root = crate::roots::param(i);
         for &p in ps {
             em.facts.reads_at.push((n, p));
             em.facts.call_arg.push((n, p, root));
@@ -5636,7 +5736,7 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
         }
     }
     for (i, ps) in out.values.iter().enumerate() {
-        let root = crate::body::roots::fn_arg(i);
+        let root = crate::roots::fn_arg(i);
         em.facts.call_arg.extend(ps.iter().map(|&p| (n, p, root)));
     }
     let lent: Vec<PlaceId> = out.args.iter().flatten().copied().collect();
@@ -5659,12 +5759,42 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     if let Some(k) = captured {
         clause_run_in_closure(em, n, st, k, (*op, args))?;
     }
-    if let Some(r) = nodes.ret {
-        held_refs(em, r, st, args)?;
-        bind_dest(em, r, st, dest, &out.ret)?;
+    match code {
+        // The code of the clause runs the values of the arguments; the
+        // result is the result of the operation or one of the values.
+        Some(ty) => {
+            let block = em.at.0;
+            let v = transfer::op_value_out(&mut em.cx(), (body, block), st, &ty, args)?;
+            let ret = Tree::leaf(out.ret.flat().joined(&v.ret.flat()));
+            let origin =
+                em.p.body(body)
+                    .and_then(|b| b.blocks.get(block.index()))
+                    .map_or_else(weft_ir::Span::default, |b| b.term.origin.span);
+            value_run(
+                em,
+                nodes,
+                st,
+                block,
+                (&v, &ret),
+                None,
+                &ty.params,
+                (args, dest, origin),
+            )?;
+        }
+        None => {
+            if let Some(r) = nodes.ret {
+                held_refs(em, r, st, args)?;
+                bind_dest(em, r, st, dest, &out.ret)?;
+            }
+        }
     }
     Ok(())
 }
+
+/// Why a perform through a captured capability of a local handler with a
+/// function value in an argument is not in scope (stage R0h: the clause runs
+/// in the closure, `clause_run_in_closure`, with no function values).
+const OP_FN_ARGS: &str = "a function value that an operation gives to a handler (stage F14)";
 
 /// The type parameters that make the closures of the value `v` linear in a
 /// generic body (`crate::props::GenericBody`, `docs/ir.md` 6.7): empty if
@@ -6311,7 +6441,7 @@ pub fn spawn(
     use crate::analysis::tasks;
     let body = em.body;
     operand(em, n, st, scope)?;
-    unowned_spawn(em, site)?;
+    unowned_spawn(em, site);
     let (ret_ty, out_ret) = task_start(em, n, st, block, site, task, origin)?;
     em.facts.escapes_at.push((n, ASYNC.to_string()));
     em.started.push(site.0);
@@ -6361,23 +6491,21 @@ pub fn spawn(
 }
 
 /// The check of a spawn that does not name its scope (stage R0e): the
-/// analysis must find the one scope of its scope operand
-/// (`Handlers::site_scopes`).
+/// analysis must find the scope that ends the task (`Handlers::site_scopes`,
+/// [`crate::analysis::tasks::SiteScope::end`]: the one scope of the scope
+/// operand, or the outer one of more than one nested scope, plan stage R0j).
+/// Else the program is pending.
 ///
 /// In the facts of a closure body in the terms of its interface, the scope
 /// can be a scope of the maker: then no reference of the operand points
 /// into a scope capability of the closure, and the spawn is not in a scope
 /// body of the closure (part `tasks`).
-///
-/// # Errors
-///
-/// Returns [`AlphaError::Later`] if a check fails.
-fn unowned_spawn(em: &mut Em<'_>, site: weft_ir::SpawnId) -> R {
+fn unowned_spawn(em: &mut Em<'_>, site: weft_ir::SpawnId) {
     let Some(d) = em.p.spawns.get(site.index()) else {
-        return Ok(());
+        return;
     };
     if d.fork || d.scope.is_some() {
-        return Ok(());
+        return;
     }
     let body = em.body;
     let res = em.hx.site_scopes.get(&site).cloned().unwrap_or_default();
@@ -6388,17 +6516,30 @@ fn unowned_spawn(em: &mut Em<'_>, site: weft_ir::SpawnId) -> R {
                     .get(k.index())
                     .is_some_and(|s| super::alpha::unit_root(em.p, s.body) == cb)
             };
-            match res.one() {
+            match res.end(em.p) {
                 Some(k) => own(&k),
                 None => !res.scopes.iter().any(own) && !in_scope_body(em.p, body),
             }
         }
-        _ => res.one().is_some(),
+        // Plan stage R0j: a spawn on one of more than one nested scope ends
+        // its task at the outer scope (`SiteScope::end`).
+        _ => res.end(em.p).is_some(),
     };
+    // Plan stage R0j: else the task ends at no scope of the facts, so the
+    // program is in scope only if the `ir` pipeline rejects it.
     if !ok {
-        return Err(AlphaError::Later(UNOWNED_SCOPE));
+        pending(crate::irbuild::scope::Group::E, UNOWNED_SCOPE);
     }
-    Ok(())
+}
+
+/// Notes a construct with no full facts (plan stage R0j, the rule of stage
+/// R0g, `Scope::pending`): the `ir` pipeline checks the program, and its
+/// error is final; with no error the old pipeline checks it.
+fn pending(group: crate::irbuild::scope::Group, reason: &str) {
+    crate::analysis::clause::note_pending(super::Unsupported {
+        group,
+        reason: reason.to_string(),
+    });
 }
 
 /// True if body `b` is a scope body or splices into one inside its frame
@@ -6648,15 +6789,20 @@ fn task_start(
     // applies at `n`: the whole run of the task is at `n` (plan stage F19).
     // A run again (a value that runs another value more than once, OR3)
     // needs a second node after the first run: a spawn has none.
+    // Plan stage R0j: the facts have no node for the second run, so the
+    // program is in scope only if the `ir` pipeline rejects it
+    // (`Scope::pending`, the rule of stage R0g); the run at `n` stays.
     if out.apps.iter().any(|a| a.again && !a.order) {
-        return Err(AlphaError::Later(TASK_AGAIN));
+        pending(crate::irbuild::scope::Group::E, TASK_AGAIN);
     }
     // A task runs the value that a shared cell (a `ByRef` or `Kept`
     // capture) holds when it runs: a variable that gets a new function value
     // after the spawn gives the task code that the run at `n` does not
     // apply (`zz_late`, `late_task`).
+    // Plan stage R0j: the later values of the cell are not in the run at
+    // `n`, so the program is in scope only if the `ir` pipeline rejects it.
     if fns.iter().any(|f| runs_rebound_cell(em.p, f, em.sums)) {
-        return Err(AlphaError::Later(TASK_LATE));
+        pending(crate::irbuild::scope::Group::E, TASK_LATE);
     }
     // Code of a caller that runs as a task (a parameter, a closure that
     // runs one): the caller checks the value that it gives as a task (part
@@ -6673,8 +6819,12 @@ fn task_start(
                 | FnVal::Capture(_)
         )
     });
+    // Plan stage R0j: the worst way of a task of such code has no facts of
+    // the places that the code changes, so the program is in scope only if
+    // the `ir` pipeline rejects it; the run at `n` applies the code of a
+    // caller as a plain run.
     if !known || out.apps.iter().any(|a| a.code && a.run.is_none()) {
-        return Err(AlphaError::Later(TASK_CODE));
+        pending(crate::irbuild::scope::Group::E, TASK_CODE);
     }
     let caller_code = out.apps.iter().any(|a| a.code);
     operand_moves(em, n, st, task, false, true)?;
@@ -7158,10 +7308,7 @@ pub fn site_in_scope(
         d.scope == Some(k)
             || (!d.fork
                 && d.scope.is_none()
-                && site_scopes
-                    .get(&site)
-                    .and_then(crate::analysis::tasks::SiteScope::one)
-                    == Some(k))
+                && site_scopes.get(&site).and_then(|r| r.end(p)) == Some(k))
     })
 }
 

@@ -1,0 +1,12 @@
+// nonportable closure through: a non-generic enum payload with a fn field; a scope task runs it (must be pinned)
+enum Act { Go(fn()), No }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let a = Go(c)
+    let f = match a { Go(g) => g, No => || print(0) }
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

@@ -1,0 +1,7 @@
+// a by-value method call on a field behind a reference
+struct W { items: Vec<u64> }
+fn take(v: Vec<u64>) -> u64 { v.len() }
+fn f(r: &W) -> u64 { take(r.items) }
+fn main() { let w = W { items: Vec.new() }
+    print(f(&w))
+    print(take(w.items)) }

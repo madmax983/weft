@@ -1,0 +1,14 @@
+// The clean twin of rv_p04: the callee changes `v` before the perform.
+effect Run { multi fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    v.push(2)
+    let r = &v[0]
+    run(|| print(r))
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { resume(())
+        g()
+        resume(()) } } in { f(&v) }
+}

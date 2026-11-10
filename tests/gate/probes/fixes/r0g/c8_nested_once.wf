@@ -1,0 +1,11 @@
+// A clause of an inner handler performs a `multi` operation of an outer local
+// handler while its `once` continuation is live (W0503).
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        handle Ask { fn ask() { if pick() { resume(1) } else { resume(2) } } } in {
+            print(ask())
+        }
+    }
+}

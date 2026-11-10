@@ -86,7 +86,7 @@ pub fn interface_place(
             let a = roots.group_adt(info.root)?;
             (
                 IRoot::Group(a),
-                crate::body::roots::group(crate::AdtId(a.index())),
+                crate::roots::group(crate::AdtId(a.index())),
             )
         }
         _ => return None,
@@ -199,6 +199,8 @@ pub fn summarize(
         place(*q).filter(|ip| matches!(ip.root, IRoot::Param(_) | IRoot::Held(_) | IRoot::Group(_)))
     });
     changed.multi |= fv.code_multi;
+    changed.unknown_runs |= fv.code_unknown;
+    changed.caller_muts |= fv.caller_muts;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
     }
@@ -236,6 +238,14 @@ pub fn summarize(
         let base = facts.wild_base(m).unwrap_or(m);
         if let Some(mp) = interface_place(facts, roots, entry, sig, &owned, base) {
             changed.muts.push(mp);
+        } else if facts
+            .places
+            .get(base.index())
+            .is_some_and(|i| matches!(roots.role(i.root), Some(Role::Caller)))
+        {
+            // A change through a reference of the result of an operation of
+            // a caller (stage R0h, D3 form R).
+            changed.caller_muts = true;
         }
     }
     changed.muts.sort();
@@ -522,12 +532,18 @@ fn gives_frame(
 /// `Return` nodes.
 #[derive(Clone, Copy, Debug)]
 pub struct FnParts<'a> {
+    /// A call of the body passes on the part `caller_muts` of its callee
+    /// (stage R0h fix).
+    pub caller_muts: bool,
     /// The runs of the function values of the interface.
     pub runs: &'a [(crate::analysis::transfer::RunOf, bool)],
     /// The state at each `Return`.
     pub returns: &'a [super::State],
     /// A run node runs code of a caller that can resume more than once.
     pub code_multi: bool,
+    /// A run node runs a function value that the body does not know (part
+    /// `unknown_runs`, plan stage R0i fix).
+    pub code_unknown: bool,
     /// The join of the states where the body makes its closures (before
     /// each closure literal and each terminator): a `Kept` capture keeps
     /// the value that its variable has there, also after the variable ends.
@@ -1010,26 +1026,26 @@ fn closure_place(
 ) -> Option<(IPlace, u32)> {
     let info = facts.places.get(p.index())?;
     let steps = steps_of(facts, p);
-    let stored = crate::body::roots::STORED;
+    let stored = crate::roots::STORED;
     let (root, idx, steps) = match roots.role(info.root)? {
         Role::Capture(b, k) if b == body => (IRoot::Capture(k), stored, steps),
         Role::CaptureHeld(b, k) if b == body => (IRoot::CaptureHeld(k), stored, steps),
         Role::CaptureDeep(b, k) if b == body => (IRoot::CaptureDeep(k), stored, steps),
         Role::Param(b, i) if b == body && i > 0 => (
             IRoot::Param(i - 1),
-            crate::body::roots::param(i as usize - 1),
+            crate::roots::param(i as usize - 1),
             steps,
         ),
         Role::Held(b, i) if b == body && i > 0 => (
             IRoot::Held(i - 1),
-            crate::body::roots::param(i as usize - 1),
+            crate::roots::param(i as usize - 1),
             steps,
         ),
         Role::Group => {
             let a = roots.group_adt(info.root)?;
             (
                 IRoot::Group(a),
-                crate::body::roots::group(crate::AdtId(a.index())),
+                crate::roots::group(crate::AdtId(a.index())),
                 steps,
             )
         }
@@ -1400,7 +1416,7 @@ pub fn closure(
             .unwrap_or_else(|| format!("parameter {j}"));
         out.params.push(ParamIface {
             name,
-            root: crate::body::roots::param(j - 1),
+            root: crate::roots::param(j - 1),
             in_place: None,
         });
     }
@@ -1469,6 +1485,8 @@ pub fn closure(
     });
     out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
     out.pins = task_pins(facts, fv.code_opaque);
+    // A run of a value that the closure does not know (plan stage R0i-b).
+    out.unknown_runs = fv.code_unknown;
     out.joins = fv.joins.iter().copied().collect();
     out.abort_joins = fv.abort_joins.iter().copied().collect();
     // The tasks that run while the closure waits at an operation of a

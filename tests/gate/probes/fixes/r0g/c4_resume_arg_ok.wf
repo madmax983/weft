@@ -1,0 +1,17 @@
+// The clean twin: the closure only reads the local of the clause.
+effect Get { fn get() -> fn() }
+fn main() {
+    handle Get {
+        fn get() {
+            let v = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            let n = resume(|| print(v.len()))
+            print(r + 1)
+            n
+        }
+    } in {
+        let f = get()
+        f()
+    }
+}

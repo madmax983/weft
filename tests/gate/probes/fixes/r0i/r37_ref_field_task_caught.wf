@@ -1,0 +1,28 @@
+// on abort runs a fn value read through a reference field as a task, under a caught Fail
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+struct Box { f: fn() }
+linear struct T { b: &Box }
+    on abort = undo
+fn undo(t: T) {
+    let T(b) = t
+    let f = b.f
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let k = s.spawn(|| f())
+            k.join()
+        }
+    }
+}
+fn done(t: T) { let T(b) = t }
+fn body(bx: &Box) / Stop, Ask {
+    let t = T { b: bx }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        let bx = Box { f: || print(ask()) }
+        handle Stop { fn stop() { () } } in body(&bx)
+    }
+}

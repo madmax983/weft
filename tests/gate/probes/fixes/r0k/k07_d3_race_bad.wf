@@ -1,0 +1,16 @@
+// Plan stage R0k (D3, a value that changes places): the clause gives back
+// a closure that clears `c.v`; the callee runs it while `r` points into
+// `c.v` (W0301).
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn run_ref(c: &C) / Get {
+    let r = &c.v[0]
+    let g = get()
+    g()
+    print(r)
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+}

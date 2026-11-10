@@ -1,0 +1,8 @@
+// a fip fn with a type error itself (no IR) that logs
+enum List { Cons(u64, List), Nil }
+fip fn walk(xs: List) -> List {
+    log.info("x")
+    let z: u64 = "s"
+    xs
+}
+fn main() / io { let l = walk(Nil) }

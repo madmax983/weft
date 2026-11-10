@@ -1,0 +1,3 @@
+[package]
+name = "lg"
+kind = "lib"

@@ -1,0 +1,15 @@
+// An abort to an outer local handler leaves a closure that performs through
+// the inner handler in a local of the site (W0313).
+effect Log { fn log(m: String) }
+effect Op { fn op() }
+fn main() {
+    let f = || print(0)
+    handle Op { fn op() { print(9) } } in {
+        handle Log { fn log(m) { resume(()) } } in {
+            f = || log("x")
+            op()
+            f = || print(1)
+        }
+    }
+    f()
+}

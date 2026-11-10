@@ -1,0 +1,11 @@
+// A callee makes a closure that captures nothing of a handler; the closure
+// it gives back runs in a handled body. Then a made closure with a captured
+// capability leaves a callee through its result (W0313 in the callee).
+effect Log { fn log(m: String) }
+fn leak() -> fn() {
+    handle Log { fn log(m) { resume(()) } } in { let f = || log("late"); f }
+}
+fn main() {
+    let g = leak()
+    g()
+}

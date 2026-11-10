@@ -1,0 +1,20 @@
+// a clause gets a linear closure as the value of resume and drops it (W0601 expected)
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+    print("rollback {i}") }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Q { fn q() }
+fn main() {
+    handle Q { fn q() {
+        let g = resume(())
+        print("dropped")
+    } } in {
+        q()
+        let tx = Tx { id: 1 }
+        let c = || commit(tx)
+        ()
+    }
+    print("end")
+}

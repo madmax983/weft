@@ -520,7 +520,7 @@ fn footprint_text(f: &FnFacts, n: NodeId, m: PlaceId) -> Option<String> {
 /// only that handler changes place `m` at `n`. The facts of the IR give the
 /// changes of a handler at the node itself (`mutates_at`), with no
 /// `footprint`: the root of each such change (`call_mut`) is the root of
-/// the clauses of the handler (`weft_sema::body::roots::clause`).
+/// the clauses of the handler (`weft_sema::roots::clause`).
 fn clause_footprint_text(f: &FnFacts, n: NodeId, m: PlaceId) -> Option<String> {
     let mut roots = f
         .call_mut
@@ -531,7 +531,7 @@ fn clause_footprint_text(f: &FnFacts, n: NodeId, m: PlaceId) -> Option<String> {
     let clause = f
         .performs_at
         .iter()
-        .any(|&(p, c)| p == n && weft_sema::body::roots::clause(c) == root);
+        .any(|&(p, c)| p == n && weft_sema::roots::clause(c) == root);
     if !clause || roots.any(|i| i != root) {
         return None;
     }

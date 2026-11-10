@@ -399,4 +399,5 @@ body b13: fn not_uniq; cap_env e0; unwind_exit bb6
     Goto(bb6)
   bb6 (cleanup):
     UnwindExit
+// W0303 at 27:29: cannot move a `Vec<u64>` out of a borrowed place; borrow it with `&`
 // steal: no IR: W0303, a move through a reference

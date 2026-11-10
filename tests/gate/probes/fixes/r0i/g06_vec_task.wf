@@ -1,0 +1,33 @@
+// a Vec<fn()> field, an element run as a task under a caught Fail
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+
+linear struct T { fs: Vec<fn()> }
+    on abort = undo
+fn undo(t: T) {
+    let T(fs) = t
+    let f = fs[0]
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let k = s.spawn(|| f())
+            k.join()
+        }
+    }
+}
+fn done(t: T) {
+    let T(fs) = t
+    let f = fs[0]
+    f()
+}
+fn body() / Stop, Ask {
+    let t = T { fs: { let v: Vec<fn()> = Vec.new()
+        v.push(|| print(ask()))
+        v } }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

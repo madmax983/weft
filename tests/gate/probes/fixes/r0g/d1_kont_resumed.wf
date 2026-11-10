@@ -1,0 +1,15 @@
+// A `resume` gives the handled body a closure that resumes the continuation of
+// a `multi` clause; the body gives it back as the value of the `handle`.
+effect Ask { multi fn ask() -> fn() }
+fn main() {
+    let g = handle Ask {
+        fn ask() {
+            let k = || { resume(|| print(1)); () }
+            resume(k)
+        }
+    } in {
+        let f = ask()
+        f
+    }
+    g()
+}

@@ -1,0 +1,13 @@
+// The callee performs two times; the second clause clears the vector that
+// the first reference points into.
+effect Pick { fn pick() -> &u64 }
+fn picks_twice() / Pick {
+    let r = pick()
+    let r2 = pick()
+    print(r)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { v.clear(); v.push(2); resume(&v[0]) } } in picks_twice()
+}

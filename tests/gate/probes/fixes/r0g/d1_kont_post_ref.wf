@@ -1,0 +1,15 @@
+// J2 form: the resume point is a run of a closure; the code of the clause after
+// it clears `v` while `keep` points into it (W0301, judge probe J2).
+effect Tick { fn tick() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() { let k = || resume(()); k(); v.clear() } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

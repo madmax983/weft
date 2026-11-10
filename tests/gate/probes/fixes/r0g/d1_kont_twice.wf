@@ -1,0 +1,6 @@
+// A `once` closure that resumes the continuation runs two times (W0502).
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let n = handle Ask { fn ask() { let k = || resume(1); k(); k() } } in { ask() + 1 }
+    print(n)
+}

@@ -1,0 +1,10 @@
+// The clean twin: the inner clause resumes first. The old pipeline checks it.
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        handle Ask { fn ask() { resume(1); print(pick()) } } in {
+            print(ask())
+        }
+    }
+}

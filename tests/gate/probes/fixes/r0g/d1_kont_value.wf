@@ -1,0 +1,9 @@
+// A closure that resumes the continuation is the value of the clause (W0313).
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let g = handle Ask { fn ask() { || { let n = resume(5); print(n) } } } in {
+        let n = ask()
+        || print(n)
+    }
+    g()
+}

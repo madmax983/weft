@@ -54,7 +54,7 @@ fn given_away() {
 }
 fn given_to_twice() {
     let tx = begin()
-    twice(|| rollback(tx))   //~ W0601 W0502
+    twice(|| rollback(tx))   //~ W0502 old: W0502 W0601
 }
 fn timed() / async, fail {
     let tx = begin()
@@ -126,7 +126,7 @@ struct Node { v: u64 }
 fn rc_closure() / par {
     let n = Rc.new(Node { v: 1 })
     let c = || print(n.v)
-    fork(|| c(), || print(2))   //~ W0401
+    fork(|| c(), || print(2))   //~ W0401 W0401 old: W0401
 }
 fn plain_closure() / par {
     let n = Node { v: 1 }
@@ -140,7 +140,7 @@ fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
 fn uniq_across_multi(v: &Vec<u64>) -> bool / mut(v), Choice {
     let (l, r) = v.split_mut(1)
     let f = || needs_uniq(l)
-    let b = choose()   //~ W0503
+    let b = choose()   //~ W0503 W0503 old: W0503
     f()
     b
 }
@@ -171,8 +171,8 @@ fn linear_through_generic() {
 fn linear_in_vec() {
     let tx = begin()
     let v: Vec<fn()> = Vec.new()
-    v.push(|| rollback(tx))   //~ W0601
-}
+    v.push(|| rollback(tx))   //~ old: W0601
+}   //~ W0601 old:
 fn once_in_vec() {
     let b = Buf { items: Vec.new() }
     let v: Vec<fn()> = Vec.new()
@@ -212,7 +212,7 @@ fn rc_in_vec() / par {
     let n = Rc.new(Node { v: 1 })
     let v: Vec<fn()> = Vec.new()
     v.push(|| print(n.v))
-    fork(|| print(v.len()), || print(2))   //~ W0401
+    fork(|| print(v.len()), || print(2))   //~ W0401 W0401 old: W0401
 }
 fn plain_in_field() / par {
     let n = Node { v: 1 }
@@ -223,7 +223,7 @@ fn plain_in_field() / par {
 fn uniq_in_tuple(v: &Vec<u64>) -> bool / mut(v), Choice {
     let (l, r) = v.split_mut(1)
     let t = (|| needs_uniq(l), 1)
-    let b = choose()   //~ W0503
+    let b = choose()   //~ W0503 W0503 old: W0503
     let (g, n) = t
     g()
     b
@@ -231,7 +231,7 @@ fn uniq_in_tuple(v: &Vec<u64>) -> bool / mut(v), Choice {
 fn uniq_in_option(v: &Vec<u64>) -> bool / mut(v), Choice {
     let (l, r) = v.split_mut(1)
     let o = Some(|| needs_uniq(l))
-    let b = choose()   //~ W0503
+    let b = choose()   //~ W0503 W0503 old: W0503
     match o { Some(g) => g(), None => {} }
     b
 }

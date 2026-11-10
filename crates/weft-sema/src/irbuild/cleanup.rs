@@ -463,12 +463,18 @@ mod tests {
         let mut fields = PlaceFields::new(&tys);
         let (mut fns, mut decls) = (BTreeMap::new(), Vec::new());
         let mut pending = super::super::closure::Pending::default();
+        let values = super::super::values::BindingValues::new();
         let d = Decls {
             a: &a,
             fns: &mut fns,
             items: &mut decls,
             cap_envs: &mut Vec::new(),
             pending: &mut pending,
+            values: &values,
+            bound: &mut Vec::new(),
+            moves: &std::cell::RefCell::new(Vec::new()),
+            stated: &std::cell::RefCell::new(Vec::new()),
+            fn_reads: &std::cell::RefCell::new(Vec::new()),
         };
         let span = Span { lo: 0, hi: 1 };
         let mut b = Builder::new(&t, &mut tys, &mut fields, d, 0, ret, span);

@@ -1,0 +1,13 @@
+// Plan stage R0k-a (D3, a `once` value that the clause makes): the closure
+// moves `v` when the clause makes it; `main` uses `v` after the handler
+// (W0302).
+effect Get { fn get() -> fn() }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn run_once() / Get { let g = get()
+ g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| eat(v)) } } in { run_once() }
+    print(v.len())
+}

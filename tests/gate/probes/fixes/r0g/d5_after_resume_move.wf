@@ -1,0 +1,13 @@
+// The clause resumes, then performs the `multi` operation, then moves a linear
+// value of the site: a second `resume` of `choose` runs the move again.
+linear struct Tok { id: u64 }
+fn eat(t: Tok) { let Tok(id) = t; print(id) }
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+fn at_clause() / Choice {
+    let t = Tok { id: 1 }
+    handle Log { fn log(m) { resume(()); let b = choose(); eat(t) } } in log("x")
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in at_clause()
+}

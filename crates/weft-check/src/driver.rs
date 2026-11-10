@@ -44,6 +44,9 @@ impl Checked {
 /// Each fact that a diagnostic reports gets the index of its body
 /// ([`bridge::body_key`]), so two bodies with one name keep apart.
 pub fn check_analysis(mut analysis: Analysis, files: &[SourceFile]) -> Checked {
+    if let Some(p) = analysis.ir_scope.as_mut().and_then(|s| s.pending.take()) {
+        return check_pending(analysis, files, p);
+    }
     let ir = analysis.ir_facts.take().map(|facts| {
         let mut view = analysis.clone();
         view.bodies = facts.bodies;
@@ -53,6 +56,41 @@ pub fn check_analysis(mut analysis: Analysis, files: &[SourceFile]) -> Checked {
     let mut c = check_bodies(analysis, files);
     c.ir = ir;
     c
+}
+
+/// Checks a program with a construct that the facts of the `ir` pipeline
+/// do not model (stage R0g, `weft_sema::factgen::Scope::pending`).
+///
+/// `analysis` has the facts of the old lowering and, in
+/// [`Analysis::ir_facts`], those of the `ir` pipeline. If the check of the
+/// `ir` facts finds an error, the `ir` pipeline rejects the program and
+/// gives the result (alone, or as [`Checked::ir`] next to the check of the
+/// old facts). Else the facts can miss an error, so the old pipeline checks
+/// the program: the scope gets the reason of the fallback.
+fn check_pending(
+    mut analysis: Analysis,
+    files: &[SourceFile],
+    p: weft_sema::factgen::Pending,
+) -> Checked {
+    if let Some(facts) = analysis.ir_facts.take() {
+        let mut view = analysis.clone();
+        view.bodies = facts.bodies;
+        view.diags = facts.diags;
+        view.sigs = facts.sigs;
+        let ir = check_bodies(view, files);
+        if !ir.ok() {
+            if p.ir_view {
+                return ir;
+            }
+            let mut c = check_bodies(analysis, files);
+            c.ir = Some(Box::new(ir));
+            return c;
+        }
+    }
+    if let Some(s) = analysis.ir_scope.as_mut() {
+        s.fallback = Some(p.reason);
+    }
+    check_bodies(analysis, files)
 }
 
 /// Runs the production checker on every body of `analysis`, with no `ir`
@@ -168,6 +206,7 @@ fn check_source_here(name: &str, src: &str, opts: Options) -> Checked {
                 program: weft_sema::Program::default(),
                 sigs: Vec::new(),
                 bodies: Vec::new(),
+                decls: Vec::new(),
                 diags: Vec::new(),
                 lowerings: 0,
                 work: weft_sema::Work::default(),

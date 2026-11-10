@@ -162,7 +162,7 @@ fn clause_after_resume() / async {
         handle Run {
             fn run(f) {
                 s.spawn(f)
-                resume(())   //~ W0405
+                resume(())   //~ old: W0405
             }
         } in {
             run(|| n += 1)

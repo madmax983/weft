@@ -1,0 +1,10 @@
+// Plan stage R0j: the clean twin of j03. The closure writes `c.k` after its
+// scope. The `ir` pipeline finds no error, so the old pipeline checks the
+// program (the pending rule).
+struct C { k: u64 }
+fn run2(f: fn(fn())) { f(|| print(1)) }
+fn main() / async {
+    let c = C { k: 0 }
+    run2(|h| { scope { s => s.spawn(h); s.spawn(|| c.k += 1) }; c.k += 2 })
+    print(c.k)
+}

@@ -1,0 +1,10 @@
+// a handle gives back a linear closure, which is dropped
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Q { fn q() }
+fn main() {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let f = handle Q { fn q() { resume(()) } } in c
+}

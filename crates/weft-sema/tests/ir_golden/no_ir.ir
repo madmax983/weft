@@ -35,6 +35,8 @@ body b1: fn main; cap_env e0; unwind_exit bb3
     Unreachable
   bb3 (cleanup):
     UnwindExit
+// W0303 at 11:31: cannot move a `Vec<u64>` out of a borrowed place; borrow it with `&`
+// W0303 at 14:18: cannot move a `Vec<u64>` out of a borrowed place; borrow it with `&`
 // steal: no IR: W0303, a move through a reference
 // steal_in_closure: no IR: W0303, a move through a reference
 // pair: no IR: a type error

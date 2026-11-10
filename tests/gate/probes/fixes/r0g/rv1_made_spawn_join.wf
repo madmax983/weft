@@ -1,0 +1,10 @@
+// A closure that a closure makes clears a vector of the site; a task runs it
+// and the scope body uses r after the join (review of stage R0g, t_13/t_14).
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let mk = || (|| v.clear())
+    let f = mk()
+    scope { s => let t = s.spawn(f); t.join(); print(r + 1) }
+}

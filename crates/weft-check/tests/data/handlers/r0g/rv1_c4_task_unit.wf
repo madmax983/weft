@@ -1,0 +1,17 @@
+// The clause holds r into its vector v across a resume whose argument is a
+// closure that clears v; the handled body runs the closure on a task of a
+// scope (review of stage R0g, B1).
+effect Get { fn get() -> fn() }
+fn main() / async {
+    handle Get {
+        fn get() {
+            let v = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            resume(|| v.clear())
+            print(r + 1)
+        }
+    } in {
+        let f = get(); scope { s => s.spawn(f); () }
+    }
+}

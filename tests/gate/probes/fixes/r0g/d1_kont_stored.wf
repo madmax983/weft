@@ -1,0 +1,9 @@
+// A closure that resumes the continuation goes into a vector of the site.
+effect Note { fn note(x: u64) }
+fn main() {
+    let v = Vec.new()
+    v.push(|| print(0))
+    handle Note { fn note(x) { v.push(|| resume(())) } } in note(1)
+    let g = v[1]
+    g()
+}

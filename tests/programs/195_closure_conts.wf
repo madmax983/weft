@@ -1,0 +1,146 @@
+// Stage R0g: continuations and capabilities in closures. A closure that a
+// clause gives to the handled body or to the site, a closure that a closure
+// or a callee makes with a captured capability, a capability that leaves its
+// handler through an abort, a closure that resumes the continuation of a
+// clause, and a `multi` operation in a clause.
+effect Log { fn log(m: String) }
+effect Op { fn op() }
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+effect Reg { fn reg(f: fn()) }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> bool }
+
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+// A closure that a closure makes captures the capability again; the clause
+// that its run runs clears `v` while `r` points into it.
+fn made_cap_live() {
+    let v = mk_v()
+    let r = &v[0]
+    handle Log { fn log(m) { v.clear(); resume(()) } } in {
+        let mk = || (|| log("x"))
+        let g = mk()
+        g()
+    }
+    print(r + 1)   //~ W0301
+}
+fn made_cap_live_ok() {
+    let v = mk_v()
+    let r = &v[0]
+    handle Log { fn log(m) { print(m); resume(()) } } in {
+        let mk = || (|| log("x"))
+        let g = mk()
+        g()
+    }
+    print(r + 1)
+}
+
+// The value of a clause is a closure that captures a local of the clause.
+fn clause_value_dangling() {
+    let f = handle Ask { fn ask() { let v = mk_v(); || print(v.len()) } } in { let k = ask(); || print(k) }   //~ W0301
+    f()   //~ W0301 old:
+}
+fn clause_value_ok() {
+    let f = handle Ask { fn ask() { || print(7) } } in { let k = ask(); || print(k) }
+    f()
+}
+
+// A clause puts a closure into a local of the site; the closure runs a value
+// that performs through the inner handler after that handler ends.
+fn clause_site_local() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x); resume(()) } } in {   //~ W0313
+        handle Reg { fn reg(f) { keep = || f(); resume(()) } } in reg(|| note(3))
+    }
+    keep()
+}
+fn clause_site_local_ok() {
+    let keep = || print(0)
+    handle Reg { fn reg(f) { keep = || f(); resume(()) } } in reg(|| print(3))
+    keep()
+}
+
+// An abort to an outer local handler leaves a closure of the inner handler in
+// a local of the site.
+fn abort_past() {
+    let f = || print(0)
+    handle Op { fn op() { print(9) } } in {
+        handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+            f = || log("x")
+            op()
+            f = || print(1)
+        }
+    }
+    f()
+}
+fn abort_past_ok() {
+    let f = || print(0)
+    handle Op { fn op() { print(9) } } in {
+        handle Log { fn log(m) { resume(()) } } in {
+            f = || log("x")
+            f()
+            f = || print(1)
+            op()
+        }
+    }
+    f()
+}
+
+// A callee gives back a closure with the capability of its handler.
+fn leak() -> fn() {
+    handle Log { fn log(m) { resume(()) } } in { let f = || log("late"); f }   //~ W0313
+}
+fn run_leaked() {
+    let g = leak()
+    g()
+}
+
+// A closure that resumes the continuation of a clause leaves the clause.
+fn kont_local() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = || resume(()) } } in note(1)   //~ W0313
+    k()
+}
+fn kont_value() {
+    let g = handle Ask { fn ask() { || { let n = resume(5); print(n) } } } in {   //~ W0313
+        let n = ask()
+        || print(n)
+    }
+    g()
+}
+fn kont_stored() {
+    let v = Vec.new()
+    v.push(|| print(0))
+    handle Note { fn note(x) { v.push(|| resume(())) } } in note(1)   //~ W0313
+    let g = v[1]
+    g()
+}
+// A `once` closure that resumes the continuation runs two times.
+fn kont_twice() {
+    let n = handle Ask { fn ask() { let k = || resume(1); k(); k() } } in { ask() + 1 }   //~ W0502
+    print(n)
+}
+
+// A clause performs a `multi` operation of a handler of a caller, or of an
+// outer local handler, while its `once` continuation is live.
+fn multi_in_clause() / Choice {
+    handle Log { fn log(m) { let b = choose(); resume(()) } } in log("x")   //~ W0503
+}
+fn multi_caller() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in multi_in_clause()
+}
+fn multi_nested() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        handle Ask { fn ask() { if pick() { resume(1) } else { resume(2) } } } in {   //~ W0503
+            print(ask())
+        }
+    }
+}
+
+fn main() {
+    made_cap_live_ok()
+    clause_value_ok()
+    clause_site_local_ok()
+    abort_past_ok()
+}

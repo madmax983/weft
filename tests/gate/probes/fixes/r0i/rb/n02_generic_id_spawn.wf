@@ -1,0 +1,11 @@
+// nonportable closure through: a generic identity; a scope task runs it (must be pinned)
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let f = id(c)
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

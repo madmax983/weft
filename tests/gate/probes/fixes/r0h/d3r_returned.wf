@@ -1,0 +1,13 @@
+// The callee gives back the reference that the clause gave it; the site
+// clears the vector and reads the reference.
+effect Pick { fn pick() -> &u64 }
+fn pass() -> &u64 / Pick { pick() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = pass()
+        v.clear()
+        print(r)
+    }
+}

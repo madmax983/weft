@@ -228,8 +228,15 @@ fn plain(n: u64) -> u64 { n + 1 }
 /// A program that the fact generator does not support with each group on:
 /// a `resume` of a captured continuation (follow-up F16.1). Stage F17 put
 /// the W0313 escape of `ESCAPE` in scope.
-const KONT: &str = "effect Ask { fn ask() -> u64 }
-fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }
+// A program that the fact generator does not support: a clause gives the
+// callee a function value that can race (stage R0g put the `resume` in a
+// closure, the form of this program before, in scope for a program that the
+// `ir` pipeline rejects; stage R0h put a value that cannot race in scope;
+// stage R0k-a put the callee in scope with a copy at the call, so the
+// perform is in a closure that the callee runs, which the copy keeps).
+const KONT: &str = "effect Get { fn get() -> fn() }
+fn run_it() / Get { let k = || { let g = get(); g() }; k() }
+fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }
 fn typo() -> u64 { nope }
 fn plain(n: u64) -> u64 { n + 1 }
 ";
@@ -627,11 +634,12 @@ fn the_note_of_a_fallback_names_the_body_that_the_fact_generator_does_not_suppor
     // Plan stage R0b: the callers of a body that the fact generator does not
     // support get the worst case of its declaration, so the note gives the
     // reason of that body, not "a call of a function with ...".
-    let src = "effect Ask { fn ask() -> u64 }
-        fn first() -> u64 { kont() }
-        fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }";
+    let src = "effect Get { fn get() -> fn() }
+        fn run_it() / Get { let k = || { let g = get(); g() }; k() }
+        fn first() { kont() }
+        fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }";
     let why = fallback(src).expect("out of scope");
-    assert!(why.contains("captured continuation"), "{why}");
+    assert!(why.contains("gives a function value"), "{why}");
 }
 
 #[test]
@@ -771,4 +779,117 @@ fn a_loop_that_builds_a_recursive_value_ends() {
     // The checker reports W0301 for `deep` (corpus
     // `186_recursive_list_loop.wf`).
     assert_eq!(fallback(deep), None);
+}
+
+#[test]
+fn a_construct_with_no_full_facts_keeps_both_views_for_the_check() {
+    // Stage R0g: a `resume` in a closure has no full facts. The program is
+    // pending: the scope names the reason, and the analysis keeps the facts
+    // of the old lowering and those of the `ir` pipeline, also in the `ir`
+    // mode. `weft_check::check_analysis` decides.
+    let src = "effect Ask { fn ask() -> u64 }
+        fn kont() -> u64 { handle Ask { fn ask() { let k = || resume(1); k() } } in ask() }";
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(scope.fallback, None);
+    let p = scope.pending.as_ref().expect("pending");
+    assert!(p.reason.contains("captured continuation"), "{}", p.reason);
+    assert!(p.ir_view);
+    assert!(a.ir_facts.is_some(), "both views");
+    let both = analyze(src, opts(FactGen::Both, Groups::ALL));
+    let p = both.ir_scope.and_then(|s| s.pending).expect("pending");
+    assert!(!p.ir_view);
+}
+
+#[test]
+fn function_values_and_references_across_operations_are_in_scope() {
+    // Plan stage R0h. C2: a function value in an argument of an operation of
+    // a handler of a caller. D3: a callee gives a function value to a clause
+    // of a local handler, and a clause gives a reference or a function value
+    // that cannot race back to the callee.
+    let in_scope = [
+        "effect Run { fn run(g: fn()) }
+        fn f() / Run { let n = 5; run(|| print(n)) }",
+        "effect Run { fn run(g: fn()) }
+        fn f() / Run { let n = 5; run(|| print(n)) }
+        fn main() { handle Run { fn run(g) { g(); resume(()) } } in { f() } }",
+        "effect Pick { fn pick() -> &u64 }
+        fn user() / Pick { let r = pick(); print(r) }
+        fn main() { let v = Vec.new(); v.push(1); handle Pick { fn pick() { resume(&v[0]) } } in user() }",
+        "effect Get { fn get() -> fn() }
+        fn run_it() / Get { let g = get(); g() }
+        fn main() { handle Get { fn get() { resume(|| print(1)) } } in { run_it() } }",
+        // Stage R0k-a: the callee gets a copy at the call.
+        "effect Get { fn get() -> fn() }
+        fn run_it() / Get { let g = get(); g() }
+        fn main() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }",
+    ];
+    for src in in_scope {
+        assert_eq!(fallback(src), None, "{src}");
+    }
+    // A value that the clause of a caller can keep with a reference in it
+    // (no call in the program serves the effect), and a value that a clause
+    // gives back to a closure that the callee runs (no copy of the closure
+    // body, stage R0k-a), keep the old pipeline.
+    let out = [
+        "effect Run { fn run(g: fn()) }
+        fn f(v: &Vec<u64>) / Run { let r = &v[0]; run(|| print(r)) }",
+        "effect Get { fn get() -> fn() }
+        fn run_it() / Get { let k = || { let g = get(); g() }; k() }
+        fn main() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }",
+    ];
+    for src in out {
+        assert!(fallback(src).is_some(), "{src}");
+    }
+}
+
+#[test]
+fn the_task_fallbacks_are_pending() {
+    // Plan stage R0j: a task run with no full facts is pending (the rule of
+    // stage R0g). The scope names the reason, and `weft_check` decides: an
+    // error of the `ir` pipeline is final, else the old pipeline checks the
+    // program. Each source is the clean twin of a probe.
+    let pending = [
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j01_again_ok.wf"),
+            "runs a callback more than once",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j02_late_ok.wf"),
+            "function variable that gets a new value",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j03_nested_ok.wf"),
+            "a function value of a callee runs as a task",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j04_value_ok.wf"),
+            "runs a value of its arguments as a task",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j05_code_old.wf"),
+            "runs code of a caller",
+        ),
+    ];
+    for (src, reason) in pending {
+        let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+        let scope = a.ir_scope.as_ref().expect("a scope");
+        assert_eq!(scope.fallback, None, "{src}");
+        let p = scope.pending.as_ref().expect("pending");
+        assert!(p.reason.contains(reason), "{}: {src}", p.reason);
+    }
+    // A spawn on one of two nested scopes has full facts: the task ends at
+    // the outer scope (`SiteScope::end`).
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j06_unowned_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
+    // A value that code of a caller runs on a foreign task stays with the
+    // old pipeline: the weak facts give W0403 at the call.
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j07_run_ok.wf");
+    let reason = fallback(src).expect("a fallback");
+    assert!(reason.contains("can run on another thread"), "{reason}");
 }

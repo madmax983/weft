@@ -1,0 +1,10 @@
+// a function item makes a once closure from its Vec param; the result is called twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn mk(v: Vec<u64>) -> fn() { || eat(v) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = mk(v)
+    f()
+    f()
+}

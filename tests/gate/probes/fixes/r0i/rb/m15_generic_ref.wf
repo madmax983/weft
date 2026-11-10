@@ -1,0 +1,7 @@
+// a generic function moves a T out of a reference
+fn take<T>(r: &Option<T>) -> T { match r { Some(x) => x, None => take(r) } }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() { let o = Some(Vec.new())
+    let v = take(&o)
+    eat(v)
+    match o { Some(x) => eat(x), None => {} } }

@@ -1,0 +1,14 @@
+// The twin of `d3f_returned.wf`: the site runs the closure before the
+// change.
+effect Get { fn get() -> fn() }
+fn get_it() -> fn() / Get { get() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Get { fn get() { resume(|| print(r)) } } in {
+        let f = get_it()
+        f()
+        v.clear()
+    }
+}

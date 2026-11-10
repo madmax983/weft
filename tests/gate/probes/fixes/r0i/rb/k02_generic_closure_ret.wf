@@ -1,0 +1,7 @@
+// a generic fn returns a closure that captures its T; the caller drops the result
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print(i) }
+fn keep<T>(x: T) -> T { x }
+fn g<T>(x: T) -> fn() -> T { || keep(x) }
+fn main() { let f = g(Tx { id: 1 }) }

@@ -1,0 +1,7 @@
+// move a Vec field out of a reference param as an argument
+struct W { items: Vec<u64>, n: u64 }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(r: &W) { eat(r.items) }
+fn main() { let w = W { items: Vec.new(), n: 1 }
+    f(&w)
+    eat(w.items) }

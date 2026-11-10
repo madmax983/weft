@@ -1,0 +1,11 @@
+// a callee makes a Holder whose closure captures an Rc; the fork branch reads the field
+struct Holder { cb: fn() }
+fn mkh() -> Holder {
+    let r = Rc.new(0)
+    Holder { cb: || { let y = r.clone() } }
+}
+fn main() {
+    let h = mkh()
+    fork(|| { let g = h.cb
+        g() }, || print(1))
+}

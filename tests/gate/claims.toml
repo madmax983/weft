@@ -865,7 +865,7 @@ verdict = "one-rule"
 group = "AD"
 stage = "F16.3"
 repro = ["tests/gate/probes/ir/work/map/opres.wf"]
-note = "the result of an operation of a handler of a caller has no places. Stage F17 (group D on) moved the claim to the follow-up F16.3: a call that runs a clause whose operation gives a reference back is not in scope (`GIVES_BACK`), so the old pipeline checks the repro (ledger open-old)"
+note = "the result of an operation of a handler of a caller has no places. Stage F17 (group D on) moved the claim to the follow-up F16.3: a call that runs a clause whose operation gives a reference back is not in scope (`GIVES_BACK`), so the old pipeline checks the repro (ledger open-old). Stage R0h: the program is in scope (the result points into the wildcard places of the reference arguments and of the callers; σ(`Caller`) of the call names the places that the clause gives back), and the `ir` pipeline rejects it (W0301 in the callee)"
 
 [[claim]]
 finding = "map-N2"

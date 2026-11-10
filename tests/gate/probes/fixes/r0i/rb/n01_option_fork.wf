@@ -1,0 +1,9 @@
+// nonportable closure through: Some and match; fork branch runs it (W0401 expected)
+
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let o = Some(c)
+    let f = match o { Some(g) => g, None => || print(0) }
+    fork(|| f(), || print(1))
+}

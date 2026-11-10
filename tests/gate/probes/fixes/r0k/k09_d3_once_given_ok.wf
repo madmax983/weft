@@ -1,0 +1,12 @@
+// Plan stage R0k-a: the clean twin of k09. The callee runs the `once`
+// closure one time, and `main` does not use `v` after it.
+effect Get { fn get() -> fn() }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn run_once() / Get { let g = get()
+ g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || eat(v)
+    handle Get { fn get() { resume(c) } } in { run_once() }
+}

@@ -1,0 +1,15 @@
+// D3 in a closure that the callee runs: the closure gets g and runs it while the callee holds a loan
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn run_ref(c: &C) / Get {
+    let r = &c.v[0]
+    let k = || { let g = get()
+        g() }
+    k()
+    print(r)
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+}

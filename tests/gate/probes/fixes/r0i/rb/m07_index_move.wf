@@ -1,0 +1,9 @@
+// move a Vec element (Vec) out of a reference by index
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(r: &Vec<Vec<u64>>) { let v = r[0]
+    eat(v) }
+fn main() { let vs = Vec.new()
+    vs.push(Vec.new())
+    f(&vs)
+    let x = vs[0]
+    eat(x) }

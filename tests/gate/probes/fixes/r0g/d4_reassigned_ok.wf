@@ -1,0 +1,13 @@
+// A closure that performs through the handler runs inside the handled body;
+// the local gets a new value before the end (the analysis keeps the old value
+// after the `resume`: the program falls back or is clean).
+effect Log { fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}

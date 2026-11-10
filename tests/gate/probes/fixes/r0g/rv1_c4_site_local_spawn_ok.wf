@@ -1,0 +1,20 @@
+// The clause stores a closure over its vector v into a local of the site
+// before the resume; the handled body spawns it, and the clause does not use
+// r after the resume (review of stage R0g, B1).
+effect Get { fn get() -> u64 }
+fn main() / async {
+    let keep = || print(0)
+    handle Get {
+        fn get() {
+            let v = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            print(r + 1)
+            keep = || v.clear()
+            resume(1)
+            print(v.len())
+        }
+    } in {
+        let n = get(); scope { s => s.spawn(keep); () }
+    }
+}

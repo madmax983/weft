@@ -1,0 +1,18 @@
+// A helper gets the closure as a parameter and gives it to the operation.
+// The clause keeps it; the site runs it after the callee ends. The closure
+// reads a vector of the callee by reference.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn helper(g: fn()) / Run { run(g) }
+fn f() / Run {
+    let v = Vec.new()
+    v.push(1)
+    helper(|| print(v.len()))
+}
+fn main() {
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g; resume(()) } } in { f() }
+    let x = h.f
+    x()
+}

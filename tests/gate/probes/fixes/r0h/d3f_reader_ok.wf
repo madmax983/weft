@@ -1,0 +1,10 @@
+// The clause gives the callee a closure that reads a vector of the site;
+// the callee runs it two times.
+effect Get { fn get() -> fn() }
+fn run_it() / Get { let g = get(); g(); g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Get { fn get() { resume(|| print(v.len())) } } in { run_it() }
+    v.clear()
+}

@@ -39,6 +39,7 @@ mod stmt;
 mod task;
 mod unset;
 mod upvar;
+pub mod values;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -177,6 +178,18 @@ pub struct Built {
     /// The diagnostics of the builder (`docs/ir.md` 5.36): W0315 for a jump
     /// out of a fence. Only the built bodies give diagnostics.
     pub diags: Vec<Diagnostic>,
+    /// The local of each binding of each body, by entry, for each built
+    /// entry (`values.rs`, plan stage R0i-b).
+    pub bindings: Vec<Vec<(BodyId, BindingId, LocalId)>>,
+    /// The properties of the values of the bindings of each entry that the
+    /// last round of the builder read (`values.rs`, plan stage R0i-b).
+    pub binding_values: Vec<values::BindingValues>,
+    /// The local of each `let` binding with a stated type, of each built
+    /// body (W0502, `values.rs`).
+    pub stated: Vec<(BodyId, LocalId)>,
+    /// The copies of a function value out of a place behind a reference or
+    /// an `rc` object, of each built body (W0303, `values.rs`).
+    pub fn_reads: Vec<FnRead>,
 }
 
 impl Built {
@@ -257,8 +270,72 @@ fn id_of(i: usize) -> u32 {
     u32::try_from(i).unwrap_or(u32::MAX)
 }
 
+/// The most rounds of the builder ([`build_all`]). The properties of the
+/// values only grow, and each binding has four, so the rounds end long
+/// before this guard.
+const MAX_ROUNDS: usize = 16;
+
 /// Builds the IR of each body of `a` on the current stack.
+///
+/// The builder reads the properties of the values of the bindings
+/// (`values.rs`, plan stage R0i-b). A first round builds with the properties
+/// of the types; each next round builds with the properties that
+/// [`values::infer`] gives for the IR of the round before, until they do not
+/// change.
 fn build_all(a: &Analysis) -> Built {
+    let mut values: Vec<values::BindingValues> = vec![values::BindingValues::new(); a.decls.len()];
+    let mut out = build_round(a, &values);
+    for _ in 0..MAX_ROUNDS {
+        let next = values::infer(&out.program, &out.tys, &out.bindings);
+        if next == values {
+            break;
+        }
+        values = next;
+        out = build_round(a, &values);
+    }
+    // W0303 of a copy of a `once` closure out of a place behind a reference
+    // (plan stage R0i-b).
+    for (span, unit, ty) in values::once_reads(&out.program, &out.tys, &out.fn_reads) {
+        let shown = out.tys.show(ty);
+        let mut d = Diagnostic::error(
+            weft_syntax::diag::Code::W0303,
+            format!("cannot move a `{shown}` out of a borrowed place; borrow it with `&`"),
+            span,
+        );
+        d.unit = unit as usize;
+        out.diags.push(d);
+    }
+    // W0502 of a `once` closure in a place of plain data (plan stage
+    // R0i-b).
+    for (span, ty) in values::once_into_plain(&out.program, &out.tys, &out.stated) {
+        let shown = out.tys.show(ty);
+        let mut d = Diagnostic::error(
+            weft_syntax::diag::Code::W0502,
+            format!("a `once` closure cannot go into a place of type `{shown}`: a copy of the place could call it again"),
+            Span {
+                lo: span.lo,
+                hi: span.hi,
+            },
+        );
+        d.unit = span.unit as usize;
+        out.diags.push(d);
+    }
+    out
+}
+
+/// One round of the builder with the properties `values` of the bindings of
+/// each entry, on a large stack. A test hook (plan stage R0i-b): a test
+/// compares the IR of the properties of the old value flow with the IR of
+/// [`build`].
+#[doc(hidden)]
+pub fn build_with(a: &Analysis, values: &[values::BindingValues]) -> Built {
+    crate::on_large_stack(|| build_round(a, values))
+}
+
+/// One round of [`build_all`] with the properties `values` of the bindings
+/// of each entry.
+fn build_round(a: &Analysis, values: &[values::BindingValues]) -> Built {
+    let empty = values::BindingValues::new();
     let mut out = Built {
         program: Program::default(),
         tys: a.thir_tys.clone(),
@@ -266,6 +343,10 @@ fn build_all(a: &Analysis) -> Built {
         fns: BTreeMap::new(),
         broken: Vec::new(),
         diags: Vec::new(),
+        bindings: Vec::new(),
+        binding_values: values.to_vec(),
+        stated: Vec::new(),
+        fn_reads: Vec::new(),
     };
     let mut fields = unset::PlaceFields::new(&out.tys);
     // One capability environment: the entry of each function and each test
@@ -275,7 +356,7 @@ fn build_all(a: &Analysis) -> Built {
         adds: Vec::new(),
     });
     let mut decl_ok = Vec::new();
-    for b in &a.bodies {
+    for b in &a.decls {
         if let Some(f) = b.func {
             let (decl, ok) = fn_decl(a, &mut out.tys, f);
             out.fns
@@ -284,17 +365,17 @@ fn build_all(a: &Analysis) -> Built {
             decl_ok.push(ok);
         }
     }
-    let funcs = a.bodies.iter().filter(|b| b.func.is_some()).count();
+    let funcs = a.decls.iter().filter(|b| b.func.is_some()).count();
     let mut fn_index = 0;
-    for (i, (b, t)) in a.bodies.iter().zip(&a.thir).enumerate() {
-        let name = b.facts.name.clone();
+    for (i, (b, t)) in a.decls.iter().zip(&a.thir).enumerate() {
+        let name = b.name.clone();
         // The bodies of the tests come after the bodies of the functions.
         let test = i.checked_sub(funcs).and_then(|j| a.program.tests.get(j));
         let src = if let Some(f) = b.func {
             let k = fn_index;
             fn_index += 1;
             let def = a.program.fns.get(f.index());
-            let sig = a.sigs.get(f.index());
+            let sig = def.map(|d| &d.sig);
             match (def, sig, out.fns.get(&f)) {
                 (Some(def), Some(sig), Some(&id)) => def.decl.body.as_ref().map(|block| Src {
                     kind: BodyKind::Fn(id),
@@ -319,7 +400,8 @@ fn build_all(a: &Analysis) -> Built {
         let (outcome, reported) = match src {
             None => (Outcome::NoIr(NoIr::TypeError), false),
             Some(src) => {
-                let outcome = body_outcome(a, b.unit, t, &src, &mut out, &mut fields);
+                let vals = values.get(i).unwrap_or(&empty);
+                let outcome = body_outcome(a, (b.unit, vals), t, &src, &mut out, &mut fields);
                 if let (Outcome::Built(id), BodyKind::Test(_)) = (&outcome, src.kind) {
                     out.program.tests.push(TestDecl {
                         name: test.map_or_else(String::new, |t| t.name.clone()),
@@ -339,6 +421,9 @@ fn build_all(a: &Analysis) -> Built {
             outcome,
             reported,
         });
+        if out.bindings.len() < out.entries.len() {
+            out.bindings.push(Vec::new());
+        }
     }
     // The blocks in reverse post-order (`docs/ir.md` 5.1.9): the text reads
     // from top to bottom, and each later pass sees a block after the blocks
@@ -367,7 +452,8 @@ struct Src<'a> {
 }
 
 /// Returns true if a `typeck` diagnostic is inside the body at `span` with
-/// block `block` of unit `unit` (the rule of test D0). W0118 does not count:
+/// block `block` of unit `unit` (the rule of test D0). A code of
+/// [`crate::OLD_INFERENCE_CODES`] does not count (W0118 is a W01xx code):
 /// it is a check of the effects of an `on abort` function, and the `ir`
 /// pipeline asks the summary of the body of the function for it
 /// (`crate::factgen::checks`, `docs/ir.md` 6.9).
@@ -375,7 +461,7 @@ fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bo
     a.diags.iter().any(|d| {
         d.unit == unit
             && d.code.as_str().starts_with("W01")
-            && d.code != weft_syntax::diag::Code::W0118
+            && !crate::OLD_INFERENCE_CODES.contains(&d.code)
             && d.span.lo >= span.lo
             && d.span.hi <= span.hi.max(block.span.hi)
     })
@@ -396,21 +482,24 @@ fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bo
 /// a local that a later statement of a loop settles), it returns false: the
 /// old pipeline must check the program.
 fn reported(a: &Analysis, unit: usize, src: &Src<'_>, n: NoIr) -> bool {
-    use weft_syntax::diag::{Code, Severity};
+    use weft_syntax::diag::Severity;
     let error = |d: &&Diagnostic| d.severity == Severity::Error;
-    let kept = |d: &&Diagnostic| !crate::IR_DROPS.contains(&d.code);
+    // The diagnostics of the analysis that the `ir` pipeline keeps, but not
+    // the checks that read the signatures of the old inference (W0118,
+    // `fip`): the `ir` pipeline gives its own (plan stage R0i fix). So the
+    // old inference cannot make a body with no IR count as reported.
+    let kept = |d: &&Diagnostic| {
+        !crate::IR_DROPS.contains(&d.code) && !crate::OLD_INFERENCE_CODES.contains(&d.code)
+    };
     match n {
         NoIr::TypeError => {
             typeck_error(a, unit, src.span, src.block)
                 || (!src.decl_ok && a.diags.iter().filter(error).any(|d| kept(&d)))
         }
         NoIr::DeclTypes => a.diags.iter().filter(error).any(|d| kept(&d)),
-        NoIr::MoveThroughRef => a.diags.iter().filter(error).any(|d| {
-            d.code == Code::W0303
-                && d.unit == unit
-                && d.span.lo >= src.span.lo
-                && d.span.hi <= src.span.hi.max(src.block.span.hi)
-        }),
+        // The builder gives W0303 for each move through a reference of the
+        // body (plan stage R0i-b).
+        NoIr::MoveThroughRef => true,
         NoIr::Conflict | NoIr::VariantPayload => false,
     }
 }
@@ -418,7 +507,7 @@ fn reported(a: &Analysis, unit: usize, src: &Src<'_>, n: NoIr) -> bool {
 /// Builds one body, or tells why it has none.
 fn body_outcome(
     a: &Analysis,
-    unit: usize,
+    (unit, values): (usize, &values::BindingValues),
     t: &Tables,
     src: &Src<'_>,
     out: &mut Built,
@@ -442,12 +531,21 @@ fn body_outcome(
     let envs_before = out.program.cap_envs.len();
     let id = BodyId(id_of(out.program.bodies.len()));
     let mut pending = closure::Pending::new(id.0, &out.program);
+    let mut bound = Vec::new();
+    let moves = std::cell::RefCell::new(Vec::new());
+    let stated = std::cell::RefCell::new(Vec::new());
+    let fn_reads = std::cell::RefCell::new(Vec::new());
     let d = Decls {
         a,
         fns: &mut out.fns,
         items: &mut out.program.fns,
         cap_envs: &mut out.program.cap_envs,
         pending: &mut pending,
+        values,
+        bound: &mut bound,
+        moves: &moves,
+        stated: &stated,
+        fn_reads: &fn_reads,
     };
     let mut b = Builder::new(t, &mut out.tys, fields, d, unit_id, ret, src.span);
     b.body_id = id;
@@ -459,6 +557,29 @@ fn body_outcome(
         Some(made) => Ok((body, diags, made)),
         None => unsupported(Construct::NoThir, src.span),
     });
+    // A move through a reference (W0303): the builder gives the diagnostic
+    // of each one, and the body has no IR, also if the builder stopped later
+    // for another reason (plan stage R0i-b).
+    let moves = moves.into_inner();
+    let no_ir_moves = moves.iter().any(|m| m.2);
+    for &(span, ty, _) in &moves {
+        let shown = out.tys.show(ty);
+        let mut d = Diagnostic::error(
+            weft_syntax::diag::Code::W0303,
+            format!("cannot move a `{shown}` out of a borrowed place; borrow it with `&`"),
+            span,
+        );
+        d.unit = unit;
+        out.diags.push(d);
+    }
+    if no_ir_moves {
+        out.program.cap_envs.truncate(envs_before);
+        if out.program.fns.len() > fns_before {
+            out.program.fns.truncate(fns_before);
+            out.fns.retain(|_, v| v.index() < fns_before);
+        }
+        return Outcome::NoIr(NoIr::MoveThroughRef);
+    }
     match done {
         Ok((body, diags, made)) => {
             out.diags.extend(diags.into_iter().map(|mut d| {
@@ -467,6 +588,9 @@ fn body_outcome(
             }));
             out.program.bodies.push(body);
             out.program.bodies.extend(made.bodies);
+            out.bindings.push(bound);
+            out.stated.extend(stated.into_inner());
+            out.fn_reads.extend(fn_reads.into_inner());
             out.program.closures.extend(made.closures);
             out.program.handlers.extend(made.handlers);
             out.program.scopes.extend(made.scopes);
@@ -501,7 +625,7 @@ fn body_outcome(
 /// (V10).
 fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
     let mut ok = true;
-    let (Some(def), Some(sig)) = (a.program.fns.get(f.index()), a.sigs.get(f.index())) else {
+    let Some(def) = a.program.fns.get(f.index()) else {
         return (
             FnDecl {
                 name: String::new(),
@@ -515,6 +639,7 @@ fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
             false,
         );
     };
+    let sig = &def.sig;
     let mut ty = |t: &crate::types::Ty| {
         crate::types::final_ty(&a.program, tys, t).unwrap_or_else(|_| {
             ok = false;
@@ -569,6 +694,11 @@ const fn reborrow<'b>(d: &'b mut Decls<'_>) -> Decls<'b> {
         items: &mut *d.items,
         cap_envs: &mut *d.cap_envs,
         pending: &mut *d.pending,
+        values: d.values,
+        bound: &mut *d.bound,
+        moves: d.moves,
+        stated: d.stated,
+        fn_reads: d.fn_reads,
     }
 }
 
@@ -716,7 +846,36 @@ struct Decls<'a> {
     /// The bodies, the closures and the handlers that the function makes
     /// (`closure.rs`, `handle.rs`).
     pending: &'a mut closure::Pending,
+    /// The properties of the values of each binding of the THIR tables of
+    /// the entry body, from the IR pass of the last round (`values.rs`,
+    /// plan stage R0i-b). A binding with no entry has the properties of its
+    /// type.
+    values: &'a values::BindingValues,
+    /// The local of each binding of each body that the builder finishes
+    /// (`values.rs` reads them).
+    bound: &'a mut Vec<(BodyId, BindingId, LocalId)>,
+    /// Each move through a reference of the bodies of the entry, with the
+    /// location of its expression and the type of the value (W0303, plan
+    /// stage R0i-b). A read of a place records it and goes on, so each move
+    /// gets a diagnostic; the entry then has no IR.
+    /// The flag is true for a move through a reference (the body has no
+    /// IR), false for a move out of an `rc` object (the IR has a form for
+    /// it).
+    moves: &'a std::cell::RefCell<Vec<(Span, TyId, bool)>>,
+    /// The local of each `let` binding with a stated type (W0502: the
+    /// stated type of a place does not show a closure, `values.rs`).
+    stated: &'a std::cell::RefCell<Vec<(BodyId, LocalId)>>,
+    /// Each copy of a function value out of a place behind a reference or
+    /// an `rc` object: the body, the local of the place, the location and
+    /// the type. A `once` closure there is no plain data, so the copy is a
+    /// move through a reference (W0303, `values.rs`).
+    fn_reads: &'a std::cell::RefCell<Vec<FnRead>>,
 }
+
+/// A copy of a function value out of a place behind a reference
+/// (`Decls::fn_reads`): the body, the local of the place, the location,
+/// its unit and the type.
+pub type FnRead = (BodyId, Place, Span, u32, TyId);
 
 /// The builder of one body. The state is here, not in the frames of the
 /// recursive functions, so that the recursion uses little stack.
@@ -888,7 +1047,7 @@ impl<'a> Builder<'a> {
         if !self.tys.mentions_fn(t) {
             return p;
         }
-        let Some(v) = self.t.binding_of(b).map(|x| x.value) else {
+        let Some(v) = self.d.values.get(&b).copied() else {
             return p;
         };
         p.linear |= v.linear;
@@ -1078,6 +1237,9 @@ impl<'a> Builder<'a> {
 
     /// Makes the body of kind `kind` from the blocks.
     fn finish(self, kind: BodyKind, span: Span) -> Body {
+        for (&b, &l) in &self.vars {
+            self.d.bound.push((self.body_id, b, l));
+        }
         let origin = self.origin(span, None);
         let unwind_exit = BlockId(id_of(self.blocks.len()));
         let mut blocks: Vec<Block> = self

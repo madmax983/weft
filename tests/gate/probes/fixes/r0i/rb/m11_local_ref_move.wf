@@ -1,0 +1,8 @@
+// move through a local reference
+struct W { items: Vec<u64>, n: u64 }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() { let w = W { items: Vec.new(), n: 1 }
+    let r = &w
+    let v = r.items
+    eat(v)
+    eat(w.items) }

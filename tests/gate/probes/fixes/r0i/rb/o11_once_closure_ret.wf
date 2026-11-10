@@ -1,0 +1,11 @@
+// a closure returns a once closure; the result is called twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let mk = || { let c = || eat(v)
+        c }
+    let f = mk()
+    f()
+    f()
+}

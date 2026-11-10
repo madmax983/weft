@@ -1,0 +1,20 @@
+// As f32, with the perform one call deeper.
+struct H { f: fn() }
+fn noop() {}
+effect Get { fn get() -> fn() }
+fn keep(h: &H) / Get, mut(h) { h.f = get() }
+fn keep2(h: &H) / Get, mut(h) { keep(h) }
+fn s(k: fn()) -> H {
+    let h = H { f: noop }
+    handle Get { fn get() { resume(k) } } in { keep2(&h) }
+    h
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = s(|| v.clear())
+    let r = &v[0]
+    let x = h.f
+    x()
+    print(r)
+}

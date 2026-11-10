@@ -1,0 +1,21 @@
+// abort with a linear closure held through: a clause that gets it and gives it back by resume (the unwinder must roll back tx)
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+    print("rollback {i}") }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Stop { fn stop() }
+fn id<T>(x: T) -> T { x }
+effect Q { fn q(g: fn()) -> fn() }
+fn body() / Stop {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let f = handle Q { fn q(g) { resume(g) } } in q(c)
+    stop()
+    f()
+}
+fn main() {
+    handle Stop { fn stop() { () } } in body()
+    print("end")
+}

@@ -1,0 +1,12 @@
+// Plan stage R0k (C2, a `once` value): the callee gives a closure that
+// moves a vector to an operation, and the clause runs it two times (W0502).
+effect Run { fn run(g: fn()) }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(w: Vec<u64>) / Run { run(|| eat(w)) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { g()
+ g()
+ resume(()) } } in { f(v) }
+}

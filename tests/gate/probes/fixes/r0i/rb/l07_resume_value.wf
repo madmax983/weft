@@ -1,0 +1,12 @@
+// a clause resumes with a linear closure; the handled body drops it
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Q { fn q() -> fn() }
+fn main() {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    handle Q { fn q() { resume(c) } } in {
+        let f = q()
+    }
+}

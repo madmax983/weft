@@ -34,18 +34,22 @@ use crate::thir::{Callee, Tables};
 use crate::Analysis;
 
 /// Fills the exports of `facts` (one for each body of `a`) from the IR of
-/// `built`, or from the old facts for a body with no IR.
+/// `built`, or from the old facts for a body with no IR (the only read of
+/// the facts of the old lowering in the `ir` pipeline: plan stage R4 removes
+/// it with the AST compiler of the interpreter).
 pub(super) fn fill(a: &Analysis, built: &Built, facts: &mut [FnFacts]) {
-    let funcs = a.bodies.iter().filter(|b| b.func.is_some()).count();
+    let funcs = a.decls.iter().filter(|b| b.func.is_some()).count();
     for (i, e) in built.entries.iter().enumerate() {
-        let (Some(old), Some(f)) = (a.bodies.get(i), facts.get_mut(i)) else {
+        let (Some(d), Some(f)) = (a.decls.get(i), facts.get_mut(i)) else {
             continue;
         };
         if !matches!(e.outcome, Outcome::Built(_)) {
-            copy_old(&old.facts, f);
+            if let Some(old) = a.bodies.get(i) {
+                copy_old(&old.facts, f);
+            }
             continue;
         }
-        let block = match old.func {
+        let block = match d.func {
             Some(id) => a
                 .program
                 .fns

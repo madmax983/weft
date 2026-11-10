@@ -1,0 +1,9 @@
+// a once closure in an Option, called twice in the arm
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let o = Some(|| eat(v))
+    match o { Some(f) => { f()
+        f() }, None => {} }
+}

@@ -50,6 +50,7 @@ pub mod frames;
 pub mod generic;
 pub mod handlers;
 pub mod holders;
+pub mod instantiate;
 pub mod kernel;
 pub mod nodes;
 pub mod prune;
@@ -88,8 +89,9 @@ impl fmt::Display for Unsupported {
 /// What [`emit`] reads.
 #[derive(Clone, Copy, Debug)]
 pub struct Input<'a> {
-    /// The analysis of the old lowering: the program, the signatures and
-    /// the THIR tables.
+    /// The analysis: the program, the declarations of the bodies and the
+    /// THIR tables. The fact generator does not read the facts and the
+    /// signatures of the old lowering and of its inference (plan stage R0i).
     pub analysis: &'a Analysis,
     /// The IR.
     pub built: &'a Built,
@@ -105,19 +107,9 @@ pub struct Input<'a> {
     /// No root handler serves an effect (W0118).
     pub no_runtime: bool,
     /// W0118 from the summaries of the `on abort` functions
-    /// ([`checks::on_abort_rows`]). An emit that leaves it `None` keeps the
-    /// W0118 of the old inference.
+    /// ([`checks::on_abort_rows`]). For an emit that leaves it `None`,
+    /// `factgen::run` asks the summaries itself.
     pub on_abort: &'a std::cell::RefCell<Option<Vec<Diagnostic>>>,
-}
-
-/// W0118 of the old inference, for an emit that does not give its own, and
-/// the option that the check needs.
-#[derive(Clone, Debug, Default)]
-pub struct OnAbortRows {
-    /// The diagnostics of the old inference.
-    pub old: Vec<Diagnostic>,
-    /// No root handler serves an effect.
-    pub no_runtime: bool,
 }
 
 /// A fact generator.
@@ -138,6 +130,7 @@ pub type Emit = fn(&Input<'_>, &mut [FnFacts]) -> Result<(), Unsupported>;
 /// Returns [`Unsupported`] for the first body with a construct that the
 /// fact generator does not support yet.
 pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported> {
+    let _ = crate::analysis::clause::take_pending_escapes();
     let mut inf = crate::analysis::callgraph::infer(input.analysis, input.built, None);
     for (i, e) in input.built.entries.iter().enumerate() {
         let Outcome::Built(entry) = e.outcome else {
@@ -156,6 +149,35 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
         };
         input.diags.borrow_mut().extend(ds);
     }
+    // A closure that runs outside the handler of its capability (stage
+    // R0g): W0313 for that handler must reject the program, else the old
+    // pipeline checks it.
+    let pending = crate::analysis::clause::take_pending_escapes();
+    if !pending.is_empty() {
+        // A run outside a handler whose W0313 (or W0314) the fact
+        // generator does not give: the check decides.
+        let diags = input.diags.borrow();
+        let w0314 = diags
+            .iter()
+            .any(|d| d.code == weft_syntax::diag::Code::W0314);
+        let reported = |(h, task): (weft_ir::HandlerId, bool)| {
+            (task && w0314)
+                || checks::handle_span(&input.built.program, h).is_some_and(|sp| {
+                    diags.iter().any(|d| {
+                        d.code == weft_syntax::diag::Code::W0313
+                            && d.unit == sp.unit as usize
+                            && d.span.lo == sp.lo
+                            && d.span.hi == sp.hi
+                    })
+                })
+        };
+        if !pending.into_iter().all(reported) {
+            crate::analysis::clause::note_pending(Unsupported {
+                group: Group::D,
+                reason: "a capability that leaves its handler (stage F17)".to_string(),
+            });
+        }
+    }
     *input.on_abort.borrow_mut() = Some(checks::on_abort_rows(
         input.analysis,
         input.built,
@@ -166,13 +188,6 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
     diags.extend(inf.diags);
     for (f, e) in &inf.effects {
         diags.extend(w0701(input.analysis, *f, e));
-    }
-    // A function with no row of the IR yet (stage F12): the row of the old
-    // inference, which adds the effects of the closures that it makes.
-    for &f in &inf.old_rows {
-        if let Some(sig) = input.analysis.sigs.get(f.index()) {
-            diags.extend(w0701(input.analysis, f, &sig.effects));
-        }
     }
     input.effects.borrow_mut().extend(inf.effects);
     Ok(())
@@ -188,7 +203,7 @@ fn w0701(a: &Analysis, f: crate::FnId, e: &crate::program::EffectSig) -> Option<
     use weft_syntax::diag::Code;
     let prog = &a.program;
     let def = prog.fns.get(f.index())?;
-    let declared = a.sigs.get(f.index()).is_some_and(|s| s.declared);
+    let declared = def.sig.declared;
     let to_state = !e.muts.is_empty() || !e.named.is_empty();
     if !def.is_pub || declared || !to_state || def.decl.is_extern {
         return None;
@@ -252,11 +267,11 @@ pub fn preview(a: &Analysis, built: &Built, index: usize) -> Result<FnFacts, Uns
         Some(Outcome::Built(b)) => *b,
         _ => return Err(unsupported("the body has no IR")),
     };
-    let old = a
-        .bodies
+    let decl = a
+        .decls
         .get(index)
         .ok_or_else(|| unsupported("no such body"))?;
-    let mut facts = seed(&old.facts);
+    let mut facts = seed(decl);
     let sums = summaries(a, built);
     emit_body(a, built, &sums, index, entry, &mut facts)?;
     Ok(facts)
@@ -266,6 +281,11 @@ pub fn preview(a: &Analysis, built: &Built, index: usize) -> Result<FnFacts, Uns
 /// support, from the text of the reason.
 fn later_group(why: &str) -> Group {
     let has = |w: &str| why.contains(w);
+    // A clause of a local handler that gives a value back (stage R0h): the
+    // analysis refuses it, and its group stays D.
+    if why == crate::analysis::clause::GIVES_BACK {
+        return Group::D;
+    }
     if has("loop") || has("iterator") {
         Group::B
     } else if has("closure") || has("function value") || has("environment") {
@@ -349,16 +369,11 @@ fn check_supported(
                 }
             }
             // A call that can perform through a local handler or fail to a
-            // local `Fail` handler runs a clause there: the fact generator
-            // supports it when the clauses give no function value and no
-            // reference back to the callee (plan stages F14, F15).
-            if matches!(blk.term.kind, TermKind::Call { .. })
-                && frames::clause_handlers(p, tys, sums, bid, &blk.term.kind)
-                    .iter()
-                    .any(|h| !crate::analysis::clause::given_ops(p, tys, *h))
-            {
-                return no(Group::D, crate::analysis::clause::GIVES_BACK);
-            }
+            // local `Fail` handler runs a clause there (plan stages F14,
+            // F15). A clause that gives a function value or a reference back
+            // to the callee is in scope too (stage R0h): the analysis
+            // refuses only a function value that can race
+            // (`clause::call_clauses`).
             match &blk.term.kind {
                 // A `handle` (stage F14).
                 TermKind::Handle { .. }
@@ -402,15 +417,17 @@ fn check_supported(
                         );
                     }
                 }
+                // A `resume` in a closure or in a body inside the clause: the
+                // facts do not model it (no resume point of the clause), so
+                // the program is in scope only if the `ir` pipeline rejects
+                // it (stage R0g).
                 TermKind::Resume { kont, .. } => {
                     match crate::analysis::clause::kont_handler(p, bid, kont) {
                         Some((_, c, _)) if c == bid => {}
-                        _ => {
-                            return no(
-                                Group::D,
-                                "a `resume` of a captured continuation (stage F16)",
-                            )
-                        }
+                        _ => crate::analysis::clause::note_pending(Unsupported {
+                            group: Group::D,
+                            reason: crate::analysis::clause::KONT_CAPTURED.to_string(),
+                        }),
                     }
                 }
                 // The task terminators of a body that splices into a
@@ -544,9 +561,17 @@ pub struct Emitted {
     /// A run node of the entry body runs code of a caller that can resume
     /// more than once.
     pub code_multi: bool,
+    /// A run node of the entry body runs a function value that the body
+    /// does not know, or applies a summary with the part `unknown_runs`
+    /// (plan stage R0i fix).
+    pub code_unknown: bool,
     /// The `lends_mut` of the summaries that the entry body applies and that
     /// a caller does not apply again (`templates::Em::own_lends`).
     pub own_lends: Vec<(weft_facts::NodeId, PlaceId)>,
+    /// A call of the entry body applies a summary with the part
+    /// `caller_muts` and passes it on (stage R0h fix,
+    /// `Handlers::caller_muts_at`).
+    pub caller_muts: bool,
     /// The join of the states of the entry body before each terminator and
     /// each closure literal (with closures in the component).
     pub made: Option<crate::analysis::State>,
@@ -682,10 +707,11 @@ pub fn emit_parts(
     }
     let mut hx = crate::analysis::clause::Handlers::default();
     let sig = a
-        .bodies
+        .decls
         .get(index)
         .and_then(|b| b.func)
-        .and_then(|f| a.sigs.get(f.index()));
+        .and_then(|f| a.program.fns.get(f.index()))
+        .map(|def| &def.sig);
     let (params, ret_places) = match sig {
         Some(sig) => {
             let ps = decls::params(p, &mut tys, facts, &mut roots, entry, sig)
@@ -753,7 +779,7 @@ pub fn emit_parts(
     let mut holders = holders::Holders::new(vars.holder_parts());
     let has_tasks = !task_ids.is_empty();
     hx.task_ids = task_ids;
-    hx.no_runtime = a.bodies.iter().any(|b| b.facts.no_runtime);
+    hx.no_runtime = a.decls.iter().any(|b| b.no_runtime);
     let joins: Vec<u32>;
     let abort_joins: Vec<u32>;
     let fn_then: Vec<(u32, bool)>;
@@ -787,6 +813,7 @@ pub fn emit_parts(
             returns: Vec::new(),
             runs: Vec::new(),
             code_multi: false,
+            code_unknown: false,
             run_nodes: Vec::new(),
             run_multi: Vec::new(),
             own_lends: Vec::new(),
@@ -850,10 +877,11 @@ pub fn emit_parts(
             em.runs,
             em.returns,
             em.last,
-            (em.code_multi, em.own_lends),
+            (em.code_multi, em.code_unknown, em.own_lends),
         )
     };
-    let (mut stored, aborts, union, mut runs, returns, last, (code_multi, own_lends)) = stored;
+    let (mut stored, aborts, union, mut runs, returns, last, (code_multi, code_unknown, own_lends)) =
+        stored;
     runs_after(&mut runs, &cycles);
     let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
         .iter()
@@ -1040,7 +1068,10 @@ pub fn emit_parts(
     diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     let mut escapes = hx.escapes.clone();
     for e in closure_escapes {
-        if !escapes.iter().any(|(h, _)| *h == e.0) {
+        if !escapes
+            .iter()
+            .any(|x| crate::analysis::clause::Escape::same_report(x, &e))
+        {
             escapes.push(e);
         }
     }
@@ -1079,16 +1110,19 @@ pub fn emit_parts(
         v.uniq = uniq.get(&id).copied().unwrap_or(false);
         v.once |= v.uniq;
     }
+    not_many(p, &tys, &unions, &vars, facts);
     sim_blocks(p, &comp, &table, facts);
-    decls::std_effects(facts);
+    if let Some(d) = a.decls.get(index) {
+        decls::effect_names(&a.program, d.module, facts);
+    }
     // The checks of a generic function item as a value (RR9, V081).
     let names = |f: weft_ir::FnId, j: u32| -> String {
         built
             .fns
             .iter()
             .find(|(_, g)| **g == f)
-            .and_then(|(s, _)| a.sigs.get(s.index()))
-            .and_then(|sig| sig.generics.get(j as usize).cloned())
+            .and_then(|(s, _)| a.program.fns.get(s.index()))
+            .and_then(|def| def.sig.generics.get(j as usize).cloned())
             .unwrap_or_else(|| format!("T{j}"))
     };
     generic::copy_held(facts, &held);
@@ -1135,7 +1169,12 @@ pub fn emit_parts(
         runs,
         returns,
         code_multi,
+        // A node of the body, of a handled body or of a clause of the body
+        // (plan stage R0i-b): the closures of the component have handlers of
+        // their own.
+        code_unknown: code_unknown || hx.clause_unknown || !hx.unknown_runs_at.is_empty(),
         own_lends,
+        caller_muts: hx.caller_muts_at.iter().any(|n| n.index() < entry_nodes),
         made: unions.remove(&entry).map(|mut u| {
             if let Some(l) = &last {
                 u.join(l);
@@ -1695,6 +1734,7 @@ fn closure_summary(
     let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
     let closure_inherited: Vec<(u32, bool, PlaceId, bool)>;
     let closure_opaque: Vec<weft_facts::TaskId>;
+    let closure_unknown: bool;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
@@ -1716,6 +1756,7 @@ fn closure_summary(
             returns: Vec::new(),
             runs: Vec::new(),
             code_multi: false,
+            code_unknown: false,
             run_nodes: Vec::new(),
             run_multi: Vec::new(),
             own_lends: Vec::new(),
@@ -1755,6 +1796,7 @@ fn closure_summary(
         closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         closure_waits = std::mem::take(&mut em.waits);
         run_multi = std::mem::take(&mut em.run_multi);
+        closure_unknown = em.code_unknown;
         (
             std::mem::take(&mut em.returns),
             std::mem::take(&mut em.aborts),
@@ -1914,6 +1956,10 @@ fn closure_summary(
             runs: &runs,
             returns: &returns,
             code_multi: false,
+            // A run of a value that the closure, a clause of it or a callee
+            // does not know (plan stage R0i-b).
+            code_unknown: closure_unknown || hx.clause_unknown || !hx.unknown_runs_at.is_empty(),
+            caller_muts: false,
             run_nodes: &run_nodes,
             run_multi: &run_multi,
             lends: &own_lends,
@@ -2167,6 +2213,7 @@ fn emit_closure(
         returns: Vec::new(),
         runs: Vec::new(),
         code_multi: false,
+        code_unknown: false,
         run_nodes: Vec::new(),
         run_multi: Vec::new(),
         own_lends: Vec::new(),
@@ -2475,6 +2522,7 @@ fn emit_clause(
         returns: Vec::new(),
         runs: Vec::new(),
         code_multi: false,
+        code_unknown: false,
         run_nodes: Vec::new(),
         run_multi: Vec::new(),
         own_lends: Vec::new(),
@@ -2503,6 +2551,9 @@ fn emit_clause(
     };
     handlers::clause_entry(&mut em, en, &entry)?;
     emit_blocks(&mut em, out.table, frames, &states, body)?;
+    // A run of a value that the clause does not know is a run of the body
+    // that has the handler (plan stage R0i-b).
+    em.hx.clause_unknown |= em.code_unknown;
     // The stores of the clause name the places of its parameters: they map
     // onto the places of the arguments after the projection
     // (`handlers::map_stored`).
@@ -2556,8 +2607,63 @@ pub struct Component {
 /// Returns [`Unsupported`] for the first body that the fact generator does
 /// not support (the program is not in scope).
 pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
+    let _ = crate::analysis::clause::take_pending();
+    let _ = crate::analysis::clause::take_pending_escapes();
+    let out = components_of(a, built);
+    // A construct that the facts do not model (stage R0g): the fact oracle
+    // checks nothing.
+    let pending = crate::analysis::clause::take_pending();
+    let escapes = crate::analysis::clause::take_pending_escapes();
+    let out = out?;
+    if let Some(u) = pending.into_iter().next() {
+        return Err(u);
+    }
+    if !escapes.is_empty() {
+        return Err(Unsupported {
+            group: Group::D,
+            reason: "a capability that leaves its handler (stage F17)".to_string(),
+        });
+    }
+    Ok(out)
+}
+
+/// The program that the `ir` pipeline checks, and the facts of each of its
+/// components (as [`components`]).
+///
+/// For a program that needs copies of callees at their calls (stage R0k-a,
+/// [`instantiate`]), it is the program with the copies. The fact oracle
+/// runs that program.
+///
+/// # Errors
+///
+/// As [`components`], for the program that it gives.
+pub fn components_built(
+    a: &Analysis,
+    built: Built,
+) -> (Built, Result<Vec<Component>, Unsupported>) {
+    let first = components(a, &built);
+    let Err(u) = &first else {
+        return (built, first);
+    };
+    let Some(inst) = instantiate::wanted(u)
+        .then(|| instantiate::instantiate(&built))
+        .flatten()
+    else {
+        return (built, first);
+    };
+    let second = {
+        let _weak = inst
+            .weak_ok
+            .then(crate::analysis::transfer::WeakRowOps::enter);
+        components(a, &inst.built)
+    };
+    (inst.built, second)
+}
+
+/// The components of [`components`].
+fn components_of(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
     let inf = crate::analysis::callgraph::infer(a, built, None);
-    let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
+    let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
     let mut tables = Vec::new();
     for (i, e) in built.entries.iter().enumerate() {
         let Outcome::Built(entry) = e.outcome else {
@@ -3223,12 +3329,19 @@ fn emit_block(
             };
             templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
+            templates::given_back_runs(em, &nodes, &st, block, blk.term.origin.span)?;
             templates::call_joins(em, &nodes, &st, &blk.term.kind)?;
             templates::wait_tasks(em, n, blk.term.origin.span);
             em.wait_nodes.clear();
             em.abort_starts.clear();
         }
         weft_ir::TermKind::Perform { cap, .. } => {
+            // The task nodes of the code of a clause of a handler of a caller
+            // that runs a function value of an argument as a task (stage R0h).
+            let runs = frames.run_task_nodes(bid, block);
+            em.task_nodes = (1..=runs)
+                .filter_map(|i| table.get(at(Phase::Task(i), NORMAL)))
+                .collect();
             let nodes = templates::CallNodes {
                 main: n,
                 ret: table.get(at(Phase::Ret, NORMAL)),
@@ -3777,6 +3890,24 @@ pub struct Scope {
     /// Why the old pipeline checks the program, or `None` if the program is
     /// in scope.
     pub fallback: Option<String>,
+    /// A program with a construct that the facts do not model (stage R0g):
+    /// the `ir` pipeline checks it only if it rejects it. Else the old
+    /// pipeline checks it, for this reason (`weft_check::check_analysis`).
+    pub pending: Option<Pending>,
+}
+
+/// A program that the `ir` pipeline checks only if it rejects it (stage
+/// R0g, [`Scope::pending`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Pending {
+    /// Why the facts are not whole: the reason of the fallback if the `ir`
+    /// pipeline finds no error.
+    pub reason: String,
+    /// The analysis keeps the facts of the old lowering in
+    /// [`Analysis::bodies`] and those of the `ir` pipeline in
+    /// [`Analysis::ir_facts`]. True if the pipeline is [`crate::FactGen::Ir`]:
+    /// the check then gives the `ir` view alone.
+    pub ir_view: bool,
 }
 
 impl Scope {
@@ -3795,11 +3926,17 @@ pub struct IrFacts {
     /// the builder (W0315), and those of the fact generator and of its
     /// effect inference (W0204 stores, W0701, W0706).
     pub diags: Vec<Diagnostic>,
-    /// The signatures, by [`crate::FnId`]: a function whose summary comes
-    /// from its body has the `EffectSig` of its summary
-    /// (`crate::analysis::sig::to_effect_sig`, `docs/ir.md` 6.8); the other
-    /// functions keep the signature of the old inference.
+    /// The signatures, by [`crate::FnId`] ([`ir_sigs`]): a function whose
+    /// summary comes from its body has the `EffectSig` of its summary
+    /// (`crate::analysis::sig::to_effect_sig`, `docs/ir.md` 6.8); a
+    /// function whose body has no IR has the row of the worst case of its
+    /// declaration; the other functions keep their declaration. No row comes
+    /// from the old inference (plan stage R0i).
     pub sigs: Vec<crate::FnSig>,
+    /// The functions whose body has no IR. Their signature in
+    /// [`IrFacts::sigs`] is the worst case of their declaration, so
+    /// `weft-gate sigdiff` does not compare it.
+    pub no_ir: Vec<crate::FnId>,
 }
 
 /// The text of a list of groups that are off: `group A`, or
@@ -3816,11 +3953,16 @@ fn off_text(off: Groups) -> String {
     }
 }
 
-/// Runs the `ir` pipeline on the analysis `a` of the old lowering, with the
-/// groups `on` and the fact generator `emit`. `kept` holds the diagnostics of
-/// the analysis that the `ir` pipeline keeps (`docs/ir.md` 2.4), and `rows`
-/// the W0118 of the old inference: `emit` can replace them with its own
-/// ([`Input::on_abort`]).
+/// Runs the `ir` pipeline on the analysis `a`, with the groups `on` and the
+/// fact generator `emit`. `kept` holds the diagnostics of the analysis that
+/// the `ir` pipeline keeps (`docs/ir.md` 2.4). `no_runtime`: no root handler
+/// serves an effect (W0118).
+///
+/// The pipeline reads the program, the declarations of the bodies
+/// ([`Analysis::decls`]) and the THIR tables. It does not read the facts of
+/// the old lowering or the signatures of the old inference (plan stage
+/// R0i): the signatures come from the summaries of the IR and from the
+/// declarations ([`ir_sigs`]).
 ///
 /// Returns the scope of the program and, if it is in scope, its facts and
 /// diagnostics.
@@ -3829,7 +3971,7 @@ pub(crate) fn run(
     on: Groups,
     emit: Emit,
     kept: Vec<Diagnostic>,
-    rows: OnAbortRows,
+    no_runtime: bool,
 ) -> (Scope, Option<IrFacts>) {
     let built = irbuild::build(a);
     let bodies = scope::groups(&built);
@@ -3838,6 +3980,7 @@ pub(crate) fn run(
         bodies,
         used,
         fallback: None,
+        pending: None,
     };
     if let Some(e) = built.entries.iter().find_map(|e| match &e.outcome {
         Outcome::Unsupported(u) => Some((e, *u)),
@@ -3879,50 +4022,127 @@ pub(crate) fn run(
         ));
         return (s, None);
     }
-    let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
-    let emitted = std::cell::RefCell::new(Vec::new());
-    let effects = std::cell::RefCell::new(Vec::new());
-    let on_abort = std::cell::RefCell::new(None);
-    let input = Input {
-        analysis: a,
-        built: &built,
-        scope: &s,
-        diags: &emitted,
-        effects: &effects,
-        no_runtime: rows.no_runtime,
-        on_abort: &on_abort,
+    let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
+    let mut emitted = std::cell::RefCell::new(Vec::new());
+    let mut effects = std::cell::RefCell::new(Vec::new());
+    let mut on_abort = std::cell::RefCell::new(None);
+    let _ = crate::analysis::clause::take_pending();
+    let first = {
+        let input = Input {
+            analysis: a,
+            built: &built,
+            scope: &s,
+            diags: &emitted,
+            effects: &effects,
+            no_runtime,
+            on_abort: &on_abort,
+        };
+        emit(&input, &mut facts)
     };
-    if let Err(u) = emit(&input, &mut facts) {
-        s.fallback = Some(u.to_string());
-        return (s, None);
+    let mut built = built;
+    if let Err(u) = first {
+        let _ = crate::analysis::clause::take_pending();
+        // A call that a local handler serves with a function value or a
+        // reference: the callee gets a copy at the call (stage R0k-a).
+        let inst = instantiate::wanted(&u)
+            .then(|| instantiate::instantiate(&built))
+            .flatten();
+        let Some(inst) = inst else {
+            s.fallback = Some(u.to_string());
+            return (s, None);
+        };
+        facts = a.decls.iter().map(seed).collect();
+        emitted = std::cell::RefCell::new(Vec::new());
+        effects = std::cell::RefCell::new(Vec::new());
+        on_abort = std::cell::RefCell::new(None);
+        let second = {
+            let input = Input {
+                analysis: a,
+                built: &inst.built,
+                scope: &s,
+                diags: &emitted,
+                effects: &effects,
+                no_runtime,
+                on_abort: &on_abort,
+            };
+            let _weak = inst
+                .weak_ok
+                .then(crate::analysis::transfer::WeakRowOps::enter);
+            emit(&input, &mut facts)
+        };
+        if let Err(u2) = second {
+            let _ = crate::analysis::clause::take_pending();
+            s.fallback = Some(u2.to_string());
+            return (s, None);
+        }
+        // A copy that brings in a construct with no full facts (stage R0g,
+        // `Scope::pending`): the weak form of that construct can reject a
+        // clean program (`rv_p04_c2_multi_ok`, D5). The copy does not apply,
+        // and the program keeps its fallback.
+        if let Some(p2) = crate::analysis::clause::take_pending().first() {
+            s.fallback = Some(format!("{u} (with the copies of the callees: {p2})"));
+            return (s, None);
+        }
+        built = inst.built;
+    }
+    // A construct that the facts do not model: the check decides (stage
+    // R0g).
+    if let Some(u) = crate::analysis::clause::take_pending().first() {
+        s.pending = Some(Pending {
+            reason: u.to_string(),
+            ir_view: false,
+        });
     }
     exports::fill(a, &built, &mut facts);
     // The rows that no rule reads go (stage C1.4).
     for f in &mut facts {
         prune::prune(f);
     }
-    let mut sigs = a.sigs.clone();
-    for (f, e) in effects.into_inner() {
-        if let Some(sig) = sigs.get_mut(f.index()) {
-            sig.effects = e;
-        }
-    }
+    // An emit that gives no W0118 (a test hook): the summaries give it.
+    let on_abort = on_abort.into_inner().unwrap_or_else(|| {
+        let sums = summaries(a, &built);
+        checks::on_abort_rows(a, &built, &sums, no_runtime)
+    });
+    let (sigs, no_ir) = ir_sigs(a, &built, effects.into_inner());
     let bodies = a
-        .bodies
+        .decls
         .iter()
         .zip(facts)
         .map(|(b, facts)| BodyFacts {
             func: b.func,
             unit: b.unit,
             facts,
+            // A test has no signature and no summary: its row is empty.
             effects: b
                 .func
                 .and_then(|f| sigs.get(f.index()))
-                .map_or_else(|| b.effects.clone(), |s| s.effects.clone()),
+                .map(|s| s.effects.clone())
+                .unwrap_or_default(),
         })
         .collect();
     let mut diags = kept;
-    diags.extend(on_abort.into_inner().unwrap_or(rows.old));
+    diags.extend(on_abort);
+    // The `fip` functions with the signatures of the `ir` pipeline. A body
+    // with no IR has no inferred row: W1004 takes its declaration, not the
+    // worst case, which would add an error of the worst case to the type
+    // error of the body (`49_fip_paths.wf`, `unknown`).
+    let fns: Vec<crate::FnId> = a
+        .decls
+        .iter()
+        .filter_map(|b| b.func)
+        .filter(|f| a.program.fns.get(f.index()).is_some_and(|d| d.decl.is_fip))
+        .collect();
+    if !fns.is_empty() {
+        let mut fip_sigs = sigs.clone();
+        for &f in &no_ir {
+            if let (Some(s), Some(def)) =
+                (fip_sigs.get_mut(f.index()), a.program.fns.get(f.index()))
+            {
+                s.clone_from(&def.sig);
+            }
+        }
+        diags.extend(crate::fip_diags(&a.program, &fip_sigs, &fns));
+    }
     diags.extend(built.diags.iter().cloned());
     diags.extend(emitted.into_inner());
     (
@@ -3931,6 +4151,7 @@ pub(crate) fn run(
             bodies,
             diags,
             sigs,
+            no_ir,
         }),
     )
 }
@@ -3956,18 +4177,152 @@ pub fn component(built: &Built, entry: weft_ir::BodyId) -> Vec<weft_ir::BodyId> 
         .collect()
 }
 
-/// The facts of the declarations of a body, from the facts of the old
-/// lowering: the name, the names of the effects, and the flags of the driver
-/// (`library()`, `started()`, `no_runtime()`). They do not depend on the code
-/// of the body.
-pub(crate) fn seed(old: &FnFacts) -> FnFacts {
+/// A closure that captures a value that is not `many` (a `@ uniq`
+/// reference, a value that is not `many` itself) is not `many`, and so is
+/// each variable of a local that can hold it (`Lower::closure_not_many`;
+/// W0503: a `multi` resume would copy it). The analysis gives the `@ uniq`
+/// mode of a variable (`templates::Em::meet_uniq`), so this pass runs on the
+/// facts, over the join of the states of each body (`unions`), and not in
+/// the builder (plan stage R0i-b: before, the value flow of the old
+/// lowering gave it in `thir::Binding::value`).
+fn not_many(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    unions: &std::collections::HashMap<weft_ir::BodyId, crate::analysis::State>,
+    vars: &vars::Vars,
+    facts: &mut FnFacts,
+) {
+    let var_of = |b: weft_ir::BodyId, l: weft_ir::LocalId| {
+        vars.get(&vars::VarKey::S(b, l))
+            .or_else(|| vars.get(&vars::VarKey::C(b, l)))
+    };
+    let once =
+        |facts: &FnFacts, v: weft_facts::VarId| facts.vars.get(v.index()).is_some_and(|x| x.once);
+    for _ in 0..=facts.vars.len() {
+        let mut grew = false;
+        let not_many_closure = |facts: &FnFacts, c: weft_ir::ClosureId| {
+            p.closures.get(c.index()).is_some_and(|d| {
+                d.captures
+                    .iter()
+                    .filter_map(|cap| var_of(d.maker, cap.source.local))
+                    .any(|v| once(facts, v))
+            })
+        };
+        for (&b, st) in unions {
+            let Some(body) = p.body(b) else {
+                continue;
+            };
+            for (j, d) in body.locals.iter().enumerate() {
+                // Only a local of a type with a function part, as the old
+                // lowering marks it (`Builder::binding_props_of`).
+                if !tys.mentions_fn(d.ty) {
+                    continue;
+                }
+                let l = weft_ir::LocalId(u32::try_from(j).unwrap_or(u32::MAX));
+                let Some(v) = var_of(b, l) else {
+                    continue;
+                };
+                if once(facts, v) {
+                    continue;
+                }
+                let holds = st.value((b, l), &[]).flat().fns.iter().any(|f| match f {
+                    crate::analysis::FnVal::Closure(c) | crate::analysis::FnVal::Made(c) => {
+                        not_many_closure(facts, *c)
+                    }
+                    _ => false,
+                });
+                if holds {
+                    if let Some(x) = facts.vars.get_mut(v.index()) {
+                        x.once = true;
+                        grew = true;
+                    }
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+}
+
+/// The facts of the declaration `d` of a body: the name and the flags of
+/// the driver (`library()`, `started()`, `no_runtime()`). They do not depend
+/// on the code of the body, and they do not come from the old lowering
+/// (plan stage R0i). The names of the effects come from the facts of the IR
+/// ([`decls::effect_names`]).
+pub(crate) fn seed(d: &crate::BodyDecl) -> FnFacts {
     FnFacts {
-        name: old.name.clone(),
-        effect_names: old.effect_names.clone(),
-        hidden_effects: old.hidden_effects.clone(),
-        library: old.library,
-        started: old.started,
-        no_runtime: old.no_runtime,
+        name: d.name.clone(),
+        library: d.library,
+        started: d.started,
+        no_runtime: d.no_runtime,
         ..FnFacts::default()
     }
+}
+
+/// The signatures of the `ir` pipeline, by [`crate::FnId`] (plan stage
+/// R0i): the declaration of each function, with the row `effects` of each
+/// function whose summary comes from its body.
+///
+/// A function of the program whose body has no IR (a type error, W0303)
+/// gets the row of the worst case of its declaration
+/// (`crate::analysis::sig::from_declaration`: the summary that its callers
+/// apply); a stated row stays, with the other parts of the worst case, as
+/// for a function whose summary comes from its body. So the authority of a
+/// dependency (`weft deps`, W0901) does not get weaker for such a body (R0i
+/// fix). The program has an error for the body (`irbuild::Entry::reported`).
+/// An extern function and a function of the prelude keep their
+/// declaration. The second result holds the functions whose body has no
+/// IR.
+pub fn ir_sigs(
+    a: &Analysis,
+    built: &Built,
+    effects: Vec<(crate::FnId, crate::program::EffectSig)>,
+) -> (Vec<crate::FnSig>, Vec<crate::FnId>) {
+    let prog = &a.program;
+    let mut sigs: Vec<crate::FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
+    let no_ir: Vec<crate::FnId> = a
+        .decls
+        .iter()
+        .zip(&built.entries)
+        .filter(|(_, e)| matches!(e.outcome, Outcome::NoIr(_)))
+        .filter_map(|(b, _)| b.func)
+        .collect();
+    for &f in &no_ir {
+        let (Some(sig), Some(decl)) = (
+            sigs.get_mut(f.index()),
+            built
+                .fns
+                .get(&f)
+                .and_then(|g| built.program.fns.get(g.index())),
+        ) else {
+            continue;
+        };
+        let Ok(sum) = crate::analysis::sig::from_declaration(prog, f, decl, &built.tys) else {
+            continue;
+        };
+        let worst = crate::analysis::sig::to_effect_sig(prog, &sum);
+        sig.effects = if sig.declared {
+            crate::program::EffectSig {
+                muts: sig.effects.muts.clone(),
+                named: sig.effects.named.clone(),
+                passthrough: sig.effects.passthrough.clone(),
+                raises: worst.raises,
+                multi: worst.multi,
+                drops: worst.drops,
+                holds: worst.holds,
+                pins: worst.pins,
+                task_effects: worst.task_effects,
+                ..crate::program::EffectSig::default()
+            }
+        } else {
+            worst
+        };
+    }
+    for (f, e) in effects {
+        if let Some(sig) = sigs.get_mut(f.index()) {
+            sig.effects = e;
+        }
+    }
+    (sigs, no_ir)
 }

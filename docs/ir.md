@@ -237,7 +237,9 @@ of a free type variable can exist at run time. A body with `Ty::Error` gets no I
 `Props` (section 3) comes from one function, `crates/weft-sema/src/props.rs`, applied to
 the final type. The builder stores it in each `LocalDecl`. For a binding whose type has
 a function part, the builder joins the modes that the analysis infers for its values
-(`thir::Binding::value`, 5.22). The facts read the flags of a variable from the props of
+(5.22). From plan stage R0i-b these modes come from a value flow over the IR
+(`irbuild::values`), not from the old lowering (`thir::Binding::value`): the builder
+runs again with the modes of the round before until they do not change. The facts read the flags of a variable from the props of
 its move path, joined with the modes of the closures that the analysis says it can hold
 (V061).
 
@@ -1833,9 +1835,20 @@ body c (Closure):  params _1 = env, _2 = p; _0
   joins the modes of the closures that a value can hold for each other place (2.3).
 - Each other local of a binding whose type has a function part (`let g = f`, a
   parameter of a function, of a closure or of a clause, a pattern binding) gets the
-  modes that the analysis infers for the values of the binding (`Binding::value` of the
-  THIR, from the `VarInfo` flags of its variables): linear, no `on abort`, nonportable,
-  `once`, and `copy` only if it is not `once` (plan stage B12). A function parameter
+  modes that the analysis infers for the values of the binding: linear, no `on abort`,
+  nonportable, `once`, and `copy` only if it is not `once` (plan stage B12). Until plan
+  stage R0i-b they came from `Binding::value` of the THIR (the `VarInfo` flags of the
+  variables of the old lowering). From R0i-b they come from `irbuild::values`: a value
+  flow over the IR of the program (a closure gets the modes of its captures and of
+  `ClosureDecl::once`; an assignment, an aggregate, a reference, a call with the
+  arguments for the parameters that its result can be, a write behind a reference, a
+  callee with no body that can keep an argument behind a reference argument, a clause
+  parameter, a `resume` (the value of the handled body), a task (its handle names the
+  site; a `join` gets the result of a run of the value of the task), a `fork` (the
+  results of the branches), a `handle`, a `scope` and an upvar pass them on), and the
+  builder runs again with them until they do not change (`irbuild::build`). A closure
+  that captures a `@ uniq` value (the analysis gives the mode) is not `many`: the fact
+  generator marks each variable that can hold it (`factgen::not_many`, W0503). A function parameter
   holds a value that the body does not know, so the analysis gives it no closure modes.
   A field of a function type has the props of its type: the facts take the modes of the
   closures that it can hold from the analysis (2.3).
@@ -2102,6 +2115,29 @@ form for the move: V9 rejects a `Move` through `Deref(Ref)` and a `Copy` of a va
 is not plain data. A move in a closure or a nested body of the function gives the whole
 function no IR.
 
+As built (plan stage R0i-b): the builder gives W0303 itself. A read of a place
+(`read_place`, a binding of a pattern) records each move through a reference with the
+location of the expression (of the statement for `let x = <place>`) and the type
+(`TyTable::show`), and goes on, so each move of the body gets a diagnostic; the body then
+has no IR (also when the builder stops later for another reason), and
+`irbuild::reported` counts it. A move out of an `rc` object is W0303 too, but the IR has
+a form for it, so the body keeps its IR. A copy of a function value out of a place
+behind a reference or an `rc` object whose type does not come from a declared function
+type (a field of a type parameter) is W0303 if the value can be a closure that moves a
+capture (`values::once_reads`): the old type showed such a closure. W0303 and W0502 of the
+old lowering are in `IR_DROPS`.
+
+W0502 of a `once` closure in a place of plain data (`Lower::keep_modes` of the old
+lowering) comes from `values::once_into_plain` (plan stage R0i-b): a closure that moves
+a capture (`ClosureDecl::once`) and is not linear (a linear one is W0601 there) goes into
+a field of a declared function type of a struct or a variant literal, into the place of
+an assignment whose last projection is such a field, or into an argument of a function
+item whose parameter type is not a function type while another argument is a place of a
+stated type with a function part (a parameter, a `let` with a stated type, a field:
+`v.push(|| eat(b))` with `let v: Vec<fn()>`). A type that the analysis infers from the
+closure shows it, as the old type did, so `let v = Vec.new(); v.push(|| eat(b))` is
+valid. A body with no IR gets no W0502 (it has the error of the body).
+
 Other bodies with no IR (plan stage B12), each with its reason:
 
 - `NoIr::VariantPayload`: a field expression `o.A` of a variant `A` with no field or
@@ -2232,6 +2268,50 @@ them: they run once for each run of their terminator (V15), so a summary would o
 order. A closure and a clause can run at many nodes, so their effects reach each run
 node through their summary. The components share the tables of roots, places and
 variables of the `FnFacts`.
+
+As built (plan stage R0k-a, call-site copies, `factgen/instantiate.rs`): a summary
+of a callee cannot tell what the clause of a local handler does with a function
+value that the callee gives to an operation (C2), or when the callee runs a value
+that the clause gives back (D3). So for such a program the fact generator works on
+a copy of the IR in which each such call is the code of the callee. A call gets a
+copy when the capability environment of the call binds an effect that the callee
+performs through its row (also through its callees) with a function value or a
+reference in an argument or in the result, the call has no type arguments, the
+callee has a body and is not recursive, the chain of copies is at most 8 calls
+deep, and the copies add at most 6000 blocks. The copy of the code of the callee
+in the site body:
+
+- each local of the callee is a new local of the site: a parameter is a variable of
+  the source, `_0` a temporary;
+- a new block gives each parameter the operand of the call and goes to the entry of
+  the callee; a `Return` gives `_0` to the destination of the call and goes to its
+  next block; the `UnwindExit` of the callee goes to the cleanup block of the call;
+- each body inside the callee (closure, handled body, clause, scope body) gets a copy
+  with new ids of its declarations, spawn sites and capability environments; the
+  root environment of the callee is the environment of the call;
+- a perform through the row that the environment of the call serves goes to the
+  capability of the serving handler (through new upvar locals in a body inside the
+  copy); a closure of the callee gets a `Cap` capture for each such effect that its
+  code can use, as the builder gives a closure of the site.
+
+Then the perform is a perform of a local handler, and the rules of a handled body
+apply (the clause at the node of the perform, the resume regions, the `multi`
+re-entry, the abort edges). The copies change no other program: `factgen::run` makes
+them only if the program falls back with C2 or D3 without them, and the program keeps
+its fallback if the copies bring in a construct with no full facts
+(`Scope::pending`). The verifier checks the copy (V16, the order of a cleanup chain,
+is not checked in a body with a copy: the chain of the callee ends before the chain
+of the site, as in the machine). The fact oracle runs the copy (`components_built`),
+and the test `copies.rs` of `weft-interp` runs each copied probe with and without
+the copies and compares the runs.
+
+In the facts of the callee itself (its own diagnostics and its summary), a perform
+through the row of a value that the clause can keep has the weak form of R0h (code
+of a caller runs the values). This holds only if no call that a local handler
+serves applies that summary (`Instantiated::weak_ok`: each such call has a copy,
+and no closure, function item value, `main` or test can run such a callee). The
+analysis checks the invariant (`transfer::note_weak_call`): a served call of a
+summary with the weak form, also through a callee, keeps the old pipeline.
 
 ### 6.2 Nodes and phases
 
@@ -2622,7 +2702,7 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
   with no edges.
 - `Call`, `Perform`, `Resume` at `Main`: the operands; `call_arg(n, A, root)` for each
   place `A` that an argument reaches, also through stored references (R3RT3), with one
-  root kind of `body/roots.rs` for each; `call_mut(n, M, root)` for each place `M` of the
+  root kind of `roots.rs` (`body/roots.rs` before plan stage R0i) for each; `call_mut(n, M, root)` for each place `M` of the
   applied `muts` part, with the root of the parameter that the summary names (a change
   that comes from a run of function argument `i` gets the root of argument `i`, so a
   closure argument does not conflict with itself, O3-7); `arg_at`, `param_in`, `uniq_param`,
@@ -2863,7 +2943,12 @@ scope):
   spawn from the references of its scope operand (`Handlers::site_scopes`,
   `tasks::SiteScope`). The spawn needs exactly one scope and no other value; else the
   program is not in scope (`templates::UNOWNED_SCOPE`: two scopes, a reference through a
-  reference, a capability that a generic callee gives back). In the facts of a closure
+  reference, a capability that a generic callee gives back). From plan stage R0j an
+  operand that can be the capability of more than one scope, and of no other value,
+  ends its task at the outer scope (`SiteScope::end`): each such scope is live at the
+  spawn, so the scopes are nested in one unit and the outer one ends last. The facts
+  then have a task that runs a longer time, which is sound. The other forms are pending
+  (the rule of stage R0g, below). In the facts of a closure
   in the terms of its interface, the scope can be a scope of the maker (no reference into
   a scope capability of the closure, and the spawn is not in a scope body of the
   closure): then the task is in the part `tasks`. `ScopeWait` and the cleanup chain of
@@ -2980,7 +3065,137 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   closure that spawns on a scope of main, through an item, both pipelines miss them). A
   run as a task of a known value at depth > 0 (E7), a task that runs a value more than once
   (E2), a task that runs a variable that gets a new value (E4), and a task of code that the
-  body does not follow (E5) stay with the old pipeline.
+  body does not follow (E5) stay with the old pipeline. From plan stage R0j these forms,
+  and a function value that runs a value of its arguments as a task, are pending (the
+  rule of stage R0g, below): the facts keep the run at the spawn node and the code of a
+  caller as a plain run, and the program is in scope only if the `ir` pipeline rejects
+  it. A function value that code of a caller can run on another thread and that changes
+  places or holds a nonportable value (`transfer::TASK_RUN`) stays with the old
+  pipeline: with the weak facts the worst way of a foreign task gives W0403 at the call
+  of a clean program (`fixes/r0j/j07_run_ok.wf`).
+
+As built (plan stage R0g: continuations and capabilities in closures):
+
+- A program that the facts do not model whole. Some constructs have no complete
+  template yet: a `resume` in a closure or in a body inside the clause (no resume point
+  of the clause), a `multi` operation of a handler of a caller in a clause and a `multi`
+  resume of a node in a clause or a closure inside the handled body (no re-entry of a
+  clause frame, the design note of plan stage R0d), and a run of a closure whose
+  captured capability left its handler where no W0313 of that handler is found. The fact
+  generator notes each one (`analysis::clause::note_pending`) and goes on with a weak
+  form: the `resume` moves its argument, uses the continuation and gives a plain value;
+  the clause has no re-entry; the run applies no clause. The scope of the program then
+  has `Scope::pending`, and the analysis keeps the facts of both pipelines.
+  `weft_check::check_analysis` checks the facts of the `ir` pipeline first. If they give
+  an error, the `ir` pipeline rejects the program, and its result is final. A rejected
+  program does not run, so the facts that are not whole cannot let a fault through
+  (the errors that they show can be fewer or more than the old pipeline shows; the gate
+  counts them). If they give no error, the old pipeline checks the program, with the
+  reason of the first construct as the note of the fallback. So the facts that do not
+  model a program never accept it.
+- A closure that a clause gives to the handled body (through `resume` or a place of the
+  site) or to the site (the value of the clause): the states where it runs have no
+  values of the locals of the clause, so σ of its run takes the environment from the
+  closure value, as for a closure that a callee made (`apply::closure_sigma` calls
+  `made_sigma`; C4). A `ByRef` capture of a local of the clause points into the cell of
+  that local, so a run after the end of the clause is W0301.
+- The fix of R0g (review round 1, B1): a scope body runs in the frame of its site, as a
+  handled body and a clause do. `made_sigma` finds the variable of a `Kept` or `ByRef`
+  capture through the makers in the body of the run or in a body whose frame that body
+  runs in (`apply::frame_capture_source`: a scope body, a handled body, a clause), and
+  `apply::other_maker` walks up from a scope body too. So a closure whose value holds
+  its environment (a closure that a clause gives, a closure that a closure made) changes
+  the variables of that environment when it runs in a scope body or as a task of the
+  scope: the task gets them in `task_writes` and `task_reads`. Before the fix, σ there
+  named only the place of the closure value, which is the task's own.
+- A captured capability of a closure that a callee or a closure made (`made_sigma`, C6):
+  σ maps the capture to the capability of the handler that the capture names through the
+  makers (`clause::capture_handler`), if the handled body of the handler runs at the node
+  (the state has its `Cap` local; `apply::live_cap`), else to nothing. A run with no
+  capability is a run outside the handler (`transfer::check_cap_apps`): W0313 of that
+  handler must reject the program (also a W0313 of another function, for a closure that a
+  callee made, `factgen::emit`), else the program is pending (above). A run of a closure
+  whose handler runs but whose clause the node does not run (a task runs the closure)
+  needs that W0313 or a W0314 (D4).
+- An abort to a local handler `g` outside handler `h` leaves the locals outside the
+  handled body of `g` with their values at the abort (`clause::note_past`, at each abort
+  edge with a destination of `frames::destinations`): a closure there that performs
+  through `h` leaves `h` (W0313, "the local `f` keeps it"), as the old lowering checks
+  on the abort paths (`check_local_keeps`).
+- W0313 for a continuation (`clause::check_kont_escape`, `Escape::Kont`): a closure that
+  can resume the continuation of a clause (it captures it, through the makers, or holds
+  such a closure in a capture, `clause::resumes_kont`) leaves the clause if it is in the
+  value of the clause, in a local outside the `handle` or in a heap slot where the
+  clause ends (also after its `resume`), or in the argument of a `resume` of the clause.
+  The span is the clause, and the texts are those of the old lowering
+  (`check_cont_escape`, `cont_to_body`).
+
+As built (plan stage R0h: function values and references across operations):
+
+- A function value in an argument of an operation of a handler of a caller (C2,
+  `templates::perform`). The body does not know the clause, so the clause is code of a
+  caller that gets the arguments: the perform node applies `FnVal::Unknown` with
+  `Given::Args` and the types of the operation (`transfer::op_value_out`, `OpTy`; no row,
+  no environment, `multi` only for a `multi` operation). So each value of the arguments
+  runs more than once, also after the other ones, and a value that can race
+  (`task_unsafe`) is a task of the node in the worst way (W0401, W0403, W0405), as for a
+  call of a function value. A perform to a caller gets task nodes for each argument that
+  can hold a function value (`frames::perform_to_caller`, `nodes::phases_with`). The
+  result of the operation joins the result of the code (the clause can resume with one
+  of the values). The facts of the perform itself do not change. `templates::value_run`
+  is the part of `call_value` that both use.
+- A value that the code of a caller can keep and run after a change that the facts do
+  not see stays with the old pipeline: a closure that does not race and that has a
+  capture whose type holds a reference or a function value (`transfer::kept_value_risk`).
+  The facts of code of a caller have no part for a value that it keeps (plan stage R0f,
+  open item 1). A value that races is no risk: the worst way rejects it. A perform
+  through a captured capability of a local handler keeps the reason too (its clause runs
+  in the closure, `clause_run_in_closure`, with no function values).
+- A clause of a local handler that a call runs (D3, `clause::call_clauses`; before,
+  `clause::given_ops` sent each such call to the old pipeline):
+  - a parameter of the operation that holds a function value: the value is a value of
+    the callee. In the clause it is code of a caller whose environment is the places that
+    the call gives (`clause::Given::values`): a run of it lends them. The callee checks
+    its own value as the code of a caller of its perform (C2).
+  - a reference result: σ(`Caller`) of the call also names the places that the clauses
+    can give to `resume` (`clause::back_places`, kept in `Handlers::back` by run node):
+    the wildcard places of each local of the site that a clause names, what their
+    references point into, their `rc` groups, the places that the call gives, and what
+    the values of the clauses at `resume` pointed into in the runs so far
+    (`Handlers::back_refs`, also a local of a clause). The summary part `caller_muts`
+    (the body changes a place of a caller) changes each such place at the call, the call
+    reads them (`handlers::call_clauses`), and the result of the call can point into
+    them (`transfer::back_ret`): a signature cannot name such a place. A call in a closure
+    body whose clause names a local of another frame keeps the reason.
+  - a function value result: the call runs each value that a clause gives to `resume`
+    as code of a caller runs a value that it gets (`transfer::given_back_apps`): at
+    `Main` and at `Ret`, on some paths only, with the places that the call gives, and the
+    result of the call can be one of them (`Handlers::given_back`,
+    `templates::given_back_runs`). A closure of a clause has no operand at the call: its
+    environment is what the values point into (`Handlers::given_refs`, `made_sigma`). A
+    value that can race, that the callee could keep with a reference in it, or that is
+    `once` keeps the reason: the call has no task nodes for the worst way, no part for a
+    kept value, and no operand that a second run uses. Only a call that can perform the
+    operation counts (`clause::call_performs`: a known closure or item whose summary does
+    not perform the effect and runs no value gives the clause nothing).
+- The stub of the fallback tests (`scope.rs`, `cli.rs`) is now a clause that gives the
+  callee a closure that can race.
+- The fix of R0h (review round 1). A value of the interface of the body (a parameter, its
+  result, a capture) or a value that the analysis does not know, in an argument of an
+  operation of a caller (C2) or given back by a clause (D3 form F), is code of a caller:
+  the code that gets it can keep it in a place, and the summaries say that the place
+  holds code of a caller (`put_values` gives `FnVal::Unknown`), so a later run of the
+  place does not apply the value (`f32_param_back_keep`: the callee keeps the parameter
+  `k` of the site in a field that the site gives back). Such a program keeps the old
+  pipeline (`transfer::op_fn_args`, `clause::call_clauses`: only a closure or an item
+  goes on). A call whose callee changes a place of a caller (`caller_muts`) and gets a
+  place in an argument keeps the old pipeline too (`transfer::callee_caller_muts`): the
+  callee can hold a reference into the argument while it changes the same place through
+  the reference of the clause, and its own facts do not see that the two places are one
+  (`r39_two_level_param`). A body passes `caller_muts` of a callee on to its own summary
+  (`Handlers::caller_muts_at`, `Emitted::caller_muts`), so a change in a callee of the
+  callee is a change at the call (`r01_two_level_mut`). A function with no body has
+  `caller_muts` only for an effect with an operation whose result holds a reference.
 
 As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 `factgen::emit`):
@@ -3250,10 +3465,12 @@ the default set):
   v.push(3) }` makes `r` invalid after the call (hole H1 of the review of the ABC
   preview, F12-fix). A change before the rebind stays at `Main` only.
 - A function with a function value in its signature and no stated row has no summary
-  until stage F12 (`callgraph::summary_of`). W0701 takes the row of the old inference
+  until stage F12 (`callgraph::summary_of`). W0701 took the row of the old inference
   for it (`Inference::old_rows`), which adds the effects of the closures that the
   function makes. A function that returns a closure inside a struct has a summary with
-  no row for the closure: its W0701 waits for F12.
+  no row for the closure: its W0701 waits for F12. From plan stage R0i each function
+  with IR has a summary (`summary_of` fails only for a function with no signature), so
+  `old_rows` is gone.
 
 As built (plan stage F14, `crates/weft-sema/src/analysis/clause.rs`,
 `factgen/handlers.rs`; group D is a preview with `--groups ABCD` until stage F17
@@ -4062,7 +4279,8 @@ As built (plan stage F5, `crates/weft-sema/src/analysis/`):
   of each function of the IR, or the reason why it has none yet.
 - `sig.rs`: `from_signature` gives the summary of a function with a stated row (an
   extern function too). The parts that only the old inference has for a function with a
-  body (`drops`, `holds`, `raises`) come from `Analysis::sigs` until stage F6. A signature
+  body (`drops`, `holds`, `raises`) came from `Analysis::sigs` until stage F6; from plan
+  stage R0i the declaration (`FnDef::sig`) gives the signature. A signature
   with a function value, a store into an `rc` object, a foreign change of an `rc` object,
   or a task gives a reason, and the program stays with the old pipeline. From plan stage
   R0b a function with no summary of its body uses `from_declaration` (6.8).
@@ -4552,6 +4770,50 @@ the interpreter read them; W0701 comes from them, with the text of the old lower
 `weft-gate sigdiff` compares them with the old ones on each program in scope; each
 difference needs a ledger entry of class `sig`.
 
+As built (plan stage R0i, part a): the `ir` pipeline reads no part of the old inference
+and no fact of the old lowering, but the exports of a body with no IR
+(`factgen::exports::copy_old`, plan stage R4). The parts:
+
+- The declaration of each body (`BodyDecl` in `Analysis::decls`: the function, the
+  unit, the module, the name, `library()`, `started()`, `no_runtime()`) comes from the
+  program and the options. It gives the first facts of a body (`factgen::seed`), the
+  entries of the builder and the nodes of the call graph.
+- The names that the diagnostics show for the user effects (`FnFacts::effect_names`,
+  `hidden_effects`) come from the facts of the IR (`decls::effect_names`, with
+  `std_effect`): the effects that escape, the stated effects, the effects that a clause
+  performs, the handled effects and the effects of function arguments. Before, the
+  seed took them from the old facts, so an effect that only the IR facts name showed
+  its identity (`main.Note`) with the note of a private effect.
+- A signature part of the declaration (the types, the parameters, the stated places,
+  the stated row, `declared`) comes from `FnDef::sig`. The part `pins` of a function
+  with a stated row comes from its body only (before: also from the old inference).
+- `factgen::ir_sigs` gives `IrFacts::sigs`: the declaration of each function, with the
+  row of the summary of each function with IR. A function whose body has no IR gets the
+  row of the worst case of its declaration (`sig::from_declaration`, the summary that
+  its callers apply; a stated row stays), so the authority of a dependency (`weft
+  deps`, W0901) does not get weaker for it (R0i fix; part a gave it its declaration,
+  and W0901 of `fixes/r0i/pkg1_deps_noir` went). `IrFacts::no_ir` names these
+  functions, so `weft-gate sigdiff` does not compare them. A test body has an empty row
+  (`BodyFacts::effects`): it has no signature and no summary.
+- W0118: `checks::on_abort_rows` reads the summary, and the part `reaches` is the
+  summary too (`checks::reaches`), only for a function with IR (the worst case runs
+  each value of its parameter, and its other parts give W0118 already). It is a run of
+  the part `runs` of a capture or of a parameter whose type has a function part (a call
+  or a task: a local `Fail` handler around a scope catches the failure of the scope,
+  so the task gives no other W0118; `fixes/r0i/r31_*`), or the new summary part
+  `unknown_runs`: the body runs a function value that it does not know (code of a
+  caller that is no value of the interface: a value from an `rc` object, an extern
+  result), also through a callee (`Handlers::unknown_runs_at`), with no regard to the
+  `multi` operations of the program (`unknown_multi` is `multi` of the program, and the
+  worst case of a callee with no IR has it). A task of a value of a type parameter
+  (`s.spawn(|| x)`, `verify/s5/R3x/p1/c14_task.wf`) does not count. An emit that gives
+  no W0118 (a test hook) gets the rows of the summaries from `factgen::run`.
+- `fip` (W1001 to W1004): `factgen::run` checks each `fip` function with the
+  signatures of the `ir` pipeline; a function whose body has no IR takes its
+  declaration there, not the worst case (the program has an error for the body).
+- `irbuild::reported` counts no code of `OLD_INFERENCE_CODES` (W0118 and the `fip`
+  codes, which `analyze` gives from the old signatures for the old pipeline).
+
 As built (plan stage F13 part 2, group C on): `DEFAULT_GROUPS` is A, B and C, so the
 `ir` pipeline checks closures, function values and stored function values by default.
 The signature diff with the groups A to C has these classes (one `sig` entry each in
@@ -4732,10 +4994,10 @@ that it rebinds a weak update (class D-REBIND of stage F17: `maybe(c, || { f = .
 kept only the new value of `f`, so a closure with the capability that `f` held was
 lost). The facts have no capability root yet: no `error` of the spec has a capability
 root as its evidence free, so nothing folds into the W0313 diagnostic. W0313 for a
-continuation stays with the old pipeline: a closure that captures a continuation is
-not in scope (follow-up F16.1), and the corpus programs 83 and 122 use other
-constructs that are not in scope (a function value that an operation gives to a
-handler of a caller, group E).
+continuation stayed with the old pipeline until plan stage R0g (6.4, "As built (plan
+stage R0g)"): the analysis checks it at each end of a clause and at each `resume` of
+the clause (`clause::check_kont_escape`). A program with a `resume` in a closure is in
+scope only if the `ir` pipeline rejects it (`Scope::pending`).
 
 The `error` of the spec for a returned reference into a by-value parameter that the
 signature states has the W0204 of the signature check: the diagnosis gives a fold

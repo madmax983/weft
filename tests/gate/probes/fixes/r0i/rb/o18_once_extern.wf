@@ -1,0 +1,11 @@
+// a once closure passed through an extern (no body) and called twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+extern fn pass(f: fn()) -> fn()
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || eat(v)
+    let f = pass(c)
+    c()
+    c()
+}

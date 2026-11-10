@@ -1,0 +1,11 @@
+// The clean twin: the clause resumes first, then performs the `multi`
+// operation. The facts have no re-entry of the clause: the old pipeline
+// checks the program.
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+fn at_clause() / Choice {
+    handle Log { fn log(m) { resume(()); let b = choose(); print(b) } } in log("x")
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in at_clause()
+}

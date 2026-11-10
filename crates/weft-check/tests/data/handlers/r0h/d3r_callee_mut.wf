@@ -1,0 +1,15 @@
+// The clause gives the callee a reference into a local of the site; the
+// callee changes the place through it while the site holds a reference.
+struct Counter { items: Vec<u64> }
+effect PickC { fn pick_c() -> &Counter }
+fn clear_picked() / PickC {
+    let r = pick_c()
+    r.items.clear()
+}
+fn main() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(5)
+    let first = &c.items[0]
+    handle PickC { fn pick_c() { resume(&c) } } in clear_picked()
+    print(first)
+}

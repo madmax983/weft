@@ -1,0 +1,15 @@
+// The clean twin of rv_p11: the clause runs the value before the callee
+// clears `v`.
+effect Run { fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    let c1 = || print(r)
+    run(|| c1())
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { g()
+        resume(()) } } in { f(&v) }
+}

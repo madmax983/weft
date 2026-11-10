@@ -1,0 +1,12 @@
+// a once closure assigned into a Vec<fn()> element, then two copies called
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn main() {
+    let v = [1]
+    let xs: Vec<fn()> = Vec.new()
+    xs.push(|| print(0))
+    xs[0] = || print(take_v(v))
+    let h = xs[0]
+    h()
+    let k = xs[0]
+    k()
+}

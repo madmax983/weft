@@ -98,7 +98,7 @@ fn stored_callback_and_keep(xs: &Vec<u64>) / mut(xs) {
     let r = &xs[0]
     let v = Vec.new()
     v.push(|| { xs.push(1) })
-    twice_keep(v[0], Keep { f: || print(r) })   //~ W0301 W0312
+    twice_keep(v[0], Keep { f: || print(r) })   //~ W0312 old: W0301 W0312
 }
 
 // A callback that runs a stored value that another argument holds: the
@@ -134,10 +134,10 @@ fn hof_runs_other(xs: &Vec<u64>) / mut(xs) {
     let w = Vec.new()
     w.push(|| { xs.push(1) })
     let j = Job { f: || print(r) }
-    run_hof(&j, |jj| {   //~ W0301 W0312
+    run_hof(&j, |jj| {   //~ W0204 W0301 old: W0301 W0312
         let a = w[0]
         a()
         let g = jj.f
-        g()   //~ W0301
+        g()   //~ old: W0301
     })
 }

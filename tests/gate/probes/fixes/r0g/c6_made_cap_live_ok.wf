@@ -1,0 +1,13 @@
+// The clean twin: the clause does not change `v`.
+effect Log { fn log(m: String) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Log { fn log(m) { print(m); resume(()) } } in {
+        let mk = || (|| log("x"))
+        let g = mk()
+        g()
+    }
+    print(r + 1)
+}

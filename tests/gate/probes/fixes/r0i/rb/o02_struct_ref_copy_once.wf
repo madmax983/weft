@@ -1,0 +1,13 @@
+// a once closure in a struct field (inferred), copied twice out of a reference
+fn eat(v: Vec<u64>) { print(v.len()) }
+struct W<T> { f: T }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = W { f: || eat(v) }
+    let p = &w
+    let g = p.f
+    g()
+    let h = p.f
+    h()
+}

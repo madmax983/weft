@@ -1,0 +1,12 @@
+// nonportable closure through: Some and match; a scope task runs it (must be pinned)
+
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let o = Some(c)
+    let f = match o { Some(g) => g, None => || print(0) }
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

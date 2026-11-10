@@ -1,0 +1,13 @@
+// a callee gets a Holder (closure captures an Rc) and spawns a task that runs it
+struct Holder { cb: fn() }
+fn go(h: Holder) {
+    scope { s =>
+        let t = s.spawn(|| { let g = h.cb
+            g() })
+        t.join()
+    }
+}
+fn main() {
+    let r = Rc.new(0)
+    go(Holder { cb: || { let y = r.clone() } })
+}

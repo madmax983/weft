@@ -94,7 +94,7 @@ fn at_resume_clause() / Choice {
     handle Log {
         fn log(m) {
             let t = mint()
-            resume(())   //~ W0503
+            resume(())   //~ old: W0503
             spend(t)
             let b = choose()
         }
@@ -229,7 +229,7 @@ fn clause_value_escapes() {
 fn resume_escapes() {
     handle Get {
         fn get() {
-            handle Log { fn log(m) { resume(()) } } in resume(|| log("late"))   //~ W0313
+            handle Log { fn log(m) { resume(()) } } in resume(|| log("late"))   //~ old: W0313
         }
     } in {
         let f = get()

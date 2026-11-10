@@ -1,0 +1,12 @@
+// The clean twin of rv_p03: g reads a vector of `main`, which lives.
+effect Run { fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run {
+    let r = &v[0]
+    run(|| print(r))
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { resume(())
+        g() } } in { f(&v) }
+}

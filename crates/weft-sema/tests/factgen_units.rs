@@ -1398,8 +1398,12 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             ],
             &[],
         ),
+        // A perform of an operation of a caller whose arguments hold
+        // function values runs the code of the clause as a call of a
+        // function value does (stage R0h): its `Ret` is a `Ret` of a call.
+        "perform ret" => return template_of("call ret"),
         // The result binds.
-        "perform ret" | "resume ret" => (
+        "resume ret" => (
             &[
                 "cfg_edge",
                 "rebound_at",
@@ -1568,7 +1572,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // at its `Task` node as a spawn, and the last `Task` node ends the
         // branches; `Ret` binds the tuple of the results.
         "fork" => (&["cfg_edge", "may_abort"], &[]),
-        "fork task" | "call task" => (
+        "fork task" | "call task" | "perform task" => (
             &[
                 "cfg_edge",
                 "empty_at",
@@ -1675,12 +1679,14 @@ fn check_templates(f: &FnFacts, what: &str) -> BTreeMap<String, BTreeSet<&'stati
     let mut seen: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     // A task that a call starts while code of a local handler can run at
     // its `Main` starts on each edge into that node too (follow-up F19.4):
-    // a node with an edge into a `call` node can have `spawned_at`.
+    // a node with an edge into a `call` node can have `spawned_at`. A
+    // perform of an operation of a caller whose clause runs a function value
+    // of an argument as a task does the same (stage R0h).
     let before_call = |n: NodeId| {
         !f.joined_at.iter().any(|&(_, m)| m == n)
             && f.cfg_edge
                 .iter()
-                .any(|&(a, b)| a == n && f.node(b).kind == "call")
+                .any(|&(a, b)| a == n && matches!(f.node(b).kind.as_str(), "call" | "perform"))
     };
     for (n, rels) in node_rels(f) {
         let label = f.node(n).kind.clone();
@@ -3200,6 +3206,11 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
             continue;
         };
         if !ir.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope) {
+            continue;
+        }
+        // A program with a construct that the facts do not model (stage
+        // R0g) has no components: the fact oracle checks nothing there.
+        if ir.ir_scope.as_ref().is_some_and(|s| s.pending.is_some()) {
             continue;
         }
         let built = irbuild::build(&old);

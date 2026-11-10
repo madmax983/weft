@@ -1,0 +1,8 @@
+// move a Vec field out of an rc object
+struct W { items: Vec<u64>, n: u64 }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() { let r = Rc.new(W { items: Vec.new(), n: 1 })
+    let v = r.items
+    eat(v)
+    let r2 = r.clone()
+    eat(r2.items) }

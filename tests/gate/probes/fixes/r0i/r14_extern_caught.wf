@@ -1,0 +1,21 @@
+// on abort calls an extern result under a local Fail handler, program with a spawn
+effect Stop { fn stop() }
+extern fn mk() -> fn()
+linear struct T { n: u64 }
+    on abort = undo
+fn undo(t: T) {
+    let T(n) = t
+    let f = mk()
+    handle Fail { fn fail(m) { print("caught {m}") } } in f()
+}
+fn done(t: T) { let T(n) = t }
+fn par() { scope { s => s.spawn(|| print(1)) } }
+fn body() / Stop {
+    let t = T { n: 1 }
+    stop()
+    done(t)
+}
+fn main() {
+    par()
+    handle Stop { fn stop() { () } } in body()
+}

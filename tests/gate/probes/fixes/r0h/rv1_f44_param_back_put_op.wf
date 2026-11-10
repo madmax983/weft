@@ -1,0 +1,24 @@
+// The clause gives back a function parameter of the site; the callee gives
+// it to a second operation, whose clause keeps it in a field that the site
+// gives back to main.
+struct H { f: fn() }
+fn noop() {}
+effect Get { fn get() -> fn() }
+effect Put { fn put(g: fn()) }
+fn relay() / Get, Put { put(get()) }
+fn s(k: fn()) -> H {
+    let h = H { f: noop }
+    handle Put { fn put(g) { h.f = g; resume(()) } } in {
+        handle Get { fn get() { resume(k) } } in { relay() }
+    }
+    h
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = s(|| v.clear())
+    let r = &v[0]
+    let x = h.f
+    x()
+    print(r)
+}

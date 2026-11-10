@@ -1,0 +1,26 @@
+// on abort gives an extern result to an item that runs its param as a task
+effect Stop { fn stop() }
+extern fn mk() -> fn()
+linear struct T { n: u64 }
+    on abort = undo
+fn go(f: fn()) {
+    scope { s =>
+        let k = s.spawn(|| f())
+        k.join()
+    }
+}
+fn undo(t: T) {
+    let T(n) = t
+    handle Fail { fn fail(m) { print("caught {m}") } } in { go(mk()) }
+}
+fn done(t: T) { let T(n) = t }
+fn par() { scope { s => s.spawn(|| print(1)) } }
+fn body() / Stop {
+    let t = T { n: 1 }
+    stop()
+    done(t)
+}
+fn main() {
+    par()
+    handle Stop { fn stop() { () } } in body()
+}

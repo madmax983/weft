@@ -1,0 +1,11 @@
+// The clean twin of `c2_mut_local.wf`: the closure only reads a copy of
+// plain data.
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let n = 5
+    run(|| print(n))
+    print(n)
+}
+fn main() {
+    handle Run { fn run(g) { g(); g(); resume(()) } } in { f() }
+}

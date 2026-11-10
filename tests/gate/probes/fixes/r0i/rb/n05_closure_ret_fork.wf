@@ -1,0 +1,9 @@
+// nonportable closure through: a closure that returns the closure; fork branch runs it (W0401 expected)
+
+fn main() {
+    let r = Rc.new(0)
+    let c = || { let y = r.clone() }
+    let mk = || c
+    let f = mk()
+    fork(|| f(), || print(1))
+}

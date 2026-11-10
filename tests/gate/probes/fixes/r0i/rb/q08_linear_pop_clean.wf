@@ -1,0 +1,10 @@
+// a linear closure pushed, popped and called (clean if allowed)
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print(i) }
+fn main() {
+    let tx = Tx { id: 1 }
+    let fs = Vec.new()
+    fs.push(|| commit(tx))
+    match fs.pop() { Some(g) => g(), None => {} }
+}

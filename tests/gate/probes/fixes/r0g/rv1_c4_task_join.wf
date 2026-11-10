@@ -1,0 +1,16 @@
+// The handled body spawns the closure of the resume argument and joins the
+// task; the closure pushes to the vector of the clause (review of stage R0g, B1).
+effect Get { fn get() -> fn() }
+fn main() / async {
+    handle Get {
+        fn get() {
+            let v = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            resume(|| { v.push(2); v.push(3); v.push(4); v.push(5) })
+            print(r + 1)
+        }
+    } in {
+        let f = get(); scope { s => let t = s.spawn(f); t.join() }
+    }
+}

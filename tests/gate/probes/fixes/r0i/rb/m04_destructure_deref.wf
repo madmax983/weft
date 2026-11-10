@@ -1,0 +1,8 @@
+// destructure through a reference
+struct W { items: Vec<u64>, n: u64 }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn f(r: &W) { let W(v, n) = r
+    eat(v) }
+fn main() { let w = W { items: Vec.new(), n: 1 }
+    f(&w)
+    eat(w.items) }

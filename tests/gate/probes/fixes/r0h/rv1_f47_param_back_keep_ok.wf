@@ -1,0 +1,20 @@
+// Clean twin of f32: main takes the reference after it ran the value.
+struct H { f: fn() }
+fn noop() {}
+effect Get { fn get() -> fn() }
+fn keep(h: &H) / Get, mut(h) { h.f = get() }
+fn s(k: fn()) -> H {
+    let h = H { f: noop }
+    handle Get { fn get() { resume(k) } } in { keep(&h) }
+    h
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = s(|| v.clear())
+    let x = h.f
+    x()
+    v.push(2)
+    let r = &v[0]
+    print(r)
+}

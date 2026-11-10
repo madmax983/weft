@@ -1,0 +1,14 @@
+// C2 with a multi clause: resume, run g, resume again; g reads v, which the callee cleared after the perform
+effect Run { multi fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    run(|| print(r))
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { resume(())
+        g()
+        resume(()) } } in { f(&v) }
+}

@@ -1,0 +1,19 @@
+// on abort calls a fn value that an extern function returns
+effect Stop { fn stop() }
+extern fn mk() -> fn()
+linear struct T { n: u64 }
+    on abort = undo
+fn undo(t: T) {
+    let T(n) = t
+    let f = mk()
+    f()
+}
+fn done(t: T) { let T(n) = t }
+fn body() / Stop {
+    let t = T { n: 1 }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Stop { fn stop() { () } } in body()
+}

@@ -1918,10 +1918,13 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0c | The leftovers of groups A and B | A1, A2, B1 | done (157ff56) |
 | R0d | Handlers in closure bodies; the two shapes of a handler that passes an operation on that R0b left | D2, C5 (C8, D5 stay: design note of R0d) | done (ec9563d) |
 | R0e | Tasks in closure bodies; a spawn that does not name its scope | E1, E3 (a new reason E3b stays for 2 programs of tier 1 and 3 of tier 2: R0e as built) | done (8b2c59c) |
-| R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, C7, E7 (E2, E4, E5 stay: R0f as built) | done (this stage) |
-| R0g | Continuations and capabilities in closures | D1, D4, C4, C6 | L |
-| R0h | Function values across operations | C2, D3 | M |
-| R0i | The other old inputs: `ValueProps`, W0502, W0303, `Analysis::sigs`, the seed facts (can run beside R1 and R2) | | M |
+| R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, C7, E7 (E2, E4, E5 stay: R0f as built) | done (f364e26) |
+| R0g | Continuations and capabilities in closures; a construct with no full facts is in scope only if the `ir` pipeline rejects the program | D1, D4, C4, C6, D5, C8 (D1 15/49, D4 1/2, D5 5/5 stay: R0g as built) | done (5aea3a8) |
+| R0h | Function values across operations: an operation of a caller gets a function value; a clause gets a function value of the callee, or gives a reference or a function value back to it | C2, D3 (after the fix of R0h C2 17/68, D3 1/1 stay; E2, E4, E5, C7, E7 stay: R0h as built, R0h fix as built) | done (c9da6d3) |
+| R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
+| R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
+| R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (closure-body copies at run nodes), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a: this stage |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -2807,6 +2810,963 @@ built (plan stage R0f)"):
   `fixes/r0d` (756 programs) each verdict is as at R0f. The fallbacks: E7 2/5 to 2/6 (the
   program that goes out of scope); the other counts of R0f do not change.
 
+R0g design note (continuations and capabilities in closures; the reasons D1, D4, C4, C6,
+and D5 and C8, which R0d left):
+
+- The six reasons are of two kinds. C4, C6 and part of D4 are forms that the facts can
+  model with the rules that exist: a closure whose maker frame is gone, a captured
+  capability of a closure that a callee or a closure made, and an escape through an
+  abort. D1 (a `resume` in a closure: the run of the closure is a resume point of the
+  clause), D5 and C8 (a re-entry of a clause frame after a `multi` operation, the design
+  note of R0d) need new kinds of facts: a summary part "resumes the continuation of
+  capture `k`" that splits the clause at the run node, and copied clause frames. Each one
+  is a stage of its own (size L), with its own proofs of E1 to E4.
+- The forms of the first kind. C4: σ of a closure that a clause gives to the handled body
+  or to the site takes the environment from the closure value (`made_sigma`), as for a
+  closure that a callee made: the states there have no values of the locals of the
+  clause. C6: σ of a captured capability of a made closure is the capability of the
+  handler that the capture names, if its handled body runs at the node, else none.
+  D4: an abort to a local handler outside the handler leaves the locals outside its
+  handled body with their values: W0313, as the old lowering does on its abort paths.
+- The forms of the second kind, in proportion. Most programs of D1, D5 and C8 are
+  rejected by the old pipeline (W0313 for a continuation that leaves the clause, W0502
+  for a `once` closure that resumes two times, W0503 for a `once` continuation that is
+  live across a `multi` operation). The facts with a weak form of the construct give the
+  same errors: a `resume` in a closure moves its argument and uses the continuation, a
+  clause has no re-entry. A rejected program does not run, so a rejection with facts
+  that are not whole lets no fault through. So such a program is in scope only if the
+  `ir` pipeline rejects it (`Scope::pending`, `weft_check::check_analysis`); else the old
+  pipeline checks it, as before. The same rule takes the D4 runs whose W0313 the fact
+  generator does not find. W0313 for a continuation is a new Rust check of the `ir`
+  pipeline (`clause::check_kont_escape`), with the texts of the old lowering.
+- What stays. A clean program with a `resume` in a closure (D1), a clause that performs
+  a `multi` operation after its `resume` (D5, C8), and a D4 form that the `ir` pipeline
+  accepts: the old pipeline checks them. Stage R0z needs the full forms (above) for them.
+- No rule of the spec changes. Probes: `tests/gate/probes/fixes/r0g/` (the bad form and
+  the clean twin of each shape). Corpus: `tests/programs/195_closure_conts.wf`.
+
+R0g as built:
+
+- C4 (`apply::closure_sigma`): a closure that runs where the locals of its maker clause
+  have no value (`clause::runs_with_maker` is false) gets σ of `made_sigma`. C6
+  (`made_sigma`): a `Cap` capture maps to the capability of the handler that the capture
+  names through the makers, if its handled body runs at the node (`apply::live_cap`), else
+  to nothing. A `Kont` capture maps to nothing and is pending (below).
+- D4 (`transfer::check_cap_apps`): a run with no capability for a `Cap(k)` perform notes
+  the handler of the capture (`clause::note_pending_escape`); a run whose node does not
+  run the clause of a live handler notes it with the flag "a W0314 is enough". At the end
+  of `factgen::emit` each noted handler needs a W0313 at the span of its `handle` (also of
+  another function: a closure that a callee made; `checks::handle_span`), else the
+  program is pending. The escape check of a `handle` also reads the abort edges to a
+  local handler outside it (`clause::note_past`, `Open::past`): a closure in a local that
+  lives on there is W0313 ("the local `f` keeps it", as `check_local_keeps`).
+- W0313 for a continuation (`clause::check_kont_escape`, `Escape::Kont`,
+  `checks::kont_escape`): at each end of a clause (its `Return` before and after its
+  `resume`, `run_clause` and `run_handled`) and at each `resume` of the clause, a closure
+  that can resume the continuation of the clause (`clause::resumes_kont`: a `Kont`
+  capture through the makers, `kont_capture_clause`, or a `Kept`/`ByRef` capture whose
+  value holds such a closure) in the value of the clause, in a local outside the `handle`,
+  in a heap slot, or in the argument of the `resume`. Escapes are one report for each
+  handler and clause (`Escape::same_report`).
+- Pending (`clause::note_pending`, `factgen::Scope::pending`, `factgen::Pending`):
+  a `resume` of a captured continuation (`clause::KONT_CAPTURED`, in `check_supported`,
+  `clause::resume`, `handlers::resume` and the `Kont` captures of σ), a row in a clause
+  (`analysis::run_rows`), a `multi` resume of a nested node (`clause::handle_run`), and a
+  D4 handler with no W0313. Each one has a weak form, and the program keeps both views
+  (`lib.rs`). `weft_check::check_analysis` (`check_pending`) checks the `ir` facts; with
+  an error the result is the `ir` result (alone in the `ir` mode, as `Checked::ir` in the
+  `both` mode), else the old pipeline checks the program and the scope gets the reason.
+  `factgen::components` gives no components for such a program (the fact oracle checks
+  nothing); `weft-gate` `oracle.rs` reads the fallback after the check, and `sigdiff.rs`
+  decides the scope with the check.
+- Tests: corpus `tests/programs/195_closure_conts.wf` (W0301, W0313, W0502, W0503 of the
+  forms, the clean twins) with its IR golden; the markers of `71_closure_modes.wf`,
+  `123_resume_scope_ends.wf` and `124_local_suspends.wf`, which come into scope (`old:`
+  where the facts with a weak form give other lines); probes
+  `tests/gate/probes/fixes/r0g/` (24: the bad form and the clean twin of each shape);
+  `weft-check` `ir_handlers.rs`
+  (`a_construct_with_no_full_facts_is_in_scope_only_if_the_ir_pipeline_rejects_it`, data
+  `tests/data/handlers/r0g/`; `the_rows_of_clauses_stay_with_the_old_pipeline` now has
+  three programs that the `ir` pipeline rejects), `weft-sema` `scope.rs`
+  (`a_construct_with_no_full_facts_keeps_both_views_for_the_check`; the stub of the
+  fallback tests is a clause that gives a function value back, D3), `cli.rs` (the same
+  stub).
+- The fallbacks, before (R0f fix, binary `weft-r0ffix1`) and after, tier 1 / tier 2, by
+  the note of `weft check` over each tier-1 file and over the programs of tier 2 that fell
+  back at C3 or R0f (scratchpad `r0g/before-t*.tsv`, `x9-t*.tsv`): D1 60/309 to 15/49, D4
+  15/46 to 1/2, C4 7/22 to 0/0, C6 6/15 to 0/0, D5 15/116 to 5/5, C8 2/2 to 0/0. The
+  programs whose first failing body was one of these and that still fall back show their
+  own reason: D3 34/59 to 36/93, C2 18/105 to 19/121, A2 2/53 to 3/61. 80 programs of tier
+  1 and 396 of tier 2 come into scope; no program goes out of scope. Each one that comes
+  into scope is rejected by both pipelines: the facts with a weak form are in scope only
+  for a program that the `ir` pipeline rejects, and the old pipeline rejects each C4, C6
+  and D4 program of the lists too. What stays: the clean programs of D1 (a closure that
+  resumes in its clause, a `resume` in a task), D5 (a clause that performs the `multi`
+  operation after its `resume`), and three D4 forms (the analysis keeps a value of a local
+  of the site from the resume point after the `handle`: `partb/p/e1_fp.wf`; a run in a
+  clause of a closure of an outer local handler: `r3/fidelity/p/sp1.wf`).
+- Gates: tier 1 0 blockers (4672 of 4859 in scope; 3731 same, 9 open, 274 fixed, 1
+  new-fp, 135 lost-clean, 139 moved, 570 changed; the 41 new `moved` and `changed` rows
+  are programs that come into scope, rejected by both pipelines, ledgered; the old
+  records of the 25 new entries and of the three corpus files with new markers are new
+  in `tests/gate/baseline-tier1.jsonl`, and the other old records do not change). Tier 2
+  (2 workers) 0 blockers (54243 of 57393 in scope; 40149 same, 10 open, 88 fixed, 12
+  new-fp (0.096 %, the rows of R0d), 0 lost-fault, 3443 lost-clean, 1837 moved, 11854
+  changed; the 222 rows that leave `same` come into scope, each ledgered, most by the
+  entries of the older stages for their codes). No new lost-clean row, so no row waits
+  for a signature. Fact oracle tier 1 0 failures (8 faults and 22 timeouts, as R0f; 1302
+  pass); a pending program gives the oracle no components. Sigdiff tier 1 0 rows with no
+  entry (one `sig` entry of R0g for 24 programs that come into scope). The fact oracle
+  over the 476 programs that come into scope (`ev.sh`): 0 failures (102 run it; the
+  pending programs give it nothing). `ereview/ev.sh` (binary `r0g/bin/weft-final`)
+  on the 476 programs that come into scope: 0 HOLE (380 rejected by both pipelines with
+  no fault, 96 held); on the 24 probes of the stage and the four corpus files: 0 HOLE (9
+  held, 10 rejected by both, 9 no fault); on the review sets of R0d to R0f (`r0frev/p`, `r0frev2/p`, `r0erev*/p*`,
+  `fixes/r0d`, `fixes/r0e`, `fixes/r0f`: 972 programs) each verdict is as at R0f fix (the
+  HOLE rows are older); one IR record changes (`r0erev3/p/d03_multi_clause.wf`, a D5
+  program that the `ir` pipeline now rejects with the W0312 of the old pipeline).
+- Open. The full facts of D1 (a summary part "resumes the continuation of capture `k`"
+  and the split of the clause at the run node), of D5 and C8 (copied clause frames), and
+  of the D4 forms above, for stage R0z. The facts with a weak form give fewer errors than
+  the old pipeline in some rejected programs (`123_resume_scope_ends.wf`: four W0301 of
+  the old pipeline after the run of a closure that resumes, in `resume_in_closure`,
+  `resume_in_callee`, `moved_in_closure` and `cleared_in_closure`; the text of the
+  ledger entry is correct from the R0g fix); such a program is rejected for its other
+  errors, and with no error it falls back.
+
+R0g fix as built (the review of R0g, round 1: blocker B1):
+
+- B1. A closure that a clause gives to the handled body (C4, in scope from R0g) runs
+  on a task of a scope, and the `ir` pipeline lost its changes: `weft check` gave no
+  error and the run read a freed cell (`r0grev/p/c4_14c_task_unit.wf` and six more;
+  the old pipeline gave W0301). The same hole is older for a closure that a closure
+  makes (`let mk = || (|| v.clear()); let f = mk()`, spawned or run in a scope body:
+  `t_06`, `t_11`, `t_13`, `t_14`, a HOLE at R0f fix too).
+- The root cause is not in the task path. A spawn is always in a scope body, and a
+  scope body is a body of its own that names the locals of its site through upvar
+  locals. `apply::made_sigma` took the variable of a `Kept` or `ByRef` capture only when
+  the walk through the makers reached the body of the run (`made_capture_source`,
+  `maker == body`), and `apply::other_maker` walked up from a handled body and a clause,
+  but not from a scope body. So in a scope body σ of the capture named only the place
+  of the closure value. For a task that place is the task's own (`task_start`, the
+  `own` filter), so `task_writes` and the change at the spawn node had nothing; for a
+  run in the scope body the change was of the place of `f`.
+- The fix (`crates/weft-sema/src/analysis/apply.rs`): `frame_capture_source` tries
+  `made_capture_source` for the body of the run and for each body whose frame it runs
+  in (a scope body, a handled body, a clause: as `alpha::unit_root`), and α reads the
+  source in the body that it found; `other_maker` walks up from a scope body too. The
+  states of a body have the values of the locals of those bodies, so the run changes
+  the variable itself (`mutates_at`/`reads_at` at the node, `task_writes`/`task_reads`
+  of the task, through the code of `task_start` that exists). This closes B1 and the
+  older `t_06` family; no fallback is added. A handled body and a clause that run a
+  closure that a closure of the site made now name the variable too (more exact facts
+  for `fixes/f14/made/k1`, `k2`, `k6`, with the same diagnostics).
+- Tests: corpus `tests/programs/196_made_closure_tasks.wf` (W0301 of C4 on a task, of a
+  clause closure in a local of the site on a task, of a made closure on a task and in a
+  scope body; the clean twins) with its IR golden; probes
+  `tests/gate/probes/fixes/r0g/rv1_*.wf` (11: the bad forms and their clean twins;
+  `rv1_c4_scope_direct.wf` falls back with an older F16 reason); `weft-check`
+  `ir_handlers.rs`
+  (`a_task_of_a_closure_whose_value_holds_its_environment_changes_the_environment`, data
+  `tests/data/handlers/r0g/rv1_*`).
+- The ledger text of `123_resume_scope_ends.wf` (R0g) now names the functions with the
+  four `old:` W0301 (`resume_in_closure`, `resume_in_callee`, `moved_in_closure`,
+  `cleared_in_closure`, lines 86, 97, 113 and 126): a `resume` in a closure, not in a
+  scope body.
+- Gates (binary `r0gfix/bin/weft-final`, `weft-gate`): see the rows "R0g fix" of the
+  table of the gates. Tier 1 0 blockers: only the 12 new files change (the snapshot of
+  the `ir` records against R0g: 7 programs with other diagnostics, all new; 17 other
+  digests, the 12 new files and `fixes/f14/made/k1`, `k1_c`, `k2`, `k2_c`, `k6`, `k6_c`).
+  The 12 old records are new in `tests/gate/baseline-tier1.jsonl`. Two new lost-clean
+  rows (`rv1_c4_task_unit_ok.wf`, `rv1_c4_site_local_spawn_ok.wf`: the old pipeline
+  gives W0301 at the spawn line, the interpreter runs them with no fault) are UNSIGNED.
+  Tier 2 (2 workers): each class count as R0g, and the rows that are not `same` are
+  as R0g. Fact oracle tier 1 0 failures. Sigdiff tier 1 0 rows with no entry (two `sig`
+  entries of the fix: `pins` for a task of such a closure, which is `opaque` as at R0g;
+  no `raises` for a scope body with no task). `ereview/ev.sh` on the 105 probes of the
+  review and the 35 probes of `fixes/r0g`: 0 HOLE but the old `c4_07` (`r0gfix/ev-final.tsv`);
+  the 11 HOLE rows of B1 and of the `t_06` family are `held`. The `weft check` result of
+  the 1448 programs of the R0g review sets and of R0g's `into.paths` does not change.
+- Open: `c4_07` (a clause stores a closure over a clause local into a field of a
+  parameter: old W0204, `ir` 0; R0f fix the same), issue #78.
+
+R0h design note (function values across operations: the reasons C2 and D3, and the rest
+of C7, E2, E4, E5 and E7):
+
+- The counts before R0h (binary `weft-r0gfix1`, by the note of `weft check`, tier 1 /
+  the tier-2 list of R0g; scratchpad `r0h/before-t*.tsv`): C2 19/121, D3 39/93, E2 13/24,
+  E7 12/6, C7 10/11, E4 5/91, E5 4/15. `ereview/ev.sh` on these 463 programs: the old
+  pipeline rejects each C2, C7 and E5 program. It accepts 15 D3 programs (five of them
+  fault: `opres.wf` and three `d1_callee_mut*.wf` of tier 2, a reference that a clause
+  gives back), 4 E2, 6 E4 and 3 E7 programs. So the risk of a new false positive is in
+  D3 and E only, and the 0.1 % rule of tier 2 has room for no new row.
+- C2 (a function value in an argument of an operation of a handler of a caller,
+  `templates::perform`). The clause is code of a caller: the body does not know it. So
+  the perform node runs the values of the arguments as code of a caller runs them
+  (`transfer::apply_value` with `FnVal::Unknown` and `Given::Args`), with the parameter
+  types and the result type of the operation: each value can run many times, also after
+  the others, and a value that can race (`task_unsafe`) is a task of the node in the
+  worst way (W0401, W0403, W0405), as the old lowering does. A perform with such a value
+  gets task nodes, as a call of a function value (`frames::value_task_args`). The result
+  of the operation can be one of the values (the clause can resume with it). The facts
+  of the perform itself (the places of the callers, `escapes_at`, `multi_at`) do not
+  change. A perform through a captured capability of a local handler keeps the reason
+  (its clause is known, and it runs in the closure).
+- D3 (a call that runs a clause of a local handler whose operation gives a function
+  value or a reference back to the callee, `clause::given_ops`). Three forms:
+  - P: a parameter of the operation holds a function value. The clause gets a value of
+    the callee: in the clause it is code of a caller (`FnVal::Unknown`) whose
+    environment is the places that the call gives (`clause::given`). So a run of it in
+    the clause lends those places.
+  - R: the result holds a reference and the clause resumes. σ(`Caller`) of the call gets
+    the places that the clauses can give to `resume`: the wildcard places of the locals
+    of the site that the clauses name, what their references point into, their `rc`
+    groups and the given places. So a change of the callee through the result of the
+    operation is a change of those places at the call (F16.3).
+  - F: the result holds a function value. The callee runs it as code of a caller runs a
+    value: the call node runs the values that the clauses give to `resume` many times,
+    at `Main` and at `Ret`, and the result of the call can hold them. A value that can
+    race keeps the reason: the call has no task nodes for it (the worst way needs them),
+    and the old pipeline accepts a clean sequential run (a new false positive).
+- E2, E4, E5, the rest of C7 and E7: each one needs a node or a value that the facts do
+  not have (a second run node of a spawn, the values that a shared cell gets after the
+  spawn, the places of code that no caller gives). The stage looks at them after C2 and
+  D3; a reason that does not get full facts at a reasonable size stays, and "R0h as
+  built" says why.
+- No rule of the spec changes. `Scope::pending` is not used. Probes:
+  `tests/gate/probes/fixes/r0h/` (the bad form and the clean twin of each shape). Corpus:
+  `tests/programs/197_fn_values_across_ops.wf`.
+
+R0h as built:
+
+- C2 (`templates::perform`, `transfer::perform_row`): a perform of an operation of a
+  handler of a caller with a function value in an argument runs the clause as code of a
+  caller that gets the arguments (`transfer::op_value_out`, `OpTy`), with task nodes for
+  each argument that can hold a function value (`frames::perform_to_caller`,
+  `nodes::phases_with`) and the facts of `templates::value_run` (the part of
+  `call_value` that both use). The result of the operation joins the result of the
+  code. Two forms keep the reason: a closure that does not race and has a capture whose
+  type holds a reference or a function value (`transfer::kept_value_risk`: the code can
+  keep it and run it after a change, and the facts of code of a caller have no part for
+  a kept value, R0f open item 1; `fixes/r0h/c2_stored_ref.wf` was a hole of the first
+  build), and a perform through a captured capability of a local handler.
+- D3 (`clause::call_clauses`; the early test of `factgen::emit` and
+  `clause::given_ops` are gone): form P, a function value of the callee in a parameter
+  of a clause, is code of a caller whose environment is the places that the call gives
+  (`clause::Given::values`). Form R, a reference result: σ(`Caller`) of the call also
+  names the places that the clauses can give back (`clause::back_places`,
+  `Handlers::back`, `Handlers::back_refs`); the new summary part `caller_muts` (the
+  body changes a place of a caller; also the worst cases and code of a caller) changes
+  them at the call (`apply::main`), the call reads them (`handlers::call_clauses`) and
+  its result can point into them (`transfer::back_ret`). This closes the old misses
+  `ir/work/map/opres.wf` (issue #48: W0301 in the callee) and `d1_callee_mut*.wf` of tier
+  2 (W0301 at the site). Form F, a function value result: the call runs each value that a
+  clause gives to `resume` at `Main` and `Ret` as code of a caller runs a value that it
+  gets (`transfer::given_back_apps`, `apply_given_back`, `templates::given_back_runs`,
+  `Handlers::given_back`, `given_refs`), and the result of the call can be one of them.
+  A value that can race, that holds a reference or a function value in a capture, or
+  that is `once` keeps the reason (no task nodes for the worst way, no part for a kept
+  value, no operand that a second run uses). Only a call that can perform the operation
+  counts (`clause::call_performs`): a value call of a closure of a clause that performs
+  nothing (`let f = get(); f()`) gives the clause nothing back.
+- E2, E4, E5 and the rest of C7 and E7 stay (no full facts at a reasonable size in this
+  stage). E2: a spawn has one node, and a second run of a `once` value needs a node after
+  the first run; the old pipeline accepts four clean programs of the form
+  (`s8_steal_fnparam.wf` in both tiers, `m2/p7046.wf`, `fixes/r0f/c09_cc_during_ok.wf`),
+  so a coarse rule is a new false positive (the 0.1 % rule of tier 2 has no room). E4:
+  the task needs the values that the shared cell gets after the spawn (the states of the
+  later assignments); the old pipeline accepts six clean programs of tier 2
+  (`seeds3/gen3_*`, `gen4_*`). E5: a task of code that no caller gives needs the worst way
+  of a task with the places of each parameter; each program of the lists is rejected by
+  the old pipeline, two with a fault, and the stage leaves it for the next one. C7 and E7:
+  a value that a value of a callee runs as a task runs at depth > 0, where the call has no
+  task nodes. `Scope::pending` is not used.
+- Tests: corpus `tests/programs/197_fn_values_across_ops.wf` (W0403, W0405, W0502 of C2
+  and D3 form P; W0301 of form R with an `old:` marker; the clean twins) with its IR
+  golden; the `old:` markers of the corpus files that come into scope (63, 86, 89, 122,
+  137, 143); probes `tests/gate/probes/fixes/r0h/` (29: the bad forms and their clean
+  twins: values run once and twice, on a task, kept in a field, given back as the result,
+  with a reference capture, `once` and linear values; references given back, changed,
+  given back again, made invalid by a second clause, into a local of a clause; function
+  values given back, run after a change, given back again, `once`, racing, spawned);
+  `weft-check` `ir_handlers.rs`
+  (`function_values_and_references_across_operations_have_full_facts`, data
+  `tests/data/handlers/r0h/`), `weft-sema` `scope.rs`
+  (`function_values_and_references_across_operations_are_in_scope`; the stub of the
+  fallback tests is a clause that gives the callee a value that can race), `cli.rs` (the
+  same stub). The claim map-N1 (`opres.wf`) holds in scope; its `edge` entry and the
+  `edge` entry of the three `d1_callee_mut` programs of tier 2 are gone.
+- The fallbacks, before (R0g fix, binary `weft-r0gfix1`) and after, tier 1 (the 4848
+  files of the manifest of R0g fix) / tier 2 (the list of R0g), by the note of `weft
+  check` (scratchpad `r0h/before-t*.tsv`, `after-t*.tsv`): C2 19/121 to 5/7, D3 39/93 to
+  2/13. The programs whose first failing body was one of these and that still fall back
+  show their own reason: C7 10/11 to 14/15, E5 4/15 to 6/31, A2 3/61 to 4/85. E2 13/24,
+  E4 5/91 and E7 12/6 do not change. 44 programs of tier 1 and 150 of tier 2 come into
+  scope; no program goes out of scope.
+- Gates (binary `r0h/bin/weft-final`, `weft-gate`): tier 1 0 blockers (4743 of 4901 in
+  scope; 3739 same, 14 open (+6 `open-old` probes of the forms that stay, -1 `opres.wf`),
+  276 fixed (+2: `opres.wf`, `fixes/r0h/d3r_callee_mut.wf`, which the old pipeline
+  misses), 1 new-fp, 0 lost-fault, 139 lost-clean (+2, UNSIGNED:
+  `fixes/r0g/c4_resume_arg_ok.wf`, `partb/s3fix/p/dbg2.wf`), 145 moved (+3), 587 changed
+  (+16), each new row ledgered; no program that was in scope changes its class). The old
+  records of the 30 new files are new in `tests/gate/baseline-tier1.jsonl`, and the other
+  old records do not change. Tier 2 (2 workers) 0 blockers (54393 of 57393 in scope, +150;
+  40044 same, 6 open (-4: `opres.wf` and three `d1_callee_mut` programs are `fixed`), 92
+  fixed, 12 new-fp (0.096 %, the rows of R0e), 0 lost-fault, 3444 lost-clean (+1, the
+  copy of `dbg2.wf`, the UNSIGNED entry), 1857 moved (+20), 11938 changed (+84); each
+  row that changes is a program that comes into scope). Fact oracle tier 1 0 failures (8
+  faults and 22 timeouts, as R0g; 1315 pass). Sigdiff tier 1 0 rows with no entry (five
+  `sig` entries of R0h for 17 programs that come into scope). `ereview/ev.sh` (2 at one
+  time): the 44 programs of tier 1 that come into scope, the 29 probes and corpus 197: 0
+  HOLE (30 held, 17 rejected by both, 19 no fault, 8 old misses that the `ir` pipeline
+  rejects or that fall back); the 150 of tier 2: 0 HOLE (30 held, 111 rejected by both,
+  5 no fault, 4 old misses that the `ir` pipeline now rejects); the review sets of R0g
+  (`r0grev/p`, `r0grev2/p`) and `fixes/r0g` (245): each verdict as with `weft-r0gfix1`
+  but one better (`c4_08` from no fault to rejected by both); the 3 HOLE rows are older
+  (`c4_07`, `k09`, `k10`).
+- Open: the forms that stay (above); code of a caller that keeps a value (R0f open item
+  1, the reason the risky forms stay); the summary oracle (A3) attributes a read or a
+  change through a reference that a clause gave to the handled body to the node `handle
+  post` (`verify/s5/diff/p/v1d.wf`, also an older program with a direct perform; the
+  programs that show it are rejected); a function with a stated row whose body changes a
+  place through a reference of an operation result has no such `mut` in its summary
+  (W0703 rejects it; `p8_opref_store_caller.wf`).
+
+R0h fix as built (the review of R0h, round 1: seven HOLE rows of one root cause):
+
+- The root cause. `clause::call_clauses` let a value that a clause gives back to the
+  callee go on when it could not race, held no reference in a capture and was not `once`.
+  For a value of the interface of the site (`FnVal::Param`, `ParamResult`, `Capture`) all
+  three tests are false. But the callee can keep such a value in a place that the call
+  gives, and the summary of the callee says that the place holds code of a caller
+  (`transfer::put_values` gives `FnVal::Unknown`), not the value: so a later run of the
+  place in the site or in its caller does not apply the closure that the caller gave
+  (`r0hrev/p/f32_param_back_keep.wf`: `s(k)` gives `k` back, `keep(&h)` puts it into
+  `h.f`, `main` runs `h.f` after it took a reference into the vector that the closure
+  clears; the old pipeline gives W0301, the run reads a freed cell). The same holds for
+  a value that a second local clause keeps (`f44`) and through a deeper perform (`f50`).
+- The fix (the minimal sound form): only a closure or an item that a clause gives back
+  goes on (`clause::call_clauses`); another value keeps the old pipeline (GIVES_BACK).
+  The same rule holds for C2: a value of the interface, or a value that the analysis does
+  not know, in an argument of an operation of a caller keeps the old pipeline
+  (`transfer::op_fn_args`; `c13_param_fn_vec`, `c14`, `c16` of the review; the old
+  pipeline misses them too). The precise form (a part of the summary for the values that
+  code of a caller keeps, R0f open item 1) is larger: it changes `put_values` for each
+  summary, and the review issues #78 and #79 keep it.
+- Two more forms of the review. `r01_two_level_mut` (both pipelines missed it): a body
+  that calls a function with the part `caller_muts` and has no back places passes the
+  part on (`Handlers::caller_muts_at`, `Emitted::caller_muts`, `FnParts::caller_muts`),
+  so `outer() { clear_picked() }` changes the places that the clause of `main` gives
+  back: W0301. A function with no body has `caller_muts` only for an effect with an
+  operation whose result holds a reference. `r39_two_level_param` (a HOLE of R0h; both
+  pipelines miss it): the callee holds a reference into its argument `&d` while a callee
+  of it clears `d` through the reference that the clause gives back; its own facts do not
+  see that the two places are one. A call whose callee changes a place of a caller and
+  whose arguments reach a root that a clause names itself (an upvar of the site, a value
+  that a clause gave to `resume`) keeps the old pipeline (`transfer::callee_caller_muts`,
+  `clause::BackPlaces::named`).
+- The summary-oracle failure "a callee makes a read ... at `handle post`" of the review
+  showed on the seven programs and on the clean twin `f47_param_back_keep_ok.wf`: these
+  programs now keep the old pipeline, so the oracle checks no facts there. The older
+  form of the failure (a direct perform, `r0h/t/v3.wf`) stays on rejected programs.
+- Not fixed (issues #78, #79): `p02_param_keep`, `p11_closure_relay_keep` (D3 form P: the
+  clause keeps a value of the callee; they keep the old pipeline through C2 in the
+  callee now, and the old pipeline misses them), `f54_param_result_back` (keeps the old
+  pipeline now), and the false positive `c10_ret_fn_out` (2 W0405 of the worst way of
+  code of a caller; the old pipeline accepts it, the run is clean).
+- Tests: probes `tests/gate/probes/fixes/r0h/rv1_*` (the seven blockers, the clean twin
+  `f47`, `r01`); `weft-check` `ir_handlers.rs`
+  (`a_given_back_value_of_the_interface_keeps_the_old_pipeline`, data
+  `tests/data/handlers/r0h/rv1_*`). The reviewer signed the lost-clean entry of R0h.
+- The fallbacks after the fix, tier 1 / tier 2 (the lists of R0h; scratchpad
+  `r0h/fix-t*.tsv`): C2 19/121 before R0h, 5/7 at R0h, 17/68 now; D3 39/93, 2/13, 1/1 now
+  (most D3 programs whose callee gives a parameter to an operation show C2 now); C7 10/11,
+  E5 5/16, A2 3/62. 39 programs of tier 1 and 143 of tier 2 come into scope against R0g
+  fix (5 and 7 fewer than at R0h: the copies of the `v1c` files and two mutants of tier 2,
+  `m00647_83_kept_values`, `m02208_66_cap_paths`, keep the old pipeline again, which
+  rejects them); no program goes out of scope against R0g fix.
+- Gates (binary `r0h/bin/weft-fix1`, `weft-gate`): tier 1 0 blockers (4739 of 4910 in
+  scope; 3752 same, 14 open, 277 fixed (+1: `rv1_r01_two_level_mut.wf`), 1 new-fp, 0
+  lost-fault, 139 lost-clean, 145 moved, 582 changed (-5: the `v1c` files keep the old
+  pipeline); the old records of the 9 new probes are new in
+  `tests/gate/baseline-tier1.jsonl`). Tier 2 (2 workers) 0 blockers (54386 of 57393 in
+  scope; 40051 same, 6 open, 92 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3444
+  lost-clean, 1857 moved, 11931 changed; the rows that differ from R0h are the 7 programs
+  that keep the old pipeline again). Fact oracle tier 1 0 failures (8 faults, 22
+  timeouts, 1315 pass). Sigdiff tier 1 0 rows with no entry (the `sig` entry of the `v1c`
+  files is gone). `ereview/ev.sh` (2 at one time) on `fixes/r0h`, `r0hrev/p`,
+  `r0grev/p`, `r0grev2/p`, `fixes/r0g` and the into-scope lists of R0h (581 programs):
+  0 new HOLE; against `weft-r0gfix1` each verdict is the same or better (127 from no
+  fault to rejected by both) but `r0hrev/p/c10_ret_fn_out.wf` (no fault to FP-IR, a
+  precision loss); the seven blockers are `held` (the old pipeline rejects them), `f47`
+  has no fault; the 3 HOLE rows are older (`c4_07`, `k09`, `k10`).
+
+R0i design note (the other old inputs of the `ir` pipeline; the scope report, "Other
+reads of `body/` that R1/R2 do not cover"):
+
+- The inventory at c9da6d3 (scratchpad `r0i/notes.md`). The `ir` pipeline reads:
+  - the facts of the old lowering (`Analysis::bodies`): the first facts of each body
+    (`factgen::seed`: the name, `effect_names`, `hidden_effects`, `library()`,
+    `started()`, `no_runtime()`), the function and the unit of each body (the builder,
+    the call graph, `factgen::run`), `no_runtime` of the handlers (`emit_parts`), the
+    row of a test body (`BodyFacts::effects`), and the exports of a body with no IR
+    (`exports::copy_old`, stage R4);
+  - the signatures of the old inference (`Analysis::sigs`). Most reads take a part of
+    the declaration (the types, the parameters, the stated places and row,
+    `declared`), equal to `FnDef::sig`: the inference changes only `effects`, and only
+    the parts other than the row of a function with a stated row. The reads of real
+    inferred parts: `pins` of a function with a stated row (`callgraph::summary_of`,
+    `effect_sig`), `reaches` of W0118 (`checks::on_abort_rows`), W0701 with the old
+    row (`Inference::old_rows`), the rows of the functions with no IR (`IrFacts::sigs`
+    starts as a copy of the old signatures), the rows that `fip::check` reads (W1004),
+    and the old W0118 for an emit that gives none (`OnAbortRows::old`);
+  - the diagnostics of the old lowering that `typeck_only` keeps: the W01xx, W0119,
+    W0120 and W0504 of `typeck` (stages R1 and R2), W0303 (a move through a
+    reference; `irbuild::reported` reads it for `NoIr::MoveThroughRef`), and W0502 of
+    `keep_modes` (a `once` closure into a place of plain data);
+  - `Binding::value` of the THIR tables (`ValueProps`: `linear`, `no_on_abort`,
+    `once`, `nonportable`): the recorder joins the `VarInfo` of the old value flow, and
+    `Builder::binding_props_of` puts it into the `LocalDecl::props` of a local of a
+    function type (also the cleanup: a `linear` local gets an `UnwindValue`);
+  - the constants `body::roots`.
+- The stage is two parts. Part a (this commit, "R0i as built") removes each read of the
+  old inference and of the old facts but `copy_old`: the declarations of the bodies
+  come from the program, the effect names from the facts of the IR, each signature
+  part from the declaration or from the summary, W0118 and W1004 from the signatures of
+  the `ir` pipeline. It changes no class of the gate.
+- Part b (R0i-b, the design for the next stage): the reads of the old value flow and of
+  the move diagnostics. They share one need: the builder must know the closures that
+  a local of a function type can hold, and it must go on after an error.
+  - `ValueProps`: the builder makes each body with the properties of the types only,
+    then a pass over the IR of the component joins, for each local of a function type,
+    the properties of the closures that reach it (`closure_props` of each
+    `Aggregate(Closure)`, a `Use` of another local, a field or an element read of a
+    place that holds one, the `ret.fns` and `ret.linear` of the summary of a callee,
+    the values that a clause or a resume gives). A parameter of a function type, and
+    code of a caller, are `many` and not linear (the caller cannot give a `once` or a
+    linear closure there: W0502, W0601 at the call). The cleanup reads `linear`, so a
+    body whose locals get a new property is built again with them (a fixpoint: at
+    most four bits for each local). The test: for each body of tiers 1 and 2, the
+    properties equal the `ValueProps` of the recorder, else a ledger entry.
+  - W0502 of `keep_modes`: with these properties, `factgen` checks each operand that
+    holds a `once` value and goes into a place of plain data: a field or an element of
+    an aggregate, the place of an assignment that is not a new binding, an argument of
+    a parameter that the callee keeps (the parts `puts` and `put_fns` of its summary),
+    with the text of the old lowering.
+  - W0303: the builder records each move through a reference with the span of the
+    expression and the text of its type (`TyTable::show`, with the text of the old
+    lowering for a function type: `fn() -> ()`), gives a placeholder operand and goes
+    on; a body with a record has the outcome `NoIr::MoveThroughRef` and the builder
+    gives the diagnostics (14 programs of tier 1 have more than one W0303 in a body).
+    `irbuild::reported` reads them, and W0303 joins `IR_DROPS`. A body that the
+    builder stops for another reason after a record keeps the record (the program has
+    the error, so it stays in scope as now).
+  - The gate: ideally no class change; `ereview/ev.sh` on each program whose
+    diagnostics change.
+
+R0i as built (part a):
+
+- The constants of the roots are `crate::roots` (`body::roots` uses them again for
+  the old lowering; `weft-check` reads `weft_sema::roots`).
+- `Analysis::decls` holds a `BodyDecl` for each body (the function, the unit, the
+  module, the name, `library()`, `started()`, `no_runtime()`), from the program and
+  the options (`lib.rs`, `body_decls`). `factgen::seed`, the builder, the call graph,
+  `factgen::run` and `exports::fill` read it, not the old facts.
+- `decls::effect_names` (with `std_effect`, before `decls::std_effects`) gives the
+  names of the user effects from the facts of the IR. 13 programs of tier 1 change
+  only the text of a diagnostic: an effect that only the facts of the IR name showed
+  its identity (`main.Note`) and the note of a private effect; now it shows its name
+  (`Note`) and the note of a missing handler (W0805, W0702; for example
+  `r2/fidelity/p/e1_resume_abort.wf`).
+- The reads of a declaration part take `FnDef::sig`. `pins` of a function with a
+  stated row comes from the body only (65 functions of 30 files of tier 1 lose the
+  `pins` of the old inference: a `sig` entry of class F19-SIG-PINS; the interpreter
+  reads `pins` only for a function item that `http.serve` runs, and none of them is
+  one). `Inference::old_rows` is gone (each function with IR has a summary).
+  `factgen::ir_sigs` gives `IrFacts::sigs`: the summary rows, and the declaration of
+  each other function; `IrFacts::no_ir` lists the functions whose body has no IR, and
+  `weft-gate sigdiff` and the test of the corpus signatures do not compare them. A
+  first build gave such a function the row of the worst case of its declaration: then
+  W1004 (`49_fip_paths.wf`, `unknown`) and W0901 (four packages of tier 2, for
+  example `verify/partb/S3/pkg1`) came from the worst case, as more errors of a
+  program with a type error. A test body has an empty row.
+- W0118 reads `reaches` from the summary (`checks::reaches`: a run of the part `runs`
+  that is not a task, or `unknown_multi`), only for a function with IR. The 14 programs
+  of tier 1 with this W0118 keep it. A first build counted each run and the worst case
+  too: then a function with a type error (`fd1_v2_generic.wf`, nine mutants of
+  `r2/oracle/runs`) and `verify/s5/R3x/p1/c14_task.wf` (a task `s.spawn(|| x)` with
+  `x` of a type parameter: the summary has a run of the parameter as a task) got one
+  more W0118. `factgen::run` gives W0118 for an emit with none. `OnAbortRows` is gone.
+- `fip`: `factgen::run` checks each `fip` function with the signatures of the `ir`
+  pipeline.
+- Test: `weft-sema` `tests.rs`
+  `the_ir_pipeline_reads_no_old_signature_and_no_old_fact` (a run on an analysis with
+  wrong old signatures and old facts gives the same facts, rows and diagnostics).
+- What still reads the old pipeline: `copy_old` (stage R4), the THIR tables and the
+  `typeck` diagnostics (stages R1, R2), `ValueProps`, W0502 and W0303 (R0i-b).
+- Gates (binary `r0i/bin/weft-final`, `weft-gate`): tier 1 0 blockers, each row as at
+  R0h fix (4739 of 4910 in scope; 3752 same, 14 open, 277 fixed, 1 new-fp, 0
+  lost-fault, 139 lost-clean, 145 moved, 582 changed). Tier 2 (2 workers) 0 blockers,
+  each row as at R0h fix (54386 of 57393 in scope; 40051 same, 6 open, 92 fixed, 12
+  new-fp (0.096 %), 0 lost-fault, 3444 lost-clean, 1857 moved, 11931 changed; 4
+  timeouts). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, 1315 pass, as R0h
+  fix). Sigdiff tier 1 0 rows with no entry (40076 functions compared, 584 fewer: the
+  functions with no IR; the new `sig` entry of R0i for `pins`). No new probe, so the
+  manifest, the oracle caches and the baseline of tier 1 do not change; no new
+  lost-clean row. The diagnostics of `weft check` on `tests/programs` and
+  `tests/gate/probes` (5247 files) against `weft-r0hfix1`: only the 13 texts of the
+  effect names change; `ereview/ev.sh` on those 13 and the 30 files of the `pins` entry
+  (44 with the first-build file `fd1_v2_generic.wf`): each verdict and each fact-oracle
+  column as with `weft-r0hfix1` (21 held, 14 rejected by both, 7 no fault, 2 old
+  misses; 0 HOLE).
+
+R0i fix as built (the review of R0i, round 1: no blocker; the lost diagnostics of the
+review, scratchpad `r0irev/notes.md`):
+
+- W0118 `reaches` (`checks::reaches`). Part a left out each task run ("the scope gives
+  W0118 already"), but a local `Fail` handler around the scope catches the failure of
+  the scope (`summarize::caught`): `r31`, `r34`, `r35`, `r37`, `r38`, `r40`, `r41` of
+  the review lost the W0118 of the old inference, and the unwinder run faults (no
+  handler for `Ask.ask`); W0601 and W0602 of the old `ValueProps` held them, so they
+  would be holes after R0i-b. Now a run of the part `runs` counts, a call or a task,
+  if it is a run of a capture or of a parameter whose type has a function part
+  (`props::ir_has_fns`); a task of a value of a type parameter (`s.spawn(|| x)`,
+  `verify/s5/R3x/p1/c14_task.wf`) does not.
+- A run of a function value that the body does not know: `unknown_multi` is the
+  `multi` of the program, so part a missed the run in a program with no `multi`
+  operation (`r16`: W0118 lost; `r05`, `r14`, `r17`, `r19`: the line lost). The new
+  summary part `unknown_runs` (`Em::code_unknown`: a run of code of a caller that is no
+  value of the interface; `Handlers::unknown_runs_at`: a call of a function or a
+  closure with the part; `Inferred::unknown_runs`) gives it, also through a callee:
+  `r18` (an `on abort` function that calls a function that runs an extern result) now
+  gets W0118, which both binaries before missed (`ev.sh`: HOLE+oldmiss to oldmiss; the
+  fault is the stub of the extern function). `unknown_multi` does not count any more:
+  the worst case of a callee with no IR has it (`r28` keeps its rows).
+- `weft deps`: a function whose body has no IR gets the row of the worst case of its
+  declaration again (`factgen::ir_sigs`; a stated row stays), so W0901 of
+  `fixes/r0i/pkg1_deps_noir` stays (it names each standard effect but `io`, not only
+  `log`). The four packages of tier 2 that got a new W0901 in the first build of part
+  a get it (`verify/partb/S3/pkg1`, `verify/review_edge/Edge/pkg2`: an unknown name;
+  `verify/quality/manifests/depitems`, `verify/review_edge/Edge/pkg3`: a declaration
+  error); the worst case is sound but not precise (`pkg3` `info` only prints), and each
+  program has the error of the body already (a comment in the ledger). `fip` takes the
+  declaration of a function with no IR: `f06` of the review loses the old W1004 (its
+  W1003 and W0102 stay).
+- `irbuild::reported` and `typeck_error` count no code of `OLD_INFERENCE_CODES` (W0118
+  and W1001 to W1004: `analyze` gives them from the old signatures for the old
+  pipeline). The test `the_ir_pipeline_reads_no_old_signature_and_no_old_fact` also
+  takes these diagnostics out of `Analysis::diags` and puts wrong ones in, and it has
+  a program with a declaration error and the probes `r31`, `r16`.
+- The ledger entry F19-SIG-PINS of R0i names the part `pins` of the summary too (the
+  `opaque` mark of a task, the stealable sink, the callers): the review found the same
+  `weft facts` and the same oracle runs on the 30 files.
+- R3 must move `crate::infer::{growth_limit, not_converged, SIG_PLACE_STEPS}` out of
+  `infer.rs` before it deletes it (R3 text).
+- Probes `tests/gate/probes/fixes/r0i/` (15 files of the review and the package
+  `pkg1_deps_noir`); tests `analysis_units.rs`
+  `an_on_abort_function_that_runs_an_unknown_value_is_w0118`, `cli.rs`
+  `a_dependency_function_with_no_ir_keeps_its_authority`.
+- Gates (binary `r0i/bin/weft-fix1`, `weft-gate-fix1`): tier 1 0 blockers (4926; 3756
+  same, 14 open, 278 fixed, 1 new-fp, 0 lost-fault, 139 lost-clean, 145 moved, 593
+  changed: the 16 new probes are 4 same, 1 fixed (`r18`) and 11 changed, each one
+  rejected by both and accepted by entry 6; the other rows as at R0i). The manifest, the
+  two oracle caches and `tests/gate/baseline-tier1.jsonl` get the 16 rows of the new
+  probes, and no other row changes. Tier 2 (2 workers) 0 blockers (40047 same, 6 open,
+  92 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3444 lost-clean, 1857 moved, 11935
+  changed; 4 timeouts): against R0h fix only the four packages of the W0901 of the
+  worst case (`same` to `changed`, both reject, `ev.sh` the same verdicts with both
+  binaries). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, 1315 pass). Sigdiff
+  tier 1 0 rows with no entry (two `sig` entries of the fix for the new probes). The
+  diagnostics of `weft check` on `tests/programs`, `tests/gate/probes` and
+  `r0irev/p` against `weft-r0hfix1`: the 13 texts of R0i, `r18` (one more W0118, a
+  real one) and `f06` (W1004 goes); `ereview/ev.sh` on these: each verdict the same but
+  `r18` (HOLE+oldmiss to oldmiss); 0 new HOLE. The review probes `r31` to `r41`, `r05`,
+  `r14`, `r16`, `r17`, `r19` and `r28` have the diagnostics of `weft-r0hfix1` again.
+
+R0i-b as built (the old value flow and the move diagnostics; the review of R0i, round
+2, also found that the part `unknown_runs` was not set in closure and clause bodies):
+
+- `irbuild::values` gives the properties of the values of the bindings
+  (`BindingValues`: linear, no `on abort`, `once`, nonportable) from the IR: a value flow
+  over the whole program to its fixpoint. Each local starts with the props of its
+  declaration; a closure gets the props of its captures (`once` also for a capture that
+  is not `many` or `@ uniq`, and for a body that calls a `once` value) and of
+  `ClosureDecl::once`; an assignment, an aggregate, a reference, an iterator, a call (the
+  result of the callee with the arguments for the parameters that its result can be),
+  a write behind a reference or into an `rc` object (also of a callee, by parameter, and
+  of a callee with no body into an argument that is a reference to a type with a
+  function part: `Vec.push`), a perform (the clause parameters, the values of `resume`),
+  a `handle`, a `scope` and an upvar pass them on. A parameter gets nothing from the
+  callers, as in the old value flow. `Builder::binding_props_of` reads them
+  (`Decls::values`), not `thir::Binding::value`. The builder runs in rounds
+  (`irbuild::build_all`, at most `MAX_ROUNDS`): the first with the props of the types,
+  each next one with the values of the IR of the round before, until they do not change
+  (the cleanup reads `linear`, so the IR depends on them). `build_with` is the test hook
+  that builds with given values. A closure that captures a `@ uniq` value (the analysis
+  knows the mode, the builder does not) is not `many`: `factgen::not_many` marks each
+  variable of a local of a type with a function part that can hold it (W0503).
+- A scratch test compared the local props of the bindings with those of the old values
+  on the 5374 files of `tests/programs`, `tests/gate/probes` and the review probes
+  (scratchpad `r0i/vcmp.tsv`): 113 144 the same, 203 more and 193 fewer in an early
+  build. The IR gives more for a linear closure that a clause parameter, a `Vec` or a
+  handle result gets, and for a closure of a returned closure; fewer for a closure that
+  captures a `@ uniq` reference (`not_many` gives it in the facts) and for parts of a
+  container whose type does not show them. The diagnostics decide: the diff below.
+  A capture of a type with no function part takes the props of its declaration (a part
+  of a linear struct is not linear by itself: `verify/s5/R3x/p1/c1_closure.wf` keeps
+  W0118 of a dropped type parameter), and a reference to a place behind a reference
+  (`&(*ks)`) points where that reference points (so a callee that pushes into `ks` gives
+  its caller the value, not its own parameter: `stored_linear.wf` of `weft-check`).
+- W0303: the builder records each move through a reference (`read_place` with the
+  location of the expression, of the statement for `let x = <place>`; `bind_how`) and
+  goes on; the body has no IR and the builder gives each W0303 (`Decls::moves`). A move
+  out of an `rc` object gives W0303 with IR (the old lowering gave it). A copy of a
+  function value behind a reference or an `rc` object whose value can be a closure that
+  moves a capture and whose type does not come from a declared function type is W0303
+  too (`values::once_reads`, `fixes`: `r3/redteam/p/f2_kesc.wf`). `irbuild::reported`
+  does not read W0303 of the old lowering; W0303 and W0502 join `IR_DROPS`.
+- W0502 of `keep_modes`: `values::once_into_plain` (`docs/ir.md` 5.36). A closure that
+  moves a capture and is not linear goes into a field of a declared function type of a
+  struct or variant literal, into an assignment to such a field, or into an argument of
+  a function item whose parameter type is not a function type while another argument is
+  a place of a stated type (a parameter, a `let` with a stated type, `Decls::stated`, a
+  field). A body with no IR gives no W0502 (`verify/s5/R2c/p/c1.wf` and `or9_v1.wf`
+  lose the old W0502 of a body with a type error).
+- `unknown_runs` in closure and clause bodies: `closure_summary` gives it from its `Em`
+  (`summarize::closure`), a clause sets `Handlers::clause_unknown`, and the function
+  counts each node of `Handlers::unknown_runs_at` (the clauses of the function too). So
+  `u06`, `u13`, `u14` of the review get W0118 again, and `u18` to `u20` (an item that
+  runs an extern result, called from a clause, a closure or a task) get it now (each
+  pipeline before missed them). `u04` (an item that runs an extern result as a task)
+  stays (ledger `open-old` R0i-U04: the fault is the stub of the extern function).
+- r31 to r41 of the first review: each one is still rejected (W0118 of `reaches`, and
+  W0601 and W0602 of the values of the IR).
+- Tests: `weft-sema` `tests.rs` `the_ir_pipeline_reads_no_old_signature_and_no_old_fact`
+  (also wrong `Binding::value` and wrong W0303 and W0502 of the old lowering),
+  `analysis_units.rs` (`the_builder_gives_w0303_and_w0502_of_a_once_closure`,
+  `the_values_of_the_bindings_come_from_the_ir`, the probes `u06` to `u20` in
+  `an_on_abort_function_that_runs_an_unknown_value_is_w0118`); probes
+  `tests/gate/probes/fixes/r0i/` (`u01` to `u20`, `g01` to `g07` of the review).
+- What still reads the old pipeline: `copy_old` (stage R4), the THIR tables and the
+  `typeck` diagnostics (R1, R2). The recorder still fills `Binding::value`, and no part of
+  the `ir` pipeline reads it.
+- Gates (binaries `r0i/bin/weft-b1`, `weft-gate-b1`): tier 1 0 blockers (4953 of
+  them; 3768 same, 15 open, 283 fixed, 1 new-fp, 0 lost-fault, 140 lost-clean, 145
+  moved, 601 changed: the 27 new probes are 13 same, 1 open (`u04`, ledger `open-old`),
+  5 fixed (`u03`, `u09`, `u18` to `u20`), 8 changed; `c2_linear_drop` gets W0601 and
+  W0602 of the clause (ledger `changed`); `d6_closure_via_clause` is `lost-clean`
+  (UNSIGNED, below); the other rows as at R0i fix). The manifest, the oracle caches and
+  the baseline of tier 1 get the 27 rows of the new probes, and no old record changes.
+  Tier 2 (2 workers) 0 blockers (40045 same, 6 open, 92 fixed, 12 new-fp (0.096 %), 0
+  lost-fault, 3446 lost-clean (+2: `d6` and `verify/s5/R3t/w0303.wf`, both UNSIGNED),
+  1857 moved, 11935 changed; 4 timeouts). The rows that differ from R0i fix: `w0303.wf`
+  (lost-clean: the old W0303 of a copy of a closure that moves no capture), `o35vv.wf`
+  (the same W0303 goes, still rejected; ledger `changed`), `p4982`, `p25330` (one more
+  W0401 or W0503 on a line with the code), two mutants of corpus 122 and the copies of
+  `c1.wf` and `or9_v1.wf` (the old W0502 of a body with no IR goes), `d6`. Fact oracle
+  tier 1 0 failures (8 faults, 22 timeouts, 1316 pass). Sigdiff tier 1 0 rows with no
+  entry (ledger `sig` entries for `g03`, `g05`, `u09`, `u12`).
+- The diagnostics of `weft check` on `tests/programs`, `tests/gate/probes` and the review
+  probes (`r0irev/p`, `r0irev2/p`) against `weft-r0ifix1`: `c2_linear_drop` (+W0601,
+  W0602), `d6_closure_via_clause` (-W0601 at the end of `main`), `c1.wf` and `or9_v1.wf`
+  (-W0502 in a body with a type error), and the probes `u01`, `u02`, `u06`, `u08`,
+  `u09`, `u13` to `u16`, `u18` to `u20` (W0118 of `reaches`). `ereview/ev.sh` (2 at one
+  time) on these and on the rows of tier 2 above (23 files): each verdict is the same or
+  better (`u06`, `u13`, `u14` HOLE to held; `u18` to `u20` HOLE+oldmiss to oldmiss;
+  `w0303` both-reject to no fault) but `d6`: held(AST-only) to HOLE(AST-only). The IR
+  engine runs `d6` clean (seeds 1 to 3) and the fact oracle passes; only the AST engine
+  faults, when it runs the `on abort` of `tx` that the closure kept by the clause owns
+  (the AST compiler goes in stage R4). The lost-clean row is UNSIGNED for the review.
+
+R0i-b fix as built (the review of R0i-b, round 1: a blocker of one root cause):
+
+- The blocker. `irbuild::values` had no rule for the terminators `Spawn`, `Join`, `Fork`
+  and `Resume`, though each one gives its destination a value. A linear closure that
+  came back from `t.join()`, from a `fork` branch or as the value of `resume(..)` in a
+  clause was not linear in the IR, so the cleanup gave the local no `UnwindValue`, and
+  on an abort the `on abort` of the captured value did not run (the IR engine: "a live
+  linear value is left after the cleanup chain"; `fixes/r0i/rb/a16_task_join`, `a21`,
+  `a22`, `a23_fork_result`, `a28_resume_dest`).
+- The fix: a task handle names its spawn site (`Val::tasks`), and the result of each
+  site is the result of a run of the value of the task (`Flow::tasks`, also for a branch
+  of a `fork` and for the `TaskResult` local of a task that the scope keeps); a `join`
+  gives the result of each site of the handle, a `fork` the results of its branches,
+  and `resume` the value `_0` of the handled body of its clause (`Flow::handled_of`, also
+  from a closure of the clause). Each terminator that gives a destination a value has a
+  rule now. The probes give `rollback 1` on the IR engine, as with `weft-r0ifix1`, and
+  `a07`, `a09`, `a11`, `a19` (HOLE with `weft-r0ifix1`) stay closed.
+- A capture of a type with a function part in a field (`Holder { cb: fn() }`) takes
+  the value of the flow (`props::ir_has_fns`, not `TyTable::mentions_fn`, which sees
+  only the type arguments); `the_values_of_the_bindings_come_from_the_ir` checks that
+  such a struct holds a linear closure.
+- Not fixed: `a25_join_dropped`, `a27_fork_dropped` (a linear closure from a `join` or a
+  `fork` that the program drops: no W0601 in any binary of the `ir` pipeline; the old
+  pipeline rejects them). The IR has the value now (the local is linear and its cleanup
+  runs), but the analysis of the facts gives the run of a task the result
+  `FnVal::Unknown` with no linear flag (`tasks::task_result`, `handle_value`), so no
+  W0601 at the end of the local. The fix needs the result of a task in the domain of the
+  analysis (a part for the values of a task); it is larger than this fix, and the two
+  probes, which are `lost-fault`, are not in the probe set (scratchpad
+  `r0i/rb-excluded/`). `n06_resume_fork` (W0401 of a nonportable closure that comes back
+  from an operation and a `fork` branch runs; the oracle does not check it, so the
+  gate class is new-fp, which the 0.1 % rule of tier 1 has no room for; FP-IR also with
+  `weft-r0ifix1`) is not in the set either, and neither are `a07_resume` and
+  `n06_resume_spawn`: the summary oracle (A3) fails on them with each binary
+  (`weft-r0ifix1` too; a read of a value that a clause gave to the handled body is at
+  the node `handle post`, the open item of R0h fix), so they would be the first
+  failures of the fact oracle of tier 1; `a07` (a HOLE of `weft-r0ifix1`) runs clean
+  on the IR engine with the fix.
+- Probes: the 127 other probes of the review in `tests/gate/probes/fixes/r0i/rb/`; the
+  test `analysis_units.rs`
+  `a_linear_closure_from_a_task_a_fork_or_resume_is_linear` (the five blockers). The
+  reviewer signed the two lost-clean rows of R0i-b (`d6_closure_via_clause`,
+  `verify/s5/R3t/w0303.wf`). New ledger rows: 12 lost-clean probes of the review that the
+  `ir` pipeline accepts and the IR engine runs clean (UNSIGNED), 28 `changed` and 1
+  `moved` (both pipelines reject), three `sig` entries.
+- Gates (binaries `r0i/bin/weft-b2`, `weft-gate-b2`): tier 1 0 blockers (5080; 3847 same,
+  15 open, 285 fixed, 1 new-fp, 0 lost-fault, 152 lost-clean, 146 moved, 634 changed:
+  the 127 probes are 79 same, 2 fixed, 12 lost-clean, 1 moved, 33 changed; the other
+  rows as at R0i-b). The manifest, the oracle caches and the baseline of tier 1 get the
+  127 rows, and no old record changes. Tier 2 (2 workers) 0 blockers, each row as at
+  R0i-b (40045 same, 6 open, 92 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3446
+  lost-clean, 1857 moved, 11935 changed; 5 timeouts, one more than R0i-b on a loaded
+  machine). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, 1350 pass). Sigdiff
+  tier 1 0 rows with no entry.
+- The diagnostics of `weft check` on `tests/programs`, `tests/gate/probes` and the
+  review probes against `weft-r0ib1`: only `rb/n04_holder_whole_fork` and
+  `rb/n13_holder_callee_fork` (W0401 a second time on the line of the `fork`: the holder
+  holds the nonportable closure, `ir_has_fns`). Against `weft-r0ifix1`: the changes of
+  R0i-b and these two. `ereview/ev.sh` (2 at one time) with the three binaries on the
+  36 files that change, and on the five blockers and `a07`, `a09`, `a11`, `a19`: the
+  blockers HOLE (with `weft-r0ib1`) to no fault (as with `weft-r0ifix1`); `a07`, `a09`,
+  `a11`, `a19` no fault (HOLE with `weft-r0ifix1`); each other verdict as with
+  `weft-r0ib1` (`n06_resume_fork` FP-IR with each binary, `d6` HOLE(AST-only), signed);
+  `a25`, `a27` HOLE with each binary (above).
+
+R0j design note (the task fallbacks of groups E and C; 58 programs of tier 1 with
+`weft-r0ib2`):
+
+- The six reasons. E: a task that runs a callback more than once (`TASK_AGAIN`, 13), a
+  task that runs a function variable that gets a new value (`TASK_LATE`, 11), a task
+  that runs code of a caller (`TASK_CODE`, F19, 8), a task of a scope that the spawn does
+  not name and that the analysis does not find (E3b, 4). C: a function value that a
+  function value of a callee runs as a task (R0e fix 2, 12), a function value that runs
+  a value of its arguments as a task (`VALUE_TASKS`, 10).
+- Full facts. E3b: a scope operand that can be the capability of more than one scope,
+  and of no other value. Each of these scopes is live at the spawn, so the scopes are
+  nested, and the task ends at or before the end of the outer scope. The facts end the
+  task at the outer scope (`SiteScope::end`: `joined_at` at its `ScopeWait` and on its
+  cleanup chain). A task that ends at an inner scope runs a longer time in the facts:
+  this is sound for each check of a running task, and it can only add errors. A spawn
+  through a reference to the capability, or on scopes that are not nested in one unit,
+  stays pending (below).
+- The other five reasons need facts of a new kind: a second node for each run of a
+  value that a task runs again (a spawn has one node), the later values of a shared
+  cell in the run at the spawn node, the worst way of code of a caller (with the places
+  that the code changes), and the task nodes of a value that a value runs as a task.
+  Each one is a stage of its own (size L), with its own proofs. In this stage these
+  forms use the rule of stage R0g (`Scope::pending`): the facts keep the weak form (the
+  run at the spawn node, the code of a caller as a plain run), the `ir` pipeline checks
+  the program first, and an `ir` error is final. Else the old pipeline checks the
+  program, as before. A rejected program does not run, so a rejection with facts that
+  are not whole lets no fault through. The `ir` pipeline can report fewer errors of a
+  rejected program than the old pipeline (corpus `84_task_stores.wf`,
+  `114_repeated_callbacks.wf`: `old:` markers).
+- What stays. A program of these five forms that the `ir` pipeline accepts: the old
+  pipeline checks it. A function value that changes places or holds a nonportable value,
+  and that code of a caller can run on another thread (F18, `TASK_RUN`), which R0j
+  shows on four programs of tier 1 that failed first on another reason: with the weak
+  facts the worst way of a foreign task gives W0403 at the call of a clean program
+  (`fixes/r0j/j07_run_ok.wf`), so the pending rule does not apply, and the reason stays.
+- No rule of the spec changes. Probes: `tests/gate/probes/fixes/r0j/` (a bad form and a
+  clean twin of each reason). Tests: `scope.rs` `the_task_fallbacks_are_pending`,
+  `analysis_units.rs` `a_spawn_on_one_of_nested_scopes_ends_its_task_at_the_outer_scope`.
+
+R0j as built:
+
+- E3b (full facts): `tasks::SiteScope::end` gives the scope that ends the task: the one
+  scope of the operand, or the outer one of more than one scope whose bodies nest in one
+  unit (`unit_inside`), if the operand can be no other value. `templates::site_in_scope`,
+  `unowned_spawn`, `handlers::owned_by_value` and `handlers::owned_by_clause` read it.
+  A spawn through a reference to the capability (`fixes/r0e/u10_ref_scope.wf`) stays
+  pending.
+- Pending (`templates::pending`, `clause::note_pending`): `TASK_AGAIN`, `TASK_LATE`,
+  `TASK_CODE` (`templates::task_start`), `VALUE_TASKS` (`value_run`: the run keeps no
+  task nodes) and R0e fix 2 (`transfer::NESTED_TASK_RUN`). `TASK_RUN` (F18) stays a
+  fallback (design note).
+- Corpus: `84_task_stores.wf` (three lines `old: W0314`), `114_repeated_callbacks.wf`
+  (one line `old: W0301`). The probe `fixes/r0i/rb/n11_enum_nongeneric_fork.wf` leaves
+  the gate set: with the pending rule its correct W0401 (a nonportable closure in a
+  `fork` branch) is a new-fp row of the oracle, which sees no fault, and tier 1 has room
+  for no second new-fp row.
+- Fallbacks: tier 1 125 to 84 on the files of R0i-b (91 with the 17 probes of
+  `fixes/r0j/`; left of the R0j reasons: `TASK_AGAIN` 4, R0e fix 2 4, `TASK_LATE` 3, and
+  `TASK_RUN` 4, which the end of the first reason shows); tier 2 3007 to 2907.
+- Gates (binaries `r0j/bin/weft-j1`, `weft-gate-j1`): tier 1 0 blockers (5096; 3838 same,
+  14 open, 286 fixed, 1 new-fp, 0 lost-fault, 152 lost-clean, 146 moved, 659 changed);
+  tier 2 (2 workers) 0 blockers (39990 same, 6 open, 92 fixed, 12 new-fp (0.096 %), 0
+  lost-fault, 3446 lost-clean, 1858 moved, 11989 changed); fact oracle tier 1 0 failures
+  (8 faults, 22 timeouts, 1352 pass); sigdiff tier 1 0 rows with no entry. No new
+  lost-clean row. New ledger rows: one `changed` entry, one `moved` entry, two `sig`
+  entries; the `open-old` entry R0i-U04 goes (the `ir` pipeline gives W0118 now).
+- `ereview/ev.sh` on the 48 files whose diagnostics or scope change, against
+  `weft-r0ib2`: 31 held to held, 13 fallback to both-reject, `j06_unowned_ok` no fault,
+  `fixes/r0i/u04_item_task_extern.wf` FP-IR (its fault is the stub of an extern function,
+  "a task needs a closure", which `ev.sh` does not count; the gate row is `fixed`). No
+  HOLE.
+
+R0k design note (revised at R0k-a; the first form of the note is in 5d8106c): the
+operation fallbacks C2 and D3, the re-entry forms and the task leftovers (91 fallbacks
+of tier 1 with `weft-r0j1`: C2 21, D3 18, D1 18, D5 6, F18 6, E2 5, R0e fix 2 5, E4 4,
+A 3, D4 2, E5 1, C8 1, `VALUE_TASKS` 1):
+
+- The pending rule does not apply to C2 and D3: its weak forms reject clean programs
+  (`fixes/r0k/k01_c2_param_ok`, `k02_c2_capture_ok`, `fixes/r0h/d3f_dangling_ok`).
+- C2 and D3 by call-site copies (stage R0k-a, below): a call that a local handler serves
+  with a function value or a reference gets a copy of the code of the callee, so the
+  perform is a perform of the local handler. The design review of R0k (scratchpad
+  `r0kdes/notes.md`) showed that a summary part (`op_values`, and the order part
+  `before(o)`/`after(o)`/`Back(o)` of the first form of this note) is unsound for a
+  perform that runs more than once (a loop, two performs, `multi`) unless it has a cycle
+  for each repeated perform, and the copy gets those orders from the CFG.
+- What stays for later stages:
+  - R0k-a2, closure-body copies: a perform in a closure that the callee (or the site)
+    makes and runs, and a perform through a captured capability of a local handler. The
+    call of the closure value is a run node whose value only the analysis knows, so the
+    copy needs the closure body at the run node, from the states. Programs of tier 1:
+    `fixes/r0k/rv_p07_d3_in_closure` (and `_ok`), `verify/s5/S5a/x/p/e2b_e_job`,
+    `e2b_e_mk_job`, `e2b_e_struct`, `e2b_variants`, `verify/partb/p/a2_escapes`,
+    `a4_get_own`, `verify/s5/diff/p/v1c_stored`, `partb/s3fix/p/b2_call`,
+    `tests/programs/66_cap_paths.wf`, `85_op_args.wf`, and `verify/partb/p/g2_lexical`
+    (D3, a closure that a clause makes performs the effect of an outer handler).
+  - Recursive callees and callees over the bound: the summary-part design of the first
+    form of this note, with the changes of the design review (a cycle
+    `Back(o) -> after(o) -> Back(o)` for a repeated perform, a clause run per perform,
+    loans and reads in the split, composition through calls and closure runs, the abort
+    edges, `multi` re-entry to `Back(o)`), is the plan for them. No program of tier 1
+    needs it now.
+  - D1, D5 and C8 (stage R0k-c): a resume point of the clause at the run node of a closure
+    that resumes a captured continuation, and copied clause frames for a `multi`
+    operation in a clause. A copy that brings such a construct in keeps the fallback
+    (`rv_p04_c2_multi`, `rv_p12_c2_task_after_perform`).
+  - The task leftovers, D4 and A: as in the first form of this note (E2 a second node of
+    the run at the spawn; E4 the values of the cell at each assignment; R0e fix 2 and
+    `VALUE_TASKS` the task nodes of a value that a value runs as a task; F18 the places of
+    the other tasks of the callee in the worst way; D4 a strong update after a `resume`;
+    A the starts of the region of a `resume` for a clause run that maps to no node).
+
+R0k-a as built (call-site copies for C2 and D3; `docs/ir.md` 6.1, "As built (plan stage
+R0k-a)"):
+
+- The copy (`factgen/instantiate.rs`). An IR-to-IR pass gives a program in which a call
+  that a local handler serves gets the code of its callee: the environment of the call
+  binds an effect that the callee performs through its row (also through its callees)
+  with a function value or a reference in an argument or the result (`Needs`, a fixpoint
+  over the calls). Bounds: no type arguments, a body, not recursive (the call graph),
+  a chain of at most 8 copies, at most 6000 added blocks (`Bounds`). The parameters
+  are variables bound to the operands at a new entry block, `_0` is a temporary that a
+  `Return` moves into the destination, the `UnwindExit` of the callee goes to the
+  cleanup block of the call. Each body inside the callee gets a copy with new
+  closure, handler, scope, spawn and environment ids; a body inside a closure of the
+  callee keeps the environment of the closure body (`Copy::ctx`). A perform through the
+  row that the environment of the call serves goes to the capability of the serving
+  handler (upvar locals in the bodies on the way); a closure of the callee gets a `Cap`
+  capture for each served effect that its code can use (performs, the rows of its
+  calls, each effect for a call of a value with no stated row), as the builder does for
+  a closure of the site. The copies are scanned again, so a callee of a copy gets a
+  copy. The verifier checks the result (V16 is not checked in a body with a copy).
+- The scope (`factgen::run`, `components_built`). The copies are made only if the
+  program falls back with C2 (`OP_KEPT`) or D3 (`GIVES_BACK`) without them, so no
+  program that was in scope changes. The second emit runs on the copy; a fallback of
+  the second emit gives its own reason, and a construct with no full facts that the
+  copy brings in (`Scope::pending`, the D5 weak form of `rv_p04_c2_multi_ok`) keeps the
+  first fallback. The fact oracle runs the copy (`weft-interp`, `components_built`).
+- The weak form and its invariant. In the facts of a callee, a perform through the row
+  with a value that the clause can keep has the weak form of R0h (`WeakRowOps`,
+  `transfer::op_fn_args`). The invariant: no call that a local handler serves applies
+  the summary of such a body. `Instantiated::weak_ok` checks it on the copy (no served
+  call of such a callee is left, and no closure, function item value, `main` or test
+  can run one); the analysis checks it again (`transfer::note_weak_call`: a served
+  call of a summary with the weak form, also through a callee or a function item
+  value, is `OP_KEPT`). The test `analysis_units` `copies::a_served_call_of_a_summary_
+  with_the_weak_form_keeps_the_old_pipeline` turns the weak form on with no copies and
+  sees the guard refuse the program.
+- Three fixes that the copies needed (each one shows on the inline form today):
+  - A call of a function value runs no clause of a local handler when the analysis
+    knows each value that it runs and none performs the effect of the handler or runs a
+    function value (`clause::call_clauses`, `Handlers::no_clause`, `run_handlers`; a
+    `Fail` handler stays). Before, the static destinations of the call ran the clause
+    again at the run of a value that the clause gave back, so a `once` closure that the
+    clause made moved its capture again (`k06_d3_once_ok`: W0302; `let c = || eat(v);
+    resume(c)` run once: W0502). The cause was not `made_sigma`. With the clause
+    gone from such a node, σ of a closure that a clause makes and the handled body
+    runs maps a `Kept` or `ByRef` capture of an upvar of the clause to the variable of
+    the site (`apply::made_capture_source` follows the upvar locals), so the node
+    reads the variable (the summary oracle found the missing read on
+    `fixes/r0h/d3f_returned_ok`, `d3f_dangling_ok` and `fixes/r0k/k08_d3_kept_ok`).
+  - The D3 fallback applies to a `multi` operation whose result holds a function value
+    (`clause::op_multi`): the run of the clause stops at its first `resume`, so the
+    values of a later `resume` were not in the facts (`rv_p09_d3_multi`, an `ir` hole).
+  - The fact oracle (`oracle/facts.rs`, `step`): a clause frame takes `Post` of the
+    `handle` as its site only when it leaves the location of a `resume`; the read of the
+    operand of a `resume` that is the first location of the clause is code before the
+    resume point (`resume(k)` of a local of the site failed A3 at `handle post`:
+    `rv1_f47_param_back_keep_ok`, `k05_d3_param_ok`, `rv_p05_d3_two_performs_ok`). Test
+    `summary_oracle.rs` `a_clause_that_resumes_with_a_site_local_reads_it_at_the_perform_node`
+    (the facts pass; with the read gone they fail). No fact changes.
+- Tests: `analysis_units` `copies` (parameters and result, the cleanup edge, the served
+  perform, a callee of a callee, a closure of a copy, a recursive callee, the bounds, the
+  weak guard); `weft-interp` `copies.rs` (each probe of `fixes/r0h` and `fixes/r0k` with a
+  copy runs with and without the copies with the same output and fault);
+  `summary_oracle.rs` (above); `ir_handlers.rs` (`c2_stored_ref`, `d3f_mut_race`,
+  `d3f_reader_ok`, `rv1_f32`, `rv1_f47`, `rv1_c13` in scope;
+  `a_call_with_no_copy_keeps_the_old_pipeline`: a recursive callee and a perform in a
+  closure that the callee runs); `scope.rs` and `cli.rs` (the stub of the fallback tests is
+  a perform in a closure that the callee runs). Probes `fixes/r0k/`: the clean twins of
+  the probes of the design review (`rv_*_ok`), `k09` (a `once` value of the site that the
+  clause gives back, run once, then `v` used: W0302; and the clean twin), `k10` (a `once`
+  value that the clause makes), `k11` (a value of the site given back at the first location
+  of the clause, and the clean twin, for the fact oracle).
+- Not done: a note of the diagnostic that names the call of a copy (a diagnostic in the
+  code of a copy points into the callee).
+- The fallbacks, tier 1 (the 5142 files of the manifest; scratchpad `r0k/a/base2-t1.tsv`,
+  `ka1-t1.tsv`), before (`weft-r0j1`) and after: all 132 to 72; C2 35 to 12, D3 42 to 4.
+  Of the 39 C2 and D3 programs of tier 1 before R0k (without `fixes/r0k`), 26 come into
+  scope (19 rejected, 7 accepted). What stays: the closure forms of R0k-a2 (R0k design
+  note: `e2b_*`, `a2_escapes`, `a4_get_own`, `v1c_stored`, `b2_call`, `66_cap_paths`,
+  `85_op_args`, `g2_lexical`, `rv_p07` and its twin), `rv_p04` and its twin (the copy brings
+  in D5), `fixes/r0h/d3f_task` (the copy brings in a task that runs code of a caller), and
+  `83_kept_values` (with the copies: a perform whose rest of the handled body the facts do
+  not find). No program that was in scope changes its record in tier 1 but
+  `rv_p09_d3_multi` (W0301, the hole is closed). Tier 2 (the 57393 files; `base-t2.tsv`,
+  `ka1-t2.tsv`): C2 68 to 39 (7 into scope, 22 show the reason A now), D3 1 to 1; in scope
+  54486 to 54493. Three programs of tier 2 that were in scope lose a diagnostic of the
+  `ir` pipeline that the old pipeline does not give either (the clause of a local handler
+  ran at a call of a function value that cannot perform its effect:
+  `r2/oracle/runs/g5/p21542.wf` W0312, `r3/oracle/runs/g3b/p11406.wf` W0602) or gives at
+  other lines (`r2/oracle/t0/q266.wf` W0602); each one stays rejected.
+- Size and time: the facts of the programs that come into scope have about the rows of
+  the old facts (9419 against 9791 for the 57 programs of tier 1 of the prototype; the
+  largest ratio 3.45, `rv_p10_d3_abort_path`). Programs that were in scope have the same
+  facts. The tier-1 check time does not change (the slowest program, `s5/h4000.wf`, has no
+  copy; the slowest program with a copy takes 0.08 s).
+- Gates (binaries `r0k/a/bin/weft-ka1`, `weft-gate-ka1`): tier 1 0 blockers (5142; 3862
+  same, 12 open, 305 fixed, 1 new-fp, 0 lost-fault, 153 lost-clean, 146 moved, 663
+  changed); tier 2 (2 workers) 0 blockers (39989 same, 6 open, 92 fixed, 12 new-fp
+  (0.096 %), 0 lost-fault, 3446 lost-clean, 1858 moved, 11990 changed); fact oracle tier 1
+  0 failures (8 faults, 22 timeouts, 1376 pass); sigdiff tier 1 0 rows with no entry
+  (three `sig` entries of R0k: the weak C2 summaries, the bodies with a copy, `main` with a
+  local `multi` handler). The interpreter sources changed (the fact oracle), so the oracle
+  caches of tiers 1 and 2 were made again; the verdicts of tier 1 are the same but for
+  two runs at the time limit (`r3/fidelity/p/hs1.wf`, `s5/h4000.wf`: timeouts, no fault).
+  Ledger: the `open-old` entries of R0h-STAYS keep only the probes that still fall back
+  and fault (`c2_task`, `rv_p04`, `rv_p07`, `rv_p12`); the entry of `k02`, `k06`, `k07`,
+  `k08` and the entry R0k-P09 go (class `fixed`); a `changed` entry for four programs that
+  come into scope, and an UNSIGNED `lost-clean` entry for `d3f_returned_ok` (the old W0301
+  is a false positive). `ereview/ev.sh` on the 65 files of tier 1 and the 10 of tier 2
+  whose record changes, against `weft-r0j1`: no HOLE; 19 faults that both pipelines
+  missed are now rejected by the `ir` pipeline (`rv_p09` was a HOLE); no new FP-IR.
+
 #### R1 Standalone `typeck`, part 1
 
 - Depends on: C3 and one review round.
@@ -2847,7 +3807,11 @@ built (plan stage R0f)"):
 - Goal: one fact generator.
 - Files: delete `crates/weft-sema/src/body/`, `crates/weft-sema/src/thir/record.rs`,
   the re-lowering loop of `crates/weft-sema/src/infer.rs` (keep `growth_limit` for
-  W0706), `FactGen::Old` and `Both`, `Options::ir_groups` and `irbuild/scope.rs` (all
+  W0706: the `ir` pipeline uses `crate::infer::{growth_limit, not_converged,
+  SIG_PLACE_STEPS}` in `analysis/callgraph.rs` and `analysis/sig.rs`, so move them
+  out of `infer.rs` before it goes; review of R0i), the checks that `analyze` runs on
+  the old signatures (`program::check_on_abort_rows`, `fip::check` with the old
+  signatures, `OLD_INFERENCE_CODES`), `FactGen::Old` and `Both`, `Options::ir_groups` and `irbuild/scope.rs` (all
   groups are on), `FnFacts::mark`/`rewind`/`FactMark` in `crates/weft-facts/src/lib.rs`,
   the closure summary of `Ty::Fn` and `fn_joins` in `crates/weft-sema/src/types.rs`,
   W0707 and W0704 in `crates/weft-check/src/codes.rs` (their texts say "no longer
@@ -2910,7 +3874,7 @@ gate and the exit of its parent, limited to its group of differences.
 | F13.2 | F13 | lost-fault W0301 / none in group C, found by the signature diff of stage F13 part 2 (no gate probe has the shape). An unknown function value that runs in a body (the capture of a made closure that holds a function parameter of the maker, `let f = mk_call(push1, world); f()`; a function-value local that a closure gives a new value, `let set = \|\| { g = grow }; set(); g(world)`) is code of a caller. Its `lends_mut` of the reference parameter and of `a place of a caller` do not reach the summary of the body, so a caller of the body misses the change (`verify/p/v06_ret_paths.wf` `ret_passthrough`, the tier-2 mutant `m01258_43_loops.wf` `item_later_pub`; the summary oracle fails on a caller). Fix (docs/ir.md 6.8 "As built (follow-up F13.2)"): a made closure runs the values that it holds with the places of the run, a rebound local gets the values that the closure puts there, and the summary of a function body has the part `lends` for code that no caller gives; a value that a closure runs through a capture changes its environment (no W0312). Probes `tests/gate/probes/fixes/f13d/` (class UR, claim F13D-UR); the sigdiff rows of `mk2` (v06_ret_paths.wf) join the `sig` entry of a maker of a maker | done (F13.2) |
 | F16.1 | F16 | fallback (old pipeline) / group D: a continuation that a closure captures (`CaptureMode::Kont`, a `resume` in a closure that a clause makes; 40 tier-1 programs fall back), and the continuation summary of `ir` 6.7 (`analysis/cont.rs`). Claims R3RT4, V121, J2 and RT8 hold only through the fallback today. Do: a run of such a closure in its clause is a resume point at the run node; a closure that holds the continuation and leaves the clause is W0313 (stage F17) | open |
 | F16.2 | F16 | fallback / group D: a handler in a closure body (11 tier-1 programs; claim O3-8), a closure that a clause gives to the handled body (`resume(\|\| ..)`, 4), a `multi` resume point in a clause or a closure inside the handled body (2). Do: the clause runs of the closure body in its own facts; the states of the clause where the given closure runs | open (a handler in a closure body: done at R0d) |
-| F16.3 | F16 | fallback / group D: `GIVES_BACK`, a call that runs a clause of an operation with a function value, a type parameter or a reference result and a clause that resumes (18 tier-1 programs; σ(Caller) at the call is the resumed values, and only code of a caller lends places of `Caller`), and a `multi` operation of a handler of a caller in a clause (14). Type parameters: done at stage F20 (an effect has no type parameter, so the test goes) | open (function values, references) |
+| F16.3 | F16 | fallback / group D: `GIVES_BACK`, a call that runs a clause of an operation with a function value, a type parameter or a reference result and a clause that resumes (18 tier-1 programs; σ(Caller) at the call is the resumed values, and only code of a caller lends places of `Caller`), and a `multi` operation of a handler of a caller in a clause (14). Type parameters: done at stage F20 (an effect has no type parameter, so the test goes) | references: done at R0h (σ(`Caller`) names the places that the clauses give back, part `caller_muts`); function values: done at R0h for a value that cannot race, holds no reference in a capture and is not `once` |
 | F17.1 | F17 | lost-clean / group D: group D on, after the second independent review of group D (scratchpad `dreview2/review.md`). Fixed first: ORACLE-GAP-2 (A4 of copied callee and closure frames), D-MULTI-MID (a `multi` clause changes a place between two `resume`s while a copied callee or closure frame holds a reference into it; the copy of the frame is used at the `Copy` node), D-COPY-WAIT-CALL (the caller changes the place after the call, an old hole), FP-W0313-RUN (`clause::performs_cap`). The reviewer signed the 12 `lost-clean` rows; the `new-fp` `h6_option_closure.wf` is a precision loss of the groups A and C (issue to file). Then the default groups are A to D (`DEFAULT_GROUPS`), `done` gets F14 to F17.1, the 15 `open-old` entries of the old holes that group D closes go, the signature differences of the new bodies have `sig` entries, and the tests of the default groups change | done (F17.1) |
 | F17.2 | F17 | lost-fault W0312, W0301, W0302 / group D, after the third independent review of group D (scratchpad `dreview3/review.md`). ORACLE-GAP-3: the clause cover A5 of the fact oracle. D-FNVAL-ROW: a function item or a function parameter that runs in the handled body of a local handler of its row runs the clauses of the handler (`frames::value_effects`); a call in a closure body through a captured capability runs the clauses of its handler (`handlers::captured_calls`, also FP-W0805-FNVAL). D-ROW-MID (an old hole): a known callee of a `multi` re-entry through the row gets the copy of its frame. Probes `fixes/f17/fnval_row`, `fixes/f17/row_mid` | done (F17.2) |
 | F16.4 | F16 | lost-fault W0301 / none in groups A and C, found by the self-attack of stage F16 (class C-RR, scratchpad `f16/open/crr_*.wf`). A closure that holds a reference to a container of references (`kr: &Vec<&i64>`) reads through it; the node that runs the closure used only the variables of the captures, not of the references on the chain, so `v.clear(); g()` was accepted (the old pipeline also missed it through a callee or a returned closure). Fix (docs/ir.md 6.9 "As built (follow-up F16.4)"): the run node follows the chain from σ(`CaptureHeld(k)`) of each such capture, as `deep_uses` of a call argument; the type test also looks into the fields of a struct and the payloads of an enum. Probes `tests/gate/probes/fixes/crr/` (claim C-RR; ledger `open-old` for the group-D probe `crr03_opfn.wf`, `moved` for `crr01_direct.wf`) | done (F16.4) |
@@ -2943,6 +3907,10 @@ gate and the exit of its parent, limited to its group of differences.
 | R0e fix 4 | R0e fix 3 | the review of R0e, round 2: R2-B1 (the lift filter of fix 2 dropped a clause task that is joined on one path only: now only a task of a scope of the clause, a `fork` there, or a task that the clause joins on each path is skipped), and the older holes a15, a35 (a run of the value in a clause, `clause_run_at`) and a31 (a value that runs in a task next to another task of the callee, `task_hows`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry. The 6 new lost-clean rows wait for the review | done (R0e fix 4) |
 | R0f | R0e fix 4 | task runs (Phase R, R0f; C1, C7, E7): a value of a caller that a foreign function, `http.serve`, code of a caller or a function value runs as a task applies at the task nodes of the call (the worst way, or the way of the code of a caller that the node knows: `via_plain`, `via_code_twice`); a call of a function value has task nodes for its arguments; a closure that spawns a value of its interface on a scope of its maker gives the value to that task (`TaskHow::tasks`; closes `c29d`, `c29f`, older holes). Fallbacks C1 40/126 to 0/0, C7 12/79 to 7/11, E7 3/19 to 2/5. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE. The 6 new lost-clean rows wait for the review | done (R0f) |
 | R0f fix | R0f | the review of R0f, round 1: B1 (a reader that code of a caller runs as a task while the code changes a place it gets: the values become tasks of the call with the places of the code; E7 stays for an `Unknown` value whose task runs with changes or other values) and B2 (a slot of a value that runs as plain code kept no plain places for `with`; a value in a task of the call gives its places to a maker task). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE on the 127 review probes. The reviewer signed the lost-clean rows of R0f; 1 new row waits for round 2 | done (R0f fix) |
+| R0g | R0f fix | continuations and capabilities in closures (Phase R, R0g; D1, D4, C4, C6, D5, C8): σ of a closure that a clause gives takes the environment from the value; a captured capability of a made closure maps to its live handler; W0313 through an abort past the handler; W0313 for a continuation; a `resume` in a closure, a row in a clause, a nested `multi` resume and a run outside a handler with no W0313 are in scope only if the `ir` pipeline rejects the program (`Scope::pending`). Fallbacks D1 60/309 to 15/49, D4 15/46 to 1/2, C4 7/22 to 0/0, C6 6/15 to 0/0, D5 15/116 to 5/5, C8 2/2 to 0/0. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE. No new lost-clean row | done (R0g) |
+| R0g fix | R0g | the review of R0g, round 1: B1 (a closure that a clause gives to the handled body runs on a task of a scope and its changes were lost; the same hole is older for a closure that a closure makes, `t_06`). A scope body runs in the frame of its site: `made_sigma` finds the variable of a capture through the makers in the bodies of that frame (`apply::frame_capture_source`), and `other_maker` walks up from a scope body. No fallback is added. Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, each count as R0g (new-fp 12, 0.096 %; lost-fault 0); fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 HOLE but the old `c4_07`. 2 new lost-clean rows wait for the review | done (R0g fix) |
+| R0h | R0g fix | function values and references across operations (Phase R, R0h; C2, D3): the clause of an operation of a caller is code of a caller that gets the arguments (`transfer::op_value_out`, task nodes of a perform); a function value of the callee in a clause is code of a caller; σ(`Caller`) of a call names the places that its local clauses give back (`Handlers::back`, part `caller_muts`, `back_ret`); a function value that a clause gives back runs at the call as code of a caller runs it. A value that the code can keep with a reference in it, and a given-back value that can race or is `once`, keep the reason; E2, E4, E5, C7, E7 stay. Closes the old misses `opres.wf` (issue #48) and `d1_callee_mut*` (tier 2). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE. 2 new lost-clean rows wait for the review | done (R0h) |
+| R0h fix | R0h | the review of R0h, round 1: seven HOLE rows of one root cause (a value of the interface of the site that a clause gives back, kept by the callee: the summary says that the place holds code of a caller). Only a closure or an item goes on in D3 form F; a value of the interface or an unknown value in an argument of an operation of a caller keeps the old pipeline (C2); `caller_muts` passes on through a body (`r01`); a callee with `caller_muts` whose arguments reach a root that a clause names keeps the old pipeline (`r39`). Gates: tier 1 0 blockers; tier 2 (2 workers) 0 blockers, new-fp 12 (0.096 %), lost-fault 0; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no entry; `ev.sh` 0 new HOLE | done (R0h fix) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -3035,6 +4003,14 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | R0f (tier 2, the defaults) | 53848 of 57393 | 40368 | 88 | 12 (0.096 %, as R0e) | 3443 (+2, UNSIGNED) | 1823 | 11649 (+105, ledgered) | 10 (as C3) |
 | R0f fix (tier 1, the defaults) | 4574 of 4834 | 3747 | 274 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 135 (+1, UNSIGNED; the rows of R0f signed) | 128 | 540 (+1, ledgered) | 9 |
 | R0f fix (tier 2, the defaults) | 53847 of 57393 | 40371 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0f; signed) | 1824 (+1, ledgered) | 11645 | 10 (as C3) |
+| R0g (tier 1, the defaults) | 4672 of 4859 | 3731 | 274 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 135 (as R0f fix) | 139 (+11, ledgered) | 570 (+30, ledgered) | 9 |
+| R0g (tier 2, the defaults) | 54243 of 57393 | 40149 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0f fix) | 1837 (+13, ledgered) | 11854 (+209, ledgered) | 10 (as C3) |
+| R0g fix (tier 1, the defaults) | 4683 of 4871 | 3737 | 274 | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 137 (+2, `rv1_c4_task_unit_ok.wf`, `rv1_c4_site_local_spawn_ok.wf`, UNSIGNED) | 142 (+3, ledgered) | 571 (+1, `196_made_closure_tasks.wf`, ledgered) | 9 |
+| R0g fix (tier 2, the defaults) | 54243 of 57393 | 40149 | 88 | 12 (0.096 %, as R0e) | 3443 (as R0g) | 1837 (as R0g) | 11854 (as R0g) | 10 (as C3) |
+| R0h (tier 1, the defaults) | 4743 of 4901 | 3739 | 276 (+2: `opres.wf`, `fixes/r0h/d3r_callee_mut.wf`, which the old pipeline misses) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 139 (+2, `c4_resume_arg_ok.wf`, `dbg2.wf`, UNSIGNED) | 145 (+3, ledgered) | 587 (+16, ledgered) | 14 (+6 `open-old` probes of R0h, -1 `opres.wf`) |
+| R0h (tier 2, the defaults) | 54393 of 57393 | 40044 | 92 (+4: `opres.wf`, three `d1_callee_mut` programs) | 12 (0.096 %, as R0e) | 3444 (+1, the copy of `dbg2.wf`, UNSIGNED) | 1857 (+20, ledgered) | 11938 (+84, ledgered) | 6 (-4) |
+| R0h fix (tier 1, the defaults) | 4739 of 4910 | 3752 | 277 (+1: `rv1_r01_two_level_mut.wf`) | 1 (`fixes/f12c/n2/tw.wf`, ledgered) | 139 (signed by the review of R0h) | 145 | 582 (-5: the `v1c` files keep the old pipeline) | 14 |
+| R0h fix (tier 2, the defaults) | 54386 of 57393 | 40051 | 92 | 12 (0.096 %, as R0e) | 3444 (signed) | 1857 | 11931 | 6 |
 
 Cost at C1 (§2.7.4, release, tier 1, the 4112 single-file programs in scope, one process
 for each check): `check` takes 32.6 s with the old facts and 72.0 s with the `ir` facts

@@ -1,0 +1,14 @@
+// as n15, a scope task reads the field and runs it
+struct Holder { cb: fn() }
+fn mkh() -> Holder {
+    let r = Rc.new(0)
+    Holder { cb: || { let y = r.clone() } }
+}
+fn main() {
+    let h = mkh()
+    scope { s =>
+        let t = s.spawn(|| { let g = h.cb
+            g() })
+        t.join()
+    }
+}

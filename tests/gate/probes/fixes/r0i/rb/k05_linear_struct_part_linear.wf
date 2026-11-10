@@ -1,0 +1,9 @@
+// a linear part of a linear struct captured by a closure that is dropped
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print(i) }
+fn keep<T>(x: T) -> T { x }
+linear struct P { t: Tx, n: u64 }
+fn main() { let p = P { t: Tx { id: 1 }, n: 2 }
+    let P(t, n) = p
+    let c = || commit(t) }

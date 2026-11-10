@@ -982,6 +982,39 @@ pub fn task_runs(
         .filter(|(_, r)| r.task && !r.capture)
 }
 
+/// True if a perform through `cap` of operation `op` in body `body` goes to
+/// a handler of a caller, as `templates::perform` takes it (stage R0h).
+///
+/// It is a perform through the row, an operation that a local handler with no
+/// clause passes on, and a captured capability whose handlers pass it on.
+pub fn perform_to_caller(
+    p: &Program,
+    tys: &TyTable,
+    body: BodyId,
+    cap: &CapOperand,
+    op: weft_ir::OpIdx,
+) -> bool {
+    match cap {
+        CapOperand::Row(_) => true,
+        CapOperand::Local(c) => {
+            if clause::passes_to_caller(p, body, c, op).is_some() {
+                return true;
+            }
+            if clause::passes_to_capture(p, body, c, op).is_some() {
+                return false;
+            }
+            let Some((k, _)) = clause::captured_cap(p, tys, body, c) else {
+                return false;
+            };
+            super::alpha::unit_closure(p, body)
+                .and_then(|cb| p.closure_of(cb))
+                .and_then(|(cl, _)| clause::capture_handler(p, cl, k))
+                .and_then(|h| clause::serving(p, h, op))
+                .is_none()
+        }
+    }
+}
+
 /// The arguments of a call of a function value that can hold a function
 /// value (stage R0f): each one has [`TASK_NODES`] task nodes, in order. A
 /// place with a projection counts.
@@ -1124,6 +1157,14 @@ impl Frames {
                         ..
                     } => sums.get(*f).map_or(0, |s| task_runs(s).count()),
                     TermKind::Call { args, .. } => value_task_args(p, tys, body, args).len(),
+                    // A perform of an operation of a handler of a caller: the
+                    // code of the clause can run a function value of an
+                    // argument as a task (stage R0h).
+                    TermKind::Perform { cap, op, args, .. }
+                        if perform_to_caller(p, tys, body, cap, *op) =>
+                    {
+                        value_task_args(p, tys, body, args).len()
+                    }
                     _ => continue,
                 };
                 if k > 0 {

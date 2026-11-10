@@ -1,0 +1,11 @@
+// A closure that a closure makes reads a vector of the site; it runs on a
+// task while r points into the vector (review of stage R0g, t_06).
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let mk = || (|| print(v.len()))
+    let f = mk()
+    scope { s => s.spawn(f); () }
+    print(r + 1)
+}

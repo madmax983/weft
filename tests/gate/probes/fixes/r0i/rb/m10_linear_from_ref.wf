@@ -1,0 +1,10 @@
+// move a linear field out of a reference
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t
+    print(i) }
+struct Box2 { t: Tx }
+fn f(b: &Box2) { commit(b.t) }
+fn main() { let b = Box2 { t: Tx { id: 1 } }
+    f(&b)
+    let Box2(t) = b
+    commit(t) }

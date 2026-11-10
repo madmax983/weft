@@ -1,0 +1,13 @@
+// The twin of `c2_result.wf`: the callee runs the result before the change.
+effect Run { fn run(g: fn()) -> fn() }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    let k = run(|| print(r))
+    k()
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { resume(g) } } in { f(&v) }
+}

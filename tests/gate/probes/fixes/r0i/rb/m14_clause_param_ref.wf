@@ -1,0 +1,8 @@
+// a clause gets a reference and moves out of it
+struct W { items: Vec<u64>, n: u64 }
+fn eat(v: Vec<u64>) { print(v.len()) }
+effect Q { fn q(r: &W) }
+fn main() { let w = W { items: Vec.new(), n: 1 }
+    handle Q { fn q(r) { eat(r.items)
+        resume(()) } } in q(&w)
+    eat(w.items) }

@@ -1,0 +1,13 @@
+// a task gives back a once closure; it is called twice
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| { let c = || eat(v)
+            c })
+        let f = t.join()
+        f()
+        f()
+    }
+}

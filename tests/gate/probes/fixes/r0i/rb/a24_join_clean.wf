@@ -1,0 +1,21 @@
+// a join gives back a linear closure that is called (clean, no abort)
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t
+    print("rollback {i}") }
+fn commit(t: Tx) { let Tx(i) = t
+    print("commit {i}") }
+effect Stop { fn stop() }
+fn body() / Stop, async {
+    let tx = Tx { id: 1 }
+    let c = || commit(tx)
+    let f = scope { s =>
+        let t = s.spawn(|| c)
+        t.join()
+    }
+    f()
+}
+fn main() / async {
+    handle Stop { fn stop() { () } } in body()
+    print("end")
+}

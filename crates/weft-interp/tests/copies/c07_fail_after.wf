@@ -1,0 +1,16 @@
+// D3: the callee fails after it runs the clearing closure; the caller catches and reads its loan
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn run_ref(c: &C) / Get, fail {
+    let g = get()
+    g()
+    fail("x")
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    let r = &c.v[0]
+    handle Fail { fn fail(m) { print(r) } } in {
+        handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+    }
+}

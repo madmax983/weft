@@ -173,7 +173,7 @@ pub fn code_of_caller(
         let k = u32::try_from(i).unwrap_or(u32::MAX);
         s.params.push(ParamIface {
             name: format!("parameter {i}"),
-            root: crate::body::roots::param(i),
+            root: crate::roots::param(i),
             in_place: None,
         });
         // The code gets the places of the argument (as the old lowering: a
@@ -203,6 +203,8 @@ pub fn code_of_caller(
     // The code can give a place that it gets to an operation (plan stage
     // F15).
     s.gives_frame = true;
+    // It can change a place that a local clause gives back to it (stage R0h).
+    s.caller_muts = true;
     // A stated row: the code performs its effects (with no row the effects
     // of the value pass through, ADR 0005).
     for e in row.unwrap_or(&[]) {

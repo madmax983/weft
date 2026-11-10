@@ -1,0 +1,5 @@
+// a dependency function with no stated row that logs, and has a type error
+pub fn note(msg: String) {
+    log.info(msg)
+    let x: u64 = "no"
+}

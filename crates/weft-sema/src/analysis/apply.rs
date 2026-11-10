@@ -400,9 +400,11 @@ pub fn closure_sigma(
         .get(c.index())
         .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
     if !super::clause::runs_with_maker(p, decl.maker, body) {
-        return Err(AlphaError::Later(
-            "a closure that a clause gives to the handled body (stage F16)",
-        ));
+        // A closure that a clause gives to the handled body, or to the site
+        // (stage R0g): the states there have no values of the locals of the
+        // clause, so the value of the closure holds its environment, as for
+        // a closure that a callee made.
+        return made_sigma(cx, body, st, c, (callee, callee_body), given, inst);
     }
     let cb = p
         .bodies
@@ -462,10 +464,17 @@ pub fn closure_sigma(
                 s.cap_helds.push(Vec::new());
                 s.cap_deeps.push(Vec::new());
             }
+            // A captured continuation (stage R0g): no place. The facts do
+            // not model its `resume`, so the program is in scope only if
+            // the `ir` pipeline rejects it.
             weft_ir::CaptureMode::Kont => {
-                return Err(AlphaError::Later(
-                    "a closure that captures a continuation (stage F16)",
-                ))
+                super::clause::note_pending(crate::factgen::Unsupported {
+                    group: crate::irbuild::scope::Group::D,
+                    reason: super::clause::KONT_CAPTURED.to_string(),
+                });
+                s.captures.push(Vec::new());
+                s.cap_helds.push(Vec::new());
+                s.cap_deeps.push(Vec::new());
             }
         }
     }
@@ -537,7 +546,13 @@ pub fn made_sigma(
             refs.dedup();
             (a.places, refs)
         }
-        Operand::Const(_) => (Vec::new(), Vec::new()),
+        // A closure that a clause gives back to the callee has no operand at
+        // the call: its value points into the places of the record (stage
+        // R0h, D3 form F).
+        Operand::Const(_) => (
+            Vec::new(),
+            cx.hx.given_refs.get(&inst).cloned().unwrap_or_default(),
+        ),
     };
     // The cell of a variable that the closure captures `ByRef` stands for
     // the current value of the variable (hole N1 of the second review of the
@@ -554,22 +569,37 @@ pub fn made_sigma(
     deep.sort();
     deep.dedup();
     for (k, cap) in decl.captures.iter().enumerate() {
-        if matches!(
-            cap.mode,
-            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
-        ) {
-            return Err(AlphaError::Later(
-                "a closure that captures a capability or a continuation (stage F14)",
-            ));
+        if cap.mode == weft_ir::CaptureMode::Kont {
+            super::clause::note_pending(crate::factgen::Unsupported {
+                group: crate::irbuild::scope::Group::D,
+                reason: super::clause::KONT_CAPTURED.to_string(),
+            });
+            s.captures.push(Vec::new());
+            s.cap_helds.push(Vec::new());
+            s.cap_deeps.push(Vec::new());
+            continue;
+        }
+        // A captured capability (stage R0g): the capability of the local
+        // handler that the capture names (through the makers), if its
+        // handled body runs at the node; else none, and the run is a run
+        // outside the handler (`transfer::check_cap_apps`, W0313).
+        if cap.mode == weft_ir::CaptureMode::Cap {
+            s.captures.push(live_cap(cx, st, c, k));
+            s.cap_helds.push(Vec::new());
+            s.cap_deeps.push(Vec::new());
+            continue;
         }
         // A `Kept` or `ByRef` capture whose variable is a variable of this
         // body (through the `Kept` and `ByRef` captures of the makers) is
         // that variable, as for a closure of the component: the closure
         // changes it and reads it, and no other capture (hole H7 and false
-        // positive FP4 of the third review of the ABC preview).
-        if let Some(src) = made_capture_source(p, c, k, body) {
-            let a = transfer::alpha(cx, body, st, &src)?;
-            let v = transfer::place_value(cx, body, st, &src)?.flat();
+        // positive FP4 of the third review of the ABC preview). A scope
+        // body, a handled body and a clause run in the frame of their site:
+        // a variable of the site is a variable there too (hole B1 of the
+        // review of stage R0g: a run in a scope body, or as a task).
+        if let Some((sb, src)) = frame_capture_source(p, c, k, body) {
+            let a = transfer::alpha(cx, sb, st, &src)?;
+            let v = transfer::place_value(cx, sb, st, &src)?.flat();
             let refs: Vec<PlaceId> = v.refs.into_iter().collect();
             let mut deeps = Vec::new();
             for &q in &refs {
@@ -611,13 +641,43 @@ pub fn made_sigma(
     Ok(s)
 }
 
+/// The capability roots of the local handler whose capability capture `k`
+/// of closure `c` holds (`clause::capture_handler`), in state `st`: none if
+/// the handled body of the handler does not run there (stage R0g).
+fn live_cap(cx: &Cx<'_>, st: &State, c: weft_ir::ClosureId, k: usize) -> Vec<PlaceId> {
+    let p = cx.p;
+    let Some(h) = u32::try_from(k)
+        .ok()
+        .and_then(|k| super::clause::capture_handler(p, c, k))
+    else {
+        return Vec::new();
+    };
+    let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+        return Vec::new();
+    };
+    let Some(b) = p.body(hb) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PlaceId> = b
+        .caps
+        .iter()
+        .filter_map(|&(_, l)| st.tree((hb, l)))
+        .flat_map(|t| t.flat().caps)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// True if the function body that makes `maker` (the body itself, or the
-/// function of a closure body, of a handled body or of a clause) is not the
-/// function of body `body`: a closure
+/// function of a closure body, of a handled body, of a clause or of a scope
+/// body) is not the function of body `body`: a closure
 /// that `maker` makes leaves a frame that is gone when `body` runs it.
 fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
-    // A handled body and a clause run in the frame of their site (plan
-    // stage F14): the function of the site.
+    // A handled body, a clause and a scope body run in the frame of their
+    // site (plan stages F14 and R0d): the function of the site. A run in a
+    // scope body is a run in the frame of the maker (hole B1 of the review
+    // of stage R0g).
     let root = |mut b: BodyId| {
         for _ in 0..=p.bodies.len() {
             if let Some((_, d)) = p.closure_of(b) {
@@ -628,7 +688,9 @@ fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
                 Some(x)
                     if matches!(
                         x.kind,
-                        weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Clause(..)
+                        weft_ir::BodyKind::Handled(_)
+                            | weft_ir::BodyKind::Clause(..)
+                            | weft_ir::BodyKind::Scope(_)
                     ) =>
                 {
                     b = x.parent?;
@@ -642,6 +704,36 @@ fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
         (Some(a), Some(b)) => a != b,
         _ => false,
     }
+}
+
+/// The body and the place that capture `k` of closure `c` names
+/// ([`made_capture_source`]) for a run in body `body`: the place in `body`,
+/// or in a body whose frame `body` runs in through scope bodies, handled
+/// bodies and clauses ([`crate::factgen::alpha::unit_root`]). The states of
+/// `body` have the values of the locals of those bodies.
+fn frame_capture_source(
+    p: &weft_ir::Program,
+    c: weft_ir::ClosureId,
+    k: usize,
+    body: BodyId,
+) -> Option<(BodyId, weft_ir::Place)> {
+    let mut at = body;
+    for _ in 0..=p.bodies.len() {
+        if let Some(src) = made_capture_source(p, c, k, at) {
+            return Some((at, src));
+        }
+        let x = p.bodies.get(at.index())?;
+        match (x.kind, x.parent) {
+            (
+                weft_ir::BodyKind::Handled(_)
+                | weft_ir::BodyKind::Clause(..)
+                | weft_ir::BodyKind::Scope(_),
+                Some(up),
+            ) => at = up,
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// The place in body `body` that capture `k` of closure `c` names, if the
@@ -663,9 +755,22 @@ pub(crate) fn made_capture_source(
     }
     let (mut maker, mut src) = (decl.maker, cap.source.clone());
     // A maker has a lower id than its closures, so the walk ends.
-    for _ in 0..=p.closures.len() {
+    for _ in 0..=p.closures.len() + p.bodies.len() {
         if maker == body {
             return Some(src);
+        }
+        // An upvar local of a clause, a handled body or a scope body is the
+        // cell of a local of its site (stage R0k-a: a closure that a clause
+        // makes and gives back with `resume` captures a variable of the
+        // site).
+        if let Some(mb) = p.body(maker) {
+            if let Some(weft_ir::LocalKind::Upvar(t)) = mb.local_kind(src.local) {
+                if mb.kind.has_upvars() {
+                    maker = mb.parent?;
+                    src.local = t;
+                    continue;
+                }
+            }
         }
         let (c2, j, mode) = crate::factgen::alpha::env_capture(p, maker, &src)?;
         let rest = match mode {
@@ -731,7 +836,14 @@ fn places(
         // A place of a caller of the callee is a place of a caller of the
         // run node, or a place of the run node that it cannot name: the
         // places of the caller of the run node.
-        IRoot::Caller => vec![cx.roots.caller(cx.facts)],
+        // A clause of a local handler of the run node can give the callee a
+        // reference into a place of the node (stage R0h, D3 form R): such a
+        // place is a place of a caller of the callee too.
+        IRoot::Caller => {
+            let mut v = vec![cx.roots.caller(cx.facts)];
+            v.extend(cx.hx.back.get(&s.inst).into_iter().flatten().copied());
+            v
+        }
         IRoot::Capture(k) => get(&s.captures, k),
         IRoot::CaptureHeld(k) => get(&s.cap_helds, k),
         IRoot::CaptureDeep(k) => get(&s.cap_deeps, k),
@@ -1207,16 +1319,16 @@ pub fn main(
         for ps in &s.cap_helds {
             cx.facts
                 .call_arg
-                .extend(ps.iter().map(|&p| (n, p, crate::body::roots::STORED)));
+                .extend(ps.iter().map(|&p| (n, p, crate::roots::STORED)));
         }
-        let g = given.unwrap_or_else(|| crate::body::roots::param(0));
+        let g = given.unwrap_or_else(|| crate::roots::param(0));
         let mut places: Vec<PlaceId> = s.args.iter().flatten().copied().collect();
         places.extend(s.others.iter().copied());
         places.sort();
         places.dedup();
         for p in places {
             let root = if in_env(cx.facts, p) {
-                crate::body::roots::STORED
+                crate::roots::STORED
             } else if s.nested {
                 // The closure gives the place to the run, not the callee of
                 // the node: the body of the closure checks it (issue #58).
@@ -1228,11 +1340,28 @@ pub fn main(
         }
     }
     let changed = muts(cx, sum, s)?;
+    // A callee that runs a function value that it does not know: the body
+    // runs it too (part `unknown_runs`, plan stage R0i fix). Code of a
+    // caller gives the part itself (`templates`, `Em::code_unknown`).
+    if sum.unknown_runs && kind != RunKind::Unknown {
+        cx.hx.unknown_runs_at.insert(n);
+    }
+    // A callee that changes a place of a caller can change each place that a
+    // local clause gives back to it (stage R0h, D3 form R).
+    if sum.caller_muts {
+        if let Some(back) = cx.hx.back.get(&s.inst) {
+            cx.facts.mutates_at.extend(back.iter().map(|&q| (n, q)));
+        } else if kind == RunKind::Item {
+            // The body passes the change on to its own caller (stage R0h
+            // fix: `outer() { clear_picked() }`).
+            cx.hx.caller_muts_at.insert(n);
+        }
+    }
     for &(p, idx) in &changed {
         cx.facts.mutates_at.push((n, p));
         if item || run {
             let root = if in_env(cx.facts, p) {
-                crate::body::roots::STORED
+                crate::roots::STORED
             } else {
                 as_given(idx)
             };
@@ -1252,7 +1381,7 @@ pub fn main(
             IRoot::Caller => None,
             // A capture is no argument: the value that the call runs.
             IRoot::Capture(_) | IRoot::CaptureHeld(_) | IRoot::CaptureDeep(_) => {
-                Some(crate::body::roots::STORED)
+                Some(crate::roots::STORED)
             }
             _ => Some(0),
         };
@@ -1262,7 +1391,7 @@ pub fn main(
             // check (W0312) compares it.
             if let (Some(root), true) = (root, item || run) {
                 let root = if in_env(cx.facts, p) {
-                    crate::body::roots::STORED
+                    crate::roots::STORED
                 } else {
                     as_given(root)
                 };
