@@ -624,6 +624,13 @@ impl Inst<'_> {
         // a local with such a value (the callee temporary of a call).
         let (mut at, mut found) = (l, None);
         for _ in 0..8 {
+            // A body inside `b` (a clause, a handled body, a scope body, a
+            // closure, and each body inside them) can write the cell of the
+            // local through an upvar or a capture: then the local can hold
+            // another value at the run (the review of R0k-a2: `u03` to `u10`).
+            if nested_writes(&self.p, b, at) {
+                return None;
+            }
             match single_value(body, at)? {
                 One::Closure(blk, si, c) => {
                     found = Some((blk, si, c));
@@ -2317,4 +2324,148 @@ fn single_value(body: &Body, l: LocalId) -> Option<One> {
     } else {
         None
     }
+}
+
+/// The cell that place `q` of body `x` names, as a local of the body that
+/// owns it: an upvar local goes to the local of the parent, a field `env.k`
+/// of a closure body goes to the source of a `Kept` capture `k`, and
+/// `(*env.k)` to the source of a `ByRef` capture `k`, in the maker. `None`
+/// for a place that names no local cell (a place behind a reference).
+fn cell_of(p: &Program, x: BodyId, q: &Place) -> Option<(BodyId, LocalId)> {
+    let (mut body, mut q) = (x, q.clone());
+    for _ in 0..=p.bodies.len() {
+        let b = p.body(body)?;
+        match b.local_kind(q.local)? {
+            LocalKind::Upvar(t) => {
+                body = b.parent?;
+                q.local = t;
+            }
+            LocalKind::Env => {
+                let (_, d) = p.closure_of(body)?;
+                let Some(Proj::Field(k)) = q.proj.first() else {
+                    return None;
+                };
+                let cap = d.captures.get(k.index())?;
+                let rest: Vec<Proj> = match cap.mode {
+                    weft_ir::CaptureMode::Kept => q.proj.get(1..)?.to_vec(),
+                    weft_ir::CaptureMode::ByRef => match q.proj.get(1) {
+                        Some(Proj::Deref(weft_ir::DerefKind::Ref)) => q.proj.get(2..)?.to_vec(),
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                let mut src = cap.source.clone();
+                src.proj.extend(rest);
+                body = d.maker;
+                q = src;
+            }
+            _ => {
+                if q.proj.first() == Some(&Proj::Deref(weft_ir::DerefKind::Ref))
+                    || q.proj.first() == Some(&Proj::Deref(weft_ir::DerefKind::Box))
+                    || q.proj.first() == Some(&Proj::Deref(weft_ir::DerefKind::Rc))
+                {
+                    return None;
+                }
+                return Some((body, q.local));
+            }
+        }
+    }
+    None
+}
+
+/// The places that body `b` writes, moves or borrows: the targets of the
+/// assignments and of the terminators, the places of `drop`, `uninit` and
+/// `consume`, each `move` operand, each borrow, and the place of an
+/// iterator over elements.
+fn body_writes(b: &Body) -> Vec<Place> {
+    let mut out = Vec::new();
+    let mv = |o: &Operand, out: &mut Vec<Place>| {
+        if let Operand::Move(q) = o {
+            out.push(q.clone());
+        }
+    };
+    for blk in &b.blocks {
+        for st in &blk.stmts {
+            match &st.kind {
+                StmtKind::Assign(q, rv) => {
+                    out.push(q.clone());
+                    match rv {
+                        Rvalue::Use(o) | Rvalue::Unary(_, _, o) => mv(o, &mut out),
+                        Rvalue::Binary(_, _, a, c)
+                        | Rvalue::Iter(weft_ir::IterSource::Range(a, c)) => {
+                            mv(a, &mut out);
+                            mv(c, &mut out);
+                        }
+                        Rvalue::Aggregate(_, os) | Rvalue::Concat(os) => {
+                            for o in os {
+                                mv(o, &mut out);
+                            }
+                        }
+                        Rvalue::Ref(q) | Rvalue::Iter(weft_ir::IterSource::Elems(q)) => {
+                            out.push(q.clone());
+                        }
+                        Rvalue::Len(_) | Rvalue::Discriminant(_) => {}
+                    }
+                }
+                StmtKind::Drop(q) | StmtKind::Consume(q) | StmtKind::Uninit(q) => {
+                    out.push(q.clone());
+                }
+                StmtKind::Print(os) => {
+                    for o in os {
+                        mv(o, &mut out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let t = &blk.term.kind;
+        if let Some(d) = t.dest() {
+            out.push(d.clone());
+        }
+        match t {
+            TermKind::Call { callee, args, .. } => {
+                if let Callee::Value(o) = callee {
+                    mv(o, &mut out);
+                }
+                for o in args {
+                    mv(o, &mut out);
+                }
+            }
+            TermKind::Perform { args, .. } => {
+                for o in args {
+                    mv(o, &mut out);
+                }
+            }
+            TermKind::Resume { arg, .. } => mv(arg, &mut out),
+            TermKind::Spawn { scope, task, .. } => {
+                mv(scope, &mut out);
+                mv(task, &mut out);
+            }
+            TermKind::Join { task, .. } | TermKind::Detach { task, .. } => mv(task, &mut out),
+            TermKind::Fork { branches, .. } => {
+                for o in branches {
+                    mv(o, &mut out);
+                }
+            }
+            TermKind::Switch { on, .. } => mv(on, &mut out),
+            TermKind::Assert { cond, .. } => mv(cond, &mut out),
+            TermKind::IterNext { iter, .. } => out.push(iter.clone()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// True if a body inside body `b` (each body whose lexical parent chain goes
+/// to `b`: clauses, handled bodies, scope bodies, closures, and the bodies
+/// inside them) writes, moves or borrows the cell of local `l` of `b`,
+/// through an upvar local or a capture of a closure (stage R0k-a2 fix).
+fn nested_writes(p: &Program, b: BodyId, l: LocalId) -> bool {
+    inner_bodies(p, b).into_iter().any(|x| {
+        p.body(x).is_some_and(|xb| {
+            body_writes(xb)
+                .iter()
+                .any(|q| cell_of(p, x, q) == Some((b, l)))
+        })
+    })
 }

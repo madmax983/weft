@@ -3804,6 +3804,24 @@ R0k-a2 as built (static closure copies, generic callees, the closure guard; `doc
   change. Test: `analysis_units`
   `copies::a_served_run_of_a_closure_with_the_weak_form_keeps_the_old_pipeline` (the weak
   form on, no copy: the guard refuses the run; with the copy the program is in scope).
+- The fix of the review of R0k-a2 (round 1, a blocker: `u04_task_reassigns` and
+  `u08_task_join` were new holes). The one-value rule read only the statements of the body
+  that owns the local; a body inside it (a scope body or a task, a handled body, a clause,
+  also a clause that a perform of a callee runs, a closure, and each body inside them) can
+  give the local another closure through an upvar local or a capture, and the copy then
+  checked a program that does not run. Now each write, move or borrow of a place of a body
+  inside the owner whose cell is the local refuses the copy (`nested_writes`: `cell_of`
+  follows the upvar locals to the parent, and `env.k` of a `Kept` capture and `(*env.k)` of
+  a `ByRef` capture to the source in the maker; the inner bodies come from the parent
+  chain, not from a list of body kinds). A write through a reference to the local needs a
+  borrow of it: in the owner the one-value rule refuses it, in a body inside the owner
+  `nested_writes` sees the borrow. Probes `fixes/r0k2/u03` to `u10` (bad: each keeps the
+  fallback or is rejected), `u11` (the clean twin: it keeps the fallback), `g26` (a closure
+  with the weak form given to `apply`, which the analysis runs before the maker: the guard
+  refuses); tests `analysis_units`
+  `copies::a_closure_copy_is_refused_when_a_nested_body_writes_the_local` and
+  `copies::the_weak_guard_refuses_a_value_given_to_a_body_analyzed_before_its_maker`. The
+  refusal under a shadowed capability (`s05`, `s05b` of the review) stays.
 - c10 (a task of the callee runs the given-back value) stays a fallback: with the copy the
   program brings in a task that runs code of a caller (E, `TASK_CODE`, pending), so the
   first fallback stays (R0k-a, step 2). It is task work (the task nodes of a given-back
@@ -3856,7 +3874,14 @@ review before a build):
   node gets a copy only if its set is one closure (`FnVal::Closure(c)` or `FnVal::Made(c)`)
   or one function item (`FnVal::Item(f, ts)`: the call becomes `Callee::Fn(f, ts)` and gets
   the copy of R0k-a). A set with more than one value, `Unknown`, a parameter, or a capture
-  of an outer closure keeps the summary. The probe states are not used for facts.
+  of an outer closure keeps the summary. The probe states are not used for facts. The identity must
+  be exact (the review of R0k-a2): a copy replaces the run by the body of one closure, so it
+  is sound only if the value is always that closure. (a) The probe states over-approximate
+  the function values of each local: an unmodeled construct (a noted `Later`) widens each
+  local that it can write to `Unknown`. (b) The writes through upvars and captures of the
+  bodies inside the owner count (the R0k-a2 fix `nested_writes` of the static copy is the
+  same rule in a syntactic form). (c) The fact oracle checks at each copied run node that
+  the run sees the copied closure (a cheap net for (a) and (b)).
 - The environment local. The copy of the closure body at the run node binds the
   environment to the closure value instead of rewriting each capture to a place of the
   site (R0k-a2): a new local kind `LocalKind::CopyEnv(ClosureId)` in the site body is a view
@@ -3896,9 +3921,17 @@ review before a build):
   summary; (4) a run in a clause body (`f()` of a parameter `f` that the analysis knows as
   one closure) → a copy into the clause body (the clause is a component of its own; the
   copy is a part of it); a spawn or a fork of such a value keeps the fallback (a task run is
-  no call node; W0314); (5) `weak_ok` accepts a closure with a risky row perform if each run
+  no call node; W0314). The made value can hold a reference into a local of the frame of
+  the performer (C2), and the clause can run it after its `resume`, when that frame has
+  ended: `CopyEnv` keeps the cells of the `Kept` captures, but a reference in them still
+  points into the frame. The clause facts end those referents at the `resume` node of the
+  clause at the latest (the end of the performer's frame is in the resume region,
+  `handlers.rs` `of`), so a run after it is W0301. Acceptance tests: the probes p01, p02 and
+  p03 of the design review of R0k, written so that the clause runs the value (no call-site
+  copy); (5) `weak_ok` accepts a closure with a risky row perform if each run
   node of it in the probe states got a copy (a set of copied run nodes per closure), and the
-  analysis guard (`note_weak_call`, R0k-a2) checks each other run.
+  analysis guard (`note_weak_call`, `weak_values_stay`, R0k-a2) stays on in the second
+  emit: the run nodes of the probe states are a may set.
 - Bounds: the block bound and the depth bound of R0k-a (a closure copy counts in the chain
   with the closure id, so a closure that runs itself through a value gets no copy); at most
   one closure per run node (above); no copy at a run node inside a loop whose closure value
@@ -3908,8 +3941,17 @@ review before a build):
   capture (D1), a run of a closure outside the handler of its capability (W0313, the escape
   check rejects most), a generic closure value whose type arguments the run node does not
   give, and the D5 and E pending forms that a copy brings in (R0k-a).
-- Size L. Tests: the probes of forms 2 to 5 with bad and clean twins, the R0k-a2 copies
-  test extended to `CopyEnv`, the fact oracle on each copy, and the guard tests.
+- Size L plus M: the copy with `CopyEnv` (a new local kind: the verifier, the IR printer and
+  the goldens, both interpreter engines that run the copy, the fact oracle and α; no spec
+  relation changes) is L; the probe run (an analysis mode with notes in place of errors) is
+  a second part of size M. Tests: the probes of forms 2 to 5 with bad and clean twins, the
+  R0k-a2 copies test extended to `CopyEnv`, the fact oracle on each copy, the guard tests,
+  and these acceptance probes: a callee that returns one of two closures on two paths (it
+  stays a fallback); the same closure id pushed twice into a `Vec` with other captures, the
+  second run after the source of the first one changed; a closure read from a field that a
+  callee overwrites (`put_fns`) before the run; a closure assigned in a scope body, a clause
+  and a task before the run (`u03` to `u10` of the review of R0k-a2, in the form of B1); a
+  `once` closure copied at two run nodes (the second run is W0502).
 
 #### R1 Standalone `typeck`, part 1
 

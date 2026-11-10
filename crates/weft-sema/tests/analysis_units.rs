@@ -2060,4 +2060,48 @@ mod copies {
         let _weak = weft_sema::analysis::transfer::WeakRowOps::enter();
         assert!(weft_sema::factgen::components(&a, &inst.built).is_ok());
     }
+
+    /// The review of R0k-a2: a body inside the owner of the local (a scope
+    /// task, a scope body, a nested handled body, a clause) gives the local
+    /// another closure through an upvar, so the run of the local gets no
+    /// copy of the first closure.
+    #[test]
+    fn a_closure_copy_is_refused_when_a_nested_body_writes_the_local() {
+        for name in [
+            "u03_callee_reassigns_via_clause.wf",
+            "u04_task_reassigns.wf",
+            "u05_scope_body.wf",
+            "u06_handled_body.wf",
+            "u08_task_join.wf",
+            "u09_fork.wf",
+            "u10_clause_of_inner.wf",
+            "u11_clause_harmless_then.wf",
+        ] {
+            let (_, b) = built(&r0k2(name));
+            assert!(
+                instantiate(&b).is_none_or(|i| i.closure_calls == 0),
+                "{name}: a copy"
+            );
+        }
+    }
+
+    /// The order of the weak guard (the review of R0k-a2): the analysis runs
+    /// `apply` before `main`, the maker of the closure with the weak form,
+    /// and the guard still refuses the call of `apply` that gives it the
+    /// closure where the local handler serves the operation, also with the
+    /// copies (`apply` gets no copy).
+    #[test]
+    fn the_weak_guard_refuses_a_value_given_to_a_body_analyzed_before_its_maker() {
+        let (a, b) = built(&r0k2("g26_weak_run_in_callee_bad.wf"));
+        let weak = weft_sema::analysis::transfer::WeakRowOps::enter();
+        let Err(u) = weft_sema::factgen::components(&a, &b) else {
+            panic!("the guard does not refuse the call");
+        };
+        assert_eq!(u.reason, weft_sema::analysis::transfer::OP_KEPT);
+        drop(weak);
+        if let Some(inst) = instantiate(&b) {
+            let _weak = weft_sema::analysis::transfer::WeakRowOps::enter();
+            assert!(weft_sema::factgen::components(&a, &inst.built).is_err());
+        }
+    }
 }

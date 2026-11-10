@@ -2324,7 +2324,10 @@ phases, the verifier, the fact oracle runs the copy).
   is its source (the closure shares the cell of the variable), a `ByRef` capture a new
   borrow of its source at the entry of the copy, a `Cap` capture the capability of the
   site. The copy mentions the closure value at its entry, so its references live up to
-  the run. Refused: another way to give the local a value (two closures can reach it), a
+  the run. Refused: another way to give the local a value (two closures can reach it),
+  also a write, a move or a borrow of the local in a body inside its owner through an
+  upvar local or a capture (a task, a scope body, a handled body, a clause; the fix of the
+  review of R0k-a2), a
   move or a borrow of the local, a `once` closure, a `ByMove` or `Kont` capture, a source
   that ends or gets a new cell between the closure and the run, a use of the whole
   environment, a body inside the closure that names the environment.

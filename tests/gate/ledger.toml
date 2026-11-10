@@ -10768,3 +10768,16 @@ files = [
 codes = ["W0312"]
 reason = "stage R0k-a2: the closure that the handled body makes and runs gets a copy of its body at the run (the static closure copy), so its perform through the captured capability is a perform of the local handler, and the `ir` pipeline gives the W0301 of the run of the value (as the old pipeline). The old W0312 comes from the worst way of code of a caller for the value of the operation, which the copy does not need. ev.sh: the program faults, and both pipelines reject it"
 stage = "R0k"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0k2/u03_callee_reassigns_via_clause.wf",
+    "tests/gate/probes/fixes/r0k2/u05_scope_body.wf",
+    "tests/gate/probes/fixes/r0k2/u06_handled_body.wf",
+    "tests/gate/probes/fixes/r0k2/u07_if_branch.wf",
+    "tests/gate/probes/fixes/r0k2/u10_clause_of_inner.wf",
+]
+finding = "R0k2-NESTED"
+reason = "stage R0k-a2 fix (probes of the review of R0k-a2): the local `k` gets another closure in a clause of another handler (u03), a scope body (u05), the handled body of a nested handler (u06), a branch (u07) or a clause that a perform of a callee runs (u10), so the run of `k` gets no copy of the closure body (`nested_writes`, or two values in the body) and the program keeps the old pipeline; the old pipeline misses each fault. They are acceptance tests of the copies with an environment local (R0k-b1 design note), which must see each value of `k`"
+stage = "R0k"
