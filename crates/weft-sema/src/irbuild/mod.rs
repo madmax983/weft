@@ -367,7 +367,8 @@ struct Src<'a> {
 }
 
 /// Returns true if a `typeck` diagnostic is inside the body at `span` with
-/// block `block` of unit `unit` (the rule of test D0). W0118 does not count:
+/// block `block` of unit `unit` (the rule of test D0). A code of
+/// [`crate::OLD_INFERENCE_CODES`] does not count (W0118 is a W01xx code):
 /// it is a check of the effects of an `on abort` function, and the `ir`
 /// pipeline asks the summary of the body of the function for it
 /// (`crate::factgen::checks`, `docs/ir.md` 6.9).
@@ -375,7 +376,7 @@ fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bo
     a.diags.iter().any(|d| {
         d.unit == unit
             && d.code.as_str().starts_with("W01")
-            && d.code != weft_syntax::diag::Code::W0118
+            && !crate::OLD_INFERENCE_CODES.contains(&d.code)
             && d.span.lo >= span.lo
             && d.span.hi <= span.hi.max(block.span.hi)
     })
@@ -398,7 +399,13 @@ fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bo
 fn reported(a: &Analysis, unit: usize, src: &Src<'_>, n: NoIr) -> bool {
     use weft_syntax::diag::{Code, Severity};
     let error = |d: &&Diagnostic| d.severity == Severity::Error;
-    let kept = |d: &&Diagnostic| !crate::IR_DROPS.contains(&d.code);
+    // The diagnostics of the analysis that the `ir` pipeline keeps, but not
+    // the checks that read the signatures of the old inference (W0118,
+    // `fip`): the `ir` pipeline gives its own (plan stage R0i fix). So the
+    // old inference cannot make a body with no IR count as reported.
+    let kept = |d: &&Diagnostic| {
+        !crate::IR_DROPS.contains(&d.code) && !crate::OLD_INFERENCE_CODES.contains(&d.code)
+    };
     match n {
         NoIr::TypeError => {
             typeck_error(a, unit, src.span, src.block)

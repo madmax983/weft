@@ -1327,6 +1327,12 @@ pub fn main(
         }
     }
     let changed = muts(cx, sum, s)?;
+    // A callee that runs a function value that it does not know: the body
+    // runs it too (part `unknown_runs`, plan stage R0i fix). Code of a
+    // caller gives the part itself (`templates`, `Em::code_unknown`).
+    if sum.unknown_runs && kind != RunKind::Unknown {
+        cx.hx.unknown_runs_at.insert(n);
+    }
     // A callee that changes a place of a caller can change each place that a
     // local clause gives back to it (stage R0h, D3 form R).
     if sum.caller_muts {

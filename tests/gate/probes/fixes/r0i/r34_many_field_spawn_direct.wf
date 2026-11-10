@@ -1,0 +1,26 @@
+// on abort spawns a field fn value (@ many) directly, under a caught Fail; done calls it
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+linear struct T { f: fn() @ many }
+    on abort = undo
+fn undo(t: T) {
+    let T(f) = t
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let k = s.spawn(f)
+            k.join()
+        }
+    }
+}
+fn done(t: T) { let T(f) = t
+    f() }
+fn body() / Stop, Ask {
+    let t = T { f: || print(ask()) }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

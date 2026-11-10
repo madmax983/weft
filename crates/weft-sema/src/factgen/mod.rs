@@ -560,6 +560,10 @@ pub struct Emitted {
     /// A run node of the entry body runs code of a caller that can resume
     /// more than once.
     pub code_multi: bool,
+    /// A run node of the entry body runs a function value that the body
+    /// does not know, or applies a summary with the part `unknown_runs`
+    /// (plan stage R0i fix).
+    pub code_unknown: bool,
     /// The `lends_mut` of the summaries that the entry body applies and that
     /// a caller does not apply again (`templates::Em::own_lends`).
     pub own_lends: Vec<(weft_facts::NodeId, PlaceId)>,
@@ -808,6 +812,7 @@ pub fn emit_parts(
             returns: Vec::new(),
             runs: Vec::new(),
             code_multi: false,
+            code_unknown: false,
             run_nodes: Vec::new(),
             run_multi: Vec::new(),
             own_lends: Vec::new(),
@@ -871,10 +876,11 @@ pub fn emit_parts(
             em.runs,
             em.returns,
             em.last,
-            (em.code_multi, em.own_lends),
+            (em.code_multi, em.code_unknown, em.own_lends),
         )
     };
-    let (mut stored, aborts, union, mut runs, returns, last, (code_multi, own_lends)) = stored;
+    let (mut stored, aborts, union, mut runs, returns, last, (code_multi, code_unknown, own_lends)) =
+        stored;
     runs_after(&mut runs, &cycles);
     let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
         .iter()
@@ -1161,6 +1167,7 @@ pub fn emit_parts(
         runs,
         returns,
         code_multi,
+        code_unknown: code_unknown || hx.unknown_runs_at.iter().any(|n| n.index() < entry_nodes),
         own_lends,
         caller_muts: hx.caller_muts_at.iter().any(|n| n.index() < entry_nodes),
         made: unions.remove(&entry).map(|mut u| {
@@ -1743,6 +1750,7 @@ fn closure_summary(
             returns: Vec::new(),
             runs: Vec::new(),
             code_multi: false,
+            code_unknown: false,
             run_nodes: Vec::new(),
             run_multi: Vec::new(),
             own_lends: Vec::new(),
@@ -1941,6 +1949,7 @@ fn closure_summary(
             runs: &runs,
             returns: &returns,
             code_multi: false,
+            code_unknown: false,
             caller_muts: false,
             run_nodes: &run_nodes,
             run_multi: &run_multi,
@@ -2195,6 +2204,7 @@ fn emit_closure(
         returns: Vec::new(),
         runs: Vec::new(),
         code_multi: false,
+        code_unknown: false,
         run_nodes: Vec::new(),
         run_multi: Vec::new(),
         own_lends: Vec::new(),
@@ -2503,6 +2513,7 @@ fn emit_clause(
         returns: Vec::new(),
         runs: Vec::new(),
         code_multi: false,
+        code_unknown: false,
         run_nodes: Vec::new(),
         run_multi: Vec::new(),
         own_lends: Vec::new(),
@@ -3872,13 +3883,14 @@ pub struct IrFacts {
     pub diags: Vec<Diagnostic>,
     /// The signatures, by [`crate::FnId`] ([`ir_sigs`]): a function whose
     /// summary comes from its body has the `EffectSig` of its summary
-    /// (`crate::analysis::sig::to_effect_sig`, `docs/ir.md` 6.8); the other
-    /// functions keep their declaration. No row comes from the old inference
-    /// (plan stage R0i).
+    /// (`crate::analysis::sig::to_effect_sig`, `docs/ir.md` 6.8); a
+    /// function whose body has no IR has the row of the worst case of its
+    /// declaration; the other functions keep their declaration. No row comes
+    /// from the old inference (plan stage R0i).
     pub sigs: Vec<crate::FnSig>,
     /// The functions whose body has no IR. Their signature in
-    /// [`IrFacts::sigs`] is their declaration, so `weft-gate sigdiff` does
-    /// not compare it.
+    /// [`IrFacts::sigs`] is the worst case of their declaration, so
+    /// `weft-gate sigdiff` does not compare it.
     pub no_ir: Vec<crate::FnId>,
 }
 
@@ -4021,9 +4033,27 @@ pub(crate) fn run(
         .collect();
     let mut diags = kept;
     diags.extend(on_abort);
-    // The `fip` functions with the signatures of the `ir` pipeline.
-    let fns: Vec<crate::FnId> = a.decls.iter().filter_map(|b| b.func).collect();
-    diags.extend(crate::fip_diags(&a.program, &sigs, &fns));
+    // The `fip` functions with the signatures of the `ir` pipeline. A body
+    // with no IR has no inferred row: W1004 takes its declaration, not the
+    // worst case, which would add an error of the worst case to the type
+    // error of the body (`49_fip_paths.wf`, `unknown`).
+    let fns: Vec<crate::FnId> = a
+        .decls
+        .iter()
+        .filter_map(|b| b.func)
+        .filter(|f| a.program.fns.get(f.index()).is_some_and(|d| d.decl.is_fip))
+        .collect();
+    if !fns.is_empty() {
+        let mut fip_sigs = sigs.clone();
+        for &f in &no_ir {
+            if let (Some(s), Some(def)) =
+                (fip_sigs.get_mut(f.index()), a.program.fns.get(f.index()))
+            {
+                s.clone_from(&def.sig);
+            }
+        }
+        diags.extend(crate::fip_diags(&a.program, &fip_sigs, &fns));
+    }
     diags.extend(built.diags.iter().cloned());
     diags.extend(emitted.into_inner());
     (
@@ -4078,12 +4108,13 @@ pub(crate) fn seed(d: &crate::BodyDecl) -> FnFacts {
 /// function whose summary comes from its body.
 ///
 /// A function of the program whose body has no IR (a type error, W0303)
-/// keeps its declaration (its stated row, or an empty row): its callers
-/// apply the worst case of its declaration
-/// (`crate::analysis::sig::from_declaration`), but the program has an error
-/// for the body (`irbuild::Entry::reported`), so the checks that read a
-/// signature (`fip`, `weft deps`) do not add errors of the worst case to
-/// it. An extern function and a function of the prelude keep their
+/// gets the row of the worst case of its declaration
+/// (`crate::analysis::sig::from_declaration`: the summary that its callers
+/// apply); a stated row stays, with the other parts of the worst case, as
+/// for a function whose summary comes from its body. So the authority of a
+/// dependency (`weft deps`, W0901) does not get weaker for such a body (R0i
+/// fix). The program has an error for the body (`irbuild::Entry::reported`).
+/// An extern function and a function of the prelude keep their
 /// declaration. The second result holds the functions whose body has no
 /// IR.
 pub fn ir_sigs(
@@ -4091,15 +4122,46 @@ pub fn ir_sigs(
     built: &Built,
     effects: Vec<(crate::FnId, crate::program::EffectSig)>,
 ) -> (Vec<crate::FnSig>, Vec<crate::FnId>) {
-    let sigs_of = a.program.fns.iter().map(|f| f.sig.clone());
-    let mut sigs: Vec<crate::FnSig> = sigs_of.collect();
-    let no_ir = a
+    let prog = &a.program;
+    let mut sigs: Vec<crate::FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
+    let no_ir: Vec<crate::FnId> = a
         .decls
         .iter()
         .zip(&built.entries)
         .filter(|(_, e)| matches!(e.outcome, Outcome::NoIr(_)))
         .filter_map(|(b, _)| b.func)
         .collect();
+    for &f in &no_ir {
+        let (Some(sig), Some(decl)) = (
+            sigs.get_mut(f.index()),
+            built
+                .fns
+                .get(&f)
+                .and_then(|g| built.program.fns.get(g.index())),
+        ) else {
+            continue;
+        };
+        let Ok(sum) = crate::analysis::sig::from_declaration(prog, f, decl, &built.tys) else {
+            continue;
+        };
+        let worst = crate::analysis::sig::to_effect_sig(prog, &sum);
+        sig.effects = if sig.declared {
+            crate::program::EffectSig {
+                muts: sig.effects.muts.clone(),
+                named: sig.effects.named.clone(),
+                passthrough: sig.effects.passthrough.clone(),
+                raises: worst.raises,
+                multi: worst.multi,
+                drops: worst.drops,
+                holds: worst.holds,
+                pins: worst.pins,
+                task_effects: worst.task_effects,
+                ..crate::program::EffectSig::default()
+            }
+        } else {
+            worst
+        };
+    }
     for (f, e) in effects {
         if let Some(sig) = sigs.get_mut(f.index()) {
             sig.effects = e;

@@ -589,6 +589,22 @@ pub(crate) fn fip_diags(prog: &Program, sigs: &[FnSig], fns: &[FnId]) -> Vec<Dia
     out
 }
 
+/// The codes of the checks of the old signatures.
+///
+/// `analyze` runs these checks on the signatures of the old inference for
+/// the old pipeline: W0118 (`program::check_on_abort_rows`) and the `fip`
+/// checks (`fip::check`, W1001 to W1004). They are in
+/// [`Analysis::diags`], but the `ir` pipeline does not read them: it gives
+/// its own from its signatures (`factgen::run`), and `irbuild::reported`
+/// does not count them (plan stage R0i fix).
+pub const OLD_INFERENCE_CODES: [Code; 5] = [
+    Code::W0118,
+    Code::W1001,
+    Code::W1002,
+    Code::W1003,
+    Code::W1004,
+];
+
 /// The codes of the old lowering that the `ir` pipeline drops.
 ///
 /// These are diagnostics of the old lowering and of its effect inference

@@ -199,6 +199,7 @@ pub fn summarize(
         place(*q).filter(|ip| matches!(ip.root, IRoot::Param(_) | IRoot::Held(_) | IRoot::Group(_)))
     });
     changed.multi |= fv.code_multi;
+    changed.unknown_runs |= fv.code_unknown;
     changed.caller_muts |= fv.caller_muts;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
@@ -540,6 +541,9 @@ pub struct FnParts<'a> {
     pub returns: &'a [super::State],
     /// A run node runs code of a caller that can resume more than once.
     pub code_multi: bool,
+    /// A run node runs a function value that the body does not know (part
+    /// `unknown_runs`, plan stage R0i fix).
+    pub code_unknown: bool,
     /// The join of the states where the body makes its closures (before
     /// each closure literal and each terminator): a `Kept` capture keeps
     /// the value that its variable has there, also after the variable ends.

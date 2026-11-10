@@ -214,9 +214,9 @@ pub fn check(base: &Path, entry: &Entry, groups: Groups) -> Outcome {
     };
     for f in a.program.fn_ids() {
         let def = &a.program.fns[f];
-        // A function whose body has no IR keeps its declaration in the `ir`
-        // pipeline (plan stage R0i): the program has an error for the body,
-        // and the row is not an inferred row.
+        // A function whose body has no IR has the worst case of its
+        // declaration in the `ir` pipeline (plan stage R0i): the program has
+        // an error for the body, and the row is not an inferred row.
         if def.is_std || def.decl.body.is_none() || ir.no_ir.contains(&f) {
             continue;
         }

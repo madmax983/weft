@@ -1834,9 +1834,11 @@ fn the_splits_of_two_calls_are_apart() {
 
 /// The `ir` pipeline does not read the signatures of the old inference or
 /// the facts of the old lowering (plan stage R0i). A run of the pipeline on
-/// an analysis whose old signatures and old facts are wrong gives the same
-/// facts, signatures and diagnostics. Only the exports of the old facts of
-/// a body with no IR stay (`factgen::exports::copy_old`, plan stage R4).
+/// an analysis whose old signatures, old facts and diagnostics of the old
+/// inference (W0118, `fip`: `crate::OLD_INFERENCE_CODES`) are wrong gives
+/// the same facts, signatures and diagnostics. Only the exports of the old
+/// facts of a body with no IR stay (`factgen::exports::copy_old`, plan stage
+/// R4).
 #[test]
 fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
     let programs = [
@@ -1848,6 +1850,11 @@ fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
         include_str!("../../../tests/programs/140_named_args.wf"),
         include_str!("../../../tests/programs/183_no_ir_callee.wf"),
         include_str!("../../../tests/programs/194_task_runs.wf"),
+        // A declaration with a type error: the body has no IR, and the
+        // program reports it (`irbuild::reported`).
+        "fn f(x: Nope) { print(1) }\nfn main() { f(1) }\n",
+        include_str!("../../../tests/gate/probes/fixes/r0i/r31_many_field_task_caught.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r16_extern_all_caught.wf"),
     ];
     let mut checked = 0;
     for src in programs {
@@ -1891,6 +1898,19 @@ fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
                 no_runtime: !b.facts.no_runtime,
                 ..FnFacts::default()
             };
+        }
+        // The diagnostics of the old inference go, and wrong ones come.
+        wrong
+            .diags
+            .retain(|d| !crate::OLD_INFERENCE_CODES.contains(&d.code));
+        for code in crate::OLD_INFERENCE_CODES {
+            let span = weft_syntax::ast::Span {
+                lo: 0,
+                hi: u32::try_from(src.len()).unwrap_or(u32::MAX),
+            };
+            let mut d = weft_syntax::diag::Diagnostic::error(code, "wrong", span);
+            d.unit = ROOT_UNIT;
+            wrong.diags.push(d);
         }
         let (scope2, ir2) = run(&wrong);
         assert_eq!(scope.fallback, scope2.fallback);

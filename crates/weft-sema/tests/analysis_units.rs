@@ -1317,8 +1317,8 @@ fn the_effect_sig_of_each_corpus_function_of_group_a_is_the_one_of_the_old_infer
         programs += 1;
         for g in a.program.fn_ids() {
             let def = &a.program.fns[g];
-            // A function whose body has no IR keeps its declaration (plan
-            // stage R0i), as `weft-gate sigdiff` says.
+            // A function whose body has no IR has the worst case of its
+            // declaration (plan stage R0i), as `weft-gate sigdiff` says.
             if def.is_std || def.decl.body.is_none() || ir.no_ir.contains(&g) {
                 continue;
             }
@@ -1367,4 +1367,50 @@ fn m(v: Vec<u64>) { k(v) }
     };
     assert_eq!(w0701(&ir.diags), w0701(&a.diags));
     assert_eq!(w0701(&ir.diags).len(), 1);
+}
+
+/// The W0118 lines "calls a function value that it does not know" of each
+/// source.
+fn reaches_lines(src: &str) -> usize {
+    let a = weft_sema::analyze_source(src, weft_sema::Options::from_markers(src))
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    a.diags
+        .iter()
+        .filter(|d| {
+            d.message
+                .contains("calls a function value that it does not know")
+        })
+        .count()
+}
+
+#[test]
+fn an_on_abort_function_that_runs_an_unknown_value_is_w0118() {
+    // Part `reaches` of W0118 from the summary (plan stage R0i fix): a task
+    // run of a value of the parameter under a local `Fail` handler, a call
+    // of an extern result in a program with no `multi` operation, also
+    // through a callee.
+    for src in [
+        include_str!("../../../tests/gate/probes/fixes/r0i/r31_many_field_task_caught.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r34_many_field_spawn_direct.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r40_callee_caught_task.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r16_extern_all_caught.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r05_extern_result.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/r18_extern_callee.wf"),
+    ] {
+        assert_eq!(reaches_lines(src), 1, "{src}");
+    }
+    // A task that gives back a value of a type parameter runs no value of a
+    // caller (`verify/s5/R3x/p1/c14_task.wf`), and the worst case of a
+    // callee with no IR runs no value.
+    let task = "linear struct G<T> { x: T }\n    on abort = undo_g\n\
+                fn undo_g<T>(g: G<T>) / async {\n    let G(x) = g\n    \
+                scope { s =>\n        let t = s.spawn(|| x)\n        t.detach()\n    }\n}\n\
+                fn main() / async { let g = G { x: 1 }\n let G(y) = g }\n";
+    assert_eq!(reaches_lines(task), 0);
+    assert_eq!(
+        reaches_lines(include_str!(
+            "../../../tests/gate/probes/fixes/r0i/r28_onabort_calls_noir.wf"
+        )),
+        0
+    );
 }

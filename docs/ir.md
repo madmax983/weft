@@ -4696,24 +4696,31 @@ and no fact of the old lowering, but the exports of a body with no IR
   the stated row, `declared`) comes from `FnDef::sig`. The part `pins` of a function
   with a stated row comes from its body only (before: also from the old inference).
 - `factgen::ir_sigs` gives `IrFacts::sigs`: the declaration of each function, with the
-  row of the summary of each function with IR. A function whose body has no IR keeps
-  its declaration (its stated row, or an empty row): its callers apply the worst case
-  of its declaration (`sig::from_declaration`), but the program has an error for the
-  body, so the checks that read a signature (`fip`, `weft deps`) do not add the errors
-  of the worst case (the worst case gave W1004 and W0901 there in a first build).
-  `IrFacts::no_ir` names these functions, so `weft-gate sigdiff` does not compare
-  them. A test body has an empty row (`BodyFacts::effects`): it has no signature and
-  no summary.
+  row of the summary of each function with IR. A function whose body has no IR gets the
+  row of the worst case of its declaration (`sig::from_declaration`, the summary that
+  its callers apply; a stated row stays), so the authority of a dependency (`weft
+  deps`, W0901) does not get weaker for it (R0i fix; part a gave it its declaration,
+  and W0901 of `fixes/r0i/pkg1_deps_noir` went). `IrFacts::no_ir` names these
+  functions, so `weft-gate sigdiff` does not compare them. A test body has an empty row
+  (`BodyFacts::effects`): it has no signature and no summary.
 - W0118: `checks::on_abort_rows` reads the summary, and the part `reaches` is the
-  summary too (`checks::reaches`: a run of the part `runs` that is not a task, or a run
-  of a value that no part names, `unknown_multi`), only for a function with IR (the
-  worst case runs each value of its parameter, and its other parts give W0118
-  already). A task of the function is not a call of an unknown value: the summary of
-  `s.spawn(|| x)` with `x` of a type parameter has a run of the parameter as a task
-  (`verify/s5/R3x/p1/c14_task.wf` of tier 2). An emit that gives no W0118 (a test
-  hook) gets the rows of the summaries from `factgen::run`.
+  summary too (`checks::reaches`), only for a function with IR (the worst case runs
+  each value of its parameter, and its other parts give W0118 already). It is a run of
+  the part `runs` of a capture or of a parameter whose type has a function part (a call
+  or a task: a local `Fail` handler around a scope catches the failure of the scope,
+  so the task gives no other W0118; `fixes/r0i/r31_*`), or the new summary part
+  `unknown_runs`: the body runs a function value that it does not know (code of a
+  caller that is no value of the interface: a value from an `rc` object, an extern
+  result), also through a callee (`Handlers::unknown_runs_at`), with no regard to the
+  `multi` operations of the program (`unknown_multi` is `multi` of the program, and the
+  worst case of a callee with no IR has it). A task of a value of a type parameter
+  (`s.spawn(|| x)`, `verify/s5/R3x/p1/c14_task.wf`) does not count. An emit that gives
+  no W0118 (a test hook) gets the rows of the summaries from `factgen::run`.
 - `fip` (W1001 to W1004): `factgen::run` checks each `fip` function with the
-  signatures of the `ir` pipeline.
+  signatures of the `ir` pipeline; a function whose body has no IR takes its
+  declaration there, not the worst case (the program has an error for the body).
+- `irbuild::reported` counts no code of `OLD_INFERENCE_CODES` (W0118 and the `fip`
+  codes, which `analyze` gives from the old signatures for the old pipeline).
 
 As built (plan stage F13 part 2, group C on): `DEFAULT_GROUPS` is A, B and C, so the
 `ir` pipeline checks closures, function values and stored function values by default.

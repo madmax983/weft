@@ -225,6 +225,11 @@ pub struct Handlers {
     /// itself can change a place that a clause of a caller gives back, so
     /// its summary gets `caller_muts` too (`Emitted::caller_muts`).
     pub caller_muts_at: BTreeSet<weft_facts::NodeId>,
+    /// The run nodes that apply the summary of a function or a closure with
+    /// the part `unknown_runs` (plan stage R0i fix): the body runs a
+    /// function value that it does not know through its callee, so its
+    /// summary gets the part too (`Emitted::code_unknown`).
+    pub unknown_runs_at: BTreeSet<weft_facts::NodeId>,
     /// What the values that the clauses of the local handlers of a call give
     /// to `resume` point into, for an operation with a reference result, by
     /// the body and the block of the call (stage R0h, D3 form R): a join

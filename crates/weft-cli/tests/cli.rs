@@ -973,6 +973,22 @@ fn binary_test_writes_each_log_before_its_result() {
 }
 
 #[test]
+fn a_dependency_function_with_no_ir_keeps_its_authority() {
+    // The body has a type error, so it has no IR. Its row in the `ir`
+    // pipeline is the worst case of its declaration, which needs `log` too
+    // (plan stage R0i fix): the authority does not get weaker.
+    let out = cmd(&["deps", "tests/gate/probes/fixes/r0i/pkg1_deps_noir"]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    assert!(
+        out.text
+            .contains("error[W0901]: dependency `lg` function `note` needs"),
+        "{}",
+        out.text
+    );
+    assert!(out.text.contains("log"), "{}", out.text);
+}
+
+#[test]
 fn deps_sees_effects_that_signatures_hide() {
     let out = cmd(&["deps", "tests/packages/hidden"]);
     assert_eq!(out.code, 1, "{}", out.text);

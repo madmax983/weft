@@ -10417,5 +10417,53 @@ files = [
     "verify/s5/S5a/x/p/a1_variants.wf",
     "verify/s5/diff/p/v1a.wf",
 ]
-reason = "class F19-SIG-PINS for a function with a stated row (stage R0i): the part `pins` of the IR comes from the facts of the body only (`summarize::task_pins`), as for a function with no stated row since stage F19. Before R0i a stated signature also kept the `pins` of the old inference (`inf.pins || sig.effects.pins`), and R0i removes that read. The old inference pins for other reasons (a value from a field that it does not follow, a task that runs code of a caller). The interpreter reads `pins` only for a function item that `http.serve` runs, and no function of these files is one; the diagnostics of tier 1 do not change. The other parts of these rows are the parts of the old inference for the function values of a body (the class of stage F13), which no check of the `ir` pipeline reads"
+reason = "class F19-SIG-PINS for a function with a stated row (stage R0i): the part `pins` of the IR comes from the facts of the body only (`summarize::task_pins`), as for a function with no stated row since stage F19. Before R0i a stated signature also kept the `pins` of the old inference (`inf.pins || sig.effects.pins`), and R0i removes that read. The old inference pins for other reasons (a value from a field that it does not follow, a task that runs code of a caller). The interpreter reads `pins` only for a function item that `http.serve` runs, and no function of these files is one; the diagnostics of tier 1 do not change. The part `pins` of the summary changes too (`callgraph::summary_of`): the facts read it for the `opaque` mark and the stealable sink of a task that runs such a callee (`templates.rs`) and pass it on to the callers (`summarize.rs`). The review of R0i found no effect: `weft facts` and the oracle runs of all 30 files are the same before and after. The other parts of these rows are the parts of the old inference for the function values of a body (the class of stage F13), which no check of the `ir` pipeline reads"
 stage = "R0i"
+
+# Stage R0i fix: a function whose body has no IR has the worst case of its
+# declaration in `IrFacts::sigs` (`factgen::ir_sigs`), so the authority of a
+# dependency does not get weaker for it (`weft deps`, W0901;
+# `tests/gate/probes/fixes/r0i/pkg1_deps_noir`). Four packages of tier 2 then
+# get a W0901 that names each standard effect but `io`: the function calls an
+# unknown name (W0101: `verify/partb/S3/pkg1`, `verify/review_edge/Edge/pkg2`),
+# or its module or its item has a declaration error (W0107, W0117, W0119:
+# `verify/quality/manifests/depitems`, `verify/review_edge/Edge/pkg3`). The
+# worst case is sound, but it is not precise: `pkg3/deps/log` `info` only
+# prints. Each program has the error of the body already, and entry 6 (class
+# `changed`, both pipelines have the W01xx) accepts the rows.
+
+[[entry]]
+class = "sig"
+parts = ["named", "multi", "raises"]
+files = [
+    "tests/gate/probes/fixes/r0i/f06_fip_noir_self.wf",
+    "tests/gate/probes/fixes/r0i/pkg1_deps_noir",
+    "tests/gate/probes/fixes/r0i/r28_onabort_calls_noir.wf",
+]
+reason = "stage R0i fix (probes of the review of R0i): a function with IR calls a callee whose body has no IR (a type error). The call applies the worst case of the declaration of the callee (stage R0b), so the row of the caller has each effect of the program, `raises` and `multi`; the old inference has the row that the old lowering of the callee gave. Each program has the type error of the callee"
+stage = "R0i"
+
+[[entry]]
+class = "sig"
+parts = ["reaches", "raises", "pins"]
+files = [
+    "tests/gate/probes/fixes/r0i/r17_extern_nospawn.wf",
+    "tests/gate/probes/fixes/r0i/r34_many_field_spawn_direct.wf",
+    "tests/gate/probes/fixes/r0i/r38_field_to_task_callee.wf",
+    "tests/gate/probes/fixes/r0i/r40_callee_caught_task.wf",
+    "tests/gate/probes/fixes/r0i/r41_callee_caught_task_spawnf.wf",
+]
+reason = "stage R0i fix (probes of the review of R0i): an `on abort` function that runs a value of its parameter as a task, or the result of an extern function. The old part `reaches` has no part of the IR signature (W0118 reads `Summary::runs` and `Summary::unknown_runs`, `checks::reaches`, and gives the same W0118); `pins` is the class F19-SIG-PINS; the IR gives `raises` for code that the body does not know (a failure of the runtime in it)"
+stage = "R0i"
+
+# Stage R0i fix: the probes of `tests/gate/probes/fixes/r0i/` (the review of
+# R0i). Entry 6 accepts their `changed` rows (W0118 is a W01xx code): the
+# old pipeline gives W0118 (`reaches`); the `ir` pipeline gives the same
+# W0118 from the summary and, for the task forms (r31 to r41), W0601 and
+# W0602 of the linear function part of the value that the old ValueProps
+# give (stage R0i-b looks at them). r17 and r28: one more W0118 line of the
+# summary of the callee (`raises`, the worst case of a callee with no IR).
+# f06: the old W1004 of a `fip` function with no IR goes (its declaration
+# has no row; W1003 and W0102 stay). pkg1: W0901 in both (the worst case of
+# the declaration). r18 is `fixed`: the old pipeline misses the W0118 of a
+# callee that runs an extern result.

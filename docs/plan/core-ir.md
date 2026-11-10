@@ -1921,7 +1921,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, C7, E7 (E2, E4, E5 stay: R0f as built) | done (f364e26) |
 | R0g | Continuations and capabilities in closures; a construct with no full facts is in scope only if the `ir` pipeline rejects the program | D1, D4, C4, C6, D5, C8 (D1 15/49, D4 1/2, D5 5/5 stay: R0g as built) | done (5aea3a8) |
 | R0h | Function values across operations: an operation of a caller gets a function value; a clause gets a function value of the callee, or gives a reference or a function value back to it | C2, D3 (after the fix of R0h C2 17/68, D3 1/1 stay; E2, E4, E5, C7, E7 stay: R0h as built, R0h fix as built) | done (c9da6d3) |
-| R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built) | | done (this stage) |
+| R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d; the fix of the review: this stage) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; can run beside R1 and R2) | | M |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
@@ -3318,6 +3318,69 @@ R0i as built (part a):
   column as with `weft-r0hfix1` (21 held, 14 rejected by both, 7 no fault, 2 old
   misses; 0 HOLE).
 
+R0i fix as built (the review of R0i, round 1: no blocker; the lost diagnostics of the
+review, scratchpad `r0irev/notes.md`):
+
+- W0118 `reaches` (`checks::reaches`). Part a left out each task run ("the scope gives
+  W0118 already"), but a local `Fail` handler around the scope catches the failure of
+  the scope (`summarize::caught`): `r31`, `r34`, `r35`, `r37`, `r38`, `r40`, `r41` of
+  the review lost the W0118 of the old inference, and the unwinder run faults (no
+  handler for `Ask.ask`); W0601 and W0602 of the old `ValueProps` held them, so they
+  would be holes after R0i-b. Now a run of the part `runs` counts, a call or a task,
+  if it is a run of a capture or of a parameter whose type has a function part
+  (`props::ir_has_fns`); a task of a value of a type parameter (`s.spawn(|| x)`,
+  `verify/s5/R3x/p1/c14_task.wf`) does not.
+- A run of a function value that the body does not know: `unknown_multi` is the
+  `multi` of the program, so part a missed the run in a program with no `multi`
+  operation (`r16`: W0118 lost; `r05`, `r14`, `r17`, `r19`: the line lost). The new
+  summary part `unknown_runs` (`Em::code_unknown`: a run of code of a caller that is no
+  value of the interface; `Handlers::unknown_runs_at`: a call of a function or a
+  closure with the part; `Inferred::unknown_runs`) gives it, also through a callee:
+  `r18` (an `on abort` function that calls a function that runs an extern result) now
+  gets W0118, which both binaries before missed (`ev.sh`: HOLE+oldmiss to oldmiss; the
+  fault is the stub of the extern function). `unknown_multi` does not count any more:
+  the worst case of a callee with no IR has it (`r28` keeps its rows).
+- `weft deps`: a function whose body has no IR gets the row of the worst case of its
+  declaration again (`factgen::ir_sigs`; a stated row stays), so W0901 of
+  `fixes/r0i/pkg1_deps_noir` stays (it names each standard effect but `io`, not only
+  `log`). The four packages of tier 2 that got a new W0901 in the first build of part
+  a get it (`verify/partb/S3/pkg1`, `verify/review_edge/Edge/pkg2`: an unknown name;
+  `verify/quality/manifests/depitems`, `verify/review_edge/Edge/pkg3`: a declaration
+  error); the worst case is sound but not precise (`pkg3` `info` only prints), and each
+  program has the error of the body already (a comment in the ledger). `fip` takes the
+  declaration of a function with no IR: `f06` of the review loses the old W1004 (its
+  W1003 and W0102 stay).
+- `irbuild::reported` and `typeck_error` count no code of `OLD_INFERENCE_CODES` (W0118
+  and W1001 to W1004: `analyze` gives them from the old signatures for the old
+  pipeline). The test `the_ir_pipeline_reads_no_old_signature_and_no_old_fact` also
+  takes these diagnostics out of `Analysis::diags` and puts wrong ones in, and it has
+  a program with a declaration error and the probes `r31`, `r16`.
+- The ledger entry F19-SIG-PINS of R0i names the part `pins` of the summary too (the
+  `opaque` mark of a task, the stealable sink, the callers): the review found the same
+  `weft facts` and the same oracle runs on the 30 files.
+- R3 must move `crate::infer::{growth_limit, not_converged, SIG_PLACE_STEPS}` out of
+  `infer.rs` before it deletes it (R3 text).
+- Probes `tests/gate/probes/fixes/r0i/` (15 files of the review and the package
+  `pkg1_deps_noir`); tests `analysis_units.rs`
+  `an_on_abort_function_that_runs_an_unknown_value_is_w0118`, `cli.rs`
+  `a_dependency_function_with_no_ir_keeps_its_authority`.
+- Gates (binary `r0i/bin/weft-fix1`, `weft-gate-fix1`): tier 1 0 blockers (4926; 3756
+  same, 14 open, 278 fixed, 1 new-fp, 0 lost-fault, 139 lost-clean, 145 moved, 593
+  changed: the 16 new probes are 4 same, 1 fixed (`r18`) and 11 changed, each one
+  rejected by both and accepted by entry 6; the other rows as at R0i). The manifest, the
+  two oracle caches and `tests/gate/baseline-tier1.jsonl` get the 16 rows of the new
+  probes, and no other row changes. Tier 2 (2 workers) 0 blockers (40047 same, 6 open,
+  92 fixed, 12 new-fp (0.096 %), 0 lost-fault, 3444 lost-clean, 1857 moved, 11935
+  changed; 4 timeouts): against R0h fix only the four packages of the W0901 of the
+  worst case (`same` to `changed`, both reject, `ev.sh` the same verdicts with both
+  binaries). Fact oracle tier 1 0 failures (8 faults, 22 timeouts, 1315 pass). Sigdiff
+  tier 1 0 rows with no entry (two `sig` entries of the fix for the new probes). The
+  diagnostics of `weft check` on `tests/programs`, `tests/gate/probes` and
+  `r0irev/p` against `weft-r0hfix1`: the 13 texts of R0i, `r18` (one more W0118, a
+  real one) and `f06` (W1004 goes); `ereview/ev.sh` on these: each verdict the same but
+  `r18` (HOLE+oldmiss to oldmiss); 0 new HOLE. The review probes `r31` to `r41`, `r05`,
+  `r14`, `r16`, `r17`, `r19` and `r28` have the diagnostics of `weft-r0hfix1` again.
+
 #### R1 Standalone `typeck`, part 1
 
 - Depends on: C3 and one review round.
@@ -3358,7 +3421,11 @@ R0i as built (part a):
 - Goal: one fact generator.
 - Files: delete `crates/weft-sema/src/body/`, `crates/weft-sema/src/thir/record.rs`,
   the re-lowering loop of `crates/weft-sema/src/infer.rs` (keep `growth_limit` for
-  W0706), `FactGen::Old` and `Both`, `Options::ir_groups` and `irbuild/scope.rs` (all
+  W0706: the `ir` pipeline uses `crate::infer::{growth_limit, not_converged,
+  SIG_PLACE_STEPS}` in `analysis/callgraph.rs` and `analysis/sig.rs`, so move them
+  out of `infer.rs` before it goes; review of R0i), the checks that `analyze` runs on
+  the old signatures (`program::check_on_abort_rows`, `fip::check` with the old
+  signatures, `OLD_INFERENCE_CODES`), `FactGen::Old` and `Both`, `Options::ir_groups` and `irbuild/scope.rs` (all
   groups are on), `FnFacts::mark`/`rewind`/`FactMark` in `crates/weft-facts/src/lib.rs`,
   the closure summary of `Ty::Fn` and `fn_joins` in `crates/weft-sema/src/types.rs`,
   W0707 and W0704 in `crates/weft-check/src/codes.rs` (their texts say "no longer

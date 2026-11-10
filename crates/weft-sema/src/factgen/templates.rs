@@ -100,6 +100,10 @@ pub struct Em<'a> {
     /// A run node of the body runs code of a caller that can resume more
     /// than once (the part `multi` of the summary, as the old inference).
     pub code_multi: bool,
+    /// A run node of the body runs a function value that the body does not
+    /// know, code of a caller that is no value of the interface (the part
+    /// `unknown_runs` of the summary, plan stage R0i fix).
+    pub code_unknown: bool,
     /// The run nodes where code of a caller runs a function value of the
     /// interface (an entry of `runs`): a caller applies the value that it
     /// gives there (no part `lends` of a closure summary).
@@ -5090,6 +5094,7 @@ fn emit_apps(
         // A value of a parameter passes its effects through: the caller
         // applies the value that it gives (part `runs`).
         em.code_multi |= app.code && app.run.is_none() && app.summary.multi;
+        em.code_unknown |= app.code && app.run.is_none();
         abort |= app.summary.can_abort();
         // Code of a caller: the value that the caller gives applies its own
         // aborts where the caller runs it.

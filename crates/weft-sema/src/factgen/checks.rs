@@ -57,12 +57,12 @@ pub fn on_abort_rows(
                     // of its parameter; the program has an error for the
                     // body, and the other parts of the worst case give
                     // W0118 already.
-                    let body = built
+                    let decl = built
                         .fns
                         .get(&f)
                         .and_then(|g| built.program.fns.get(g.index()))
-                        .is_some_and(|d| d.body.is_some());
-                    row.reaches = body && reaches(s);
+                        .filter(|d| d.body.is_some());
+                    row.reaches = decl.is_some_and(|d| reaches(&built.tys, d, s));
                     row
                 },
             );
@@ -71,16 +71,32 @@ pub fn on_abort_rows(
     out
 }
 
-/// True if a function with summary `s` can call a function value that it
-/// does not know (`reaches` of W0118, class D-W0118 of stage F17): it calls
-/// a function value of its interface (a run of the part `runs` that is not
-/// a task: a value in its parameter, also through a callee), or a value that
-/// no part names (`unknown_multi`). Such a value can do what its maker can,
-/// so an `on abort` function cannot call it (plan stage R0i: the old
-/// inference gave this part). A task of the function gives W0118 for its
-/// scope already.
-fn reaches(s: &crate::analysis::summary::Summary) -> bool {
-    s.runs.iter().any(|r| !r.task) || s.unknown_multi
+/// True if a function with declaration `d` and summary `s` can run a
+/// function value that it does not know (`reaches` of W0118, class D-W0118
+/// of stage F17). Such a value can do what its maker can, so an `on abort`
+/// function cannot run it (plan stage R0i: the old inference gave this
+/// part). It is one of:
+///
+/// - a run of the part `runs` of a capture, or of a value of a parameter
+///   whose type has a function part: a call or a task, also through a
+///   callee. A task counts: a local `Fail` handler around its scope can
+///   catch the failure of the scope, so no other W0118 names it (R0i fix,
+///   `fixes/r0i/r31_*`). A parameter with no function part in its type
+///   (a value of a type parameter, `s.spawn(|| x)`) runs no code that a
+///   caller made;
+/// - a run of a value that no part of the interface names (the part
+///   `unknown_runs`: a value from an `rc` object, the result of an extern
+///   function), also through a callee, and also in a program with no
+///   `multi` operation. The part `unknown_multi` does not count: the worst
+///   case of a callee with no IR has it (it can resume more than once) and
+///   runs no value (`fixes/r0i/r28_*`).
+fn reaches(tys: &weft_ir::TyTable, d: &weft_ir::FnDecl, s: &crate::analysis::Summary) -> bool {
+    let fn_part = |j: u32| {
+        d.params
+            .get(j as usize)
+            .is_some_and(|&t| crate::props::ir_has_fns(tys, t))
+    };
+    s.unknown_runs || s.runs.iter().any(|r| r.capture || fn_part(r.param))
 }
 
 /// The span of the `handle` of handler `h`: the `handle` terminator of its

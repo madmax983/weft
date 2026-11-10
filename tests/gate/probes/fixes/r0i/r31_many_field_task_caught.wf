@@ -1,0 +1,25 @@
+// on abort runs a field fn value (@ many) as a task in a scope, under a caught Fail; spawn program
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+linear struct T { f: fn() @ many }
+    on abort = undo
+fn undo(t: T) {
+    let T(f) = t
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let k = s.spawn(|| f())
+            k.join()
+        }
+    }
+}
+fn done(t: T) { let T(f) = t }
+fn body() / Stop, Ask {
+    let t = T { f: || print(ask()) }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

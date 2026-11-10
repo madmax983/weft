@@ -1,0 +1,20 @@
+// an on abort fn calls a callee with a type error (no IR) that performs Note
+effect Stop { fn stop() }
+effect Note { fn note(x: u64) }
+linear struct T { n: u64 }
+    on abort = undo
+fn helper(n: u64) {
+    note(n)
+    let z: u64 = "x"
+}
+fn undo(t: T) {
+    let T(n) = t
+    helper(n)
+}
+fn done(t: T) { let T(n) = t }
+fn body() / Stop, Note {
+    let t = T { n: 1 }
+    stop()
+    done(t)
+}
+fn main() { handle Note { fn note(x) { resume(()) } } in { handle Stop { fn stop() { () } } in body() } }

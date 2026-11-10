@@ -180,6 +180,7 @@ fn stated(
     out.lends.clone_from(&body.lends);
     out.gives_frame = body.gives_frame;
     out.caller_muts = body.caller_muts;
+    out.unknown_runs = body.unknown_runs;
     out.pins = body.pins;
     out.joins.clone_from(&body.joins);
     out.abort_joins.clone_from(&body.abort_joins);
@@ -230,6 +231,7 @@ fn summary_of(
             sig::put_parts(&mut sum, inf);
             sum.gives_frame = inf.gives_frame;
             sum.caller_muts = inf.caller_muts;
+            sum.unknown_runs = inf.unknown_runs;
             sum.pins = inf.pins;
             sum.joins.clone_from(&inf.joins);
             sum.abort_joins.clone_from(&inf.abort_joins);
@@ -511,6 +513,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 runs: &e.runs,
                                 returns: &e.returns,
                                 code_multi: e.code_multi,
+                                code_unknown: e.code_unknown,
                                 caller_muts: e.caller_muts,
                                 made: e.made.as_ref(),
                                 run_nodes: &[],

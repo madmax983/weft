@@ -475,6 +475,13 @@ pub struct Summary {
     /// call whose local clause gives the callee a reference changes the
     /// places that the clause gives back (`clause::Handlers::back`).
     pub caller_muts: bool,
+    /// The body runs a function value that it does not know: code of a
+    /// caller that is no value of its interface (a value from an `rc`
+    /// object, the result of an extern function), also through a callee
+    /// (plan stage R0i fix). It does not depend on the `multi` operations
+    /// of the program, as `unknown_multi` does. W0118 reads it
+    /// (`factgen::checks`, the part `reaches` of the old inference).
+    pub unknown_runs: bool,
     /// The places of `lends` that code of a caller other than an operation
     /// of the row gets (the inferred part `lends`, follow-up F13.2). A call
     /// that runs a local clause for each effect of the row lends only these

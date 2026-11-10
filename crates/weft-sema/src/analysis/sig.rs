@@ -547,6 +547,9 @@ pub struct Inferred {
     /// The body changes a place of a caller (`Summary::caller_muts`, stage
     /// R0h).
     pub caller_muts: bool,
+    /// The body runs a function value that it does not know
+    /// (`Summary::unknown_runs`, plan stage R0i fix).
+    pub unknown_runs: bool,
     /// The body can start a pinned task (`Summary::pins`, plan stage F18).
     pub pins: bool,
     /// The task handle parameters that the body joins on each path
@@ -732,6 +735,10 @@ impl Inferred {
         }
         if o.caller_muts && !self.caller_muts {
             self.caller_muts = true;
+            grew = true;
+        }
+        if o.unknown_runs && !self.unknown_runs {
+            self.unknown_runs = true;
             grew = true;
         }
         if o.pins && !self.pins {
@@ -1118,6 +1125,7 @@ pub fn build(
     put_parts(&mut s, inf);
     s.gives_frame = inf.gives_frame;
     s.caller_muts = inf.caller_muts;
+    s.unknown_runs = inf.unknown_runs;
     s.pins = inf.pins;
     s.joins.clone_from(&inf.joins);
     s.abort_joins.clone_from(&inf.abort_joins);
