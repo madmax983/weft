@@ -1,0 +1,21 @@
+// Plan stage R0k-a2 fix (the review of R0k-a2, probe u09_fork.wf): a body inside the owner writes `k` through an upvar or a capture, so the run of `k` gets no copy of the closure body (the program keeps the fallback, or the `ir` pipeline rejects it).
+// The probe: k is reassigned in a fork branch: k gets the risky closure there, then k() runs it (W0301 or a fallback expected)
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+effect Sw { fn sw() }
+fn main() / async, par {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let k = || run(|| print(0))
+        fork(|| { k = || run(|| print(r)) }, || print(1))
+        k()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

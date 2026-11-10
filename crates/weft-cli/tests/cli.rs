@@ -1046,8 +1046,8 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     // Each group is on by default (stage F20, plan §2.6): a program with a
     // construct that the fact generator does not support yet (a clause that
     // gives the callee a function value that can race, a fallback of stage
-    // F16 that stage R0h keeps; from stage R0k-a only in a closure that the
-    // callee runs, which the copy of the callee does not copy; a
+    // F16 that stage R0h keeps; from stage R0k-a2 only in a recursive callee,
+    // which gets no copy; a
     // handler in a closure body is in scope from stage R0d) goes to the old
     // pipeline, and the command says why on standard error. A clean program
     // with a `multi` operation of a handler of a caller in a clause
@@ -1058,7 +1058,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         &[
             (
                 "nested_bad.wf",
-                "effect Get { fn get() -> fn() }\nfn run_it() / Get { let k = || { let g = get(); g() }; k() }\nfn quiet() { let u = Vec.new(); u.push(1); handle Get { fn get() { resume(|| u.clear()) } } in { run_it() } }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
+                "effect Get { fn get() -> fn() }\nfn run_it(n: u64) / Get { if n > 0 { run_it(n - 1) } else { let g = get(); g() } }\nfn quiet() { let u = Vec.new(); u.push(1); handle Get { fn get() { resume(|| u.clear()) } } in { run_it(1) } }\nfn bad() {\n    let v = [1]\n    let w = v\n    quiet()\n    print(v.len())\n}\nfn main() { bad() }\n",
             ),
             (
                 "nested_run.wf",

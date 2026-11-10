@@ -1,0 +1,17 @@
+// Plan stage R0k-a2: the clean twin of a04 (the refusal keeps the old
+// pipeline). The handled body reads `r` before the run.
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn pick(b: bool) -> bool { b }
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in {
+        let r = &c.v[0]
+        print(r)
+        let k = if pick(true) { || { let g = get()
+            g() } } else { || { let g = get()
+            g() } }
+        k()
+    }
+}

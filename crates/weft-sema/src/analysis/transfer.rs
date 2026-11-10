@@ -1218,6 +1218,7 @@ pub fn term(
     t: &TermKind,
 ) -> Result<(), AlphaError> {
     lose_given(cx, body, st, t, false);
+    weak_values_stay(cx, body, st, t)?;
     match t {
         TermKind::Goto(_) => goto(st),
         TermKind::Switch { on, .. } => switch(cx.p, body, st, on),
@@ -2818,8 +2819,8 @@ pub fn op_fn_args(
                     .get(e.index())
                     .map(|d| d.identity.clone())
                     .unwrap_or_default();
-                if let Some(f) = fn_of_body(cx.p, body) {
-                    note_weak(f, &effect);
+                if let Some(k) = weak_owner(cx.p, body) {
+                    note_weak(k, &effect);
                 }
             }
         }
@@ -2888,21 +2889,41 @@ impl Drop for WeakRowOps {
     }
 }
 
+/// A summary that can use the weak form ([`WeakRowOps`]): of a function,
+/// or of a closure (stage R0k-a2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WeakKey {
+    /// The summary of a function item.
+    Fn(weft_ir::FnId),
+    /// The summary of a closure.
+    Closure(weft_ir::ClosureId),
+}
+
 thread_local! {
-    /// The functions whose summaries use the weak form of a perform through
-    /// the row, with the identities of the effects ([`WeakRowOps`]).
-    static WEAK_FNS: std::cell::RefCell<BTreeMap<weft_ir::FnId, BTreeSet<String>>> =
+    /// The summaries that use the weak form of a perform, with the
+    /// identities of the effects ([`WeakRowOps`]).
+    static WEAK_FNS: std::cell::RefCell<BTreeMap<WeakKey, BTreeSet<String>>> =
         const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 
-/// Notes that the summary of function `f` uses the weak form for `effect`.
-fn note_weak(f: weft_ir::FnId, effect: &str) {
+/// Notes that summary `k` uses the weak form for `effect`.
+pub fn note_weak(k: WeakKey, effect: &str) {
     WEAK_FNS.with(|w| {
         w.borrow_mut()
-            .entry(f)
+            .entry(k)
             .or_default()
             .insert(effect.to_string());
     });
+}
+
+/// The summary that the code of body `b` is part of: the closure of the
+/// innermost closure body around `b`, else the function of `b`.
+pub fn weak_owner(p: &Program, b: BodyId) -> Option<WeakKey> {
+    if let Some((c, _)) = crate::factgen::alpha::unit_closure(p, b).and_then(|cb| p.closure_of(cb))
+    {
+        return Some(WeakKey::Closure(c));
+    }
+    fn_of_body(p, b).map(WeakKey::Fn)
 }
 
 /// The function whose body is body `b` or a lexical parent of it.
@@ -2918,11 +2939,52 @@ fn fn_of_body(p: &Program, b: BodyId) -> Option<weft_ir::FnId> {
     None
 }
 
-/// The guard of the weak form (stage R0k-a).
+/// The guard of the weak form for the terminators that give a function
+/// value to code that is not a call (stage R0k-a2): a task (`spawn`,
+/// `fork`), a clause (`perform`, `resume`). A closure or a function item
+/// whose summary uses the weak form can run there where a local handler
+/// serves the operation, and no call node checks it (`note_weak_call`).
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] if such a terminator gives such a value.
+fn weak_values_stay(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    t: &TermKind,
+) -> Result<(), AlphaError> {
+    if !weak_row_ops() || WEAK_FNS.with(|m| m.borrow().is_empty()) {
+        return Ok(());
+    }
+    let ops: Vec<&Operand> = match t {
+        TermKind::Spawn { task, .. } => vec![task],
+        TermKind::Fork { branches, .. } => branches.iter().collect(),
+        TermKind::Perform { args, .. } => args.iter().collect(),
+        TermKind::Resume { arg, .. } => vec![arg],
+        _ => return Ok(()),
+    };
+    for o in ops {
+        for g in reach_fns(cx, body, st, o)? {
+            let k = match g {
+                FnVal::Item(f, _) => WeakKey::Fn(f),
+                FnVal::Closure(c) | FnVal::Made(c) => WeakKey::Closure(c),
+                _ => continue,
+            };
+            if WEAK_FNS.with(|m| m.borrow().get(&k).is_some_and(|x| !x.is_empty())) {
+                return Err(AlphaError::Later(OP_KEPT));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The guard of the weak form (stage R0k-a; closures from stage R0k-a2).
 ///
 /// It checks the invariant of `factgen::instantiate::Instantiated::weak_ok`
-/// at a call in body `body` that runs the summaries of the functions
-/// `callees` with the local handlers of the effects `served`.
+/// at a call in body `body` that runs the summaries `callees` (functions,
+/// and closures that the call runs or gives to its callee) with the local
+/// handlers of the effects `served`.
 ///
 /// A summary with the weak form does not say what a clause does with a
 /// function value that the callee gives to it. So if a local handler serves
@@ -2936,7 +2998,7 @@ fn fn_of_body(p: &Program, b: BodyId) -> Option<weft_ir::FnId> {
 pub fn note_weak_call(
     p: &Program,
     body: BodyId,
-    callees: &[weft_ir::FnId],
+    callees: &[WeakKey],
     served: &BTreeSet<String>,
 ) -> Result<(), AlphaError> {
     if !weak_row_ops() {
@@ -2952,7 +3014,7 @@ pub fn note_weak_call(
             pass.insert(e);
         }
     }
-    if let Some(g) = fn_of_body(p, body) {
+    if let Some(g) = weak_owner(p, body) {
         for e in &pass {
             note_weak(g, e);
         }

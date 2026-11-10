@@ -1,0 +1,22 @@
+// Plan stage R0k-a2 fix (the review of R0k-a2, probe u11_clause_harmless_then.wf): the clean twin of the u probes: the clause gives `k` a closure that does no harm. A body inside the owner writes `k`, so the run of `k` gets no copy.
+// The probe: k is reassigned in a clause to a harmless closure (the copy of the first one is fine): k gets the risky closure there, then k() runs it (W0301 or a fallback expected)
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+effect Sw { fn sw() }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let k = || run(|| print(0))
+        handle Sw { fn sw() { k = || print(1)
+            resume(()) } } in { sw() }
+        k()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

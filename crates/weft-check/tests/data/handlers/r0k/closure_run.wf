@@ -1,6 +1,6 @@
-// Stage R0k-a: the perform is in a closure that the callee makes and runs.
-// The copy of the callee does not copy the closure body at its run node
-// (stage R0k-a2), so the D3 form keeps the old pipeline.
+// Stage R0k-a2: the perform is in a closure that the callee makes and runs.
+// The copy of the callee has the closure, and the run of the closure gets a
+// copy of its body (W0301).
 struct C { v: Vec<u64> }
 effect Get { fn get() -> fn() }
 fn run_ref(c: &C) / Get {

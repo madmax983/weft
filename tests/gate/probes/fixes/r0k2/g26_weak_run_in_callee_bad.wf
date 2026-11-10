@@ -1,0 +1,19 @@
+// Plan stage R0k-a2 fix (the order of the weak guard): `k` performs through
+// a captured capability with a function value, so its summary has the weak
+// form. `main` gives it to `apply`, a body that the analysis runs before
+// `main`, the maker of `k`. The guard refuses the call of `apply` in the
+// handled body (the program keeps the old pipeline). The clause runs the
+// value that clears `v` while `r` points into it.
+effect Run { fn run(g: fn()) }
+fn apply(f: fn(fn()), g: fn()) { f(g) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let k = |g: fn()| run(g)
+        apply(k, || v.clear())
+    }
+    print(r)
+}

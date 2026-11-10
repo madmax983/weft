@@ -2313,6 +2313,36 @@ and no closure, function item value, `main` or test can run such a callee). The
 analysis checks the invariant (`transfer::note_weak_call`): a served call of a
 summary with the weak form, also through a callee, keeps the old pipeline.
 
+As built (plan stage R0k-a2): three more kinds of copy, under the same rules (two
+phases, the verifier, the fact oracle runs the copy).
+
+- A static closure copy. A call of a function value whose callee is a local that gets
+  one value, a closure that the same body makes (also through copies of locals, as the
+  callee temporary of a call), gets a copy of the closure body when the closure performs
+  an operation with a function value or a reference through a captured capability, or
+  calls a callee that performs one. The environment goes to the site: a `Kept` capture
+  is its source (the closure shares the cell of the variable), a `ByRef` capture a new
+  borrow of its source at the entry of the copy, a `Cap` capture the capability of the
+  site. The copy mentions the closure value at its entry, so its references live up to
+  the run. Refused: another way to give the local a value (two closures can reach it),
+  also a write, a move or a borrow of the local in a body inside its owner through an
+  upvar local or a capture (a task, a scope body, a handled body, a clause; the fix of the
+  review of R0k-a2), a
+  move or a borrow of the local, a `once` closure, a `ByMove` or `Kont` capture, a source
+  that ends or gets a new cell between the closure and the run, a use of the whole
+  environment, a body inside the closure that names the environment.
+- A generic callee. The copy substitutes the type arguments of the call in the types of
+  the locals, the aggregates, the calls and the function item values of the callee and of
+  the bodies inside it (new types go into the type table); a local whose type changes
+  gets the properties of its new type, and a `move` of a place that is a copy type now is
+  a copy (V9).
+- The closure guard. A perform through a captured capability with a function value has
+  the weak form in the facts of the closure (the clause is code of a caller that runs
+  the values). The guard of the analysis (`transfer::note_weak_call`) keeps a summary of a
+  closure with the weak form too (`WeakKey::Closure`): a call that runs it, or that gives
+  it to its callee, where a local handler serves the effect keeps the old pipeline, and a
+  `spawn`, a `fork`, a `perform` or a `resume` that gives such a value away keeps it too.
+
 ### 6.2 Nodes and phases
 
 Each statement is one node. Each terminator is one node (phase `Main`), and some

@@ -1,0 +1,22 @@
+// Plan stage R0k-a2 fix (the review of R0k-a2, probe u03_callee_reassigns_via_clause.wf): a body inside the owner writes `k` through an upvar or a capture, so the run of `k` gets no copy of the closure body (the program keeps the fallback, or the `ir` pipeline rejects it).
+// The probe: k is reassigned in the clause of another handler (upvar of the clause)
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+effect Sw { fn sw() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let k = || run(|| print(0))
+        handle Sw { fn sw() { k = || run(|| print(r))
+            resume(()) } } in { sw() }
+        k()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

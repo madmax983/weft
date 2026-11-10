@@ -1,0 +1,13 @@
+// Plan stage R0k-a2: the clean twin of a03. The value only reads `v`.
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let k = |g: fn()| run(g)
+        k(|| print(v.len()))
+    }
+    print(r)
+}
