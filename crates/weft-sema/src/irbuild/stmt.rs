@@ -94,7 +94,7 @@ impl Builder<'_> {
         if let Some(p) = self.as_place(e)? {
             let origin = self.origin(e.span, Some(e.id));
             let ty = self.value_ty(e)?;
-            match self.read_place(p.clone(), ty)? {
+            match self.read_place(p.clone(), ty, e.span) {
                 Operand::Move(q) => {
                     let t = self.temp(ty, TempKind::Discarded, origin);
                     self.assign(Place::local(t), Rvalue::Use(Operand::Move(q)), origin);
@@ -112,7 +112,16 @@ impl Builder<'_> {
     pub(super) fn stmt(&mut self, s: &Stmt) -> R<()> {
         self.open(ScopeKind::Stmt, s.span);
         match &s.kind {
-            S::Let { pat, init, .. } => self.let_stmt(pat, init.as_ref(), s)?,
+            S::Let { pat, init, ty } => {
+                self.let_stmt(pat, init.as_ref(), s)?;
+                // A stated type (W0502, `values.rs`).
+                if ty.is_some() {
+                    let local = self.t.binding.get(&pat.id).and_then(|b| self.vars.get(b));
+                    if let Some(&l) = local {
+                        self.d.stated.borrow_mut().push((self.body_id, l));
+                    }
+                }
+            }
             S::Expr(e) => self.expr_stmt(e)?,
             S::Assign { target, op, value } => self.assign_stmt(target, *op, value, s)?,
             S::Return(e) => self.return_stmt(e.as_ref(), s.span)?,
@@ -160,6 +169,15 @@ impl Builder<'_> {
                     return unsupported(Construct::NoThir, pat.span());
                 }
                 let l = self.user_local(b, id.span)?;
+                // A move out of a place reports W0303 at the statement, as
+                // the old lowering does.
+                if let Some(p) = self.as_place(init)? {
+                    let origin = self.origin(init.span, Some(init.id));
+                    let ty = self.value_ty(init)?;
+                    let op = self.read_place(p, ty, s.span);
+                    self.assign(Place::local(l), Rvalue::Use(op), origin);
+                    return Ok(());
+                }
                 self.into(init, Place::local(l))
             }
             PatternKind::Wild(_) | PatternKind::Lit(..) => {

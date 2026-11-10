@@ -611,11 +611,13 @@ pub const OLD_INFERENCE_CODES: [Code; 5] = [
 /// (`docs/ir.md` 2.4): the fact generator of the IR gives its own, and its
 /// effect inference gives W0701 and W0706 (`docs/ir.md` 6.8). W0303 stays: a
 /// body with W0303 has no IR (`docs/ir.md` 5.36).
-pub const IR_DROPS: [Code; 8] = [
+pub const IR_DROPS: [Code; 10] = [
     Code::W0204,
+    Code::W0303,
     Code::W0313,
     Code::W0314,
     Code::W0315,
+    Code::W0502,
     Code::W0701,
     Code::W0704,
     Code::W0706,

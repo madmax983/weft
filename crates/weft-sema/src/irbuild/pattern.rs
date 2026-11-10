@@ -21,7 +21,7 @@ use weft_ir::{
 };
 use weft_syntax::ast::{Lit, Pattern, PatternKind, Span, StrPart};
 
-use super::{no_ir, unsupported, Builder, Construct, NoIr, R};
+use super::{unsupported, Builder, Construct, R};
 use crate::thir::{self, BindingId};
 
 /// One test of a pattern.
@@ -255,7 +255,8 @@ impl Builder<'_> {
                     return Ok((b, How::Copy, q));
                 }
                 if through_ref(&q) {
-                    return no_ir(NoIr::MoveThroughRef);
+                    // W0303 (plan stage R0i-b): the builder records it.
+                    self.d.moves.borrow_mut().push((span, t, true));
                 }
                 return Ok((b, How::Move, q));
             }

@@ -139,7 +139,8 @@ impl Builder<'_> {
     pub(super) fn into(&mut self, e: &Expr, dest: Place) -> R<()> {
         if let Some(p) = self.as_place(e)? {
             let origin = self.origin(e.span, Some(e.id));
-            let op = self.read_place(p, self.value_ty(e)?)?;
+            let ty = self.value_ty(e)?;
+            let op = self.read_place(p, ty, e.span);
             self.assign(dest, Rvalue::Use(op), origin);
             return Ok(());
         }
@@ -264,7 +265,7 @@ impl Builder<'_> {
         let origin = self.origin(e.span, Some(e.id));
         if let Some(p) = self.as_place(e)? {
             let ty = self.value_ty(e)?;
-            return self.place_operand(p, ty, e, skip);
+            return Ok(self.place_operand(p, ty, e, skip));
         }
         let ty = self.ty(e)?;
         let t = self.temp(ty, TempKind::Operand, origin);
@@ -279,15 +280,15 @@ impl Builder<'_> {
 
     /// Reads place `p` of type `ty` (the place of `e`) as an operand: the
     /// place itself with `skip`, else a temporary (`docs/ir.md` 5.1.1).
-    fn place_operand(&mut self, p: Place, ty: weft_ir::TyId, e: &Expr, skip: bool) -> R<Operand> {
-        let op = self.read_place(p, ty)?;
+    fn place_operand(&mut self, p: Place, ty: weft_ir::TyId, e: &Expr, skip: bool) -> Operand {
+        let op = self.read_place(p, ty, e.span);
         if skip {
-            return Ok(op);
+            return op;
         }
         let origin = self.origin(e.span, Some(e.id));
         let t = self.temp(ty, TempKind::Operand, origin);
         self.assign(Place::local(t), Rvalue::Use(op), origin);
-        Ok(Operand::Move(Place::local(t)))
+        Operand::Move(Place::local(t))
     }
 
     /// Evaluates `e` now and gives an operand in a read position: a
@@ -308,7 +309,7 @@ impl Builder<'_> {
             // A local or a capture that holds a `once` closure is not plain
             // data: a read of it would move it, so it is borrowed.
             if self.copies(&p, ty) {
-                return self.place_operand(p, ty, e, skip);
+                return Ok(self.place_operand(p, ty, e, skip));
             }
             let rty = self.tys.intern(Ty::Ref(ty));
             let t = self.temp(rty, TempKind::Operand, origin);

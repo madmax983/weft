@@ -1921,8 +1921,8 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0f | Task runs (`http.serve` callbacks, code of a caller on another thread) | C1, C7, E7 (E2, E4, E5 stay: R0f as built) | done (f364e26) |
 | R0g | Continuations and capabilities in closures; a construct with no full facts is in scope only if the `ir` pipeline rejects the program | D1, D4, C4, C6, D5, C8 (D1 15/49, D4 1/2, D5 5/5 stay: R0g as built) | done (5aea3a8) |
 | R0h | Function values across operations: an operation of a caller gets a function value; a clause gets a function value of the callee, or gives a reference or a function value back to it | C2, D3 (after the fix of R0h C2 17/68, D3 1/1 stay; E2, E4, E5, C7, E7 stay: R0h as built, R0h fix as built) | done (c9da6d3) |
-| R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d; the fix of the review: this stage) |
-| R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; can run beside R1 and R2) | | M |
+| R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
+| R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built) | | done (this stage) |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -3380,6 +3380,101 @@ review, scratchpad `r0irev/notes.md`):
   real one) and `f06` (W1004 goes); `ereview/ev.sh` on these: each verdict the same but
   `r18` (HOLE+oldmiss to oldmiss); 0 new HOLE. The review probes `r31` to `r41`, `r05`,
   `r14`, `r16`, `r17`, `r19` and `r28` have the diagnostics of `weft-r0hfix1` again.
+
+R0i-b as built (the old value flow and the move diagnostics; the review of R0i, round
+2, also found that the part `unknown_runs` was not set in closure and clause bodies):
+
+- `irbuild::values` gives the properties of the values of the bindings
+  (`BindingValues`: linear, no `on abort`, `once`, nonportable) from the IR: a value flow
+  over the whole program to its fixpoint. Each local starts with the props of its
+  declaration; a closure gets the props of its captures (`once` also for a capture that
+  is not `many` or `@ uniq`, and for a body that calls a `once` value) and of
+  `ClosureDecl::once`; an assignment, an aggregate, a reference, an iterator, a call (the
+  result of the callee with the arguments for the parameters that its result can be),
+  a write behind a reference or into an `rc` object (also of a callee, by parameter, and
+  of a callee with no body into an argument that is a reference to a type with a
+  function part: `Vec.push`), a perform (the clause parameters, the values of `resume`),
+  a `handle`, a `scope` and an upvar pass them on. A parameter gets nothing from the
+  callers, as in the old value flow. `Builder::binding_props_of` reads them
+  (`Decls::values`), not `thir::Binding::value`. The builder runs in rounds
+  (`irbuild::build_all`, at most `MAX_ROUNDS`): the first with the props of the types,
+  each next one with the values of the IR of the round before, until they do not change
+  (the cleanup reads `linear`, so the IR depends on them). `build_with` is the test hook
+  that builds with given values. A closure that captures a `@ uniq` value (the analysis
+  knows the mode, the builder does not) is not `many`: `factgen::not_many` marks each
+  variable of a local of a type with a function part that can hold it (W0503).
+- A scratch test compared the local props of the bindings with those of the old values
+  on the 5374 files of `tests/programs`, `tests/gate/probes` and the review probes
+  (scratchpad `r0i/vcmp.tsv`): 113 144 the same, 203 more and 193 fewer in an early
+  build. The IR gives more for a linear closure that a clause parameter, a `Vec` or a
+  handle result gets, and for a closure of a returned closure; fewer for a closure that
+  captures a `@ uniq` reference (`not_many` gives it in the facts) and for parts of a
+  container whose type does not show them. The diagnostics decide: the diff below.
+  A capture of a type with no function part takes the props of its declaration (a part
+  of a linear struct is not linear by itself: `verify/s5/R3x/p1/c1_closure.wf` keeps
+  W0118 of a dropped type parameter), and a reference to a place behind a reference
+  (`&(*ks)`) points where that reference points (so a callee that pushes into `ks` gives
+  its caller the value, not its own parameter: `stored_linear.wf` of `weft-check`).
+- W0303: the builder records each move through a reference (`read_place` with the
+  location of the expression, of the statement for `let x = <place>`; `bind_how`) and
+  goes on; the body has no IR and the builder gives each W0303 (`Decls::moves`). A move
+  out of an `rc` object gives W0303 with IR (the old lowering gave it). A copy of a
+  function value behind a reference or an `rc` object whose value can be a closure that
+  moves a capture and whose type does not come from a declared function type is W0303
+  too (`values::once_reads`, `fixes`: `r3/redteam/p/f2_kesc.wf`). `irbuild::reported`
+  does not read W0303 of the old lowering; W0303 and W0502 join `IR_DROPS`.
+- W0502 of `keep_modes`: `values::once_into_plain` (`docs/ir.md` 5.36). A closure that
+  moves a capture and is not linear goes into a field of a declared function type of a
+  struct or variant literal, into an assignment to such a field, or into an argument of
+  a function item whose parameter type is not a function type while another argument is
+  a place of a stated type (a parameter, a `let` with a stated type, `Decls::stated`, a
+  field). A body with no IR gives no W0502 (`verify/s5/R2c/p/c1.wf` and `or9_v1.wf`
+  lose the old W0502 of a body with a type error).
+- `unknown_runs` in closure and clause bodies: `closure_summary` gives it from its `Em`
+  (`summarize::closure`), a clause sets `Handlers::clause_unknown`, and the function
+  counts each node of `Handlers::unknown_runs_at` (the clauses of the function too). So
+  `u06`, `u13`, `u14` of the review get W0118 again, and `u18` to `u20` (an item that
+  runs an extern result, called from a clause, a closure or a task) get it now (each
+  pipeline before missed them). `u04` (an item that runs an extern result as a task)
+  stays (ledger `open-old` R0i-U04: the fault is the stub of the extern function).
+- r31 to r41 of the first review: each one is still rejected (W0118 of `reaches`, and
+  W0601 and W0602 of the values of the IR).
+- Tests: `weft-sema` `tests.rs` `the_ir_pipeline_reads_no_old_signature_and_no_old_fact`
+  (also wrong `Binding::value` and wrong W0303 and W0502 of the old lowering),
+  `analysis_units.rs` (`the_builder_gives_w0303_and_w0502_of_a_once_closure`,
+  `the_values_of_the_bindings_come_from_the_ir`, the probes `u06` to `u20` in
+  `an_on_abort_function_that_runs_an_unknown_value_is_w0118`); probes
+  `tests/gate/probes/fixes/r0i/` (`u01` to `u20`, `g01` to `g07` of the review).
+- What still reads the old pipeline: `copy_old` (stage R4), the THIR tables and the
+  `typeck` diagnostics (R1, R2). The recorder still fills `Binding::value`, and no part of
+  the `ir` pipeline reads it.
+- Gates (binaries `r0i/bin/weft-b1`, `weft-gate-b1`): tier 1 0 blockers (4953 of
+  them; 3768 same, 15 open, 283 fixed, 1 new-fp, 0 lost-fault, 140 lost-clean, 145
+  moved, 601 changed: the 27 new probes are 13 same, 1 open (`u04`, ledger `open-old`),
+  5 fixed (`u03`, `u09`, `u18` to `u20`), 8 changed; `c2_linear_drop` gets W0601 and
+  W0602 of the clause (ledger `changed`); `d6_closure_via_clause` is `lost-clean`
+  (UNSIGNED, below); the other rows as at R0i fix). The manifest, the oracle caches and
+  the baseline of tier 1 get the 27 rows of the new probes, and no old record changes.
+  Tier 2 (2 workers) 0 blockers (40045 same, 6 open, 92 fixed, 12 new-fp (0.096 %), 0
+  lost-fault, 3446 lost-clean (+2: `d6` and `verify/s5/R3t/w0303.wf`, both UNSIGNED),
+  1857 moved, 11935 changed; 4 timeouts). The rows that differ from R0i fix: `w0303.wf`
+  (lost-clean: the old W0303 of a copy of a closure that moves no capture), `o35vv.wf`
+  (the same W0303 goes, still rejected; ledger `changed`), `p4982`, `p25330` (one more
+  W0401 or W0503 on a line with the code), two mutants of corpus 122 and the copies of
+  `c1.wf` and `or9_v1.wf` (the old W0502 of a body with no IR goes), `d6`. Fact oracle
+  tier 1 0 failures (8 faults, 22 timeouts, 1316 pass). Sigdiff tier 1 0 rows with no
+  entry (ledger `sig` entries for `g03`, `g05`, `u09`, `u12`).
+- The diagnostics of `weft check` on `tests/programs`, `tests/gate/probes` and the review
+  probes (`r0irev/p`, `r0irev2/p`) against `weft-r0ifix1`: `c2_linear_drop` (+W0601,
+  W0602), `d6_closure_via_clause` (-W0601 at the end of `main`), `c1.wf` and `or9_v1.wf`
+  (-W0502 in a body with a type error), and the probes `u01`, `u02`, `u06`, `u08`,
+  `u09`, `u13` to `u16`, `u18` to `u20` (W0118 of `reaches`). `ereview/ev.sh` (2 at one
+  time) on these and on the rows of tier 2 above (23 files): each verdict is the same or
+  better (`u06`, `u13`, `u14` HOLE to held; `u18` to `u20` HOLE+oldmiss to oldmiss;
+  `w0303` both-reject to no fault) but `d6`: held(AST-only) to HOLE(AST-only). The IR
+  engine runs `d6` clean (seeds 1 to 3) and the fact oracle passes; only the AST engine
+  faults, when it runs the `on abort` of `tx` that the closure kept by the clause owns
+  (the AST compiler goes in stage R4). The lost-clean row is UNSIGNED for the review.
 
 #### R1 Standalone `typeck`, part 1
 

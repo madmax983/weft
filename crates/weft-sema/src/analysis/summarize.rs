@@ -1485,6 +1485,8 @@ pub fn closure(
     });
     out.gives_frame = !facts.escapes_at.is_empty() || cap_gives;
     out.pins = task_pins(facts, fv.code_opaque);
+    // A run of a value that the closure does not know (plan stage R0i-b).
+    out.unknown_runs = fv.code_unknown;
     out.joins = fv.joins.iter().copied().collect();
     out.abort_joins = fv.abort_joins.iter().copied().collect();
     // The tasks that run while the closure waits at an operation of a

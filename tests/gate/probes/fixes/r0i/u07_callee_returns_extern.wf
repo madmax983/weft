@@ -1,0 +1,24 @@
+// on abort calls the result of a callee that returns an extern result
+effect Stop { fn stop() }
+extern fn mk() -> fn()
+linear struct T { n: u64 }
+    on abort = undo
+fn get() -> fn() { mk() }
+fn undo(t: T) {
+    let T(n) = t
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        let f = get()
+        f()
+    }
+}
+fn done(t: T) { let T(n) = t }
+fn par() { scope { s => s.spawn(|| print(1)) } }
+fn body() / Stop {
+    let t = T { n: 1 }
+    stop()
+    done(t)
+}
+fn main() {
+    par()
+    handle Stop { fn stop() { () } } in body()
+}

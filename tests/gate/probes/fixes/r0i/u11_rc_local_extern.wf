@@ -1,0 +1,25 @@
+// on abort puts an extern result into a local rc object and calls it back
+effect Stop { fn stop() }
+extern fn mk() -> fn()
+linear struct T { n: u64 }
+    on abort = undo
+struct Box { f: fn() }
+fn undo(t: T) {
+    let T(n) = t
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        let b = Rc.new(Box { f: mk() })
+        let f = b.f
+        f()
+    }
+}
+fn done(t: T) { let T(n) = t }
+fn par() { scope { s => s.spawn(|| print(1)) } }
+fn body() / Stop {
+    let t = T { n: 1 }
+    stop()
+    done(t)
+}
+fn main() {
+    par()
+    handle Stop { fn stop() { () } } in body()
+}

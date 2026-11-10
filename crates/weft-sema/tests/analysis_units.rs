@@ -1396,6 +1396,14 @@ fn an_on_abort_function_that_runs_an_unknown_value_is_w0118() {
         include_str!("../../../tests/gate/probes/fixes/r0i/r16_extern_all_caught.wf"),
         include_str!("../../../tests/gate/probes/fixes/r0i/r05_extern_result.wf"),
         include_str!("../../../tests/gate/probes/fixes/r0i/r18_extern_callee.wf"),
+        // A run of an unknown value in a closure or a clause of the
+        // function, or through an item that they call (plan stage R0i-b).
+        include_str!("../../../tests/gate/probes/fixes/r0i/u06_clause_runs_extern.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u13_closure_caught_inside.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u14_task_closure_caught_inside.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u18_clause_calls_item.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u19_closure_calls_item.wf"),
+        include_str!("../../../tests/gate/probes/fixes/r0i/u20_task_calls_item.wf"),
     ] {
         assert_eq!(reaches_lines(src), 1, "{src}");
     }
@@ -1413,4 +1421,80 @@ fn an_on_abort_function_that_runs_an_unknown_value_is_w0118() {
         )),
         0
     );
+}
+
+/// The codes and lines of the errors of the `ir` pipeline for `src`, and
+/// the messages of W0303 and W0502 (plan stage R0i-b).
+fn ir_errors(src: &str) -> Vec<(String, String)> {
+    let a = weft_sema::analyze_source(src, weft_sema::Options::from_markers(src))
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    a.diags
+        .iter()
+        .filter(|d| matches!(format!("{:?}", d.code).as_str(), "W0303" | "W0502"))
+        .map(|d| (format!("{:?}", d.code), d.message.clone()))
+        .collect()
+}
+
+#[test]
+fn the_builder_gives_w0303_and_w0502_of_a_once_closure() {
+    // W0502 from the IR (`irbuild::values::once_into_plain`): a `once`
+    // closure in a field of a stated function type, and in a `Vec` of a
+    // stated type; not in a `Vec` whose type the closure gives, and not a
+    // linear closure (W0601 is the error there).
+    let head = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\nstruct H { f: fn() }\n\
+                linear struct Tx { id: u64 }\nfn commit(t: Tx) { let Tx(i) = t }\n";
+    let field = format!("{head}fn main() {{ let b = Buf {{ items: Vec.new() }}\n let h = H {{ f: || eat(b) }}\n }}\n");
+    let stated = format!("{head}fn main() {{ let b = Buf {{ items: Vec.new() }}\n let v: Vec<fn()> = Vec.new()\n v.push(|| eat(b))\n }}\n");
+    let inferred = format!("{head}fn main() {{ let b = Buf {{ items: Vec.new() }}\n let v = Vec.new()\n v.push(|| eat(b))\n let g = v[0]\n g() }}\n");
+    let linear = format!("{head}fn main() {{ let t = Tx {{ id: 1 }}\n let h = H {{ f: || commit(t) }}\n let g = h.f\n g() }}\n");
+    let w0502 = |src: &str| ir_errors(src).iter().filter(|(c, _)| c == "W0502").count();
+    assert_eq!(w0502(&field), 1, "{:?}", ir_errors(&field));
+    assert_eq!(w0502(&stated), 1, "{:?}", ir_errors(&stated));
+    assert_eq!(w0502(&inferred), 0, "{:?}", ir_errors(&inferred));
+    assert_eq!(w0502(&linear), 0, "{:?}", ir_errors(&linear));
+    // W0303 from the builder: each move through a reference of a body.
+    let two = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\n\
+               fn f(r: &Buf, s: &Buf) {\n    let x = r.items\n    let y = s.items\n}\n";
+    let e = ir_errors(two);
+    assert_eq!(e.len(), 2, "{e:?}");
+    assert!(
+        e.iter()
+            .all(|(c, m)| c == "W0303" && m.contains("`Vec<u64>`")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn the_values_of_the_bindings_come_from_the_ir() {
+    // `irbuild::values` (plan stage R0i-b): the properties of a binding of a
+    // function type that the type does not show.
+    let src = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\n\
+               linear struct Tx { id: u64 }\nfn commit(t: Tx) { let Tx(i) = t }\n\
+               fn mk(f: fn()) -> fn() { f }\n\
+               fn main() {\n    let b = Buf { items: Vec.new() }\n    let c = || eat(b)\n\
+               let g = mk(c)\n    let t = Tx { id: 1 }\n    let l = || commit(t)\n\
+               let k = l\n    g()\n    k()\n}\n";
+    let a = weft_sema::analyze_source(src, weft_sema::Options::default())
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let built = weft_sema::irbuild::build(&a);
+    let main = a.thir.len() - 1;
+    let value = |name: &str| {
+        let t = &a.thir[main];
+        let (k, _) = t
+            .bindings
+            .iter()
+            .enumerate()
+            .find(|(_, b)| b.name == name)
+            .unwrap_or_else(|| panic!("no binding {name}"));
+        let id = weft_sema::thir::BindingId(u32::try_from(k).unwrap_or(u32::MAX));
+        built.binding_values[main]
+            .get(&id)
+            .copied()
+            .unwrap_or_default()
+    };
+    // The result of `mk(c)` is the argument: a `once` closure.
+    assert!(value("g").once);
+    // A copy of a linear closure is linear.
+    assert!(value("k").linear);
+    assert!(!value("g").linear);
 }

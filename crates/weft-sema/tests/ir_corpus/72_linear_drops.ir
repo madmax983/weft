@@ -1088,6 +1088,7 @@ body b30: fn closure_in_field; cap_env e0; unwind_exit bb7
     Dead(_1)
     Return
   bb3 (cleanup):
+    UnwindValue(_4, Drop)
     Dead(_4)
     Goto(bb4)
   bb4 (cleanup):

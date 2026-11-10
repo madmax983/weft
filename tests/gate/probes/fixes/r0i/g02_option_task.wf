@@ -1,0 +1,31 @@
+// an Option<fn()> field, its value run as a task under a caught Fail
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+
+linear struct T { o: Option<fn()> }
+    on abort = undo
+fn undo(t: T) {
+    let T(o) = t
+    match o { Some(f) => {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let k = s.spawn(|| f())
+            k.join()
+        }
+    }
+    }, None => {} }
+}
+fn done(t: T) {
+    let T(o) = t
+    match o { Some(f) => f(), None => {} }
+}
+fn body() / Stop, Ask {
+    let t = T { o: Some(|| print(ask())) }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

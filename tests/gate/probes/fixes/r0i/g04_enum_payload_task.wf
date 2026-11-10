@@ -1,0 +1,31 @@
+// an enum payload fn value run as a task under a caught Fail
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+enum Act { Go(fn()), No }
+linear struct T { a: Act }
+    on abort = undo
+fn undo(t: T) {
+    let T(a) = t
+    match a { Go(f) => {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let k = s.spawn(|| f())
+            k.join()
+        }
+    }
+    }, No => {} }
+}
+fn done(t: T) {
+    let T(a) = t
+    match a { Go(f) => f(), No => {} }
+}
+fn body() / Stop, Ask {
+    let t = T { a: Go(|| print(ask())) }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

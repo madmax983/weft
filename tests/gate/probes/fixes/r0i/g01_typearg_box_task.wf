@@ -1,0 +1,31 @@
+// a fn field set through a type argument (Box<fn()>), run as a task under a caught Fail
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+struct Box<F> { f: F }
+linear struct T { b: Box<fn()> }
+    on abort = undo
+fn undo(t: T) {
+    let T(b) = t
+    let Box(f) = b
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let k = s.spawn(|| f())
+            k.join()
+        }
+    }
+}
+fn done(t: T) {
+    let T(b) = t
+    let Box(f) = b
+    f()
+}
+fn body() / Stop, Ask {
+    let t = T { b: Box { f: || print(ask()) } }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

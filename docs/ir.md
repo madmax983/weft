@@ -237,7 +237,9 @@ of a free type variable can exist at run time. A body with `Ty::Error` gets no I
 `Props` (section 3) comes from one function, `crates/weft-sema/src/props.rs`, applied to
 the final type. The builder stores it in each `LocalDecl`. For a binding whose type has
 a function part, the builder joins the modes that the analysis infers for its values
-(`thir::Binding::value`, 5.22). The facts read the flags of a variable from the props of
+(5.22). From plan stage R0i-b these modes come from a value flow over the IR
+(`irbuild::values`), not from the old lowering (`thir::Binding::value`): the builder
+runs again with the modes of the round before until they do not change. The facts read the flags of a variable from the props of
 its move path, joined with the modes of the closures that the analysis says it can hold
 (V061).
 
@@ -1833,9 +1835,18 @@ body c (Closure):  params _1 = env, _2 = p; _0
   joins the modes of the closures that a value can hold for each other place (2.3).
 - Each other local of a binding whose type has a function part (`let g = f`, a
   parameter of a function, of a closure or of a clause, a pattern binding) gets the
-  modes that the analysis infers for the values of the binding (`Binding::value` of the
-  THIR, from the `VarInfo` flags of its variables): linear, no `on abort`, nonportable,
-  `once`, and `copy` only if it is not `once` (plan stage B12). A function parameter
+  modes that the analysis infers for the values of the binding: linear, no `on abort`,
+  nonportable, `once`, and `copy` only if it is not `once` (plan stage B12). Until plan
+  stage R0i-b they came from `Binding::value` of the THIR (the `VarInfo` flags of the
+  variables of the old lowering). From R0i-b they come from `irbuild::values`: a value
+  flow over the IR of the program (a closure gets the modes of its captures and of
+  `ClosureDecl::once`; an assignment, an aggregate, a reference, a call with the
+  arguments for the parameters that its result can be, a write behind a reference, a
+  callee with no body that can keep an argument behind a reference argument, a clause
+  parameter, a `resume`, a `handle`, a `scope` and an upvar pass them on), and the
+  builder runs again with them until they do not change (`irbuild::build`). A closure
+  that captures a `@ uniq` value (the analysis gives the mode) is not `many`: the fact
+  generator marks each variable that can hold it (`factgen::not_many`, W0503). A function parameter
   holds a value that the body does not know, so the analysis gives it no closure modes.
   A field of a function type has the props of its type: the facts take the modes of the
   closures that it can hold from the analysis (2.3).
@@ -2101,6 +2112,29 @@ gives the W0303 diagnostic, and it stays the error of the program (2.4). The IR 
 form for the move: V9 rejects a `Move` through `Deref(Ref)` and a `Copy` of a value that
 is not plain data. A move in a closure or a nested body of the function gives the whole
 function no IR.
+
+As built (plan stage R0i-b): the builder gives W0303 itself. A read of a place
+(`read_place`, a binding of a pattern) records each move through a reference with the
+location of the expression (of the statement for `let x = <place>`) and the type
+(`TyTable::show`), and goes on, so each move of the body gets a diagnostic; the body then
+has no IR (also when the builder stops later for another reason), and
+`irbuild::reported` counts it. A move out of an `rc` object is W0303 too, but the IR has
+a form for it, so the body keeps its IR. A copy of a function value out of a place
+behind a reference or an `rc` object whose type does not come from a declared function
+type (a field of a type parameter) is W0303 if the value can be a closure that moves a
+capture (`values::once_reads`): the old type showed such a closure. W0303 and W0502 of the
+old lowering are in `IR_DROPS`.
+
+W0502 of a `once` closure in a place of plain data (`Lower::keep_modes` of the old
+lowering) comes from `values::once_into_plain` (plan stage R0i-b): a closure that moves
+a capture (`ClosureDecl::once`) and is not linear (a linear one is W0601 there) goes into
+a field of a declared function type of a struct or a variant literal, into the place of
+an assignment whose last projection is such a field, or into an argument of a function
+item whose parameter type is not a function type while another argument is a place of a
+stated type with a function part (a parameter, a `let` with a stated type, a field:
+`v.push(|| eat(b))` with `let v: Vec<fn()>`). A type that the analysis infers from the
+closure shows it, as the old type did, so `let v = Vec.new(); v.push(|| eat(b))` is
+valid. A body with no IR gets no W0502 (it has the error of the body).
 
 Other bodies with no IR (plan stage B12), each with its reason:
 

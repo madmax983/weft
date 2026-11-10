@@ -124,6 +124,7 @@ body b6: fn dropped; cap_env e0; unwind_exit bb6
     Dead(_2)
     Goto(bb4)
   bb4 (cleanup):
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb5)
   bb5 (cleanup):
@@ -167,6 +168,7 @@ body b7: fn run_on_no_path; cap_env e0; unwind_exit bb11
     Dead(_2)
     Goto(bb9)
   bb9 (cleanup):
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb10)
   bb10 (cleanup):
@@ -235,6 +237,7 @@ body b9: fn run_once; cap_env e0; unwind_exit bb7
     Dead(_2)
     Goto(bb5)
   bb5 (cleanup):
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb6)
   bb6 (cleanup):

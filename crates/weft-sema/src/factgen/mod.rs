@@ -1109,6 +1109,7 @@ pub fn emit_parts(
         v.uniq = uniq.get(&id).copied().unwrap_or(false);
         v.once |= v.uniq;
     }
+    not_many(p, &tys, &unions, &vars, facts);
     sim_blocks(p, &comp, &table, facts);
     if let Some(d) = a.decls.get(index) {
         decls::effect_names(&a.program, d.module, facts);
@@ -1167,7 +1168,10 @@ pub fn emit_parts(
         runs,
         returns,
         code_multi,
-        code_unknown: code_unknown || hx.unknown_runs_at.iter().any(|n| n.index() < entry_nodes),
+        // A node of the body, of a handled body or of a clause of the body
+        // (plan stage R0i-b): the closures of the component have handlers of
+        // their own.
+        code_unknown: code_unknown || hx.clause_unknown || !hx.unknown_runs_at.is_empty(),
         own_lends,
         caller_muts: hx.caller_muts_at.iter().any(|n| n.index() < entry_nodes),
         made: unions.remove(&entry).map(|mut u| {
@@ -1729,6 +1733,7 @@ fn closure_summary(
     let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
     let closure_inherited: Vec<(u32, bool, PlaceId, bool)>;
     let closure_opaque: Vec<weft_facts::TaskId>;
+    let closure_unknown: bool;
     let (returns, aborts, runs, made, (run_nodes, own_lends, started, closure_task_effects)) = {
         let mut em = templates::Em {
             p,
@@ -1790,6 +1795,7 @@ fn closure_summary(
         closure_then = then_runs(em.facts, &em.run_at, &em.then_runs);
         closure_waits = std::mem::take(&mut em.waits);
         run_multi = std::mem::take(&mut em.run_multi);
+        closure_unknown = em.code_unknown;
         (
             std::mem::take(&mut em.returns),
             std::mem::take(&mut em.aborts),
@@ -1949,7 +1955,9 @@ fn closure_summary(
             runs: &runs,
             returns: &returns,
             code_multi: false,
-            code_unknown: false,
+            // A run of a value that the closure, a clause of it or a callee
+            // does not know (plan stage R0i-b).
+            code_unknown: closure_unknown || hx.clause_unknown || !hx.unknown_runs_at.is_empty(),
             caller_muts: false,
             run_nodes: &run_nodes,
             run_multi: &run_multi,
@@ -2542,6 +2550,9 @@ fn emit_clause(
     };
     handlers::clause_entry(&mut em, en, &entry)?;
     emit_blocks(&mut em, out.table, frames, &states, body)?;
+    // A run of a value that the clause does not know is a run of the body
+    // that has the handler (plan stage R0i-b).
+    em.hx.clause_unknown |= em.code_unknown;
     // The stores of the clause name the places of its parameters: they map
     // onto the places of the arguments after the projection
     // (`handlers::map_stored`).
@@ -4086,6 +4097,74 @@ pub fn component(built: &Built, entry: weft_ir::BodyId) -> Vec<weft_ir::BodyId> 
         .filter(|(_, x)| *x == Some(e))
         .map(|(i, _)| weft_ir::BodyId(u32::try_from(i).unwrap_or(u32::MAX)))
         .collect()
+}
+
+/// A closure that captures a value that is not `many` (a `@ uniq`
+/// reference, a value that is not `many` itself) is not `many`, and so is
+/// each variable of a local that can hold it (`Lower::closure_not_many`;
+/// W0503: a `multi` resume would copy it). The analysis gives the `@ uniq`
+/// mode of a variable (`templates::Em::meet_uniq`), so this pass runs on the
+/// facts, over the join of the states of each body (`unions`), and not in
+/// the builder (plan stage R0i-b: before, the value flow of the old
+/// lowering gave it in `thir::Binding::value`).
+fn not_many(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    unions: &std::collections::HashMap<weft_ir::BodyId, crate::analysis::State>,
+    vars: &vars::Vars,
+    facts: &mut FnFacts,
+) {
+    let var_of = |b: weft_ir::BodyId, l: weft_ir::LocalId| {
+        vars.get(&vars::VarKey::S(b, l))
+            .or_else(|| vars.get(&vars::VarKey::C(b, l)))
+    };
+    let once =
+        |facts: &FnFacts, v: weft_facts::VarId| facts.vars.get(v.index()).is_some_and(|x| x.once);
+    for _ in 0..=facts.vars.len() {
+        let mut grew = false;
+        let not_many_closure = |facts: &FnFacts, c: weft_ir::ClosureId| {
+            p.closures.get(c.index()).is_some_and(|d| {
+                d.captures
+                    .iter()
+                    .filter_map(|cap| var_of(d.maker, cap.source.local))
+                    .any(|v| once(facts, v))
+            })
+        };
+        for (&b, st) in unions {
+            let Some(body) = p.body(b) else {
+                continue;
+            };
+            for (j, d) in body.locals.iter().enumerate() {
+                // Only a local of a type with a function part, as the old
+                // lowering marks it (`Builder::binding_props_of`).
+                if !tys.mentions_fn(d.ty) {
+                    continue;
+                }
+                let l = weft_ir::LocalId(u32::try_from(j).unwrap_or(u32::MAX));
+                let Some(v) = var_of(b, l) else {
+                    continue;
+                };
+                if once(facts, v) {
+                    continue;
+                }
+                let holds = st.value((b, l), &[]).flat().fns.iter().any(|f| match f {
+                    crate::analysis::FnVal::Closure(c) | crate::analysis::FnVal::Made(c) => {
+                        not_many_closure(facts, *c)
+                    }
+                    _ => false,
+                });
+                if holds {
+                    if let Some(x) = facts.vars.get_mut(v.index()) {
+                        x.once = true;
+                        grew = true;
+                    }
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
 }
 
 /// The facts of the declaration `d` of a body: the name and the flags of

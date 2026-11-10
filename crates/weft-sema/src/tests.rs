@@ -1834,13 +1834,16 @@ fn the_splits_of_two_calls_are_apart() {
 
 /// The `ir` pipeline does not read the signatures of the old inference or
 /// the facts of the old lowering (plan stage R0i). A run of the pipeline on
-/// an analysis whose old signatures, old facts and diagnostics of the old
-/// inference (W0118, `fip`: `crate::OLD_INFERENCE_CODES`) are wrong gives
+/// an analysis whose old signatures, old facts, diagnostics of the old
+/// inference (W0118, `fip`: `crate::OLD_INFERENCE_CODES`), properties of
+/// the old value flow (`thir::Binding::value`) and W0303 and W0502 of the
+/// old lowering (plan stage R0i-b) are wrong gives
 /// the same facts, signatures and diagnostics. Only the exports of the old
 /// facts of a body with no IR stay (`factgen::exports::copy_old`, plan stage
 /// R4).
 #[test]
 fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
+    use weft_syntax::diag::Code;
     let programs = [
         include_str!("../../../tests/programs/06_http.wf"),
         include_str!("../../../tests/programs/13_signatures.wf"),
@@ -1855,6 +1858,13 @@ fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
         "fn f(x: Nope) { print(1) }\nfn main() { f(1) }\n",
         include_str!("../../../tests/gate/probes/fixes/r0i/r31_many_field_task_caught.wf"),
         include_str!("../../../tests/gate/probes/fixes/r0i/r16_extern_all_caught.wf"),
+        // Value properties, W0502 and W0303 (plan stage R0i-b).
+        include_str!("../../../tests/programs/71_closure_modes.wf"),
+        include_str!("../../../tests/programs/115_joined_fn_values.wf"),
+        include_str!("../../../tests/gate/probes/r2/redteam/p/z_moveref.wf"),
+        include_str!("../../../tests/gate/probes/r3/redteam/p/f2_kesc.wf"),
+        include_str!("../../../tests/gate/probes/verify/partb/S4/p/u2_closure_uniq.wf"),
+        include_str!("../../../tests/gate/probes/verify/partb/S4/p/c6_field_launder.wf"),
     ];
     let mut checked = 0;
     for src in programs {
@@ -1885,6 +1895,18 @@ fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
             s.effects.raises = !s.effects.raises;
             s.effects.drops.insert(7);
         }
+        // Wrong properties of the values of the old value flow
+        // (`thir::Binding::value`, plan stage R0i-b).
+        for t in &mut wrong.thir {
+            for b in &mut t.bindings {
+                b.value = crate::thir::ValueProps {
+                    linear: !b.value.linear,
+                    no_on_abort: !b.value.no_on_abort,
+                    once: !b.value.once,
+                    nonportable: !b.value.nonportable,
+                };
+            }
+        }
         for b in &mut wrong.bodies {
             b.effects.named.insert("Wrong".into());
             b.facts = FnFacts {
@@ -1903,7 +1925,16 @@ fn the_ir_pipeline_reads_no_old_signature_and_no_old_fact() {
         wrong
             .diags
             .retain(|d| !crate::OLD_INFERENCE_CODES.contains(&d.code));
-        for code in crate::OLD_INFERENCE_CODES {
+        // The W0303 and W0502 of the old lowering go too, and wrong ones
+        // come (plan stage R0i-b: the builder and `irbuild::values` give
+        // them).
+        wrong
+            .diags
+            .retain(|d| !matches!(d.code, Code::W0303 | Code::W0502));
+        for code in crate::OLD_INFERENCE_CODES
+            .into_iter()
+            .chain([Code::W0303, Code::W0502])
+        {
             let span = weft_syntax::ast::Span {
                 lo: 0,
                 hi: u32::try_from(src.len()).unwrap_or(u32::MAX),

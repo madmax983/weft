@@ -2369,3 +2369,4 @@ body b109: closure c17; parent b108; cap_env e0; unwind_exit bb1
     Return
   bb1 (cleanup):
     UnwindExit
+// W0502 at 161:30: a `once` closure cannot go into a place of type `fn() -> ()`: a copy of the place could call it again

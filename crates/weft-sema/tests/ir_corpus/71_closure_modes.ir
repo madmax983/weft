@@ -3266,3 +3266,5 @@ body b127: fn returned_uniq; cap_env e0; unwind_exit bb11
     Goto(bb11)
   bb11 (cleanup):
     UnwindExit
+// W0502 at 87:21: a `once` closure cannot go into a place of type `fn() -> ()`: a copy of the place could call it again
+// W0502 at 179:12: a `once` closure cannot go into a place of type `fn() -> ()`: a copy of the place could call it again

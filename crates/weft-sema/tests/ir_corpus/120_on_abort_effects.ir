@@ -218,6 +218,7 @@ body b7: fn undo_field; cap_env e0; unwind_exit bb4
     Dead(_1)
     Return
   bb2 (cleanup):
+    UnwindValue(_2, Drop)
     Dead(_2)
     Goto(bb3)
   bb3 (cleanup):
@@ -251,6 +252,7 @@ body b8: fn undo_elems; cap_env e0; unwind_exit bb5
     Dead(_1)
     Return
   bb2 (cleanup):
+    UnwindValue(_3, Drop)
     Dead(_3)
     Goto(bb3)
   bb3 (cleanup):

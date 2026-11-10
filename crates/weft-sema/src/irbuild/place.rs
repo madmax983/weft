@@ -226,18 +226,39 @@ impl Builder<'_> {
         Ok(t)
     }
 
-    /// Returns the operand that reads place `p` of type `ty`: a copy of plain data, else a move. A local that holds a `once`
-    /// closure is not plain data (`docs/ir.md` 5.21). A move through a
-    /// reference is W0303 of the old lowering: the body gets no IR
-    /// (`docs/ir.md` 5.36).
-    pub(super) fn read_place(&self, p: Place, ty: TyId) -> R<Operand> {
+    /// Returns the operand that reads place `p` of type `ty` (the place of
+    /// the expression at `span`): a copy of plain data, else a move. A local
+    /// that holds a `once` closure is not plain data (`docs/ir.md` 5.21). A
+    /// move through a reference is W0303: the builder records it and goes on
+    /// with the move, and the body gets no IR (`docs/ir.md` 5.36, plan stage
+    /// R0i-b).
+    pub(super) fn read_place(&self, p: Place, ty: TyId, span: weft_syntax::ast::Span) -> Operand {
+        let behind = p.proj.iter().any(|x| {
+            matches!(
+                x,
+                Proj::Deref(weft_ir::DerefKind::Ref | weft_ir::DerefKind::Rc)
+            )
+        });
         if self.copies(&p, ty) {
-            return Ok(Operand::Copy(p));
+            // A copy of a function value behind a reference: a `once` closure
+            // there makes it a move (W0303, `values.rs`).
+            if behind && matches!(self.tys.try_get(ty), Some(weft_ir::Ty::Fn(_))) {
+                self.d
+                    .fn_reads
+                    .borrow_mut()
+                    .push((self.body_id, p.clone(), span, self.unit, ty));
+            }
+            return Operand::Copy(p);
         }
         if p.proj.contains(&Proj::Deref(weft_ir::DerefKind::Ref)) {
-            return no_ir(NoIr::MoveThroughRef);
+            self.d.moves.borrow_mut().push((span, ty, true));
+        } else if p.proj.contains(&Proj::Deref(weft_ir::DerefKind::Rc)) {
+            // A move out of an `rc` object is W0303 too; the IR has a form
+            // for it (the old lowering gives the diagnostic, and the body
+            // keeps its IR).
+            self.d.moves.borrow_mut().push((span, ty, false));
         }
-        Ok(Operand::Move(p))
+        Operand::Move(p)
     }
 
     /// Returns the right side of borrow `&inner` (`docs/ir.md` 5.9):

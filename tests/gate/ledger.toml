@@ -10452,8 +10452,11 @@ files = [
     "tests/gate/probes/fixes/r0i/r38_field_to_task_callee.wf",
     "tests/gate/probes/fixes/r0i/r40_callee_caught_task.wf",
     "tests/gate/probes/fixes/r0i/r41_callee_caught_task_spawnf.wf",
+    "tests/gate/probes/fixes/r0i/g03_rc_typearg_task.wf",
+    "tests/gate/probes/fixes/r0i/g05_rc_box_task.wf",
+    "tests/gate/probes/fixes/r0i/u12_param_fn_of_item.wf",
 ]
-reason = "stage R0i fix (probes of the review of R0i): an `on abort` function that runs a value of its parameter as a task, or the result of an extern function. The old part `reaches` has no part of the IR signature (W0118 reads `Summary::runs` and `Summary::unknown_runs`, `checks::reaches`, and gives the same W0118); `pins` is the class F19-SIG-PINS; the IR gives `raises` for code that the body does not know (a failure of the runtime in it)"
+reason = "stage R0i fix and R0i-b (probes of the reviews of R0i, rounds 1 and 2): an `on abort` function that runs a value of its parameter as a task, or the result of an extern function. The old part `reaches` has no part of the IR signature (W0118 reads `Summary::runs` and `Summary::unknown_runs`, `checks::reaches`, and gives the same W0118); `pins` is the class F19-SIG-PINS; the IR gives `raises` for code that the body does not know (a failure of the runtime in it)"
 stage = "R0i"
 
 # Stage R0i fix: the probes of `tests/gate/probes/fixes/r0i/` (the review of
@@ -10467,3 +10470,45 @@ stage = "R0i"
 # has no row; W1003 and W0102 stay). pkg1: W0901 in both (the worst case of
 # the declaration). r18 is `fixed`: the old pipeline misses the W0118 of a
 # callee that runs an extern result.
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0h/c2_linear_drop.wf"]
+codes = ["W0601", "W0602"]
+reason = "stage R0i-b: the properties of the values come from the IR (`irbuild::values`). The clause parameter `g` gets the linear closure that the perform gives (the value flow of the old lowering did not give a clause parameter a linear closure of a perform), so the `ir` pipeline also reports that the clause drops `g` with no run (W0601) and holds it across `resume` (W0602). This is the bad form of the probe; both pipelines reject it with the old W0502 and W0601 at line 8"
+stage = "R0i-b"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/verify/s5/p/d6_closure_via_clause.wf"]
+reason = "stage R0i-b: the properties of the values come from the IR. `r = handle Give { fn give(f) { Some(f) } } in { .. give(f); None }` gets the linear closure that the clause gives back, so `r` is linear in the IR and each arm of the `match` consumes it (`Some(f) => f()`, `None` holds no value). The old W0601 of the `ir` pipeline at the end of `main` (`r` dropped) was a false positive of the value flow of the old lowering, which did not see the linear closure in `r`. The IR engine runs the program clean (commit 1, end) and the fact oracle passes. The AST engine faults (`a value is used after it was moved`, after `rollback 1`): it runs the `on abort` of `tx` when the handled body ends, although the closure that the clause keeps owns `tx` (ev.sh: HOLE(AST-only); the AST compiler goes in stage R4). The old pipeline gives W0502 and W0601 at line 11"
+signed_by = "UNSIGNED: the author of stage R0i-b; the independent review of R0i-b must sign this row or reject it"
+stage = "R0i-b"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/r0i/u04_item_task_extern.wf"]
+finding = "R0i-U04"
+reason = "stage R0i-b (probe of the review of R0i, round 2): an `on abort` function calls a function that runs the result of an extern function as a task. No pipeline gives W0118: the part `unknown_runs` does not count a task of the callee (the old part `reaches` did not either). The fault is the stub of the extern function (`this value cannot be called`), as for a plain call of an extern result that every pipeline accepts (r0irev/p/x01)"
+stage = "R0i-b"
+
+[[entry]]
+class = "sig"
+parts = ["ret", "reaches", "ret_refs", "raises"]
+files = ["tests/gate/probes/fixes/r0i/u09_made_closure_returned.wf"]
+reason = "stage R0i-b (probe of the review of R0i, round 2): `maker` returns a closure that runs an extern result; the summary keeps the run in the made closure (`RetFn::Made`, part `unknown_runs` of the closure), so the row of `maker` has no `raises` and the old parts `ret`, `ret_refs` and `reaches` have no IR part; `undo` runs the made closure, so its row gets `raises` (a failure of the runtime in code that it does not know). W0118 of `undo` holds in the `ir` pipeline (the old pipeline misses it: class `fixed`)"
+stage = "R0i-b"
+
+[[entry]]
+class = "lost-clean"
+files = ["verify/s5/R3t/w0303.wf"]
+reason = "stage R0i-b (tier 2): W0303 comes from the builder. The old lowering gave W0303 for a copy of a closure out of a place behind a reference when the type of the place came from the closure (`fs = Vec.new(); fs.push(|| print(1)); let g = (&fs)[0]`): its type kept the closure summary, so the value was no plain data. The closures here move no capture, so a copy of them is valid; the `ir` pipeline gives W0303 only for a closure that moves a capture (`irbuild::values::once_reads`). The program has no `main`; each function only reads and calls the closures"
+signed_by = "UNSIGNED: the author of stage R0i-b; the independent review of R0i-b must sign this row or reject it"
+stage = "R0i-b"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/R3t/o35vv.wf"]
+codes = ["W0302", "W0303", "W0403"]
+reason = "stage R0i-b (tier 2): the old W0303 at line 8 (a copy of `|| v.push(2)` out of `(&h)[0]`, a type that keeps the closure summary in the old lowering) goes: the closure moves no capture, so the copy is valid (`irbuild::values::once_reads`). The `ir` pipeline rejects the program with W0403 and W0405 (the closure changes `v` on a task while `main` reads it), as before; the old W0302 and the `ir` W0403 were the difference before R0i-b"
+stage = "R0i-b"

@@ -230,6 +230,10 @@ pub struct Handlers {
     /// function value that it does not know through its callee, so its
     /// summary gets the part too (`Emitted::code_unknown`).
     pub unknown_runs_at: BTreeSet<weft_facts::NodeId>,
+    /// A clause of a handler of the body runs a function value that it
+    /// does not know (`templates::Em::code_unknown` of the clause, plan stage
+    /// R0i-b): the body runs it where the clause runs.
+    pub clause_unknown: bool,
     /// What the values that the clauses of the local handlers of a call give
     /// to `resume` point into, for an operation with a reference result, by
     /// the body and the block of the call (stage R0h, D3 form R): a join
