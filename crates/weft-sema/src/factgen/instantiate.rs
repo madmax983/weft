@@ -78,8 +78,10 @@ impl Default for Bounds {
 pub struct Instantiated {
     /// The program with the copies.
     pub built: Built,
-    /// The number of copied calls.
+    /// The number of copied calls of function items.
     pub calls: usize,
+    /// The number of copied calls of closures (stage R0k-a2).
+    pub closure_calls: usize,
     /// True if the facts of a callee can use the weak form of a perform
     /// through its row (`analysis::transfer::WeakRowOps`).
     ///
@@ -333,7 +335,8 @@ fn serving_cap(p: &Program, env: CapEnvId, e: EffectId, op: OpIdx) -> Option<(Bo
 struct Inst<'a> {
     bounds: Bounds,
     orig: &'a Program,
-    tys: &'a TyTable,
+    tys: TyTable,
+    closure_calls: usize,
     needs: Needs,
     p: Program,
     added: usize,
@@ -388,26 +391,86 @@ struct Extra {
     new_env: CapEnvId,
 }
 
+/// What a copy copies.
+#[derive(Clone, Copy, Debug)]
+enum What {
+    /// The body of a function item at a call of it.
+    Fn(FnId),
+    /// The body of a closure at a call of a local that holds it.
+    Closure(ClosureId),
+}
+
+/// The function whose body is body `b` or a lexical parent of it.
+fn fn_of(p: &Program, b: BodyId) -> Option<FnId> {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let body = p.body(at)?;
+        match body.kind {
+            BodyKind::Fn(f) => return Some(f),
+            _ => at = body.parent?,
+        }
+    }
+    None
+}
+
 /// Why a copy cannot be made: the program keeps the call.
 #[derive(Debug)]
 struct NoCopy;
 
-/// Changes each local of place `pl` with `f`.
-fn map_place(pl: &Place, f: &impl Fn(LocalId) -> LocalId) -> Place {
-    Place {
-        local: f(pl.local),
-        proj: pl
-            .proj
-            .iter()
-            .map(|x| match x {
-                Proj::Index(l) => Proj::Index(f(*l)),
-                other => other.clone(),
-            })
-            .collect(),
+/// The map of the places of a copy: each local with `local`, and for the
+/// copy of a closure body, a place of its environment `env.k..` with the
+/// place of capture `k` in the site (`env`).
+#[derive(Clone, Copy)]
+struct PlaceMap<'a> {
+    local: &'a dyn Fn(LocalId) -> LocalId,
+    env: Option<(LocalId, &'a [Place])>,
+}
+
+impl<'a> PlaceMap<'a> {
+    /// The map of the locals `local`.
+    fn new(local: &'a dyn Fn(LocalId) -> LocalId) -> Self {
+        Self { local, env: None }
+    }
+
+    /// Local `l` in the copy.
+    fn l(&self, l: LocalId) -> LocalId {
+        (self.local)(l)
+    }
+
+    /// Place `pl` in the copy.
+    fn place(&self, pl: &Place) -> Place {
+        let rest = |proj: &[Proj]| -> Vec<Proj> {
+            proj.iter()
+                .map(|x| match x {
+                    Proj::Index(l) => Proj::Index(self.l(*l)),
+                    other => other.clone(),
+                })
+                .collect()
+        };
+        if let Some((env, caps)) = self.env {
+            if pl.local == env {
+                if let Some(Proj::Field(k)) = pl.proj.first() {
+                    if let Some(base) = caps.get(k.index()) {
+                        let mut out = base.clone();
+                        out.proj.extend(rest(pl.proj.get(1..).unwrap_or(&[])));
+                        return out;
+                    }
+                }
+            }
+        }
+        Place {
+            local: self.l(pl.local),
+            proj: rest(&pl.proj),
+        }
     }
 }
 
-fn map_operand(o: &Operand, f: &impl Fn(LocalId) -> LocalId) -> Operand {
+/// Changes each local of place `pl` with `f`.
+fn map_place(pl: &Place, f: &PlaceMap<'_>) -> Place {
+    f.place(pl)
+}
+
+fn map_operand(o: &Operand, f: &PlaceMap<'_>) -> Operand {
     match o {
         Operand::Copy(p) => Operand::Copy(map_place(p, f)),
         Operand::Move(p) => Operand::Move(map_place(p, f)),
@@ -416,16 +479,12 @@ fn map_operand(o: &Operand, f: &impl Fn(LocalId) -> LocalId) -> Operand {
 }
 
 /// The statement `s` with locals `f` and closures `cl`.
-fn map_stmt(
-    s: &Stmt,
-    f: &impl Fn(LocalId) -> LocalId,
-    cl: &impl Fn(ClosureId) -> ClosureId,
-) -> Stmt {
+fn map_stmt(s: &Stmt, f: &PlaceMap<'_>, cl: &impl Fn(ClosureId) -> ClosureId) -> Stmt {
     let mp = |p: &Place| map_place(p, f);
     let mo = |o: &Operand| map_operand(o, f);
     let kind = match &s.kind {
-        StmtKind::Live(l) => StmtKind::Live(f(*l)),
-        StmtKind::Dead(l) => StmtKind::Dead(f(*l)),
+        StmtKind::Live(l) => StmtKind::Live(f.l(*l)),
+        StmtKind::Dead(l) => StmtKind::Dead(f.l(*l)),
         StmtKind::Assign(p, rv) => {
             let rv = match rv {
                 Rvalue::Use(o) => Rvalue::Use(mo(o)),
@@ -456,7 +515,7 @@ fn map_stmt(
         StmtKind::Mention(p) => StmtKind::Mention(mp(p)),
         StmtKind::Print(ops) => StmtKind::Print(ops.iter().map(mo).collect()),
         StmtKind::UnwindValue(p, a) => StmtKind::UnwindValue(mp(p), a.clone()),
-        StmtKind::UnwindKont(l) => StmtKind::UnwindKont(f(*l)),
+        StmtKind::UnwindKont(l) => StmtKind::UnwindKont(f.l(*l)),
     };
     Stmt {
         kind,
@@ -489,9 +548,9 @@ impl Inst<'_> {
         else {
             return None;
         };
-        if !targs.is_empty() {
-            return None;
-        }
+        // A generic callee needs a type argument for each type parameter
+        // (`can_copy`); the copy substitutes them (`subst_program`).
+        let _ = targs;
         let served = self
             .needs
             .any
@@ -505,7 +564,19 @@ impl Inst<'_> {
         let Some(d) = self.orig.fns.get(f.index()) else {
             return false;
         };
-        if d.generics != 0 || d.intrinsic.is_some() || d.body.is_none() {
+        let targs = match self
+            .p
+            .body(b)
+            .and_then(|x| x.block(k))
+            .map(|x| &x.term.kind)
+        {
+            Some(TermKind::Call {
+                callee: Callee::Fn(_, ts),
+                ..
+            }) => ts.len(),
+            _ => return false,
+        };
+        if d.generics as usize != targs || d.intrinsic.is_some() || d.body.is_none() {
             return false;
         }
         let chain = self.chain(b, k);
@@ -519,6 +590,141 @@ impl Inst<'_> {
             .map(|x| x.blocks.len())
             .sum();
         self.added + size <= self.bounds.blocks
+    }
+
+    /// The local and the closure of a call of a function value at block `k`
+    /// of body `b` that can get a copy of the closure body (stage R0k-a2,
+    /// the static closure copy): the callee is `copy l` of a local `l` of
+    /// `b` that holds one closure that `b` makes, and the closure performs
+    /// an operation with a function value or a reference through a captured
+    /// capability, or calls a callee that performs one through its row.
+    ///
+    /// The copy is refused (the call keeps the summary of the closure) for
+    /// another way to give `l` a value, a `move` or a borrow of `l`, a `once`
+    /// closure, a `ByMove` or a `Kont` capture, a source of a `Kept` or a
+    /// `ByRef` capture that ends or gets a new cell between the closure and
+    /// the call, a use of the whole environment in the closure body, and a
+    /// body inside the closure that names the environment.
+    fn closure_copy(&self, b: BodyId, k: BlockId) -> Option<(LocalId, ClosureId)> {
+        let body = self.p.body(b)?;
+        let TermKind::Call {
+            callee: Callee::Value(Operand::Copy(callee)),
+            caps: CapArgs::Lexical(_),
+            unwind: Some(_),
+            ..
+        } = &body.block(k)?.term.kind
+        else {
+            return None;
+        };
+        if !callee.is_local() {
+            return None;
+        }
+        let l = callee.local;
+        // The one value of `l`: a closure that the body makes, or a copy of
+        // a local with such a value (the callee temporary of a call).
+        let (mut at, mut found) = (l, None);
+        for _ in 0..8 {
+            match single_value(body, at)? {
+                One::Closure(blk, si, c) => {
+                    found = Some((blk, si, c));
+                    break;
+                }
+                One::Copy(next) => at = next,
+            }
+        }
+        let (mb, mi, cid) = found?;
+        let decl = self.p.closures.get(cid.index())?;
+        if decl.maker != b || decl.once {
+            return None;
+        }
+        let cb = self.p.body(decl.body)?;
+        let env = *cb.params.first()?;
+        // The captures.
+        let (fwd, bwd) = (reach(body, mb, true), reach(body, k, false));
+        for cap in &decl.captures {
+            match cap.mode {
+                weft_ir::CaptureMode::Cap => {}
+                weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef => {
+                    if cap.source.has_deref() {
+                        return None;
+                    }
+                    let src = cap.source.local;
+                    if matches!(body.local_kind(src)?, LocalKind::Upvar(_)) {
+                        continue;
+                    }
+                    for (bi, blk) in body.blocks.iter().enumerate() {
+                        if !(fwd.get(bi).copied().unwrap_or(false)
+                            && bwd.get(bi).copied().unwrap_or(false))
+                        {
+                            continue;
+                        }
+                        for (si, st) in blk.stmts.iter().enumerate() {
+                            if bi == mb.index() && si <= mi {
+                                continue;
+                            }
+                            if matches!(st.kind, StmtKind::Dead(x) | StmtKind::Live(x) if x == src)
+                            {
+                                return None;
+                            }
+                        }
+                    }
+                }
+                weft_ir::CaptureMode::ByMove | weft_ir::CaptureMode::Kont => return None,
+            }
+        }
+        // The environment: only its fields.
+        let inner = inner_bodies(&self.p, decl.body);
+        if !body_places(cb)
+            .iter()
+            .all(|q| q.local != env || matches!(q.proj.first(), Some(Proj::Field(_))))
+        {
+            return None;
+        }
+        for &ib in &inner {
+            let x = self.p.body(ib)?;
+            if x.parent == Some(decl.body)
+                && x.locals.iter().any(|d| d.kind == LocalKind::Upvar(env))
+            {
+                return None;
+            }
+        }
+        // The closure performs a served operation with a function value or a
+        // reference, or calls a callee that performs one.
+        let mut served = false;
+        for x in std::iter::once(decl.body).chain(inner.iter().copied()) {
+            let Some(xb) = self.p.body(x) else { continue };
+            for blk in &xb.blocks {
+                match &blk.term.kind {
+                    TermKind::Perform {
+                        cap: CapOperand::Local(q),
+                        op,
+                        ..
+                    } => {
+                        if let Some(e) = weft_ir::print::cap_effect(&self.p, &self.tys, xb, q) {
+                            served |= risky_op(&self.tys, e, *op).0;
+                        }
+                    }
+                    TermKind::Call {
+                        callee: Callee::Fn(g, _),
+                        caps: CapArgs::Lexical(e),
+                        ..
+                    } => {
+                        served |= self
+                            .needs
+                            .any
+                            .get(g)
+                            .is_some_and(|s| s.iter().any(|&x| env_binds(&self.p, *e, x)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let size: usize = std::iter::once(decl.body)
+            .chain(inner)
+            .filter_map(|x| self.p.body(x))
+            .map(|x| x.blocks.len())
+            .sum();
+        (served && self.added + size <= self.bounds.blocks).then_some((l, cid))
     }
 
     /// The environment `e` of the callee, in the copy, for a body inside
@@ -537,7 +743,7 @@ impl Inst<'_> {
         if let Some(&x) = c.envs.get(&(e, ctx)) {
             return x;
         }
-        let Some(old) = self.orig.cap_envs.get(e.index()).cloned() else {
+        let Some(old) = self.p.cap_envs.get(e.index()).cloned() else {
             return e;
         };
         let parent = old.parent.map(|q| self.env(c, q, ctx));
@@ -622,7 +828,7 @@ impl Inst<'_> {
         c: &mut Copy,
         x: BodyId,
         t: &TermKind,
-        f: &impl Fn(LocalId) -> LocalId,
+        f: &PlaceMap<'_>,
         blk: &impl Fn(BlockId) -> BlockId,
         (env, ctx): (CapEnvId, Option<ClosureId>),
     ) -> Result<TermKind, NoCopy> {
@@ -730,7 +936,7 @@ impl Inst<'_> {
                 unwind,
             } => TermKind::ScopeWait {
                 scope: mp(scope),
-                orphans: orphans.iter().map(|l| f(*l)).collect(),
+                orphans: orphans.iter().map(|l| f.l(*l)).collect(),
                 next: blk(*next),
                 unwind: mu(unwind),
             },
@@ -810,14 +1016,62 @@ impl Inst<'_> {
     }
 
     /// Copies the callee of the call at block `k` of body `b` into `b`.
-    fn copy_call(&mut self, b: BodyId, k: BlockId, callee: FnId) -> Result<(), NoCopy> {
-        let orig = self.orig;
-        let cb = orig
-            .fns
-            .get(callee.index())
-            .and_then(|d| d.body)
-            .ok_or(NoCopy)?;
+    fn copy(&mut self, b: BodyId, k: BlockId, what: What) -> Result<(), NoCopy> {
+        match what {
+            What::Fn(f) => {
+                let ts = match self
+                    .p
+                    .body(b)
+                    .and_then(|x| x.block(k))
+                    .map(|x| &x.term.kind)
+                {
+                    Some(TermKind::Call {
+                        callee: Callee::Fn(_, ts),
+                        ..
+                    }) => ts.clone(),
+                    _ => return Err(NoCopy),
+                };
+                if ts.is_empty() {
+                    let orig = self.orig;
+                    self.copy_code(orig, b, k, what)
+                } else {
+                    // A generic callee: its body with the type arguments of the
+                    // call (stage R0k-a2, `fixes/r0k/c09`).
+                    let snap = subst_program(self.orig, &mut self.tys, f, &ts)?;
+                    self.copy_code(&snap, b, k, what)
+                }
+            }
+            What::Closure(_) => {
+                let snap = self.p.clone();
+                self.copy_code(&snap, b, k, what)
+            }
+        }
+    }
+
+    fn copy_code(
+        &mut self,
+        orig: &Program,
+        b: BodyId,
+        k: BlockId,
+        what: What,
+    ) -> Result<(), NoCopy> {
+        let (cb, callee) = match what {
+            What::Fn(f) => (
+                orig.fns.get(f.index()).and_then(|d| d.body).ok_or(NoCopy)?,
+                f,
+            ),
+            What::Closure(cid) => {
+                let cb = orig.closures.get(cid.index()).ok_or(NoCopy)?.body;
+                (cb, fn_of(orig, cb).ok_or(NoCopy)?)
+            }
+        };
         let cbody = orig.body(cb).ok_or(NoCopy)?.clone();
+        // The environment of a closure body: its capability environment is
+        // the one where the closure is made, in the site.
+        let closure = match what {
+            What::Closure(cid) => orig.closures.get(cid.index()).cloned(),
+            What::Fn(_) => None,
+        };
         let site = self.p.body(b).ok_or(NoCopy)?;
         let call = site.block(k).ok_or(NoCopy)?.term.clone();
         let TermKind::Call {
@@ -831,9 +1085,12 @@ impl Inst<'_> {
         else {
             return Err(NoCopy);
         };
+        let call_env = closure.as_ref().map_or(call_env, |d| d.cap_env);
         let inner = inner_bodies(orig, cb);
         let mut chain = self.chain(b, k);
-        chain.push(callee);
+        if matches!(what, What::Fn(_)) {
+            chain.push(callee);
+        }
         let mut c = Copy {
             local_base: u32::try_from(site.locals.len()).map_err(|_| NoCopy)?,
             block_base: u32::try_from(site.blocks.len()).map_err(|_| NoCopy)?,
@@ -933,11 +1190,57 @@ impl Inst<'_> {
             let mut nd = Self::map_local(&c, d, &fl);
             nd.kind = match d.kind {
                 LocalKind::Return => LocalKind::Temp(TempKind::Value),
-                LocalKind::Param(_) => LocalKind::User,
+                LocalKind::Param(_) | LocalKind::Env => LocalKind::User,
                 _ => nd.kind,
             };
             new_locals.push(nd);
         }
+        // The places of the captures of a closure in the site: the source of
+        // a `Kept` capture (the closure shares the cell of the variable), a
+        // new reference to the source of a `ByRef` capture, the capability of
+        // a `Cap` capture (`closure_copyable` refuses the other modes).
+        let mut env_places: Vec<Place> = Vec::new();
+        let mut borrows: Vec<(LocalId, Place)> = Vec::new();
+        if let Some(d) = &closure {
+            let mut next_local = base + u32::try_from(new_locals.len()).map_err(|_| NoCopy)?;
+            for cap in &d.captures {
+                match cap.mode {
+                    weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::Cap => {
+                        env_places.push(cap.source.clone());
+                    }
+                    weft_ir::CaptureMode::ByRef => {
+                        let t =
+                            crate::factgen::alpha::place_ty(&self.p, &mut self.tys, b, &cap.source)
+                                .ok_or(NoCopy)?;
+                        let rt = self.tys.intern(weft_ir::Ty::Ref(t));
+                        let origin = self
+                            .p
+                            .body(b)
+                            .and_then(|x| x.block(k))
+                            .map(|x| x.term.origin)
+                            .unwrap_or_default();
+                        new_locals.push(LocalDecl {
+                            ty: rt,
+                            kind: LocalKind::User,
+                            name: None,
+                            props: crate::props::ir_props(&self.tys, rt),
+                            in_place: false,
+                            origin,
+                        });
+                        let l = LocalId(next_local);
+                        next_local += 1;
+                        borrows.push((l, cap.source.clone()));
+                        env_places.push(Place::local(l));
+                    }
+                    _ => return Err(NoCopy),
+                }
+            }
+        }
+        let env_local = closure.as_ref().and_then(|_| cbody.params.first().copied());
+        let pm = PlaceMap {
+            local: &fl,
+            env: env_local.map(|e| (e, env_places.as_slice())),
+        };
         self.p
             .bodies
             .get_mut(b.index())
@@ -958,7 +1261,7 @@ impl Inst<'_> {
                 .iter()
                 .map(|cap| weft_ir::Capture {
                     source: if d.maker == cb {
-                        map_place(&cap.source, &fl)
+                        map_place(&cap.source, &pm)
                     } else {
                         cap.source.clone()
                     },
@@ -967,7 +1270,7 @@ impl Inst<'_> {
                 .collect();
             let maker_ctx = c.ctx.get(&d.maker).copied().flatten();
             let maker_env = self.env(&mut c, d.cap_env, maker_ctx);
-            let used = self.closure_uses(d.body);
+            let used = self.closure_uses(orig, d.body);
             let own: Vec<(EffectId, Place)> = orig
                 .body(d.body)
                 .filter(|x| x.cap_env != d.cap_env)
@@ -1023,8 +1326,30 @@ impl Inst<'_> {
         let fb = move |x: BlockId| BlockId(bb + 1 + x.0);
         let origin = call.origin;
         let mut entry_stmts: Vec<Stmt> = Vec::new();
-        for (i, &pl) in cbody.params.iter().enumerate() {
-            let arg = args.get(i).cloned().ok_or(NoCopy)?;
+        for &(l, ref q) in &borrows {
+            entry_stmts.push(Stmt {
+                kind: StmtKind::Live(l),
+                origin,
+            });
+            entry_stmts.push(Stmt {
+                kind: StmtKind::Assign(Place::local(l), Rvalue::Ref(q.clone())),
+                origin,
+            });
+        }
+        // The run of a closure uses the closure value: its references (a
+        // `ByRef` capture) are live up to the run, as before the copy.
+        if let (Some(_), Some(q)) = (&closure, call_value_place(&call.kind)) {
+            entry_stmts.push(Stmt {
+                kind: StmtKind::Mention(q),
+                origin,
+            });
+        }
+        let skip = usize::from(closure.is_some());
+        if cbody.params.len() != args.len() + skip {
+            return Err(NoCopy);
+        }
+        for (i, &pl) in cbody.params.iter().enumerate().skip(skip) {
+            let arg = args.get(i - skip).cloned().ok_or(NoCopy)?;
             entry_stmts.push(Stmt {
                 kind: StmtKind::Live(fl(pl)),
                 origin,
@@ -1051,8 +1376,15 @@ impl Inst<'_> {
         for blk in &cbody.blocks {
             let mut stmts: Vec<Stmt> = Vec::new();
             for st in &blk.stmts {
-                stmts.push(self.copy_stmt(&c, st, &fl, &clm)?);
+                stmts.push(self.copy_stmt(&c, st, &pm, &clm)?);
             }
+            let ends: Vec<Stmt> = borrows
+                .iter()
+                .map(|&(l, _)| Stmt {
+                    kind: StmtKind::Dead(l),
+                    origin,
+                })
+                .collect();
             let term = match &blk.term.kind {
                 TermKind::Return => match &next {
                     Some(n) => {
@@ -1067,12 +1399,16 @@ impl Inst<'_> {
                             kind: StmtKind::Dead(fl(cbody.ret)),
                             origin: blk.term.origin,
                         });
+                        stmts.extend(ends.iter().cloned());
                         TermKind::Goto(*n)
                     }
                     None => TermKind::Unreachable,
                 },
-                TermKind::UnwindExit => TermKind::Goto(unwind),
-                t => self.map_term(&mut c, b, t, &fl, &fb, (call_env, None))?,
+                TermKind::UnwindExit => {
+                    stmts.extend(ends.iter().cloned());
+                    TermKind::Goto(unwind)
+                }
+                t => self.map_term(&mut c, b, t, &pm, &fb, (call_env, None))?,
             };
             blocks.push(weft_ir::Block {
                 stmts,
@@ -1128,7 +1464,8 @@ impl Inst<'_> {
             });
             // The `Cap` captures of the closures that this body makes.
             self.add_cap_sources(&c, nid)?;
-            let same = |l: LocalId| l;
+            let same_l = |l: LocalId| l;
+            let same = PlaceMap::new(&same_l);
             let id = |x: BlockId| x;
             let mut nblocks = Vec::new();
             for blk in &ob.blocks {
@@ -1173,7 +1510,11 @@ impl Inst<'_> {
                 .filter_map(|&x| orig.body(x))
                 .map(|x| x.blocks.len())
                 .sum::<usize>();
-        self.calls += 1;
+        if matches!(what, What::Fn(_)) {
+            self.calls += 1;
+        } else {
+            self.closure_calls += 1;
+        }
         Ok(())
     }
 
@@ -1183,7 +1524,7 @@ impl Inst<'_> {
         &self,
         c: &Copy,
         st: &Stmt,
-        f: &impl Fn(LocalId) -> LocalId,
+        f: &PlaceMap<'_>,
         cl: &impl Fn(ClosureId) -> ClosureId,
     ) -> Result<Stmt, NoCopy> {
         let mut out = map_stmt(st, f, cl);
@@ -1276,13 +1617,13 @@ impl Inst<'_> {
     /// program can perform through the capabilities of its maker: its
     /// performs through the row, the rows of its calls, also in the bodies
     /// inside it.
-    fn closure_uses(&self, cb: BodyId) -> BTreeSet<EffectId> {
+    fn closure_uses(&self, orig: &Program, cb: BodyId) -> BTreeSet<EffectId> {
         let all: BTreeSet<EffectId> = (0..self.tys.effects().len())
             .map(|i| EffectId(u32::try_from(i).unwrap_or(u32::MAX)))
             .collect();
         let mut out = BTreeSet::new();
-        for x in std::iter::once(cb).chain(inner_bodies(self.orig, cb)) {
-            let Some(body) = self.orig.body(x) else {
+        for x in std::iter::once(cb).chain(inner_bodies(orig, cb)) {
+            let Some(body) = orig.body(x) else {
                 continue;
             };
             for blk in &body.blocks {
@@ -1305,7 +1646,7 @@ impl Inst<'_> {
                     TermKind::Call {
                         callee: Callee::Value(o),
                         ..
-                    } => match value_row(self.tys, body, o) {
+                    } => match value_row(&self.tys, body, o) {
                         Some(r) => out.extend(r),
                         None => return all,
                     },
@@ -1374,15 +1715,12 @@ pub fn instantiate(built: &Built) -> Option<Instantiated> {
 /// [`instantiate`] with the bounds `bounds`.
 pub fn instantiate_with(built: &Built, bounds: Bounds) -> Option<Instantiated> {
     let orig = &built.program;
-    let tys = &built.tys;
-    let needs = Needs::of(orig, tys);
-    if needs.any.values().all(BTreeSet::is_empty) {
-        return None;
-    }
+    let needs = Needs::of(orig, &built.tys);
     let mut inst = Inst {
         bounds,
         orig,
-        tys,
+        tys: built.tys.clone(),
+        closure_calls: 0,
         needs,
         p: orig.clone(),
         added: 0,
@@ -1398,10 +1736,15 @@ pub fn instantiate_with(built: &Built, bounds: Bounds) -> Option<Instantiated> {
         let mut k = 0usize;
         while k < inst.p.bodies.get(bi).map_or(0, |x| x.blocks.len()) {
             let blk = BlockId(u32::try_from(k).unwrap_or(u32::MAX));
-            if let Some(f) = inst.wants(b, blk) {
-                if inst.can_copy(b, blk, f) {
+            let what = match inst.wants(b, blk) {
+                Some(f) if inst.can_copy(b, blk, f) => Some(What::Fn(f)),
+                Some(_) => None,
+                None => inst.closure_copy(b, blk).map(|(_, c)| What::Closure(c)),
+            };
+            if let Some(what) = what {
+                {
                     let save = (
-                        inst.p.clone(),
+                        (inst.p.clone(), inst.tys.clone(), inst.closure_calls),
                         inst.added,
                         inst.calls,
                         inst.blk_chain.clone(),
@@ -1409,8 +1752,10 @@ pub fn instantiate_with(built: &Built, bounds: Bounds) -> Option<Instantiated> {
                         inst.sites.clone(),
                         inst.body_sites.clone(),
                     );
-                    if inst.copy_call(b, blk, f).is_err() {
-                        inst.p = save.0;
+                    if inst.copy(b, blk, what).is_err() {
+                        inst.p = save.0 .0;
+                        inst.tys = save.0 .1;
+                        inst.closure_calls = save.0 .2;
                         inst.added = save.1;
                         inst.calls = save.2;
                         inst.blk_chain = save.3;
@@ -1424,10 +1769,11 @@ pub fn instantiate_with(built: &Built, bounds: Bounds) -> Option<Instantiated> {
         }
         bi += 1;
     }
-    if inst.calls == 0 {
+    if inst.calls + inst.closure_calls == 0 {
         return None;
     }
-    let before = weft_ir::verify::verify_program(orig, tys).len();
+    let tys = &inst.tys;
+    let before = weft_ir::verify::verify_program(orig, &built.tys).len();
     // The cleanup chain of a copy ends the values of the callee first, then
     // those of the site: the order of one frame (V16) does not hold across
     // the two, and the machine ends them in the same order as before.
@@ -1450,9 +1796,11 @@ pub fn instantiate_with(built: &Built, bounds: Bounds) -> Option<Instantiated> {
     let weak_ok = weak_ok(&inst.p, tys, &inst.needs);
     let mut out = built.clone();
     out.program = inst.p;
+    out.tys = inst.tys;
     Some(Instantiated {
         built: out,
         calls: inst.calls,
+        closure_calls: inst.closure_calls,
         weak_ok,
         sites: inst.sites,
         body_sites: inst.body_sites,
@@ -1556,4 +1904,417 @@ fn weak_ok(p: &Program, tys: &TyTable, needs: &Needs) -> bool {
 pub fn wanted(u: &super::Unsupported) -> bool {
     u.reason == crate::analysis::transfer::OP_KEPT
         || u.reason == crate::analysis::clause::GIVES_BACK
+}
+
+/// The place of the callee of a call of a function value `copy q`.
+fn call_value_place(t: &TermKind) -> Option<Place> {
+    match t {
+        TermKind::Call {
+            callee: Callee::Value(Operand::Copy(q)),
+            ..
+        } => Some(q.clone()),
+        _ => None,
+    }
+}
+
+/// `(writes, made)` for statement `st` and local `l`: the statement writes
+/// `l` or a part of it, and the closure that it makes into the whole `l`.
+fn stmt_writes(st: &Stmt, l: LocalId) -> (bool, Option<ClosureId>) {
+    match &st.kind {
+        StmtKind::Assign(q, rv) if q.local == l => {
+            let made = match rv {
+                Rvalue::Aggregate(weft_ir::AggKind::Closure(c), _) if q.is_local() => Some(*c),
+                _ => None,
+            };
+            (true, made)
+        }
+        StmtKind::Drop(q) | StmtKind::Uninit(q) | StmtKind::Consume(q) if q.local == l => {
+            (true, None)
+        }
+        _ => (false, None),
+    }
+}
+
+/// True if statement `st` borrows or moves local `l` (or a part of it).
+fn stmt_borrows_or_moves(st: &Stmt, l: LocalId) -> bool {
+    let moved = |o: &Operand| matches!(o, Operand::Move(q) if q.local == l);
+    match &st.kind {
+        StmtKind::Assign(_, rv) => match rv {
+            Rvalue::Ref(q) | Rvalue::Iter(weft_ir::IterSource::Elems(q)) => q.local == l,
+            Rvalue::Use(o) | Rvalue::Unary(_, _, o) => moved(o),
+            Rvalue::Binary(_, _, a, b) => moved(a) || moved(b),
+            Rvalue::Aggregate(_, ops) | Rvalue::Concat(ops) => ops.iter().any(moved),
+            _ => false,
+        },
+        StmtKind::Print(ops) => ops.iter().any(moved),
+        _ => false,
+    }
+}
+
+/// True if terminator `t` moves local `l` (or a part of it).
+fn term_moves(t: &TermKind, l: LocalId) -> bool {
+    let moved = |o: &Operand| matches!(o, Operand::Move(q) if q.local == l);
+    match t {
+        TermKind::Call { callee, args, .. } => {
+            matches!(callee, Callee::Value(o) if moved(o)) || args.iter().any(moved)
+        }
+        TermKind::Perform { args, .. } => args.iter().any(moved),
+        TermKind::Resume { arg, .. } => moved(arg),
+        TermKind::Spawn { task, scope, .. } => moved(task) || moved(scope),
+        TermKind::Join { task, .. } | TermKind::Detach { task, .. } => moved(task),
+        TermKind::Fork { branches, .. } => branches.iter().any(moved),
+        TermKind::Switch { on, .. } => moved(on),
+        TermKind::Assert { cond, .. } => moved(cond),
+        _ => false,
+    }
+}
+
+/// The blocks of body `b` that a path reaches from block `from` (`fwd`), or
+/// that reach block `from` (not `fwd`), with `from` itself.
+fn reach(b: &Body, from: BlockId, fwd: bool) -> Vec<bool> {
+    let n = b.blocks.len();
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); n];
+    if !fwd {
+        for (i, blk) in b.blocks.iter().enumerate() {
+            for s in blk.term.kind.successors() {
+                if let Some(p) = preds.get_mut(s.index()) {
+                    p.push(i);
+                }
+            }
+        }
+    }
+    let mut seen = vec![false; n];
+    let mut work = vec![from.index()];
+    while let Some(x) = work.pop() {
+        match seen.get_mut(x) {
+            Some(v) if !*v => *v = true,
+            _ => continue,
+        }
+        if fwd {
+            if let Some(blk) = b.blocks.get(x) {
+                work.extend(blk.term.kind.successors().iter().map(|s| s.index()));
+            }
+        } else if let Some(p) = preds.get(x) {
+            work.extend(p.iter().copied());
+        }
+    }
+    seen
+}
+
+/// Each place that a statement or a terminator of body `b` names.
+fn body_places(b: &Body) -> Vec<Place> {
+    let mut out = Vec::new();
+    let op = |o: &Operand, out: &mut Vec<Place>| {
+        if let Some(q) = o.place() {
+            out.push(q.clone());
+        }
+    };
+    for blk in &b.blocks {
+        for st in &blk.stmts {
+            match &st.kind {
+                StmtKind::Assign(q, rv) => {
+                    out.push(q.clone());
+                    match rv {
+                        Rvalue::Use(o) | Rvalue::Unary(_, _, o) => op(o, &mut out),
+                        Rvalue::Binary(_, _, a, c)
+                        | Rvalue::Iter(weft_ir::IterSource::Range(a, c)) => {
+                            op(a, &mut out);
+                            op(c, &mut out);
+                        }
+                        Rvalue::Aggregate(_, os) | Rvalue::Concat(os) => {
+                            for o in os {
+                                op(o, &mut out);
+                            }
+                        }
+                        Rvalue::Ref(q) | Rvalue::Len(q) | Rvalue::Discriminant(q) => {
+                            out.push(q.clone());
+                        }
+                        Rvalue::Iter(weft_ir::IterSource::Elems(q)) => out.push(q.clone()),
+                    }
+                }
+                StmtKind::Drop(q)
+                | StmtKind::Consume(q)
+                | StmtKind::Uninit(q)
+                | StmtKind::Mention(q)
+                | StmtKind::UnwindValue(q, _) => out.push(q.clone()),
+                StmtKind::Bounds(q, o) => {
+                    out.push(q.clone());
+                    op(o, &mut out);
+                }
+                StmtKind::Print(os) => {
+                    for o in os {
+                        op(o, &mut out);
+                    }
+                }
+                StmtKind::Live(l) | StmtKind::Dead(l) | StmtKind::UnwindKont(l) => {
+                    out.push(Place::local(*l));
+                }
+            }
+        }
+        let t = &blk.term.kind;
+        if let Some(d) = t.dest() {
+            out.push(d.clone());
+        }
+        match t {
+            TermKind::Call { callee, args, .. } => {
+                if let Callee::Value(o) = callee {
+                    op(o, &mut out);
+                }
+                for o in args {
+                    op(o, &mut out);
+                }
+            }
+            TermKind::Perform { cap, args, .. } => {
+                if let CapOperand::Local(q) = cap {
+                    out.push(q.clone());
+                }
+                for o in args {
+                    op(o, &mut out);
+                }
+            }
+            TermKind::Resume { kont, arg, .. } => {
+                out.push(kont.clone());
+                op(arg, &mut out);
+            }
+            TermKind::Switch { on, .. } => op(on, &mut out),
+            TermKind::Assert { cond, .. } => op(cond, &mut out),
+            TermKind::ScopeWait { scope, .. } => out.push(scope.clone()),
+            TermKind::Spawn { scope, task, .. } => {
+                op(scope, &mut out);
+                op(task, &mut out);
+            }
+            TermKind::Join { task, .. } | TermKind::Detach { task, .. } => op(task, &mut out),
+            TermKind::Fork { branches, .. } => {
+                for o in branches {
+                    op(o, &mut out);
+                }
+            }
+            TermKind::IterNext { iter, .. } => out.push(iter.clone()),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Type `t` with the type arguments `targs` for its type parameters.
+fn subst_ty(tys: &mut TyTable, t: weft_ir::TyId, targs: &[weft_ir::TyId]) -> weft_ir::TyId {
+    use weft_ir::Ty;
+    if !tys.mentions_param(t) {
+        return t;
+    }
+    let Some(ty) = tys.try_get(t).cloned() else {
+        return t;
+    };
+    let s = |x: weft_ir::TyId, tys: &mut TyTable| subst_ty(tys, x, targs);
+    let new = match ty {
+        Ty::Param(i) => return targs.get(i as usize).copied().unwrap_or(t),
+        Ty::Tuple(v) => Ty::Tuple(v.into_iter().map(|x| s(x, tys)).collect()),
+        Ty::Array(a, n) => Ty::Array(s(a, tys), n),
+        Ty::Slice(a) => Ty::Slice(s(a, tys)),
+        Ty::Ref(a) => Ty::Ref(s(a, tys)),
+        Ty::Adt(id, args) => Ty::Adt(id, args.into_iter().map(|x| s(x, tys)).collect()),
+        Ty::Fn(f) => Ty::Fn(weft_ir::ty::FnTy {
+            params: f.params.into_iter().map(|x| s(x, tys)).collect(),
+            ret: s(f.ret, tys),
+            row: f.row,
+        }),
+        Ty::Cont(a, c) => Ty::Cont(s(a, tys), s(c, tys)),
+        Ty::Iter(a) => Ty::Iter(s(a, tys)),
+        other => other,
+    };
+    tys.intern(new)
+}
+
+/// The program `p` with the body of the generic function `f` and the bodies
+/// inside it under the type arguments `targs`: the types of the locals, of
+/// the aggregates, and the type arguments of the calls and of the function
+/// item values. A local whose type changes gets the properties of its new
+/// type (`props::ir_props`).
+fn subst_program(
+    p: &Program,
+    tys: &mut TyTable,
+    f: FnId,
+    targs: &[weft_ir::TyId],
+) -> Result<Program, NoCopy> {
+    let cb = p.fns.get(f.index()).and_then(|d| d.body).ok_or(NoCopy)?;
+    let mut out = p.clone();
+    let st = |t: weft_ir::TyId, tys: &mut TyTable| subst_ty(tys, t, targs);
+    let sub_op = |o: &mut Operand, tys: &mut TyTable| {
+        if let Operand::Const(weft_ir::Const::Fn(_, ts)) = o {
+            for t in ts.iter_mut() {
+                *t = st(*t, tys);
+            }
+        }
+    };
+    for x in std::iter::once(cb).chain(inner_bodies(p, cb)) {
+        let body = out.bodies.get_mut(x.index()).ok_or(NoCopy)?;
+        for d in &mut body.locals {
+            let nt = st(d.ty, tys);
+            if nt != d.ty {
+                d.ty = nt;
+                d.props = crate::props::ir_props(tys, nt);
+            }
+        }
+        for blk in &mut body.blocks {
+            for s in &mut blk.stmts {
+                match &mut s.kind {
+                    StmtKind::Assign(_, rv) => match rv {
+                        Rvalue::Aggregate(k, ops) => {
+                            match k {
+                                weft_ir::AggKind::Struct(t) | weft_ir::AggKind::Variant(t, _) => {
+                                    *t = st(*t, tys);
+                                }
+                                _ => {}
+                            }
+                            for o in ops.iter_mut() {
+                                sub_op(o, tys);
+                            }
+                        }
+                        Rvalue::Use(o) | Rvalue::Unary(_, _, o) => sub_op(o, tys),
+                        Rvalue::Binary(_, _, a, c) => {
+                            sub_op(a, tys);
+                            sub_op(c, tys);
+                        }
+                        Rvalue::Concat(ops) => {
+                            for o in ops.iter_mut() {
+                                sub_op(o, tys);
+                            }
+                        }
+                        _ => {}
+                    },
+                    StmtKind::Print(ops) => {
+                        for o in ops.iter_mut() {
+                            sub_op(o, tys);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match &mut blk.term.kind {
+                TermKind::Call { callee, args, .. } => {
+                    match callee {
+                        Callee::Fn(_, ts) => {
+                            for t in ts.iter_mut() {
+                                *t = st(*t, tys);
+                            }
+                        }
+                        Callee::Value(o) => sub_op(o, tys),
+                    }
+                    for o in args.iter_mut() {
+                        sub_op(o, tys);
+                    }
+                }
+                TermKind::Perform { args, .. } => {
+                    for o in args.iter_mut() {
+                        sub_op(o, tys);
+                    }
+                }
+                TermKind::Resume { arg, .. } => sub_op(arg, tys),
+                _ => {}
+            }
+        }
+    }
+    // A `move` of a place of a type that is a copy type now is a copy (V9).
+    for x in std::iter::once(cb).chain(inner_bodies(p, cb)) {
+        let Some(mut body) = out.body(x).cloned() else {
+            continue;
+        };
+        let is_copy = |q: &Place, tys: &mut TyTable| -> bool {
+            let temp = matches!(body_kind_of(&out, x, q.local), Some(LocalKind::Temp(_)));
+            !temp
+                && crate::factgen::alpha::place_ty(&out, tys, x, q)
+                    .is_some_and(|t| !tys.not_copy(t))
+        };
+        let fix = |o: &mut Operand, tys: &mut TyTable| {
+            if let Operand::Move(q) = o {
+                if is_copy(q, tys) {
+                    *o = Operand::Copy(q.clone());
+                }
+            }
+        };
+        for blk in &mut body.blocks {
+            for s in &mut blk.stmts {
+                if let StmtKind::Assign(_, rv) = &mut s.kind {
+                    match rv {
+                        Rvalue::Use(o) | Rvalue::Unary(_, _, o) => fix(o, tys),
+                        Rvalue::Binary(_, _, a, c) => {
+                            fix(a, tys);
+                            fix(c, tys);
+                        }
+                        Rvalue::Aggregate(_, ops) | Rvalue::Concat(ops) => {
+                            for o in ops.iter_mut() {
+                                fix(o, tys);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            match &mut blk.term.kind {
+                TermKind::Call { args, .. } | TermKind::Perform { args, .. } => {
+                    for o in args.iter_mut() {
+                        fix(o, tys);
+                    }
+                }
+                TermKind::Resume { arg, .. } => fix(arg, tys),
+                _ => {}
+            }
+        }
+        if let Some(slot) = out.bodies.get_mut(x.index()) {
+            *slot = body;
+        }
+    }
+    Ok(out)
+}
+
+/// The kind of local `l` of body `b` of program `p`.
+fn body_kind_of(p: &Program, b: BodyId, l: LocalId) -> Option<LocalKind> {
+    p.body(b).and_then(|x| x.local_kind(l))
+}
+
+/// The one value that a local gets ([`single_value`]).
+enum One {
+    /// A closure that the statement `si` of block `blk` makes.
+    Closure(BlockId, usize, ClosureId),
+    /// A copy of another local.
+    Copy(LocalId),
+}
+
+/// The one value of local `l` of body `body`: `l` is a variable or a
+/// temporary that one statement gives a whole value (a closure, or a copy of
+/// a whole local), and no statement or terminator moves it, borrows it or
+/// writes it (also a part of it) in another way.
+fn single_value(body: &Body, l: LocalId) -> Option<One> {
+    if !matches!(body.local_kind(l)?, LocalKind::User | LocalKind::Temp(_)) {
+        return None;
+    }
+    let mut one: Option<One> = None;
+    let mut writes = 0usize;
+    for (bi, blk) in body.blocks.iter().enumerate() {
+        let id = BlockId(u32::try_from(bi).ok()?);
+        for (si, st) in blk.stmts.iter().enumerate() {
+            let (w, made) = stmt_writes(st, l);
+            if w {
+                writes += 1;
+                one = match (&st.kind, made) {
+                    (_, Some(c)) => Some(One::Closure(id, si, c)),
+                    (StmtKind::Assign(_, Rvalue::Use(Operand::Copy(q))), None) if q.is_local() => {
+                        Some(One::Copy(q.local))
+                    }
+                    _ => None,
+                };
+            }
+            if stmt_borrows_or_moves(st, l) {
+                return None;
+            }
+        }
+        if blk.term.kind.dest().is_some_and(|d| d.local == l) || term_moves(&blk.term.kind, l) {
+            return None;
+        }
+    }
+    if writes == 1 {
+        one
+    } else {
+        None
+    }
 }

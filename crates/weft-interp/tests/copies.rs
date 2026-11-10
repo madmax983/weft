@@ -4,7 +4,7 @@
 //! The fact oracle runs the program with the copies (the program that the
 //! `ir` pipeline checks), so a copy that changes the program would make the
 //! oracle check the wrong program. This test runs each probe of the stages
-//! R0h and R0k with `fn main` on the IR engine two times, the program as the
+//! R0h, R0k and R0k-a2 with `fn main` on the IR engine two times, the program as the
 //! builder gives it and the program with the copies, and compares the
 //! output and the fault of the two runs. The files in `tests/copies` add
 //! the forms that a wrong copy of the parameters shows: two parameters of
@@ -29,6 +29,7 @@ fn probes() -> Vec<PathBuf> {
     for dir in [
         fixes.join("r0h"),
         fixes.join("r0k"),
+        fixes.join("r0k2"),
         here.join("tests/copies"),
     ] {
         let Ok(rd) = fs::read_dir(&dir) else {
@@ -67,6 +68,8 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     };
     let mut copied = 0;
     let mut local = 0;
+    // The probes with a copy of a closure body at a run node (stage R0k-a2).
+    let mut closures = 0;
     for p in probes() {
         let src = fs::read_to_string(&p).unwrap();
         if !src.contains("fn main") {
@@ -75,10 +78,13 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
         let name = p.display().to_string();
         let c = check_source(&name, &src, Options::default());
         let built = weft_sema::irbuild::build(&c.analysis);
-        if weft_sema::factgen::instantiate::instantiate(&built).is_none() {
+        let Some(inst) = weft_sema::factgen::instantiate::instantiate(&built) else {
             continue;
-        }
+        };
         copied += 1;
+        if inst.closure_calls > 0 {
+            closures += 1;
+        }
         if p.parent().is_some_and(|d| d.ends_with("copies")) {
             local += 1;
         }
@@ -88,4 +94,5 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     }
     assert!(copied >= 40, "only {copied} probes have copies");
     assert_eq!(local, 7, "each file in tests/copies must get a copy");
+    assert!(closures >= 8, "only {closures} probes have closure copies");
 }

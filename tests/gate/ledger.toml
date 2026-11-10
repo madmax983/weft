@@ -10695,11 +10695,10 @@ stage = "R0j"
 class = "open-old"
 files = [
     "tests/gate/probes/fixes/r0k/rv_p04_c2_multi.wf",
-    "tests/gate/probes/fixes/r0k/rv_p07_d3_in_closure.wf",
     "tests/gate/probes/fixes/r0k/rv_p12_c2_task_after_perform.wf",
 ]
 finding = "R0h-STAYS"
-reason = "stage R0k (probes of the design review of R0k; from stage R0k-a the other probes of the review get call-site copies and the `ir` pipeline rejects them, class `fixed`): forms of C2 and D3 that keep the old pipeline, and the old pipeline misses each fault. `rv_p04_c2_multi`: the copy brings in a `multi` operation of a handler of a caller in a clause (D5, no full facts), so the program keeps the fallback (R0k-a as built); `rv_p07_d3_in_closure`: the perform is in a closure that the callee makes and runs, and the copy does not copy the closure body at its run node (stage R0k-a2); `rv_p12_c2_task_after_perform`: a `resume` in a scope body of the clause (D1, stage R0k-c)"
+reason = "stage R0k (probes of the design review of R0k; from stage R0k-a the other probes of the review get call-site copies and the `ir` pipeline rejects them, class `fixed`): forms of C2 and D3 that keep the old pipeline, and the old pipeline misses each fault. `rv_p04_c2_multi`: the copy brings in a `multi` operation of a handler of a caller in a clause (D5, no full facts), so the program keeps the fallback (R0k-a as built); `rv_p07_d3_in_closure` gets the copy of the closure body at its run node in stage R0k-a2 (class `fixed`); `rv_p12_c2_task_after_perform`: a `resume` in a scope body of the clause (D1, stage R0k-c)"
 stage = "R0k"
 
 [[entry]]
@@ -10759,4 +10758,13 @@ files = [
     "tests/gate/probes/fixes/r0k/rv_p09c_d3_multi_local.wf",
 ]
 reason = "stage R0k (`main` handles a `multi` operation itself): the re-entry of the `multi` clause runs the rest of the handled body of `main` again, inside `main` (a perform of a local handler is no `multi_at` row, O3-8), so no caller of `main` sees a second resume. The old inference marks `main` `multi`. `rv_p09`, `rv_p09_ok` and `rv_p09b` have the copy of the callee at the call (stage R0k-a); `rv_p09c` is the same code in the handled body"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0k2/a03_cap_bad.wf",
+]
+codes = ["W0312"]
+reason = "stage R0k-a2: the closure that the handled body makes and runs gets a copy of its body at the run (the static closure copy), so its perform through the captured capability is a perform of the local handler, and the `ir` pipeline gives the W0301 of the run of the value (as the old pipeline). The old W0312 comes from the worst way of code of a caller for the value of the operation, which the copy does not need. ev.sh: the program faults, and both pipelines reject it"
 stage = "R0k"

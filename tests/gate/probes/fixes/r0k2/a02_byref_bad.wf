@@ -1,0 +1,19 @@
+// Plan stage R0k-a2 (a static closure copy, a `ByRef` capture): the closure
+// borrows `w` to push to it and runs the value of the clause; the value
+// clears `c.v` while `r` of the handled body points into it (W0301).
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in {
+        let w = Vec.new()
+        let r = &c.v[0]
+        let k = || { w.push(1)
+            let g = get()
+            g() }
+        k()
+        print(r)
+        print(w.len())
+    }
+}

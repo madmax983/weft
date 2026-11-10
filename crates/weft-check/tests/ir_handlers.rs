@@ -1142,11 +1142,11 @@ fn function_values_and_references_across_operations_have_full_facts() {
 }
 
 /// Stage R0k-a: a call that gets no copy keeps the old pipeline for the D3
-/// form: a recursive callee, and a perform in a closure that the callee
-/// makes and runs (the closure-body copies of stage R0k-a2).
+/// form: a recursive callee, and a run of a local that can hold one of two
+/// closures (stage R0k-a2 copies a closure body only for one closure).
 #[test]
 fn a_call_with_no_copy_keeps_the_old_pipeline() {
-    for name in ["rec_callee.wf", "closure_run.wf"] {
+    for name in ["rec_callee.wf", "two_closures.wf"] {
         let (_, fallback, _) = stage_codes("r0k", name);
         let fallback = fallback.unwrap_or_default();
         assert!(
@@ -1154,6 +1154,11 @@ fn a_call_with_no_copy_keeps_the_old_pipeline() {
             "{name}: {fallback}"
         );
     }
+    // Stage R0k-a2: the closure that the callee makes and runs gets a copy
+    // of its body at the run.
+    let (got, fallback, _) = stage_codes("r0k", "closure_run.wf");
+    assert!(fallback.is_none(), "{fallback:?}");
+    assert_eq!(got, vec![("W0301".to_string(), 11)]);
 }
 
 /// The fix of stage R0h (review round 1). A value of the interface of the

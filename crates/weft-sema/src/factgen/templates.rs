@@ -5707,7 +5707,22 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     // that a captured capability runs in the closure keeps the old pipeline.
     let code = transfer::op_fn_args(&mut em.cx(), body, st, (e, *op), args)?;
     if code.is_some() && captured.is_some() {
-        return Err(AlphaError::Later(OP_FN_ARGS));
+        if !transfer::weak_row_ops() {
+            return Err(AlphaError::Later(OP_FN_ARGS));
+        }
+        // The weak form (stage R0k-a2): the clause is code of a caller that
+        // runs the values. The summary of the closure must apply at no run
+        // where the handler serves the operation (`transfer::note_weak_call`):
+        // each such run has a copy of the closure body.
+        let id = em
+            .tys
+            .effects()
+            .get(e.index())
+            .map(|d| d.identity.clone())
+            .unwrap_or_default();
+        if let Some(k) = transfer::weak_owner(em.p, body) {
+            transfer::note_weak(k, &id);
+        }
     }
     let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, e, *op, args)?;
     let n = nodes.main;

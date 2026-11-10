@@ -1631,6 +1631,8 @@ fn a_spawn_on_one_of_nested_scopes_ends_its_task_at_the_outer_scope() {
 /// The copies of the callees at their calls (plan stage R0k-a,
 /// `weft_sema::factgen::instantiate`), on programs from source.
 mod copies {
+    #[allow(unused_imports)]
+    use weft_ir::Stmt;
     use weft_ir::{BodyKind, CapOperand, LocalKind, Program, Rvalue, StmtKind, TermKind};
     use weft_sema::factgen::instantiate::{instantiate, instantiate_with, Bounds};
     use weft_sema::irbuild::Built;
@@ -1860,6 +1862,199 @@ mod copies {
         assert_eq!(u.reason, weft_sema::analysis::transfer::OP_KEPT);
         drop(weak);
         // With the copies the program is in scope.
+        let inst = instantiate(&b).expect("a copy");
+        assert!(inst.weak_ok);
+        let _weak = weft_sema::analysis::transfer::WeakRowOps::enter();
+        assert!(weft_sema::factgen::components(&a, &inst.built).is_ok());
+    }
+
+    /// A probe of `tests/gate/probes/fixes/r0k2`.
+    fn r0k2(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0k2")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The calls in body `b` of a function value that is a local that a
+    /// closure literal of `b` gives a value, or a copy of one.
+    fn value_calls(b: &weft_ir::Body) -> usize {
+        let mut made: std::collections::BTreeSet<weft_ir::LocalId> =
+            std::collections::BTreeSet::new();
+        for _ in 0..3 {
+            for st in b.blocks.iter().flat_map(|k| &k.stmts) {
+                match &st.kind {
+                    StmtKind::Assign(q, Rvalue::Aggregate(weft_ir::AggKind::Closure(_), _)) => {
+                        made.insert(q.local);
+                    }
+                    StmtKind::Assign(q, Rvalue::Use(weft_ir::Operand::Copy(r)))
+                        if made.contains(&r.local) =>
+                    {
+                        made.insert(q.local);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        b.blocks
+            .iter()
+            .filter(|k| {
+                matches!(&k.term.kind, TermKind::Call {
+                        callee: weft_ir::Callee::Value(weft_ir::Operand::Copy(q)),
+                        ..
+                    } if made.contains(&q.local))
+            })
+            .count()
+    }
+
+    /// Stage R0k-a2, the static closure copy: a closure that the handled body
+    /// makes and runs gets a copy of its body at the run. A `Kept` capture is
+    /// its source, a `ByRef` capture a new borrow of its source, a `Cap`
+    /// capture the capability of the site; the copy mentions the closure
+    /// value, so its references live up to the run.
+    #[test]
+    fn a_closure_that_the_body_makes_and_runs_gets_a_copy_at_the_run() {
+        for name in ["a01_kept_bad.wf", "a02_byref_bad.wf", "a03_cap_bad.wf"] {
+            let (_, b) = built(&r0k2(name));
+            let before: usize = handled(&b.program).iter().map(|x| value_calls(x)).sum();
+            let inst = instantiate(&b).unwrap_or_else(|| panic!("{name}: no copy"));
+            assert_eq!(inst.closure_calls, 1, "{name}");
+            let p = &inst.built.program;
+            let hb = handled(p).into_iter().next().expect("a handled body");
+            assert_eq!(before, 1, "{name}");
+            assert_eq!(value_calls(hb), 0, "{name}: the run is gone");
+            let stmts: Vec<&StmtKind> = hb
+                .blocks
+                .iter()
+                .flat_map(|k| &k.stmts)
+                .map(|s| &s.kind)
+                .collect();
+            assert!(
+                stmts.iter().any(|k| matches!(k, StmtKind::Mention(_))),
+                "{name}"
+            );
+            if name.starts_with("a02") {
+                assert!(
+                    stmts
+                        .iter()
+                        .any(|k| matches!(k, StmtKind::Assign(_, Rvalue::Ref(_)))),
+                    "{name}: the borrow of the `ByRef` capture"
+                );
+            }
+            // A perform through the capability of the closure is a perform of
+            // the local handler now.
+            let local = hb.blocks.iter().any(|k| {
+                matches!(&k.term.kind, TermKind::Perform { cap: CapOperand::Local(q), .. }
+                    if matches!(hb.local(q.local).map(|d| d.kind), Some(LocalKind::Cap(_))))
+            });
+            assert!(local, "{name}");
+            assert!(weft_ir::verify::verify_program(p, &inst.built.tys)
+                .iter()
+                .all(|x| x.rule == weft_ir::verify::Rule::UnwindOrder));
+        }
+    }
+
+    /// The refusals of the static closure copy: the local can hold one of two
+    /// closures, the closure moves a capture into its value (`ByMove`), the
+    /// local gets its closure from a block. Each one keeps the call of the
+    /// closure value.
+    #[test]
+    fn a_closure_copy_is_refused_for_two_closures_a_move_and_another_value() {
+        for name in [
+            "a04_two_closures_bad.wf",
+            "a05_by_value_bad.wf",
+            "a06_ends_bad.wf",
+        ] {
+            let (_, b) = built(&r0k2(name));
+            assert!(
+                instantiate(&b).is_none_or(|i| i.closure_calls == 0),
+                "{name}: a copy"
+            );
+        }
+    }
+
+    /// The refusal of a source that ends between the closure and the run: a
+    /// `Dead` of the source of the `Kept` capture before the run (built by
+    /// hand: the source language gives no such program) keeps the call.
+    #[test]
+    fn a_closure_copy_is_refused_for_a_source_that_ends_before_the_run() {
+        let (_, mut b) = built(&r0k2("a01_kept_bad.wf"));
+        assert!(instantiate(&b).is_some_and(|i| i.closure_calls == 1));
+        let p = &mut b.program;
+        let (ci, src) = p
+            .closures
+            .iter()
+            .enumerate()
+            .find_map(|(i, d)| {
+                d.captures
+                    .iter()
+                    .find(|c| c.mode == weft_ir::CaptureMode::Kept)
+                    .map(|c| (i, c.source.local))
+            })
+            .expect("a kept capture");
+        let maker = p.closures[ci].maker;
+        let body = &mut p.bodies[maker.index()];
+        // The block of the run: the first call of a function value.
+        let run = body
+            .blocks
+            .iter()
+            .position(|k| {
+                matches!(
+                    k.term.kind,
+                    TermKind::Call {
+                        callee: weft_ir::Callee::Value(_),
+                        ..
+                    }
+                )
+            })
+            .expect("a run");
+        let at = body.blocks[run].stmts.len();
+        body.blocks[run].stmts.insert(
+            at,
+            weft_ir::Stmt {
+                kind: StmtKind::Dead(src),
+                origin: weft_ir::Origin::default(),
+            },
+        );
+        assert!(instantiate(&b).is_none_or(|i| i.closure_calls == 0));
+    }
+
+    /// Stage R0k-a2, a generic callee: each call gets a copy under its own type
+    /// arguments, and no local of a copy names a type parameter.
+    #[test]
+    fn a_generic_callee_gets_a_copy_under_the_type_arguments_of_the_call() {
+        let (_, b) = built(&r0k2("c09_generic_two_bad.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        assert_eq!(inst.calls, 2);
+        let p = &inst.built.program;
+        for hb in handled(p) {
+            assert!(!calls(hb, fn_id(p, "run_ref")));
+            for d in &hb.locals {
+                assert!(!inst.built.tys.mentions_param(d.ty), "{:?}", d.name);
+            }
+        }
+        assert!(weft_ir::verify::verify_program(p, &inst.built.tys)
+            .iter()
+            .all(|x| x.rule == weft_ir::verify::Rule::UnwindOrder));
+    }
+
+    /// Stage R0k-a2, the closure guard (D): the structural check of
+    /// `weak_ok` is not on the way here. With the weak form on and no copy,
+    /// the run of a closure whose summary uses the weak form (a perform
+    /// through a captured capability with a function value) where the local
+    /// handler serves the operation is refused by the analysis
+    /// (`transfer::note_weak_call`); with the copy of the closure body the
+    /// program is in scope.
+    #[test]
+    fn a_served_run_of_a_closure_with_the_weak_form_keeps_the_old_pipeline() {
+        let (a, b) = built(&r0k2("a03_cap_bad.wf"));
+        assert!(weft_sema::factgen::components(&a, &b).is_err());
+        let weak = weft_sema::analysis::transfer::WeakRowOps::enter();
+        let Err(u) = weft_sema::factgen::components(&a, &b) else {
+            panic!("the guard does not refuse the run of the closure");
+        };
+        assert_eq!(u.reason, weft_sema::analysis::transfer::OP_KEPT);
+        drop(weak);
         let inst = instantiate(&b).expect("a copy");
         assert!(inst.weak_ok);
         let _weak = weft_sema::analysis::transfer::WeakRowOps::enter();

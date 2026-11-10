@@ -232,11 +232,12 @@ fn plain(n: u64) -> u64 { n + 1 }
 // callee a function value that can race (stage R0g put the `resume` in a
 // closure, the form of this program before, in scope for a program that the
 // `ir` pipeline rejects; stage R0h put a value that cannot race in scope;
-// stage R0k-a put the callee in scope with a copy at the call, so the
-// perform is in a closure that the callee runs, which the copy keeps).
+// stage R0k-a put the callee in scope with a copy at the call, and stage
+// R0k-a2 a closure that the callee runs, so the callee is recursive: it
+// gets no copy).
 const KONT: &str = "effect Get { fn get() -> fn() }
-fn run_it() / Get { let k = || { let g = get(); g() }; k() }
-fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }
+fn run_it(n: u64) / Get { if n > 0 { run_it(n - 1) } else { let g = get(); g() } }
+fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it(1) } }
 fn typo() -> u64 { nope }
 fn plain(n: u64) -> u64 { n + 1 }
 ";
@@ -635,9 +636,9 @@ fn the_note_of_a_fallback_names_the_body_that_the_fact_generator_does_not_suppor
     // support get the worst case of its declaration, so the note gives the
     // reason of that body, not "a call of a function with ...".
     let src = "effect Get { fn get() -> fn() }
-        fn run_it() / Get { let k = || { let g = get(); g() }; k() }
+        fn run_it(n: u64) / Get { if n > 0 { run_it(n - 1) } else { let g = get(); g() } }
         fn first() { kont() }
-        fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }";
+        fn kont() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it(1) } }";
     let why = fallback(src).expect("out of scope");
     assert!(why.contains("gives a function value"), "{why}");
 }
@@ -829,14 +830,14 @@ fn function_values_and_references_across_operations_are_in_scope() {
     }
     // A value that the clause of a caller can keep with a reference in it
     // (no call in the program serves the effect), and a value that a clause
-    // gives back to a closure that the callee runs (no copy of the closure
-    // body, stage R0k-a), keep the old pipeline.
+    // gives back to a recursive callee (no copy, stage R0k-a), keep the old
+    // pipeline.
     let out = [
         "effect Run { fn run(g: fn()) }
         fn f(v: &Vec<u64>) / Run { let r = &v[0]; run(|| print(r)) }",
         "effect Get { fn get() -> fn() }
-        fn run_it() / Get { let k = || { let g = get(); g() }; k() }
-        fn main() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it() } }",
+        fn run_it(n: u64) / Get { if n > 0 { run_it(n - 1) } else { let g = get(); g() } }
+        fn main() { let v = Vec.new(); v.push(1); handle Get { fn get() { resume(|| v.clear()) } } in { run_it(1) } }",
     ];
     for src in out {
         assert!(fallback(src).is_some(), "{src}");

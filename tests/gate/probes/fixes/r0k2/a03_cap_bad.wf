@@ -1,0 +1,15 @@
+// Plan stage R0k-a2 (a static closure copy, a `Cap` capture only): the
+// closure gives a value that clears `v` to an operation of the handler; the
+// clause runs it while `r` points into `v` (W0301).
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let k = |g: fn()| run(g)
+        k(|| v.clear())
+    }
+    print(r)
+}

@@ -1,0 +1,17 @@
+// Stage R0k-a2: `k` gets one of two closures, so its run gets no copy of
+// the closure body, and the D3 form keeps the old pipeline.
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn pick(b: bool) -> bool { b }
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in {
+        let r = &c.v[0]
+        let k = if pick(true) { || { let g = get()
+            g() } } else { || { let g = get()
+            g() } }
+        k()
+        print(r)
+    }
+}

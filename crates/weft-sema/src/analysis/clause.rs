@@ -2686,26 +2686,37 @@ pub fn call_clauses(
             .filter_map(|d| cx.tys.effects().get(d.effect.index()))
             .map(|e| e.identity.clone())
             .collect();
-        let callees: Vec<weft_ir::FnId> = match t {
-            TermKind::Call {
-                callee: weft_ir::Callee::Fn(f, _),
-                ..
-            } => vec![*f],
-            TermKind::Call {
-                callee: weft_ir::Callee::Value(v),
-                ..
-            } => {
-                let from = before.cloned().unwrap_or_else(|| st.clone());
-                transfer::reach_fns(cx, body, &from, v)?
-                    .into_iter()
-                    .filter_map(|g| match g {
-                        super::FnVal::Item(f, _) => Some(f),
-                        _ => None,
-                    })
-                    .collect()
+        // The summaries that the call runs: the callee, the values that a
+        // call of a function value can run, and the closures and the items
+        // that the call gives to its callee (the callee can run them).
+        let from = before.cloned().unwrap_or_else(|| st.clone());
+        let mut callees: Vec<transfer::WeakKey> = Vec::new();
+        let key = |g: &super::FnVal| match g {
+            super::FnVal::Item(f, _) => Some(transfer::WeakKey::Fn(*f)),
+            super::FnVal::Closure(c) | super::FnVal::Made(c) => {
+                Some(transfer::WeakKey::Closure(*c))
             }
-            _ => Vec::new(),
+            _ => None,
         };
+        if let TermKind::Call { callee, args, .. } = t {
+            match callee {
+                weft_ir::Callee::Fn(f, _) => callees.push(transfer::WeakKey::Fn(*f)),
+                weft_ir::Callee::Value(v) => {
+                    callees.extend(
+                        transfer::reach_fns(cx, body, &from, v)?
+                            .iter()
+                            .filter_map(key),
+                    );
+                }
+            }
+            for a in args {
+                callees.extend(
+                    transfer::reach_fns(cx, body, &from, a)?
+                        .iter()
+                        .filter_map(key),
+                );
+            }
+        }
         transfer::note_weak_call(p, body, &callees, &served)?;
     }
     // A call of a function value runs no clause of a local handler when each
