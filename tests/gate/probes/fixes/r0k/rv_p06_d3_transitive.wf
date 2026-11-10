@@ -1,0 +1,15 @@
+// D3 through a callee: run_ref calls inner, which gets g and runs it; run_ref holds a loan across the call
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn inner() / Get { let g = get()
+    g() }
+fn run_ref(c: &C) / Get {
+    let r = &c.v[0]
+    inner()
+    print(r)
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+}

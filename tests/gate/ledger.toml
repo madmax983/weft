@@ -10707,3 +10707,31 @@ files = [
 finding = "R0h-STAYS"
 reason = "stage R0k (probes of the forms of R0h-STAYS): the forms C2 and D3 keep the old pipeline, and the old pipeline misses each fault. `k02_c2_capture_bad`: the clause of a caller keeps a closure with a captured reference and runs it after the callee clears the vector (as `c2_stored_ref`); `k06_d3_once_bad`: a `once` value that a clause gives back runs two times (as `d3f_once`); `k07_d3_race_bad`: a given-back value that clears a vector runs while the callee holds a reference into it; `k08_d3_kept_bad`: a given-back closure that holds a reference runs after a change (as `d3f_dangling`). Stages R0k-a1 (C2) and R0k-a2 (D3) give these forms full facts (R0k design note)"
 stage = "R0k"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0k/rv_p01_c2_loop_kept.wf",
+    "tests/gate/probes/fixes/r0k/rv_p02_c2_two_performs.wf",
+    "tests/gate/probes/fixes/r0k/rv_p03_c2_resume_then_run.wf",
+    "tests/gate/probes/fixes/r0k/rv_p04_c2_multi.wf",
+    "tests/gate/probes/fixes/r0k/rv_p05_d3_two_performs_once.wf",
+    "tests/gate/probes/fixes/r0k/rv_p06_d3_transitive.wf",
+    "tests/gate/probes/fixes/r0k/rv_p07_d3_in_closure.wf",
+    "tests/gate/probes/fixes/r0k/rv_p09b_d3_multi_one.wf",
+    "tests/gate/probes/fixes/r0k/rv_p10_d3_abort_path.wf",
+    "tests/gate/probes/fixes/r0k/rv_p11_c2_nested_capture.wf",
+    "tests/gate/probes/fixes/r0k/rv_p12_c2_task_after_perform.wf",
+]
+finding = "R0h-STAYS"
+reason = "stage R0k (probes of the design review of R0k): forms of C2 and D3 that keep the old pipeline, and the old pipeline misses each fault: a perform in a loop, two performs, code of a clause after `resume`, a `multi` clause, a `once` value at two performs, a perform in a callee of the callee or in a closure that the callee runs, a run on an abort path, a captured closure that holds the reference, a task after the perform. They are acceptance tests of the full facts of R0k-a"
+stage = "R0k"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0k/rv_p09_d3_multi.wf",
+]
+finding = "R0k-P09"
+reason = "stage R0k (design review of R0k): a `multi` operation of a local handler whose result is a function value, used by a callee; the second resume gives a closure that clears the vector while the callee holds a reference into it. The program is in scope (the D3 fallback skips a `multi` operation) and both pipelines accept it; the run reads a freed cell. Routing it to the D3 fallback moves the miss to the old pipeline only. The full facts of R0k-a must reject it (acceptance test); `rv_p09b_d3_multi_one` (no `multi`) and `rv_p09c_d3_multi_local` (the perform in the handled body, W0301 from both pipelines) are its twins"
+stage = "R0k"

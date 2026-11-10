@@ -1,0 +1,12 @@
+// C2: the clause resumes, then runs g; g reads a local of the callee frame, which has ended
+effect Run { fn run(g: fn()) }
+fn f() / Run {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    run(|| print(r))
+}
+fn main() {
+    handle Run { fn run(g) { resume(())
+        g() } } in { f() }
+}

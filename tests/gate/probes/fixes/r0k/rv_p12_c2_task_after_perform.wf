@@ -1,0 +1,12 @@
+// C2: the clause runs g on a task across resume; the callee spawns a task after the perform that writes the place g reads
+struct S { n: u64 }
+effect Run { fn run(g: fn()) }
+fn f() / Run, async {
+    let st = S { n: 0 }
+    run(|| print(st.n))
+    scope { s => s.spawn(|| st.n += 1) }
+}
+fn main() / async {
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in { f() }
+}

@@ -1,0 +1,13 @@
+// D3, two performs: the clause gives the same once closure each time; the callee runs each value once
+effect Get { fn get() -> fn() }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn twice() / Get { let a = get()
+    a()
+    let b = get()
+    b() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c = || eat(v)
+    handle Get { fn get() { resume(c) } } in { twice() }
+}

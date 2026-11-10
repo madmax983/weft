@@ -1,0 +1,15 @@
+// p09 with one resume (the clause gives back the clearing closure): control
+struct C { v: Vec<u64> }
+effect Get { multi fn get() -> fn() }
+fn run_ref(c: &C) / Get {
+    let g = get()
+    let r = &c.v[0]
+    g()
+    print(r)
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    c.v.push(2)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+}

@@ -1,0 +1,20 @@
+// D3 in a loop: the loan taken after the run in one iteration is used after the run of the next one
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn run_ref(c: &C) / Get {
+    let i = 0
+    let r = &c.v[0]
+    while i < 2 {
+        print(r)
+        let g = get()
+        g()
+        c.v.push(1)
+        r = &c.v[0]
+        i = i + 1
+    }
+}
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    handle Get { fn get() { resume(|| c.v.clear()) } } in { run_ref(&c) }
+}

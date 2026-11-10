@@ -1,0 +1,19 @@
+// C2: the value given to the operation captures another closure that captured a reference (two levels); the clause keeps it
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Run, mut(v) {
+    let r = &v[0]
+    let c1 = || print(r)
+    run(|| c1())
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in { f(&v) }
+    let x = h.f
+    x()
+}
