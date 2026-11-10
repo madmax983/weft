@@ -1,0 +1,17 @@
+// Plan stage R0j: the clean twin of j04. The two tasks only read `c.k`.
+// The `ir` pipeline finds no error, so the old pipeline checks the program
+// (the pending rule).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let g = || print(c.k)
+    let f = || scope { s =>
+        s.spawn(g)
+        s.spawn(g)
+        ()
+    }
+    f()
+    f()
+    c.k += 1
+    print(c.k)
+}

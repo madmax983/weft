@@ -1,0 +1,15 @@
+// Plan stage R0j: the clean twin of j07. The value changes a local of its
+// maker and performs nothing. The reason stays in stage R0j: with the weak
+// facts of the pending rule, the `ir` pipeline gives W0403 at the call (the
+// worst way of a foreign task), so the old pipeline checks the program.
+struct C { k: u64 }
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn main() {
+    let c = C { k: 0 }
+    param_in_sim(|| c.k += 1)
+    print(c.k)
+}

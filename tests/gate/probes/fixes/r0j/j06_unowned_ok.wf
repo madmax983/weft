@@ -1,0 +1,17 @@
+// Plan stage R0j: the clean twin of j06. The task only reads `c.k`, and
+// the body writes `c.k` after the outer scope. The task ends at the outer
+// scope in the facts, so the `ir` pipeline finds no error, and the program
+// is in scope (full facts).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let b = true
+    scope { a =>
+        scope { t =>
+            let x = if b { a } else { t }
+            x.spawn(|| print(c.k))
+        }
+    }
+    c.k += 2
+    print(c.k)
+}

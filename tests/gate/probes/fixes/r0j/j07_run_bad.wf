@@ -1,0 +1,17 @@
+// Plan stage R0j (C, a function value that changes places or holds a
+// nonportable value, and that code of a caller can run on another thread):
+// the task of `sim.run` performs through a handler of the spawning task
+// (W0314). The reason stays in stage R0j (j07_run_ok): the old pipeline
+// checks the program.
+effect Note { fn note(x: u64) }
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn main() {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        param_in_sim(|| note(1))
+    }
+}

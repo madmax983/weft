@@ -4535,7 +4535,14 @@ fn value_run(
         let ks = super::frames::value_task_args(em.p, &*em.tys, body, args);
         match value_slots(&out.apps, &ks) {
             Some(s) if !em.task_nodes.is_empty() => Some(s),
-            _ => return Err(AlphaError::Later(VALUE_TASKS)),
+            // Plan stage R0j: with no task nodes for the value, the run is
+            // a plain run of the call, and the program is in scope only if
+            // the `ir` pipeline rejects it.
+            _ => {
+                pending(crate::irbuild::scope::Group::C, VALUE_TASKS);
+                em.task_nodes.clear();
+                None
+            }
         }
     } else {
         // No value runs as a task: the call is a call with no task nodes.
@@ -6434,7 +6441,7 @@ pub fn spawn(
     use crate::analysis::tasks;
     let body = em.body;
     operand(em, n, st, scope)?;
-    unowned_spawn(em, site)?;
+    unowned_spawn(em, site);
     let (ret_ty, out_ret) = task_start(em, n, st, block, site, task, origin)?;
     em.facts.escapes_at.push((n, ASYNC.to_string()));
     em.started.push(site.0);
@@ -6484,23 +6491,21 @@ pub fn spawn(
 }
 
 /// The check of a spawn that does not name its scope (stage R0e): the
-/// analysis must find the one scope of its scope operand
-/// (`Handlers::site_scopes`).
+/// analysis must find the scope that ends the task (`Handlers::site_scopes`,
+/// [`crate::analysis::tasks::SiteScope::end`]: the one scope of the scope
+/// operand, or the outer one of more than one nested scope, plan stage R0j).
+/// Else the program is pending.
 ///
 /// In the facts of a closure body in the terms of its interface, the scope
 /// can be a scope of the maker: then no reference of the operand points
 /// into a scope capability of the closure, and the spawn is not in a scope
 /// body of the closure (part `tasks`).
-///
-/// # Errors
-///
-/// Returns [`AlphaError::Later`] if a check fails.
-fn unowned_spawn(em: &mut Em<'_>, site: weft_ir::SpawnId) -> R {
+fn unowned_spawn(em: &mut Em<'_>, site: weft_ir::SpawnId) {
     let Some(d) = em.p.spawns.get(site.index()) else {
-        return Ok(());
+        return;
     };
     if d.fork || d.scope.is_some() {
-        return Ok(());
+        return;
     }
     let body = em.body;
     let res = em.hx.site_scopes.get(&site).cloned().unwrap_or_default();
@@ -6511,17 +6516,30 @@ fn unowned_spawn(em: &mut Em<'_>, site: weft_ir::SpawnId) -> R {
                     .get(k.index())
                     .is_some_and(|s| super::alpha::unit_root(em.p, s.body) == cb)
             };
-            match res.one() {
+            match res.end(em.p) {
                 Some(k) => own(&k),
                 None => !res.scopes.iter().any(own) && !in_scope_body(em.p, body),
             }
         }
-        _ => res.one().is_some(),
+        // Plan stage R0j: a spawn on one of more than one nested scope ends
+        // its task at the outer scope (`SiteScope::end`).
+        _ => res.end(em.p).is_some(),
     };
+    // Plan stage R0j: else the task ends at no scope of the facts, so the
+    // program is in scope only if the `ir` pipeline rejects it.
     if !ok {
-        return Err(AlphaError::Later(UNOWNED_SCOPE));
+        pending(crate::irbuild::scope::Group::E, UNOWNED_SCOPE);
     }
-    Ok(())
+}
+
+/// Notes a construct with no full facts (plan stage R0j, the rule of stage
+/// R0g, `Scope::pending`): the `ir` pipeline checks the program, and its
+/// error is final; with no error the old pipeline checks it.
+fn pending(group: crate::irbuild::scope::Group, reason: &str) {
+    crate::analysis::clause::note_pending(super::Unsupported {
+        group,
+        reason: reason.to_string(),
+    });
 }
 
 /// True if body `b` is a scope body or splices into one inside its frame
@@ -6771,15 +6789,20 @@ fn task_start(
     // applies at `n`: the whole run of the task is at `n` (plan stage F19).
     // A run again (a value that runs another value more than once, OR3)
     // needs a second node after the first run: a spawn has none.
+    // Plan stage R0j: the facts have no node for the second run, so the
+    // program is in scope only if the `ir` pipeline rejects it
+    // (`Scope::pending`, the rule of stage R0g); the run at `n` stays.
     if out.apps.iter().any(|a| a.again && !a.order) {
-        return Err(AlphaError::Later(TASK_AGAIN));
+        pending(crate::irbuild::scope::Group::E, TASK_AGAIN);
     }
     // A task runs the value that a shared cell (a `ByRef` or `Kept`
     // capture) holds when it runs: a variable that gets a new function value
     // after the spawn gives the task code that the run at `n` does not
     // apply (`zz_late`, `late_task`).
+    // Plan stage R0j: the later values of the cell are not in the run at
+    // `n`, so the program is in scope only if the `ir` pipeline rejects it.
     if fns.iter().any(|f| runs_rebound_cell(em.p, f, em.sums)) {
-        return Err(AlphaError::Later(TASK_LATE));
+        pending(crate::irbuild::scope::Group::E, TASK_LATE);
     }
     // Code of a caller that runs as a task (a parameter, a closure that
     // runs one): the caller checks the value that it gives as a task (part
@@ -6796,8 +6819,12 @@ fn task_start(
                 | FnVal::Capture(_)
         )
     });
+    // Plan stage R0j: the worst way of a task of such code has no facts of
+    // the places that the code changes, so the program is in scope only if
+    // the `ir` pipeline rejects it; the run at `n` applies the code of a
+    // caller as a plain run.
     if !known || out.apps.iter().any(|a| a.code && a.run.is_none()) {
-        return Err(AlphaError::Later(TASK_CODE));
+        pending(crate::irbuild::scope::Group::E, TASK_CODE);
     }
     let caller_code = out.apps.iter().any(|a| a.code);
     operand_moves(em, n, st, task, false, true)?;
@@ -7281,10 +7308,7 @@ pub fn site_in_scope(
         d.scope == Some(k)
             || (!d.fork
                 && d.scope.is_none()
-                && site_scopes
-                    .get(&site)
-                    .and_then(crate::analysis::tasks::SiteScope::one)
-                    == Some(k))
+                && site_scopes.get(&site).and_then(|r| r.end(p)) == Some(k))
     })
 }
 

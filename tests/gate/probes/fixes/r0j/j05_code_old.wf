@@ -1,0 +1,19 @@
+// Plan stage R0j: the twin of j05_code_bad with no race. The `ir` pipeline
+// finds no error, so the old pipeline checks the program (the pending
+// rule). The old pipeline gives W0314: a task that runs a value of an
+// operation can perform through a handler of the caller.
+struct C { k: u64 }
+effect Get { fn get() -> fn() }
+fn from_operation(c: &C) / Get, async, mut(c) {
+    let g = get()
+    scope { s =>
+        s.spawn(g)
+        s.spawn(|| c.k += 1)
+    }
+    c.k += 2
+}
+fn main() / async {
+    let c = C { k: 0 }
+    handle Get { fn get() { resume(|| print(1)) } } in { from_operation(&c) }
+    print(c.k)
+}

@@ -1,0 +1,19 @@
+// Plan stage R0j: the clean twin of j05_item_bad. The scope body writes
+// `c.k` after the tasks end. The `ir` pipeline has full facts of the task (a
+// function item in a field), and the program is in scope.
+struct C { k: u64 }
+struct Job { f: fn() }
+fn quiet() { print(1) }
+fn item_in_field(c: &C) / async, mut(c) {
+    let j = Job { f: quiet }
+    scope { s =>
+        s.spawn(j.f)
+        s.spawn(|| c.k += 1)
+    }
+    c.k += 2
+}
+fn main() / async {
+    let c = C { k: 0 }
+    item_in_field(&c)
+    print(c.k)
+}

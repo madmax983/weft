@@ -1,0 +1,17 @@
+// Plan stage R0j: the operand is `a` or `t`, and the body writes `c.k`
+// after the inner scope `t` but in the outer scope `a`. The task can be a
+// task of `a`, so the facts end it at `a`, and the `ir` pipeline reports
+// the write (W0405), as the old pipeline does.
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let b = true
+    scope { a =>
+        scope { t =>
+            let x = if b { a } else { t }
+            x.spawn(|| print(c.k))
+        }
+        c.k += 2
+    }
+    print(c.k)
+}

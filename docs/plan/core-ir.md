@@ -1923,6 +1923,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0h | Function values across operations: an operation of a caller gets a function value; a clause gets a function value of the callee, or gives a reference or a function value back to it | C2, D3 (after the fix of R0h C2 17/68, D3 1/1 stay; E2, E4, E5, C7, E7 stay: R0h as built, R0h fix as built) | done (c9da6d3) |
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
+| R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (this stage) |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -3540,6 +3541,78 @@ R0i-b fix as built (the review of R0i-b, round 1: a blocker of one root cause):
   `a11`, `a19` no fault (HOLE with `weft-r0ifix1`); each other verdict as with
   `weft-r0ib1` (`n06_resume_fork` FP-IR with each binary, `d6` HOLE(AST-only), signed);
   `a25`, `a27` HOLE with each binary (above).
+
+R0j design note (the task fallbacks of groups E and C; 58 programs of tier 1 with
+`weft-r0ib2`):
+
+- The six reasons. E: a task that runs a callback more than once (`TASK_AGAIN`, 13), a
+  task that runs a function variable that gets a new value (`TASK_LATE`, 11), a task
+  that runs code of a caller (`TASK_CODE`, F19, 8), a task of a scope that the spawn does
+  not name and that the analysis does not find (E3b, 4). C: a function value that a
+  function value of a callee runs as a task (R0e fix 2, 12), a function value that runs
+  a value of its arguments as a task (`VALUE_TASKS`, 10).
+- Full facts. E3b: a scope operand that can be the capability of more than one scope,
+  and of no other value. Each of these scopes is live at the spawn, so the scopes are
+  nested, and the task ends at or before the end of the outer scope. The facts end the
+  task at the outer scope (`SiteScope::end`: `joined_at` at its `ScopeWait` and on its
+  cleanup chain). A task that ends at an inner scope runs a longer time in the facts:
+  this is sound for each check of a running task, and it can only add errors. A spawn
+  through a reference to the capability, or on scopes that are not nested in one unit,
+  stays pending (below).
+- The other five reasons need facts of a new kind: a second node for each run of a
+  value that a task runs again (a spawn has one node), the later values of a shared
+  cell in the run at the spawn node, the worst way of code of a caller (with the places
+  that the code changes), and the task nodes of a value that a value runs as a task.
+  Each one is a stage of its own (size L), with its own proofs. In this stage these
+  forms use the rule of stage R0g (`Scope::pending`): the facts keep the weak form (the
+  run at the spawn node, the code of a caller as a plain run), the `ir` pipeline checks
+  the program first, and an `ir` error is final. Else the old pipeline checks the
+  program, as before. A rejected program does not run, so a rejection with facts that
+  are not whole lets no fault through. The `ir` pipeline can report fewer errors of a
+  rejected program than the old pipeline (corpus `84_task_stores.wf`,
+  `114_repeated_callbacks.wf`: `old:` markers).
+- What stays. A program of these five forms that the `ir` pipeline accepts: the old
+  pipeline checks it. A function value that changes places or holds a nonportable value,
+  and that code of a caller can run on another thread (F18, `TASK_RUN`), which R0j
+  shows on four programs of tier 1 that failed first on another reason: with the weak
+  facts the worst way of a foreign task gives W0403 at the call of a clean program
+  (`fixes/r0j/j07_run_ok.wf`), so the pending rule does not apply, and the reason stays.
+- No rule of the spec changes. Probes: `tests/gate/probes/fixes/r0j/` (a bad form and a
+  clean twin of each reason). Tests: `scope.rs` `the_task_fallbacks_are_pending`,
+  `analysis_units.rs` `a_spawn_on_one_of_nested_scopes_ends_its_task_at_the_outer_scope`.
+
+R0j as built:
+
+- E3b (full facts): `tasks::SiteScope::end` gives the scope that ends the task: the one
+  scope of the operand, or the outer one of more than one scope whose bodies nest in one
+  unit (`unit_inside`), if the operand can be no other value. `templates::site_in_scope`,
+  `unowned_spawn`, `handlers::owned_by_value` and `handlers::owned_by_clause` read it.
+  A spawn through a reference to the capability (`fixes/r0e/u10_ref_scope.wf`) stays
+  pending.
+- Pending (`templates::pending`, `clause::note_pending`): `TASK_AGAIN`, `TASK_LATE`,
+  `TASK_CODE` (`templates::task_start`), `VALUE_TASKS` (`value_run`: the run keeps no
+  task nodes) and R0e fix 2 (`transfer::NESTED_TASK_RUN`). `TASK_RUN` (F18) stays a
+  fallback (design note).
+- Corpus: `84_task_stores.wf` (three lines `old: W0314`), `114_repeated_callbacks.wf`
+  (one line `old: W0301`). The probe `fixes/r0i/rb/n11_enum_nongeneric_fork.wf` leaves
+  the gate set: with the pending rule its correct W0401 (a nonportable closure in a
+  `fork` branch) is a new-fp row of the oracle, which sees no fault, and tier 1 has room
+  for no second new-fp row.
+- Fallbacks: tier 1 125 to 84 on the files of R0i-b (91 with the 17 probes of
+  `fixes/r0j/`; left of the R0j reasons: `TASK_AGAIN` 4, R0e fix 2 4, `TASK_LATE` 3, and
+  `TASK_RUN` 4, which the end of the first reason shows); tier 2 3007 to 2907.
+- Gates (binaries `r0j/bin/weft-j1`, `weft-gate-j1`): tier 1 0 blockers (5096; 3838 same,
+  14 open, 286 fixed, 1 new-fp, 0 lost-fault, 152 lost-clean, 146 moved, 659 changed);
+  tier 2 (2 workers) 0 blockers (39990 same, 6 open, 92 fixed, 12 new-fp (0.096 %), 0
+  lost-fault, 3446 lost-clean, 1858 moved, 11989 changed); fact oracle tier 1 0 failures
+  (8 faults, 22 timeouts, 1352 pass); sigdiff tier 1 0 rows with no entry. No new
+  lost-clean row. New ledger rows: one `changed` entry, one `moved` entry, two `sig`
+  entries; the `open-old` entry R0i-U04 goes (the `ir` pipeline gives W0118 now).
+- `ereview/ev.sh` on the 48 files whose diagnostics or scope change, against
+  `weft-r0ib2`: 31 held to held, 13 fallback to both-reject, `j06_unowned_ok` no fault,
+  `fixes/r0i/u04_item_task_extern.wf` FP-IR (its fault is the stub of an extern function,
+  "a task needs a closure", which `ev.sh` does not count; the gate row is `fixed`). No
+  HOLE.
 
 #### R1 Standalone `typeck`, part 1
 

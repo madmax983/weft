@@ -1,0 +1,15 @@
+// Plan stage R0j (E, a task that runs a callback more than once): code of
+// the caller runs `f` two times on the task, and the callee writes `w.k`
+// while the task runs (W0405).
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) {
+    scope { s =>
+        s.spawn(|| g(f))
+        w.k += 1
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|x| { x(); x() }, || print(c.k), &c)
+    print(c.k)
+}

@@ -180,7 +180,7 @@ pub fn owned_by_value(
         .is_some_and(|d| !d.fork && d.scope.is_none())
         && site_scopes
             .get(&site)
-            .and_then(crate::analysis::tasks::SiteScope::one)
+            .and_then(|r| r.end(p))
             .and_then(|k| p.scopes.get(k.index()))
             .is_some_and(|d| super::alpha::unit_root(p, d.body) == cb)
 }
@@ -1910,11 +1910,9 @@ fn owned_by_clause(p: &Program, hx: &Handlers, site: weft_ir::SpawnId, c: BodyId
             }) && inside(BodyId(u32::try_from(i).unwrap_or(u32::MAX)))
         });
     }
-    let scope = d.scope.or_else(|| {
-        hx.site_scopes
-            .get(&site)
-            .and_then(crate::analysis::tasks::SiteScope::one)
-    });
+    let scope = d
+        .scope
+        .or_else(|| hx.site_scopes.get(&site).and_then(|r| r.end(p)));
     scope
         .and_then(|k| p.scopes.get(k.index()))
         .is_some_and(|sd| inside(sd.body))

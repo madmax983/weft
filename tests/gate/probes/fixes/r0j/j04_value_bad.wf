@@ -1,0 +1,16 @@
+// Plan stage R0j (C, a function value that runs a value of its arguments
+// as a task): `f` spawns the captured closure `g` two times; the two tasks
+// write `c.k` at the same time (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let g = || c.k += 1
+    let f = || scope { s =>
+        s.spawn(g)
+        s.spawn(g)
+        ()
+    }
+    f()
+    f()
+    print(c.k)
+}

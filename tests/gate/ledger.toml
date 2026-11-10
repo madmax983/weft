@@ -10486,13 +10486,6 @@ signed_by = "reviewer R0i-b: tx moves into the closure (ByMove capture) and the 
 stage = "R0i-b"
 
 [[entry]]
-class = "open-old"
-files = ["tests/gate/probes/fixes/r0i/u04_item_task_extern.wf"]
-finding = "R0i-U04"
-reason = "stage R0i-b (probe of the review of R0i, round 2): an `on abort` function calls a function that runs the result of an extern function as a task. No pipeline gives W0118: the part `unknown_runs` does not count a task of the callee (the old part `reaches` did not either). The fault is the stub of the extern function (`this value cannot be called`), as for a plain call of an extern result that every pipeline accepts (r0irev/p/x01)"
-stage = "R0i-b"
-
-[[entry]]
 class = "sig"
 parts = ["ret", "reaches", "ret_refs", "raises"]
 files = ["tests/gate/probes/fixes/r0i/u09_made_closure_returned.wf"]
@@ -10618,3 +10611,87 @@ files = [
 ]
 reason = "stage R0i-b fix (probes of the review of R0i-b, round 1): the old parts `reaches` and `pins` of a function that runs a value of a holder or of an operation on a task or a fork branch: class F19-SIG-PINS (the IR `pins` comes from the facts of the body) and the old `reaches` that has no IR part"
 stage = "R0i-b"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/quality/fuzzcorp/114_repeated_callbacks.wf",
+    "r3/quality/fuzzcorp/84_task_stores.wf",
+    "verify/s5/S5c/mut/progs/m01187_84_task_stores.wf",
+    "fixes/r0j/j02_late_bad.wf",
+    "fixes/r0j/j05_code_bad.wf",
+    "tests/gate/probes/fixes/r0j/j02_late_bad.wf",
+    "tests/gate/probes/fixes/r0j/j05_code_bad.wf",
+    "fixes/r0e/u03_two_scopes.wf",
+    "fixes/r0e/u10_ref_scope.wf",
+    "fixes/r0f/c09b_cc_during_write.wf",
+    "fixes/r0f/rv1_h03_cc_two_args_one_code.wf",
+    "fixes/r0i/rb/n01_option_fork.wf",
+    "fixes/r0i/rb/q01_pop_fork.wf",
+    "r2/redteam/p/s_scope_escape2.wf",
+    "r2/redteam/p/zz_late.wf",
+    "r2/redteam/p/zz_late_modes.wf",
+    "r2/redteam/p/zz_modes_vec.wf",
+    "tests/gate/probes/fixes/r0e/u03_two_scopes.wf",
+    "tests/gate/probes/fixes/r0e/u10_ref_scope.wf",
+    "tests/gate/probes/fixes/r0f/c09b_cc_during_write.wf",
+    "tests/gate/probes/fixes/r0f/rv1_h03_cc_two_args_one_code.wf",
+    "tests/gate/probes/fixes/r0i/rb/n01_option_fork.wf",
+    "tests/gate/probes/fixes/r0i/rb/q01_pop_fork.wf",
+    "tests/gate/probes/r2/redteam/p/s_scope_escape2.wf",
+    "tests/gate/probes/r2/redteam/p/zz_late.wf",
+    "tests/gate/probes/r2/redteam/p/zz_late_modes.wf",
+    "tests/gate/probes/r2/redteam/p/zz_modes_vec.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_v2.wf",
+    "tests/gate/probes/verify/s5/p/or3c.wf",
+    "tests/gate/probes/verify/s5/p/rr7g.wf",
+    "tests/gate/probes/verify/s5/repro/V4_or3_containers.wf",
+    "tests/programs/114_repeated_callbacks.wf",
+    "tests/programs/84_task_stores.wf",
+    "verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_v2.wf",
+    "verify/s5/p/or3c.wf",
+    "verify/s5/p/rr7g.wf",
+    "verify/s5/repro/V4_or3_containers.wf",
+]
+codes = ["W0301", "W0312", "W0314", "W0401", "W0403", "W0405", "W0503", "W0601"]
+reason = "stage R0j: the program comes into scope by the rule of stage R0g (`Scope::pending`): a task that runs a callback more than once, a function variable that gets a new value, code of a caller, a value of the arguments of a function value, a value that a value of a callee runs, or a scope that the spawn does not name has no full facts, and the `ir` pipeline rejects the program, so its result is final. Both pipelines reject each program; the `ir` pipeline gives its errors at other lines or a second time on a line (W0401, W0405 for each captured value), and it does not give the error of the task that has no full facts (`old:` markers in corpus 84 and 114)"
+stage = "R0j"
+
+[[entry]]
+class = "sig"
+parts = ["reaches", "pins", "tasks", "task_runs", "task_effects", "repeats", "multi"]
+files = [
+    "tests/programs/84_task_stores.wf",
+    "tests/gate/probes/fixes/r0i/u04_item_task_extern.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1_variants2.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1v2_p_box.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1v2_p_gen.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1v2_p_get.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1v2_p_refs.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1v2_p_twice_removed.wf",
+    "tests/gate/probes/verify/s5/R2d/p/h1_or7_more.wf",
+    "tests/gate/probes/verify/s5/R2c/p/m3.wf",
+]
+reason = "stage R0j (the pending rule for the task fallbacks): these programs come into scope because the `ir` pipeline rejects each of them (W0314, W0105, W0102, W0405, W0118 or W0503), and an IR error is final. The parts `tasks`, `task_runs`, `task_effects` and `repeats` of a body with a pending task (a task that runs a callback more than once, a function variable that gets a new value, or code of a caller) are the facts of the IR before R0j full facts: no accepted program reads them. The old parts `reaches` and `pins`: class F19-SIG-PINS (the IR `pins` comes from the facts of the body) and the old `reaches` that has no IR part. `multi`: the callee has a type error (W0105 or W0102), so its body has no IR and the call applies the worst case of its declaration (stage R0b)"
+stage = "R0j"
+
+[[entry]]
+class = "sig"
+parts = ["ret", "ret_refs", "tasks", "task_runs", "pins", "raises", "drops", "muts"]
+files = [
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_v2.wf",
+    "tests/gate/probes/verify/partb/S4/p/c7_spawn_linear.wf",
+    "tests/gate/probes/verify/s5/R2c/p/m3.wf",
+    "tests/gate/probes/r3/oracle/probes/s3_steal_ret_closure.wf",
+]
+reason = "stage R0j (the pending rule for the task fallbacks): these programs come into scope because the `ir` pipeline rejects each of them (W0312, W0405, W0502, W0503 or W0204). `raises`: class F19-SIG-RAISES (a `with_timeout` performs `Fail` through the row; the scope in the returned closure of `later` does not run in `later`). `ret`, `ret_refs`, `tasks` and `task_runs` of `later`: the IR gives the returned closure its own facts, and the tasks of that closure are pending. `drops` of `generic_hold`: class F20-SIG-GENERIC. `muts` of `join_it`: class F19-SIG-MUTS (a `join` of a handle parameter changes it)"
+stage = "R0j"
+
+[[entry]]
+class = "moved"
+files = [
+    "verify/s5/S5c/mut/progs/m02663_114_repeated_callbacks.wf",
+]
+codes = ["W0301"]
+reason = "stage R0j (tier 2, a mutant of corpus 114): the program comes into scope by the pending rule (a task that runs a callback more than once), and the `ir` pipeline rejects it. The `ir` pipeline does not give the W0301 of the task that has no full facts (as the `old:` marker in corpus 114), and gives its W0301 at another line"
+stage = "R0j"

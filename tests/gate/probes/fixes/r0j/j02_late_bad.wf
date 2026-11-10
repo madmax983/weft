@@ -1,0 +1,17 @@
+// Plan stage R0j (E, a task that runs a function variable that gets a new
+// value): the task runs `g`, and `g` gets a closure that writes `st.count`
+// while the scope body reads it (W0405).
+struct Stats { count: u64 }
+fn late_task(st: &Stats) / mut(st), async {
+    let g = || print(0)
+    scope { s =>
+        g = || print(1)
+        s.spawn(|| g())
+        g = || st.count += 1
+        print(st.count)
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    late_task(&st)
+}

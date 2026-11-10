@@ -3661,8 +3661,14 @@ fn apply_runs(
         // way of the callee has no changes of that code (B1 of the review of
         // R0f).
         let busy = !run.how.writes.is_empty() || !run.how.with.is_empty();
+        // Plan stage R0j: the run stays a plain run of the node, and the
+        // program is in scope only if the `ir` pipeline rejects it
+        // (`Scope::pending`, the rule of stage R0g).
         if task && depth > 0 && fns.iter().any(|f| !matches!(f, FnVal::Unknown) || busy) {
-            return Err(AlphaError::Later(NESTED_TASK_RUN));
+            super::clause::note_pending(crate::factgen::Unsupported {
+                group: crate::irbuild::scope::Group::C,
+                reason: NESTED_TASK_RUN.to_string(),
+            });
         }
         if fns.is_empty() {
             open.insert(key);

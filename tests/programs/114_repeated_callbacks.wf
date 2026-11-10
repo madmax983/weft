@@ -132,8 +132,12 @@ fn returned_task() / async {
     let r = &v[0]
     let g = wrap(|| { print(r + 1)
  v.clear() })
+    // Plan stage R0j: a task that runs a callback more than once has no
+    // node for the second run in the facts of the IR; the program is in
+    // scope because the `ir` pipeline rejects it (`Scope::pending`), so the
+    // IR does not report this line.
     scope { s =>
-        s.spawn(g)   //~ W0301
+        s.spawn(g)   //~ old: W0301
     }
 }
 // The callee calls the function parameter in a closure that runs more than once.

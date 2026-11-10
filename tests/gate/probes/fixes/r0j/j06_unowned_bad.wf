@@ -1,0 +1,17 @@
+// Plan stage R0j (E, a task of a scope that the spawn does not name and
+// that the analysis does not find): the operand is `a` or `t`, so the facts
+// end the task at the outer scope `a` (`SiteScope::end`). The task writes
+// `c.k` while the outer scope writes it (W0405).
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let b = true
+    scope { a =>
+        scope { t =>
+            let x = if b { a } else { t }
+            x.spawn(|| c.k += 1)
+        }
+        c.k += 2
+    }
+    print(c.k)
+}

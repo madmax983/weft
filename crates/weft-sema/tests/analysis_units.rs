@@ -1552,3 +1552,78 @@ fn a_linear_closure_from_a_task_a_fork_or_resume_is_linear() {
         assert!(linear, "`{name}` is not linear in {src}");
     }
 }
+
+#[test]
+fn a_spawn_on_one_of_nested_scopes_ends_its_task_at_the_outer_scope() {
+    // Plan stage R0j: the scope operand of the spawn can be the capability
+    // of `a` or of `t`. The two scopes are live at the spawn, so they are
+    // nested, and the task ends at or before the end of the outer scope `a`.
+    use weft_sema::analysis::tasks::SiteScope;
+    let src = "fn main() / async {
+        let b = true
+        scope { a =>
+            scope { t =>
+                let x = if b { a } else { t }
+                x.spawn(|| print(1))
+            }
+        }
+        scope { u => u.spawn(|| print(2)) }
+    }";
+    let a = weft_sema::analyze_source(src, weft_sema::Options::default())
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let p = weft_sema::irbuild::build(&a).program;
+    assert_eq!(p.scopes.len(), 3, "three scopes");
+    let depth = |k: usize| {
+        let mut at = p.scopes[k].body;
+        let mut d = 0;
+        while let Some(up) = p.bodies[at.index()].parent {
+            at = up;
+            d += 1;
+        }
+        d
+    };
+    // `t`: the deepest scope. `a`: the scope whose body holds the body of
+    // `t`. `u`: the scope after them.
+    let inner = (0..3).max_by_key(|&k| depth(k)).expect("a scope");
+    let holds = |outer: usize| {
+        let mut at = p.scopes[inner].body;
+        while let Some(up) = p.bodies[at.index()].parent {
+            if up == p.scopes[outer].body {
+                return true;
+            }
+            at = up;
+        }
+        false
+    };
+    let outer = (0..3)
+        .find(|&k| k != inner && holds(k))
+        .expect("the outer scope");
+    let other = (0..3)
+        .find(|&k| k != inner && k != outer)
+        .expect("the third scope");
+    let id = |k: usize| weft_ir::ScopeId(u32::try_from(k).unwrap_or(u32::MAX));
+    let nested = SiteScope {
+        scopes: [id(inner), id(outer)].into_iter().collect(),
+        other: false,
+    };
+    assert_eq!(nested.one(), None);
+    assert_eq!(nested.end(&p), Some(id(outer)));
+    // One scope: that scope.
+    let one = SiteScope {
+        scopes: std::iter::once(id(inner)).collect(),
+        other: false,
+    };
+    assert_eq!(one.end(&p), Some(id(inner)));
+    // Scopes that are not nested, or an operand that can be another value:
+    // no scope (the pending rule).
+    let apart = SiteScope {
+        scopes: [id(inner), id(other)].into_iter().collect(),
+        other: false,
+    };
+    assert_eq!(apart.end(&p), None);
+    let open = SiteScope {
+        scopes: [id(inner), id(outer)].into_iter().collect(),
+        other: true,
+    };
+    assert_eq!(open.end(&p), None);
+}

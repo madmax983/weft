@@ -1,0 +1,19 @@
+// Plan stage R0j: the clean twin of j02. `g` gets its last value after the
+// task ends, and each value of `g` only prints. The `ir` pipeline finds no
+// error, so the old pipeline checks the program (the pending rule).
+struct Stats { count: u64 }
+fn late_task(st: &Stats) / mut(st), async {
+    let g = || print(0)
+    scope { s =>
+        g = || print(1)
+        let t = s.spawn(|| g())
+        t.join()
+        g = || print(2)
+        print(st.count)
+    }
+    st.count += 1
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    late_task(&st)
+}

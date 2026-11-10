@@ -1,0 +1,15 @@
+// Plan stage R0j: the clean twin of j01. The callee writes `w.k` after the
+// task ends. The `ir` pipeline finds no error, so the old pipeline checks
+// the program (the pending rule).
+struct C { k: u64 }
+fn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) {
+    scope { s =>
+        s.spawn(|| g(f))
+    }
+    w.k += 1
+}
+fn main() / async {
+    let c = C { k: 0 }
+    mid(|x| { x(); x() }, || print(c.k), &c)
+    print(c.k)
+}

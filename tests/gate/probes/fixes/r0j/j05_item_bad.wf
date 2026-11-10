@@ -1,0 +1,19 @@
+// Plan stage R0j: the task runs the function item in the field `j.f`; the
+// facts follow it (no pending reason). The second task writes `c.k` while the
+// scope body writes it (W0405).
+struct C { k: u64 }
+struct Job { f: fn() }
+fn quiet() { print(1) }
+fn item_in_field(c: &C) / async, mut(c) {
+    let j = Job { f: quiet }
+    scope { s =>
+        s.spawn(j.f)
+        s.spawn(|| c.k += 1)
+        c.k += 2
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    item_in_field(&c)
+    print(c.k)
+}

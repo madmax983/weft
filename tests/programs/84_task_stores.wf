@@ -80,18 +80,22 @@ fn item_behind_ref() / Note, async {
 }
 fn item_in_field() / Note, async {
     let j = Job { f: worker }
-    scope { s => s.spawn(j.f) }   //~ W0314
+    scope { s => s.spawn(j.f) }   //~ old: W0314
 }
+// Plan stage R0j: a task that runs code of a caller (`item_in_field`,
+// `from_operation`, `from_closure_param`) has no facts of the worst way; the
+// program is in scope because the `ir` pipeline rejects it (`Scope::pending`),
+// so the IR does not report these lines (`old:`).
 // The value comes from an operation of a handler of a caller, or from a parameter
 // of a closure. Or the body gives it to a function value that it does not know.
 fn from_operation() / Get, async {
     let g = get()
-    scope { s => s.spawn(g) }   //~ W0314
+    scope { s => s.spawn(g) }   //~ old: W0314
 }
 // Known imprecision: the task runs a value from a parameter of a closure. The
 // body cannot follow it, so it is W0314 also when the value is quiet.
 fn from_closure_param() / async {
-    let c = |j: &Job| scope { s => s.spawn(j.f) }   //~ W0314
+    let c = |j: &Job| scope { s => s.spawn(j.f) }   //~ old: W0314
     let j = Job { f: || print(1) }
     c(&j)
 }

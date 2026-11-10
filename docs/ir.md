@@ -2899,7 +2899,12 @@ scope):
   spawn from the references of its scope operand (`Handlers::site_scopes`,
   `tasks::SiteScope`). The spawn needs exactly one scope and no other value; else the
   program is not in scope (`templates::UNOWNED_SCOPE`: two scopes, a reference through a
-  reference, a capability that a generic callee gives back). In the facts of a closure
+  reference, a capability that a generic callee gives back). From plan stage R0j an
+  operand that can be the capability of more than one scope, and of no other value,
+  ends its task at the outer scope (`SiteScope::end`): each such scope is live at the
+  spawn, so the scopes are nested in one unit and the outer one ends last. The facts
+  then have a task that runs a longer time, which is sound. The other forms are pending
+  (the rule of stage R0g, below). In the facts of a closure
   in the terms of its interface, the scope can be a scope of the maker (no reference into
   a scope capability of the closure, and the spawn is not in a scope body of the
   closure): then the task is in the part `tasks`. `ScopeWait` and the cleanup chain of
@@ -3016,7 +3021,14 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   closure that spawns on a scope of main, through an item, both pipelines miss them). A
   run as a task of a known value at depth > 0 (E7), a task that runs a value more than once
   (E2), a task that runs a variable that gets a new value (E4), and a task of code that the
-  body does not follow (E5) stay with the old pipeline.
+  body does not follow (E5) stay with the old pipeline. From plan stage R0j these forms,
+  and a function value that runs a value of its arguments as a task, are pending (the
+  rule of stage R0g, below): the facts keep the run at the spawn node and the code of a
+  caller as a plain run, and the program is in scope only if the `ir` pipeline rejects
+  it. A function value that code of a caller can run on another thread and that changes
+  places or holds a nonportable value (`transfer::TASK_RUN`) stays with the old
+  pipeline: with the weak facts the worst way of a foreign task gives W0403 at the call
+  of a clean program (`fixes/r0j/j07_run_ok.wf`).
 
 As built (plan stage R0g: continuations and capabilities in closures):
 

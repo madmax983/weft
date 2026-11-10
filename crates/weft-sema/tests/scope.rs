@@ -834,3 +834,54 @@ fn function_values_and_references_across_operations_are_in_scope() {
         assert!(fallback(src).is_some(), "{src}");
     }
 }
+
+#[test]
+fn the_task_fallbacks_are_pending() {
+    // Plan stage R0j: a task run with no full facts is pending (the rule of
+    // stage R0g). The scope names the reason, and `weft_check` decides: an
+    // error of the `ir` pipeline is final, else the old pipeline checks the
+    // program. Each source is the clean twin of a probe.
+    let pending = [
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j01_again_ok.wf"),
+            "runs a callback more than once",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j02_late_ok.wf"),
+            "function variable that gets a new value",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j03_nested_ok.wf"),
+            "a function value of a callee runs as a task",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j04_value_ok.wf"),
+            "runs a value of its arguments as a task",
+        ),
+        (
+            include_str!("../../../tests/gate/probes/fixes/r0j/j05_code_old.wf"),
+            "runs code of a caller",
+        ),
+    ];
+    for (src, reason) in pending {
+        let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+        let scope = a.ir_scope.as_ref().expect("a scope");
+        assert_eq!(scope.fallback, None, "{src}");
+        let p = scope.pending.as_ref().expect("pending");
+        assert!(p.reason.contains(reason), "{}: {src}", p.reason);
+    }
+    // A spawn on one of two nested scopes has full facts: the task ends at
+    // the outer scope (`SiteScope::end`).
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j06_unowned_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
+    // A value that code of a caller runs on a foreign task stays with the
+    // old pipeline: the weak facts give W0403 at the call.
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j07_run_ok.wf");
+    let reason = fallback(src).expect("a fallback");
+    assert!(reason.contains("can run on another thread"), "{reason}");
+}
