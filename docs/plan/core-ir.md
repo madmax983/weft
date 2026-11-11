@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible); R0k-d1 done (8be4ab5); R0k-d2 (E4): this stage |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); R0k-c2 (D5, C8): next |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -4283,6 +4283,42 @@ the design: scratchpad `r0k/d2/notes.md`):
   the parts `reaches` and `pins`). `ereview/ev.sh` against `weft-r0kd1` on the 12 rows of
   tier 1 (the 4 programs and the 8 probes) and on the 37 rows of tier 2 that come into
   scope: no HOLE, no FP-IR.
+
+R0k-d3 design check (the task fallbacks that R0k-d2 left; not built; scratchpad
+`r0k/d3/notes.md`). Each reason is pending since R0j, so the rows left are programs that
+the facts with a weak form accept (census with `weft-r0kd2`):
+
+| reason | tier 1 | tier 2 | the rows |
+|---|---|---|---|
+| E2 `TASK_AGAIN` | 5 | 4 | `fixes/r0j/j01_again_ok`, `fixes/r0f/c09_cc_during_ok`, `r3/oracle/probes/s8_steal_fnparam` (clean); `i9_kept_write` (old W0405), `s9_steal_stored` (old W0302); tier 2: the copies of s8, s9, i9 and `r2/oracle/runs/m2/p7046` (clean) |
+| R0e fix 2 (`NESTED_TASK_RUN`) | 5 | 4 | `fixes/r0j/j03_nested_ok`, `fixes/r0e/a13_ok`, `Core_S2/probes/crash/c10` (clean); `fixes/r0e/rv1_b2_h10`, `h18` (old W0502); tier 2: `c10`, `r3/oracle/runs/t3/p148` (W0312), `g4p/p25005` (W0405), `seeds3/gen3_18180` |
+| `VALUE_TASKS` | 2 | 2 | `fixes/r0j/j04_value_ok`, `fixes/r0kd2/s3_nested_closure_ok` (clean); tier 2: `g3b/p18574` (W0312), `seeds3/gen3_15687` |
+| `TASK_CODE` | 2 | 0 | `fixes/r0h/d3f_task`, `fixes/r0j/j05_code_old` (W0314 from both pipelines) |
+
+- E2, a task that runs a value more than once (code of a caller `g(f)` with `g` a
+  parameter, or a loop in the task body): the run at the spawn node is one run; a second
+  run needs a second node of the run in the task region, after the first (a cycle for a
+  loop), so that the effects of the first run reach the second (a `once` value: W0502; a
+  reference that the first run ends). That is a new phase of the `Spawn` node, the split of
+  the applications of `templates::task_start` between the two nodes, the task facts of the
+  second node, and a new cover of the fact oracle for a task that runs a value again. Size
+  M-L. Gain: tier 1 3 clean programs, tier 2 1.
+- R0e fix 2 and `VALUE_TASKS` are one design (size L): a value of a callee, or a closure,
+  runs a value of its arguments or of its captures as a task (`j03`: the argument of `run2`
+  spawns its parameter; `j04`: `f` spawns `g` two times). The task starts and ends inside
+  the run of the outer value, with the code of that value that runs at the same time, and
+  through two levels of runs for R0e fix 2. The summary parts `joins`, `abort_joins` and
+  `task_effects` are for one level of tasks of the body itself; the design needs a summary
+  part for the tasks of the values of the interface (the window and the footprint of the
+  code that runs with them) and its application at the run node, with its proofs and the
+  summary oracle.
+- `TASK_CODE`, a task that runs code of a caller (the value of an operation): the worst
+  way of a foreign task, which is the design of F18 (`TASK_RUN`); it goes with F18. Both
+  rows are rejected by both pipelines.
+- No weak form helps (the reasons are pending already). The one exact subset that is
+  cheap is E2 for `c09` (the code of the caller runs `f` once; a copy of `mid` at the call
+  shows it): one program, no stage. The whole gain of R0k-d3 is about 8 clean programs of
+  tier 1 (probes) and 4 of tier 2.
 
 #### R1 Standalone `typeck`, part 1
 
