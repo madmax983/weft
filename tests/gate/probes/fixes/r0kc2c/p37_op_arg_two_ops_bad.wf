@@ -1,0 +1,22 @@
+// Stage R0k-c2 fix 1 (a probe of the review of stage R0k-c2: a reference parameter of a clause across a row).
+// D5 op-arg form, rows in the post part: the clause resumes, then performs choose and reads its op arg;
+// the handled body performs pick twice and clears the vec between
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick(r: &u64) -> u64 }
+fn run(v: &Vec<u64>) -> u64 / Choice, mut(v) {
+    handle Pick { fn pick(r) {
+        let c = choose()
+        print(r)
+        resume(1)
+    } } in {
+        let x = pick(&v[0])
+        v.push(9)
+        x
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&v)) }
+}

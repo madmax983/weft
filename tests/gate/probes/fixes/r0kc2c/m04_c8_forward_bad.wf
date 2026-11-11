@@ -1,0 +1,19 @@
+// Stage R0k-c2 fix 1 (a probe of the second review of the fix).
+// C8 (p30 form): the Pick clause clears v between resumes; the Ask clause forwards r into tell of an outer Tell handler whose clause performs pick
+effect Pick { multi fn pick() -> bool }
+effect Ask { multi fn ask(r: &u64) -> u64 }
+effect Tell { multi fn tell(t: &u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true)
+        v.clear()
+        resume(false) } } in {
+        handle Tell { fn tell(t) {
+            let b = pick()
+            print(t)
+            resume(1) } } in {
+            handle Ask { fn ask(r) { resume(tell(r)) } } in { print(ask(&v[0])) }
+        }
+    }
+}

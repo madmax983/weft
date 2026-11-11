@@ -1,0 +1,24 @@
+// Stage R0k-c2 fix 1 (a probe of the second review of the fix: a path with no run of the clause, or two runs of it).
+// two runs of the same clause: the handled body clears v after the first pick, then performs pick again on w
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick(r: &u64) -> u64 }
+fn run(v: &Vec<u64>, w: &Vec<u64>) -> u64 / Choice, mut(v) {
+    handle Pick { fn pick(r) {
+        let c = choose()
+        print(r)
+        resume(1)
+    } } in {
+        let x = pick(&v[0])
+        v.clear()
+        let y = pick(&w[0])
+        x + y
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(4)
+    let w = Vec.new()
+    w.push(5)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&v, &w)) }
+}

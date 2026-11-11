@@ -140,6 +140,11 @@ pub struct Handlers {
     /// joins the values of the locals outside the handled body and the heap
     /// of that state (`super::edges`).
     pub row_join: BTreeMap<(BodyId, BlockId), (State, BodyId)>,
+    /// The `Copy` nodes of the facts whose copied frames include frames of
+    /// clauses (stage R0k-c2 fix 1, `crate::factgen::handlers::copy_node`):
+    /// `crate::factgen::handlers::project` relates the variables of these
+    /// frames that point into a parameter of their clause to the arguments.
+    pub clause_copies: Vec<crate::factgen::handlers::ClauseCopy>,
     /// The run nodes whose function values can resume more than once (the
     /// analysis finds them: an applied summary is `multi`, plan stage F16).
     /// They are nodes of `crate::factgen::frames::row_multi` too.

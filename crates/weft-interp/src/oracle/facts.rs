@@ -99,6 +99,7 @@ use std::rc::Rc;
 use weft_facts::{FnFacts, NodeId, PlaceId, TaskId, VarId};
 use weft_ir::{BodyId, DerefKind, FieldIdx, LocalId, Proj, VariantIdx};
 use weft_sema::factgen::alpha::{self, Roots};
+use weft_sema::factgen::handlers;
 use weft_sema::factgen::holders::PartVersions;
 use weft_sema::factgen::nodes::{Phase, NORMAL, TERM};
 use weft_sema::factgen::vars::VarKey;
@@ -347,6 +348,10 @@ struct Reentry {
     /// (a write strictly above it, a move at or above it, a free), with the
     /// kind of the access.
     hits: Vec<(usize, &'static str)>,
+    /// For each reference: its target is a place in the buffer of a `Vec`
+    /// (stage R0k-c2 fix 1). A write of the whole buffer (as `clear` or
+    /// `push`) changes the elements: an unstable step.
+    bufs: Vec<bool>,
     /// The copies of the frame so far.
     runs: usize,
 }
@@ -457,6 +462,10 @@ pub struct FactOracle {
     reentries: HashMap<u64, Reentry>,
     /// The re-entries and the references that point into each cell.
     reentry_cells: HashMap<CellId, Vec<(u64, usize)>>,
+    /// For each component of a re-entry (stage R0k-c2 fix 1): the
+    /// variables with a place that are invalid at each `Copy` node of the
+    /// unit, by the checker ([`copy_invalid`]).
+    copy_invalid: HashMap<usize, HashSet<(VarId, NodeId)>>,
     /// The frames of scope bodies ([`LIGHT`]): the oracle follows them only
     /// for the task check (follow-up F19.3).
     light: HashMap<u64, FrameFacts>,
@@ -1006,6 +1015,7 @@ impl FactOracle {
             copy_keys: COPY_KEYS,
             reentries: HashMap::new(),
             reentry_cells: HashMap::new(),
+            copy_invalid: HashMap::new(),
             light: HashMap::new(),
             light_last: None,
             activation: HashMap::new(),
@@ -2024,6 +2034,15 @@ impl FactOracle {
             for (i, (t, _)) in refs.iter().enumerate() {
                 self.reentry_cells.entry(t.cell()).or_default().push((u, i));
             }
+            let bufs = refs
+                .iter()
+                .map(|(t, _)| {
+                    matches!(t, Target::Place(_))
+                        && heap
+                            .slot(t.cell())
+                            .is_ok_and(|x| x.kind == crate::heap::SlotKind::Buf)
+                })
+                .collect();
             self.reentries.insert(
                 u,
                 Reentry {
@@ -2032,6 +2051,7 @@ impl FactOracle {
                     task,
                     refs,
                     hits: Vec::new(),
+                    bufs,
                     runs: 0,
                 },
             );
@@ -2149,6 +2169,54 @@ impl FactOracle {
                     var_name(&comp.facts, *v),
                 ));
             }
+            // Stage R0k-c2 fix 1: in a clause frame, a free or a move of the
+            // target, or a write of the buffer of a `Vec` above it (an
+            // unstable step), makes the reference invalid. So a variable of
+            // the local must be invalid at a `Copy` node (`invalid(V, P)` of
+            // the checker). Another write above a place can keep the
+            // reference valid (only stable steps, rule 4): it only must not
+            // bind it again. In the frame of a function the change can come
+            // from a clause of a caller between two `resume`s: the facts of
+            // the caller check it at the `Copy` node of their call
+            // (D-MULTI-MID), not the facts of the frame. A variable that
+            // points into a parameter of its clause has a shadow variable
+            // for its argument (`handlers::arg_shadow_name`): the shadow
+            // variable can be the invalid one.
+            let strict = comp.clause
+                && (matches!(what, "a free" | "a move" | "a write of the buffer")
+                    || matches!(t, Target::Elems(_)));
+            if !strict {
+                continue;
+            }
+            let invalid = self
+                .copy_invalid
+                .entry(r.comp)
+                .or_insert_with(|| copy_invalid(&comp.facts));
+            let shadows: Vec<VarId> = vars
+                .iter()
+                .map(|v| handlers::arg_shadow_name(&var_name(&comp.facts, *v)))
+                .flat_map(|name| {
+                    comp.facts
+                        .vars
+                        .iter()
+                        .enumerate()
+                        .filter(move |(_, x)| x.name == name)
+                        .map(|(j, _)| VarId(u32_of(j)))
+                })
+                .collect();
+            let made_invalid = vars
+                .iter()
+                .chain(&shadows)
+                .any(|v| r.copies.iter().any(|&n| invalid.contains(&(*v, n))));
+            if !made_invalid {
+                let v = vars.first().copied().unwrap_or(VarId(0));
+                return Err(format!(
+                    "summary oracle (A4): in `{}` at {}, a `multi` `resume` runs a copy of a frame again, and the code since the operation made {what} of the target of `{}`, a place that the copies share (E5); the variable is not invalid at the `Copy` node",
+                    comp.facts.name,
+                    nodes(),
+                    var_name(&comp.facts, v),
+                ));
+            }
         }
         Ok(())
     }
@@ -2257,6 +2325,14 @@ impl FactOracle {
                         tp.path.len() > p.len() && tp.path.starts_with(p)
                     }
                 });
+                // A write of the whole buffer of a `Vec` above an element
+                // (stage R0k-c2 fix 1).
+                let what = match (what, path) {
+                    ("a write", Some(p)) if p.is_empty() && r.bufs.get(i) == Some(&true) => {
+                        "a write of the buffer"
+                    }
+                    _ => what,
+                };
                 if reached && !r.hits.iter().any(|(j, _)| *j == i) {
                     r.hits.push((i, what));
                 }
@@ -3417,6 +3493,40 @@ fn var_name(f: &FnFacts, v: VarId) -> String {
     f.vars
         .get(v.index())
         .map_or_else(|| format!("{v}"), |i| i.name.clone())
+}
+
+/// The variables with a place that are invalid at each `Copy` node of the
+/// facts `f` (A4 of re-entries, stage R0k-c2 fix 1): `invalid(V, P)` of
+/// the checker. The checker reports `error(V, P)` for each use of an
+/// invalid variable, so the facts get a use of each such variable at each
+/// `Copy` node first.
+fn copy_invalid(f: &FnFacts) -> HashSet<(VarId, NodeId)> {
+    let copies: Vec<NodeId> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind.ends_with(" copy"))
+        .map(|(i, _)| NodeId(u32_of(i)))
+        .collect();
+    if copies.is_empty() {
+        return HashSet::new();
+    }
+    let mut vars: Vec<VarId> = f.points_into.iter().map(|(v, _)| *v).collect();
+    vars.sort();
+    vars.dedup();
+    let mut probe = f.clone();
+    for &v in &vars {
+        for &n in &copies {
+            probe.uses.push((v, n));
+        }
+    }
+    let report = weft_check::rules::check(&probe);
+    report
+        .violations
+        .error
+        .into_iter()
+        .filter(|(_, n)| copies.contains(n))
+        .collect()
 }
 
 /// The local of the slot that holds cell `c`, if one does.

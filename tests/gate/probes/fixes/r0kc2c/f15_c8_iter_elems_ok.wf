@@ -1,0 +1,15 @@
+// Stage R0k-c2 fix 1 (a probe of the second review of the fix: a path with no run of the clause, or two runs of it).
+// C8 clean: main builds a vec, then the handled body of Ask asks on each element
+effect Pick { multi fn pick() -> bool }
+effect Ask { multi fn ask(r: &u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    for i in 0..3 { v.push(i) }
+    handle Pick { fn pick() { resume(true)
+        resume(false) } } in {
+        handle Ask { fn ask(r) {
+            let b = pick()
+            print(r)
+            resume(1) } } in { for i in 0..3 { print(ask(&v[i])) } }
+    }
+}

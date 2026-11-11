@@ -4015,6 +4015,53 @@ of the stage in `docs/plan/core-ir.md`):
   such a group by the code of the outer clause between two `resume`s does not reach the
   reference of the copied callee frame.
 
+As built (plan stage R0k-c2 fix 1: a parameter of a clause at the re-entry of a clause
+frame; the finding of the review of R0k-c2):
+
+- The gap. A parameter of a clause (and each variable of the clause frame that points
+  into it) points into the `Param` or `Held` place of the clause. The `Copy` rule keeps
+  the state of such a variable: the place is shared. But the code of the previous run
+  changes the argument at the node that runs the clause, not the `Param` place: only the
+  run node and the `resume` map the two places. So a `clear` or a `push` of the argument
+  between two copies left the parameter valid (a read of a freed cell in the next copy).
+- The rule (`handlers::reentry_args`, from `project`; the form after the second review of
+  the fix). For each `Copy` node whose copied frames have clause frames
+  (`handlers::ClauseCopy`, noted by `copy_node`), each variable `V` of such a clause frame
+  that the node does not bind again and that points into a `Param` or `Held` place of its
+  clause gets a shadow variable (`handlers::shadow`, named "the argument of `V`",
+  `arg_shadow_name`). The shadow variable points into the places of the argument (σ of
+  each run of the clause that is not `Post`, through `Mapper`, with the handle places of
+  the `Rc` handles on the way), but not into a place that the node copies (a local of a
+  copied frame, or the callee frame of the run node): there the copy is valid. These
+  places are on shadow roots (one for each root of an argument, kind `Arg`). Each change,
+  lend, free or moved part of a place of such a root at a node that a node that runs the
+  clause can reach (forward on the graph) is also a change of the same place of its
+  shadow root; so is the end or the move of the owner of the root there. A change before
+  the first run, or on a path with no run (a loop that runs 0 times, the other branch of
+  an `if`), does not count. The shadow variable never gets a new value: a later run of
+  the clause gives it no new state, so a change after an earlier run stays
+  (`fixes/r0kc2c/n04_loop_rebind_bad`, `n05_two_runs_rebind_bad`). Its uses are the uses
+  of `V` that a `Copy` node that keeps `V` reaches before a new value of `V`: W0301
+  there if the change can reach the `Copy` node. `V` itself does not change. An argument
+  that is a place of a parameter of an outer clause of the chain maps again through the
+  runs of that clause. A linear or `!Move` variable gets no shadow variable (E7).
+- The `rc` form (`RC_ACROSS_ROW`, in `reentry_args`). For a row of a handler of a caller
+  (D5), a variable of a copied clause frame that keeps its state and points into an `rc`
+  group, or whose argument is in an `rc` group (`n19_rc_param_arg_bad`), makes the
+  program pending: the clause of the caller can change the group through another handle
+  between two `resume`s, and its facts do not see the reference. The error of the `ir`
+  pipeline is final; with no error the old pipeline checks the program. A variable of the
+  frame of the function has the same gap (older than the stage, as above,
+  `n18_rc_handled_frame_bad`): it stays open.
+- The fact oracle (A4 of re-entries). At a later copy, a reference of a clause frame
+  into a shared cell whose target an access since the operation freed or moved, or whose
+  `Vec` buffer the access wrote as a whole (an unstable step), must have a variable that
+  is invalid at a `Copy` node, or whose shadow variable is (`invalid(V, P)`: the checker
+  with a use of each variable at each `Copy` node, `copy_invalid`). Another write above
+  the target only must not bind it again. In the frame of a function the change can come from a clause of a caller
+  between two `resume`s: the facts of the caller check it (D-MULTI-MID), so there the
+  rule of R0k-c2 stays.
+
 As built (plan stage F17 part 0, the findings of the independent review of group D;
 `factgen/handlers.rs` `Region`): the region of the continuation of a `resume` is the
 set of nodes that can run while the clause waits at it. A `Resume` lends and frees
