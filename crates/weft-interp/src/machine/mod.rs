@@ -55,6 +55,9 @@ pub struct CodeFrame {
     pub loops: Vec<(usize, usize)>,
     /// The lexical handlers.
     pub henv: HEnv,
+    /// The handlers of the frame at the entry of each open copy region, the
+    /// innermost first (plan stage R0k-b1'). `None` out of a region.
+    pub saved_henv: Option<Rc<SavedHenv>>,
     /// In unwind mode (`docs/ir.md` 8.2): the cells that the frame had when
     /// its cleanup chain started. `None` on a normal path.
     pub chain: Option<Vec<CellId>>,
@@ -65,6 +68,16 @@ pub struct CodeFrame {
     /// `resume` (a `multi` continuation), the key of its wait in the oracle
     /// (A4, plan stage F17). Else 0.
     pub wait: u64,
+}
+
+/// The handlers of a frame at the entry of a copy region (plan stage
+/// R0k-b1'), and those of the regions around it.
+#[derive(Clone, Debug)]
+pub struct SavedHenv {
+    /// The handlers of the frame at the entry of the region.
+    pub henv: HEnv,
+    /// The entry of the region around this one.
+    pub next: Option<Rc<Self>>,
 }
 
 /// One clause of a handler mark: operation, code and captured cells.
@@ -567,6 +580,7 @@ impl<'r, 'a> Machine<'r, 'a> {
             marks: Vec::new(),
             loops: Vec::new(),
             henv,
+            saved_henv: None,
             chain: None,
             uid,
             wait: 0,

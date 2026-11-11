@@ -35,8 +35,8 @@ fn own_operation_through_call() {
     } in reg_it(|| ping())
 }
 fn own_operation_through_closure() {
-    let r = |g: fn()| reg(g)
-    handle Reg {   //~ W0313
+    let r = |g: fn()| reg(g)   //~ W0314 old:
+    handle Reg {   //~ old: W0313
         fn reg(g) { g(); resume(()) }
         fn ping() { resume(()) }
     } in r(|| ping())

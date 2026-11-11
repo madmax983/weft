@@ -1,0 +1,16 @@
+// Plan stage R0k-b1' (a copy region, the pass-on form with a function value):
+// the closure `r` is made where no local handler handles `Reg`, so its `reg`
+// goes past `outer` to the handler of `main`, which does not run `g`. It
+// runs in the handled body of a local `Reg` handler, whose clause would run
+// `g`. The program prints 2. A copy with the handlers of the run node would
+// give the `reg` to the local handler and print 1.
+effect Reg { fn reg(f: fn()) }
+fn outer() / Reg {
+    let r = |g: fn()| reg(g)
+    handle Reg { fn reg(g) { g()
+        resume(()) } } in r(|| print(1))
+}
+fn main() {
+    handle Reg { fn reg(g) { print(2)
+        resume(()) } } in outer()
+}

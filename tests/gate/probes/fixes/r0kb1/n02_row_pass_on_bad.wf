@@ -1,0 +1,19 @@
+// Plan stage R0k-b1' (a copy region, the pass-on form): the closure `c` is
+// made where no local handler handles `Run`, so its `run` goes past `outer`
+// to the handler of `main`, whose clause clears `v`. It runs in the handled
+// body of a local `Run` handler. In the copy region the `Row` perform goes
+// past the function: the read of `r` in `main` is W0301.
+effect Run { fn run(g: fn()) }
+fn outer() / Run {
+    let c = || run(|| print(0))
+    handle Run { fn run(g) { g()
+        resume(()) } } in { c() }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in { outer() }
+    print(r)
+}

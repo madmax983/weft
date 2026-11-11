@@ -1,0 +1,20 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q04, the bad twin: as the clean twin, and the clause of
+// `main` clears `v` while `r` points into it. The run of `c` in H3 goes to
+// the handler of `main` (the chain of the maker env), so the read of `r`
+// reads a freed cell.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn outer() / Run {
+    let c = mk()
+    handle Run { fn run(x) { resume(()) } } in { c = mk() }
+    handle Run { fn run(x) { resume(()) } } in { c() }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in { outer() }
+    print(r)
+}

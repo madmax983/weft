@@ -1,0 +1,32 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c15 (a C2 form, `with_timeout`): the closure of `mk_cap`
+// runs a block that passes its deadline. The timeout fails through the
+// handler env of the call of `with_timeout`: the env of the closure frame
+// (the maker env, H1), not the env of the run node (H2). The clause of H1
+// clears `v`, so the read of `r` reads a freed cell.
+effect Run { fn run(g: fn()) }
+
+fn mk_cap(h: fn()) -> fn() { || { run(h)
+    let x = with_timeout(10.ms) { sleep(100.ms)
+        5 }
+    print(x) } }
+fn outer() / Run, io, async {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let r = &w[0]
+    handle Fail { fn fail(m) { v.clear() } } in {
+        let c = mk_cap(|| print(0))
+        r = &v[0]
+        handle Fail { fn fail(m) { print("H2") } } in {
+            handle Run { fn run(g) { g()
+                resume(()) } } in { c() }
+        }
+    }
+    print(r)
+}
+fn main() / io, async {
+    handle Run { fn run(g) { g()
+        resume(()) } } in { outer() }
+}

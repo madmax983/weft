@@ -1,0 +1,16 @@
+// Plan stage R0k-b1' (the clean twin of n01): the clause of H does not clear
+// `v`, so `r` stays valid.
+effect Run { fn run(g: fn()) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { print(7)
+        resume(()) } } in {
+        let c = || run(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

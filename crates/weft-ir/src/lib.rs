@@ -39,8 +39,8 @@ pub mod verify;
 
 pub use body::{Body, BodyKind, LocalDecl, LocalKind, TempKind};
 pub use decl::{
-    CapEnv, Capture, CaptureMode, ClosureDecl, FnDecl, HandlerDecl, Intrinsic, Program, ScopeDecl,
-    SpawnDecl, TestDecl,
+    CapEnv, Capture, CaptureMode, ClosureDecl, CopyRegion, FnDecl, HandlerDecl, Intrinsic, Program,
+    ScopeDecl, SpawnDecl, TestDecl,
 };
 pub use place::{Const, DerefKind, Operand, Place, Proj, Side};
 pub use stmt::{AggKind, BinOp, Block, IterSource, Rvalue, Stmt, StmtKind, UnOp, UnwindAction};

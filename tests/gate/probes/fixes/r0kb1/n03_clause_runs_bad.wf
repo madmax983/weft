@@ -1,0 +1,18 @@
+// Plan stage R0k-b1' (a copy region in a clause, form 4): the handled body of
+// `Reg` gives a closure to `reg`, and the clause runs it. The closure
+// performs `log` through the capability of the outer `Log` handler, whose
+// clause clears `v`. The copy of the closure body in the clause makes the
+// `log` a perform of the clause: the read of `r` is W0301.
+effect Reg { fn reg(f: fn()) }
+effect Log { fn log(m: u64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { v.clear()
+        resume(()) } } in {
+        let r = &v[0]
+        handle Reg { fn reg(g) { g()
+            resume(()) } } in reg(|| log(1))
+        print(r)
+    }
+}

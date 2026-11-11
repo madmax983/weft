@@ -1,0 +1,25 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c18 (a C2 form, form 3: a field): `mk_box` makes a struct
+// whose field holds a closure that gives `h` to `run` through the row of
+// `mk_box`. `mk_box` is called in the handled body of H (whose clause
+// clears `v`). The site reads the field and runs it in H2. The `run` goes
+// to H (the maker env).
+effect Run { fn run(g: fn()) }
+struct Bx { f: fn() }
+fn mk_box(h: fn()) -> Bx / Run { Bx { f: || run(h) } }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let b = mk_box(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            let c = b.f
+            c()
+        }
+        print(r)
+    }
+}
+fn main() { outer() }

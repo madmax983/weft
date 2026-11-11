@@ -1,0 +1,32 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c14, the clean twin: the clause of H1 does not clear `v`.
+effect Run { fn run(g: fn()) }
+fn work() / fail { fail("t") }
+fn sc() / async, fail {
+    scope { s =>
+        s.spawn(|| work())
+        ()
+    }
+}
+fn mk_cap(h: fn()) -> fn() { || { run(h)
+    sc() } }
+fn outer() / Run, io, async {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let r = &w[0]
+    handle Fail { fn fail(m) { print("H1") } } in {
+        let c = mk_cap(|| print(0))
+        r = &v[0]
+        handle Fail { fn fail(m) { print("H2") } } in {
+            handle Run { fn run(g) { g()
+                resume(()) } } in { c() }
+        }
+    }
+    print(r)
+}
+fn main() / io, async {
+    handle Run { fn run(g) { g()
+        resume(()) } } in { outer() }
+}

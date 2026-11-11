@@ -1,0 +1,21 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q04: `mk` is called in the handled body of H, so the handler
+// environment of its closure holds H. The closure leaves H in `c` and runs
+// after H ends, in the handled body of H3. Its `run` goes to the next
+// handler of the chain of the maker env (the handler of `main`), not to H3.
+// A B1' capture that names H as a capability leaves its handler: it must
+// not give a new W0313. No fault.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn noop() {}
+fn outer() / Run {
+    let c = mk()
+    handle Run { fn run(x) { print(5)
+        resume(()) } } in { c = mk() }
+    handle Run { fn run(x) { print(9)
+        resume(()) } } in { c() }
+}
+fn main() {
+    handle Run { fn run(x) { print(x)
+        resume(()) } } in { outer() }
+}

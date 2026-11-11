@@ -101,6 +101,7 @@ fn each_broken_value_names_its_rule() {
         (Rule::UnwindOrder, 16),
         (Rule::BadDrop, 17),
         (Rule::ReturnOrigin, 18),
+        (Rule::BadRegion, 19),
     ];
     for (r, n) in rules {
         assert_eq!(r.number(), n, "{r:?}");
@@ -619,4 +620,113 @@ fn v18_a_return_with_the_origin_of_another_expression() {
     p.bodies[0].blocks[1].term.origin = at(25, 40);
     let broken = verify_program(&p, &t.table);
     assert!(broken.is_empty(), "{broken:#?}");
+}
+
+/// A copy region on the blocks `blocks` of body 0 of `p`, with entry `entry`.
+fn region(p: &Program, entry: u32, blocks: &[u32]) -> CopyRegion {
+    CopyRegion {
+        body: BodyId(0),
+        entry: BlockId(entry),
+        blocks: blocks.iter().map(|&b| BlockId(b)).collect(),
+        env: p.bodies[0].cap_env,
+        value: Place::local(LocalId(0)),
+        closure: ClosureId(0),
+        sole: false,
+    }
+}
+
+#[test]
+fn v19_a_region_with_no_environment() {
+    let (mut p, t) = m3();
+    let mut r = region(&p, 0, &[0]);
+    r.env = CapEnvId(999);
+    p.regions.push(r);
+    only(&p, &t.table, br(Rule::BadRegion, 0, None, None));
+}
+
+#[test]
+fn v19_an_edge_out_of_a_region_that_is_not_a_goto() {
+    let (mut p, t) = m3();
+    // A normal block whose terminator is not a `Goto` and has a successor.
+    let at = p.bodies[0]
+        .blocks
+        .iter()
+        .position(|b| {
+            !b.cleanup
+                && !matches!(b.term.kind, TermKind::Goto(_))
+                && !b.term.kind.successors().is_empty()
+        })
+        .expect("a block");
+    let at = u32::try_from(at).expect("an id");
+    let r = region(&p, at, &[at]);
+    p.regions.push(r);
+    only(&p, &t.table, br(Rule::BadRegion, 0, Some(at), None));
+}
+
+#[test]
+fn v19_an_edge_into_a_region_that_is_not_its_entry() {
+    let (mut p, t) = m3();
+    // An edge from a block outside the region to a block of it that is not
+    // its entry.
+    let n = u32::try_from(p.bodies[0].blocks.len()).expect("an id");
+    let (from, to) = (0..n)
+        .flat_map(|a| {
+            p.bodies[0].blocks[a as usize]
+                .term
+                .kind
+                .successors()
+                .into_iter()
+                .map(move |b| (a, b.0))
+        })
+        .find(|&(a, b)| b != a)
+        .expect("an edge");
+    // The entry of the region is another block.
+    let other = (0..n).find(|&x| x != from && x != to).expect("a block");
+    let mut blocks = vec![other, to];
+    blocks.sort_unstable();
+    let r = region(&p, other, &blocks);
+    p.regions.push(r);
+    let got = verify_program(&p, &t.table);
+    assert!(
+        got.iter()
+            .any(|b| b.rule == Rule::BadRegion && b.block == Some(BlockId(from))),
+        "{got:#?}"
+    );
+}
+
+#[test]
+fn v11_a_row_perform_in_a_region_whose_environment_binds_the_effect() {
+    // The handled body of M3 (body 1) has a perform through its capability.
+    // A region on that block whose environment is the one of the body: a
+    // `Row` operand there names an effect that the region binds.
+    let (mut p, t) = m3();
+    let hb = p
+        .bodies
+        .iter()
+        .position(|b| matches!(b.kind, BodyKind::Handled(_)))
+        .expect("a handled body");
+    let at = p.bodies[hb]
+        .blocks
+        .iter()
+        .position(|b| matches!(b.term.kind, TermKind::Perform { .. }))
+        .expect("a perform");
+    let e = p.bodies[hb].caps[0].0;
+    if let TermKind::Perform { cap, .. } = &mut p.bodies[hb].blocks[at].term.kind {
+        *cap = CapOperand::Row(e);
+    }
+    // Without a region the body binds the effect: V11.
+    let base = verify_program(&p, &t.table);
+    assert!(base.iter().any(|b| b.rule == Rule::BadCap), "{base:#?}");
+    // In a region with the environment of the function (no handler of the
+    // effect), the `Row` perform goes past the function: valid.
+    let at = u32::try_from(at).expect("an id");
+    let outer = p.cap_envs[p.bodies[hb].cap_env.index()]
+        .parent
+        .expect("a parent");
+    let mut r = region(&p, at, &[at]);
+    r.body = BodyId(u32::try_from(hb).expect("an id"));
+    r.env = outer;
+    p.regions.push(r);
+    let got = verify_program(&p, &t.table);
+    assert!(!got.iter().any(|b| b.rule == Rule::BadCap), "{got:#?}");
 }

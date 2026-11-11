@@ -1,0 +1,22 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c16 (a C2 form, a nested closure): the closure of `mk_cap`
+// makes an inner closure and runs it. The inner closure gives `h` to `run`
+// through the row of the outer closure, so its handler env is the maker
+// env of `mk_cap` (H, whose clause clears `v`). The outer closure runs in
+// the handled body of H2 (the C2 fallback today). The `run` goes to H.
+effect Run { fn run(g: fn()) }
+fn mk_cap(h: fn()) -> fn() / Run { || { let k = || run(h)
+    k() } }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let c = mk_cap(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

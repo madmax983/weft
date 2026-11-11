@@ -1,7 +1,9 @@
 //! The program and its declarations: functions, closures, handlers, scopes, spawn
 //! sites, capability environments and tests (`docs/ir.md` 3.2).
 
-use crate::{Body, BodyId, CapEnvId, ClosureId, EffectId, OpIdx, Origin, Place, ScopeId, TyId};
+use crate::{
+    BlockId, Body, BodyId, CapEnvId, ClosureId, EffectId, OpIdx, Origin, Place, ScopeId, TyId,
+};
 
 /// A whole program: each body of each unit, and the declarations.
 #[derive(Clone, Debug, Default)]
@@ -22,6 +24,65 @@ pub struct Program {
     pub cap_envs: Vec<CapEnv>,
     /// The test blocks. The index is the [`TestId`](crate::TestId).
     pub tests: Vec<TestDecl>,
+    /// The copy regions (plan stage R0k-b1'). Only a program with the copies of
+    /// the fact generator has them: the builder makes none.
+    pub regions: Vec<CopyRegion>,
+}
+
+/// A copy region (plan stage R0k-b1', `docs/ir.md` 6.1): the blocks of a body that
+/// are a copy of the body of a closure at a run of the closure.
+///
+/// A closure runs with the handlers of the point where it is made, not with the
+/// handlers of its run node. So the code of the region runs with the handler
+/// environment of the closure value [`CopyRegion::value`]: the interpreter takes
+/// it at the entry and gives the handlers of the frame back at each exit. The
+/// static capability environment of the code is [`CopyRegion::env`], not the
+/// environment of the body: a `Row` perform of the region is valid if `env` does
+/// not bind the effect (the operation goes past the function).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopyRegion {
+    /// The body that holds the blocks.
+    pub body: BodyId,
+    /// The first block. Only this block has an edge from a block outside the
+    /// region.
+    pub entry: BlockId,
+    /// The blocks, sorted. An edge out of the region is a `Goto`.
+    pub blocks: Vec<BlockId>,
+    /// The static capability environment of the code of the region: the
+    /// environment where the closure is made.
+    pub env: CapEnvId,
+    /// The closure value that the run node runs, a place of [`CopyRegion::body`].
+    pub value: Place,
+    /// The closure whose body the region copies.
+    pub closure: ClosureId,
+    /// The copy regions of the closure are its only runs: no other code
+    /// reads the value of the closure, so its own body never runs.
+    pub sole: bool,
+}
+
+impl Program {
+    /// Returns true if body `b` is the body of a closure whose only runs are
+    /// copy regions ([`CopyRegion::sole`]), or a body inside one: it never
+    /// runs (plan stage R0k-b1').
+    pub fn never_runs(&self, b: BodyId) -> bool {
+        if !self.regions.iter().any(|r| r.sole) {
+            return false;
+        }
+        let mut at = Some(b);
+        for _ in 0..=self.bodies.len() {
+            let Some(x) = at else { return false };
+            let Some(body) = self.body(x) else {
+                return false;
+            };
+            if let crate::BodyKind::Closure(c) = body.kind {
+                if self.regions.iter().any(|r| r.sole && r.closure == c) {
+                    return true;
+                }
+            }
+            at = body.parent;
+        }
+        false
+    }
 }
 
 /// A test block: its name (the interpreter runs tests by name) and its body.
@@ -161,6 +222,22 @@ pub struct CapEnv {
 }
 
 impl Program {
+    /// Returns the copy region of block `b` of body `body`, if it is in one.
+    pub fn region_of(&self, body: BodyId, b: BlockId) -> Option<&CopyRegion> {
+        self.regions
+            .iter()
+            .find(|r| r.body == body && r.blocks.binary_search(&b).is_ok())
+    }
+
+    /// Returns the static capability environment of the code of block `b` of body
+    /// `body`: the environment of its copy region, else that of the body.
+    pub fn env_at(&self, body: BodyId, b: BlockId) -> Option<CapEnvId> {
+        match self.region_of(body, b) {
+            Some(r) => Some(r.env),
+            None => self.body(body).map(|x| x.cap_env),
+        }
+    }
+
     /// Returns body `id`, or `None` if the program has no such body.
     pub fn body(&self, id: BodyId) -> Option<&Body> {
         self.bodies.get(id.index())

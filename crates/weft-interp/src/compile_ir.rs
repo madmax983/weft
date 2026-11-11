@@ -685,7 +685,27 @@ impl<'a> BodyCx<'a> {
     // Blocks and statements
     // -----------------------------------------------------------------------
 
+    /// True if an edge from block `from` to block `to` leaves a copy region
+    /// (plan stage R0k-b1'): the frame gets its own handlers back.
+    fn leaves_region(&self, from: BlockId, to: BlockId) -> bool {
+        self.p
+            .region_of(self.id, from)
+            .is_some_and(|r| r.blocks.binary_search(&to).is_err())
+    }
+
     fn block(&mut self, b: BlockId, block: &Block, next: Option<BlockId>) -> S<()> {
+        // The entry of a copy region (plan stage R0k-b1'): the code of the
+        // region runs with the handlers of the closure value.
+        if let Some(r) = self.p.region_of(self.id, b).filter(|r| r.entry == b) {
+            let value = r.value.local;
+            self.at(
+                b,
+                0,
+                block.stmts.first().map_or(block.term.origin, |x| x.origin),
+            );
+            let var = self.cell_ref(value)?;
+            self.emit(Op::PushHenv(var));
+        }
         for (i, s) in block.stmts.iter().enumerate() {
             self.at(b, i, s.origin);
             if let StmtKind::Assign(dest, Rvalue::Aggregate(AggKind::Struct(ty), ops)) = &s.kind {
@@ -736,6 +756,9 @@ impl<'a> BodyCx<'a> {
         match block.term.kind {
             // A chain has no loop: no back edge, no preemption point.
             TermKind::Goto(to) => {
+                if self.leaves_region(b, to) {
+                    self.emit(Op::PopHenv);
+                }
                 if next != Some(to) {
                     self.jump(Label::Block(to));
                 }
@@ -1134,7 +1157,12 @@ impl<'a> BodyCx<'a> {
 
     fn term_ops(&mut self, b: BlockId, t: &Term, next: Option<BlockId>) -> S<()> {
         match &t.kind {
-            TermKind::Goto(to) => self.goto(b, *to, next),
+            TermKind::Goto(to) => {
+                if self.leaves_region(b, *to) {
+                    self.emit(Op::PopHenv);
+                }
+                self.goto(b, *to, next);
+            }
             TermKind::Switch {
                 on,
                 arms,

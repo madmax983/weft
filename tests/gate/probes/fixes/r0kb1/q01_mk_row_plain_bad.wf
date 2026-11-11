@@ -1,0 +1,19 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q01: the closure of `mk` performs `Run` through the row of
+// `mk`. It runs in the local handler of `outer`, but the perform goes to the
+// handler of `main` (the maker env). The clause of `main` clears `v` while
+// `r` points into it. The read of `r` after the handle reads a freed cell.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn outer() / Run {
+    let c = mk()
+    handle Run { fn run(x) { resume(()) } } in { c() }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in { outer() }
+    print(r)
+}

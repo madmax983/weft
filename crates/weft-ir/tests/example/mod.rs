@@ -455,6 +455,7 @@ pub fn m3_program(t: &Tys) -> Program {
             },
         ],
         tests: vec![],
+        regions: vec![],
     }
 }
 
@@ -704,6 +705,7 @@ pub fn j5d_program(t: &J5dTys, kept: bool) -> Program {
             adds: vec![],
         }],
         tests: vec![],
+        regions: vec![],
     }
 }
 
@@ -814,6 +816,7 @@ pub fn by_move_program(t: &J5dTys, once: bool) -> Program {
             adds: vec![],
         }],
         tests: vec![],
+        regions: vec![],
     }
 }
 
@@ -930,6 +933,7 @@ pub fn opt_program(arm: u32) -> (Program, TyTable) {
             adds: vec![],
         }],
         tests: vec![],
+        regions: vec![],
     };
     (p, t)
 }

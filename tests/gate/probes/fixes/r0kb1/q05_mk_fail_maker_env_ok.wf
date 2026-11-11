@@ -1,0 +1,15 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q05, the clean twin: `l` is made in the handled body of H2,
+// after the call of `mk`, and is unlocked before the run.
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk() -> fn() / fail { || fail("x") }
+fn outer() {
+    handle Fail { fn fail(m) { print("H1") } } in {
+        let c = mk()
+        let l = Lk { id: 1 }
+        unlock(l)
+        handle Fail { fn fail(m) { print("H2") } } in { c() }
+    }
+}
+fn main() { outer() }

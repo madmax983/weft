@@ -1,0 +1,16 @@
+// Plan stage R0k-b1' (the clean twin of n02): the clause of the handler of
+// `main` does not clear `v`.
+effect Run { fn run(g: fn()) }
+fn outer() / Run {
+    let c = || run(|| print(0))
+    handle Run { fn run(g) { g()
+        resume(()) } } in { c() }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { print(3)
+        resume(()) } } in { outer() }
+    print(r)
+}

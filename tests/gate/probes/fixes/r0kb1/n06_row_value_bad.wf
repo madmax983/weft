@@ -1,0 +1,17 @@
+// Plan stage R0k-b1' (the bad twin of n06): the `reg` of `r` goes past
+// `outer` to the handler of `main`, whose clause clears `v`. The read of
+// `x` after the `handle` reads a freed cell: W0301.
+effect Reg { fn reg(f: fn()) }
+fn outer() / Reg {
+    let r = |g: fn()| reg(g)
+    handle Reg { fn reg(g) { g()
+        resume(()) } } in r(|| print(1))
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let x = &v[0]
+    handle Reg { fn reg(g) { v.clear()
+        resume(()) } } in outer()
+    print(x)
+}

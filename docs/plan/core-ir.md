@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -4064,6 +4064,162 @@ R0k-b1' design review (the review of the direction B1'; not built; scratchpad
   close it (the copies apply only to fallback programs), so a separate stage closes it
   first. The review also found an FP of the `ir` pipeline on q09_ok (W0805 from the row
   destination of a closure run; issue #79).
+
+R0k-b1' as built (copy regions: closure-body copies with the handler environment of the
+maker; `docs/ir.md` 6.1, "As built (plan stage R0k-b1')"; the notes: scratchpad
+`r0k/b1p/notes.md`):
+
+- What is built of the six changes of the design review.
+  1. The copy region (`weft_ir::CopyRegion` in `Program::regions`: the body, the entry,
+     the blocks, the static environment `env`, the closure value, the closure, `sole`).
+     `env` is the capability environment of the closure declaration, or for a closure
+     that a callee makes, the `Lexical` environment of the call of the callee. Only the
+     copies of the fact generator make regions; the builder makes none (change 5).
+  2. Each construct of the region that reads the handler environment resolves through
+     `env`: the copy maps the root environment of the closure body to `env`, so a perform
+     through the row that `env` serves goes to the capability of the serving handler
+     (upvar locals), a perform through the row that `env` does not bind stays and goes
+     past the function (the pass-on form: V11 reads the environment of the region, also
+     in a handled body of the effect), and each call, closure, handled body, clause and
+     scope body of the copy gets the copied environment. The facts read these explicit
+     environments (`frames::reach` of a call, a perform, `resolve`, `value_effects`,
+     `run_dests`). The constructs whose facts take the environment of the body (`join`,
+     `fork`, `spawn`, `scope`: `frames::reach`, `site_env_of`, `task_w0314`) are under
+     the agreement rule (`Inst::agrees`): if the closure body has one, the environment of
+     the region and that of the body of the run node must send each effect to the same
+     destination, else no copy (`n05`, `c14`).
+  3. The extent rule (`Inst::extent_ok`): for each effect that the closure code can use
+     through its handlers (its operations through the row, the rows of its calls, and
+     `Fail`) and each `Cap` capture, the body that opens the capability is around each
+     body of the way of the value. A value through a local outside the handled body
+     (`n04`, `c11`: a new instance in a loop), or through the clause of its own handler
+     (66 `own_operation`), gets no copy. A heap slot is never on the way (the way has
+     only whole locals, upvar locals and clause parameters).
+  4. The IR engine runs the region with the handlers of the closure value: `Op::PushHenv`
+     (the handlers of the value in a cell, not a read of the cell for the oracles) at the
+     entry, `Op::PopHenv` at each exit (a `Goto` out of the region, also on a cleanup
+     chain), `CodeFrame::saved_henv`. The `debug_assert` of `PerformCap` checks the
+     region. The AST engine and the summaries do not change.
+  5. No builder change: no new captures, no new fields on closures of programs in scope.
+     The escape check (W0313) and `captured_handlers` do not change.
+  6. A5 of the fact oracle checks each node of a region (the frames of the component of
+     the handled body above the `handle`; a region node is a node of that component). The
+     mutation `RunOptions::site_henv_in_copies` (no regions: the copy runs with the
+     handlers of the run node) fails A5 on `n01_nested_run_ok` and `n06_row_value_ok`
+     (`fact_oracle.rs`).
+- The forms of the value (`Inst::walk_value`; B1 without `CopyEnv`): a local with one
+  value (a closure, a copy or a move of a whole local), an upvar local (the run node in a
+  handled body, a clause or a scope body inside the maker: `n01`, `h01`, 66
+  `own_operation_through_closure`, `b2_call.reg_closure_param`), a parameter of a clause
+  whose one perform gives the value (form 4, the clause-run copy, `Inst::clause_arg`: 66
+  `outer_for_operation`, `b2_call.through_call_outer`), and a closure with no capture that
+  a callee makes and gives back (form 2, `ret_closure`: `h02`). The captures go to the
+  run body through upvar locals (`root_place`, `upvar_chain`): a `Kept` or `ByRef` source
+  must be a cell of a body around the maker, or of the maker if the maker is around the
+  run node and the source does not end between the make and the terminator of the maker
+  that runs the body of the run node (`gateway`).
+- The copy of a closure body that holds a region (a snapshot copy) is refused; a copy at
+  a call inside a region is a part of the region; no region is inside another one.
+- `weak_ok`: a closure whose run got a region is not in the structural check; the guard
+  of the analysis (`note_weak_call`, `weak_values_stay`) checks each other run of its
+  summary. `CopyRegion::sole` (`sole_runs`: no code but the regions reads the value):
+  the closure body never runs (`Program::never_runs`), so its perform runs no clause, and
+  the resume region of the clause does not need a node for it (`handlers::Region::starts`;
+  without it `n01` keeps the fallback: the clause of the inner handler runs an unknown
+  value).
+- What is not built and stays a fallback (pending, with its reason):
+  - The local `CopyEnv` of B1 (a view of the closure value; α of `env.k` from σ of the
+    made value; the variables, the templates, the verifier and both engines). Without it,
+    a `ByMove` capture (`a05_by_value`), a `Kept` or `ByRef` source that ends before the
+    run (`a06_ends`; the parameter of a copied maker: `h03`, `c10`, `c13` to `c17`,
+    `c19`) and a closure that a callee makes with a capture keep the fallback. These are
+    sound refusals; the size of `CopyEnv` is L.
+  - A value in a field or a container (form 3, `c18`): the way has whole locals only.
+    `c18_bad` stays an old miss with a fallback (as before the stage); the design review
+    wanted it rejected, which needs `CopyEnv` and a field step of the way.
+  - The probe run of B1 (`run_values`): the way is static and exact; a run node with more
+    than one value keeps the summary.
+  - A program whose only construct with no full facts is `REST_NOT_FOUND` (group A,
+    pending; `n03_clause_runs_ok`): the copies apply only to C2 and D3. The unit test
+    `copies::a_clause_that_runs_its_parameter_gets_a_copy_region` shows the copy.
+  - The W0313 of the old pipeline at 66 `own_operation_through_closure` and
+    `b2_call.reg_closure_param`: in the region the closure gives `|| ping()` (a closure
+    that captures the local `Reg` capability) past the function through the row; the
+    `ir` pipeline gives W0314 at the perform (the clause of a caller can run it on
+    another task), as for an in-scope program of the same form (`61_task_paths` line
+    155). Both reject; the corpus marks it (`//~ W0314 old:`, `//~ old: W0313`).
+- Probes `tests/gate/probes/fixes/r0kb1/` (bad and clean twins): the acceptance probes of
+  the design review (`c10`, `c11`, `c13` to `c19`, `q01`, `q03`, `q04`, `q05`, `q05b`,
+  `q05c`, `q07`; `q02`, `q06` and `q08` are in `fixes/henv`; `q09` stays in the
+  scratchpad `b1prev/p`: its clean twin is the `ir` false positive of issue #79, and a
+  second `new-fp` row of the probes is more than the 0.1 % of §2.5), and the forms of
+  the stage: `n01_nested_run` (the run in an inner handled body of the same effect),
+  `n02_row_pass_on` (in scope before the stage), `n03_clause_runs` (form 4; pending
+  for `REST_NOT_FOUND`), `n04_loop_instance` (the extent rule: fallback), `n05_scope_fail`
+  (the agreement rule; in scope before the stage), `n06_row_value` (the pass-on form with
+  a function value). Tests: `analysis_units` `copies::` (a region in an inner handled
+  body, the pass-on form, a region in a clause, a closure that a callee makes, the
+  refusals of the extent and the agreement rules); `weft-ir` `verify.rs` (V19, V11 in a
+  region); `weft-interp` `copies.rs` (each probe of `fixes/r0k3` and `fixes/r0kb1` runs
+  with and without the copies with the same output and fault; at least 6 probes with a
+  region; h02 prints 1 and n06 prints 2 with and without the copy, 9 and 1 with no
+  regions), `fact_oracle.rs` (the probes pass; the mutation fails A5). The rule coverage
+  test of the corpus (`programs.rs` `corpus_exercises_every_rule`) reads the facts of
+  the old pipeline too: the `ir` facts have no `footprint`, and `83_kept_values` (the
+  last corpus program out of scope with the rule `mutates_at :- performs_at, footprint`)
+  comes into scope.
+- The census (the note of `weft check`; scratchpad `r0k/b1p/p-t1.tsv`, `p-t2.tsv`, against
+  `weft-r0kc2f2`). Tier 1 (5337 files, with the new probes): all fallbacks 116 to 108, C2
+  48 to 42, D3 8 to 8. Of the 34 C2 and D3 rows of the design review, 4 come into scope:
+  `66_cap_paths` (W0313 and W0314: `changed`), `83_kept_values` (the same 17 W0313; the
+  review expected it to stay), `partb/s3fix/p/b2_call` (`changed`), `fixes/r0k3/h01`
+  (the same W0805). The new probes `n01` and `n06` come into scope (bad: W0301, as the
+  old pipeline; clean: no error). The review estimated 9 likely and 3 maybe: `a05`,
+  `a06` and `h03` (two files each) need `CopyEnv`; `g2_lexical`, `v1c_stored` and `g26`
+  stay (a value through a `resume`, a call-site copy of a callee that runs a parameter).
+  Tier 2 (57393): all 108 to 71, C2 63 to 26, D3 1 to 1. The 37 rows that come into
+  scope: `partb/s3fix/p/b2_call`, the 13 mutants of 66 (`verify/s5/S5c/mut/progs`, W0314
+  for the W0313 of `own_operation_through_closure`), the 21 mutants of 83, `fuzzcorp/83`
+  and `fuzz/o23/slow_23_7420` (the codes of the old pipeline; one mutant of 83,
+  `m02534`, also gets W0314).
+- ev.sh (scratchpad `r0k/b1p/ev-old.tsv`, `ev-new.tsv`, `ev-final.tsv`; 175 rows:
+  `fixes/r0kb1`, `fixes/r0k3`, `fixes/henv`, `fixes/r0kc2b`, `fixes/r0kc2c`, the review
+  probes `b1prev/p`, 66 and b2_call): no HOLE, against `weft-r0kc2f2` and with the new
+  binary. One FP-IR, `q09_apply_local_handler_ok` (issue #79, the same with
+  `weft-r0kc2f2`). Each verdict stays; 66 and b2_call go from a fallback to both-reject,
+  and `h01`, `n01` and `n06` from a fallback to the `ir` pipeline with the same verdicts.
+  The bad twins of the review keep the fallback (`c10`, `c11`, `c13` to `c17`, `c19`,
+  `h03`), or the `ir` pipeline rejects them, or they are in scope as before (`q01` to
+  `q07`); the clean twins get no new error; `c18_bad` stays an old miss with the
+  fallback (open-old `R0kB1P-FIELD`).
+- Gates (release binaries `r0k/b1p/bin/weft-r0kb1p`, `weft-gate-r0kb1p`): tier 1 0
+  blockers (5337; 4011 same, 21 open, 326 fixed, 1 new-fp, 0 lost-fault, 156 lost-clean,
+  148 moved, 674 changed; the new probes have their old records in
+  `tests/gate/baseline-tier1.jsonl`); tier 2 (3 workers) 0 blockers (39898 same, 6 open,
+  92 fixed, 12 new-fp, 0 lost-fault, 3480 lost-clean, 1860 moved, 12045 changed); fact
+  oracle tier 1 0 failures (8 faults, the same as before; 21 timeouts; 1458 pass); sigdiff
+  tier 1 0 rows with no entry. The interpreter sources change (`PushHenv`, `PopHenv`), so
+  the oracle caches of tier 1 (both engines, committed) and of tier 2 (the `ir` engine)
+  run again: each verdict of a program of the previous caches is the same (tier 2: one
+  `http` program, `m01577_06_http`, goes from a timeout to `benign`, a port that another
+  run held). The code diffs against `weft-r0kc2f2` (scratchpad `c14v/cmpb1p.sh`, sets
+  `s00`, `s01`, `s02`, `s04`, `s06`, `s07`, `s08`, `s10`): 3 files, `66_cap_paths` and
+  `b2_call` (W0314 for W0313), and `r0ka2rev/p/s05_shadow_cap` (an old miss with a
+  fallback; now W0301; its clean twin `s05b` comes into scope with no error).
+  Ledger: `changed` 66 and b2_call (and three tier-2 mutants of 66: W0314 for W0313), two
+  tier-2 mutants of 83 (an old W0313 at a closure that no code calls), the bad twins of
+  q04 and q07; `lost-clean` `R0kB1P-Q04` (q04_ok and q07_ok: in scope before the stage,
+  the old W0313 is a false positive); open-old `R0kB1P-FIELD` (c18); three `sig` entries
+  (the parts `pins`, `op_fns`/`task_runs`/`repeats` of `reg_it` with the weak form, and
+  `named`/`ret`/`ret_refs` of the functions that give back a closure of a local
+  handler). No new `lost-clean` row comes from the copies.
+- What I am least sure of: the extent rule reads the effects that the closure can use
+  from its row (`closure_uses`); an effect that a run of an unknown function value
+  passes through counts as each effect, so the rule is wide there. The `sole` flag skips
+  the clause runs of a closure body that never runs only in the start points of a resume
+  region, not in the other uses of the clause runs. `weak_ok` trusts the guard of the
+  analysis for the other runs of a copied closure, as R0k-a2 does for a closure with a
+  captured capability.
 
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):

@@ -1,0 +1,15 @@
+// Plan stage R0k-b1' (the clean twin of n03): the clause of `Log` does not
+// clear `v`.
+effect Reg { fn reg(f: fn()) }
+effect Log { fn log(m: u64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { print(m)
+        resume(()) } } in {
+        let r = &v[0]
+        handle Reg { fn reg(g) { g()
+            resume(()) } } in reg(|| log(1))
+        print(r)
+    }
+}

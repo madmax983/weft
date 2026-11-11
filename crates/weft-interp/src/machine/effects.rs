@@ -1251,6 +1251,7 @@ impl super::Machine<'_, '_> {
                         marks: cf.marks.clone(),
                         loops: cf.loops.clone(),
                         henv: cf.henv.clone(),
+                        saved_henv: cf.saved_henv.clone(),
                         chain: cf.chain.as_ref().map(|cs| cs.iter().map(m).collect()),
                         // The fact oracle does not follow a copied frame
                         // (group D, stage F16).
