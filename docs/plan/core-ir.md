@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); R0k-c2 (D5, C8): next |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below); R0k-c2 (D5, C8): next |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -4319,6 +4319,131 @@ the facts with a weak form accept (census with `weft-r0kd2`):
   cheap is E2 for `c09` (the code of the caller runs `f` once; a copy of `mid` at the call
   shows it): one program, no stage. The whole gain of R0k-d3 is about 8 clean programs of
   tier 1 (probes) and 4 of tier 2.
+
+##### HENV-SHADOW fix
+
+The hole (in scope since stage C1; the R0k-b1' review, scratchpad `b1prev/notes.md`): a
+closure runs with the handler environment of its maker (`c.henv` in `call_value`). A
+callee `mk` makes a closure that performs an effect E through its row. `mk` is called in
+the handled body of a local handler H of E, and the closure runs in the handled body of
+an inner local handler H2 of E. At run time the perform goes to H. The facts resolved E
+only to the innermost local handler, H2, and past the function (`frames::reach`,
+`value_effects`), so the clause of H was not in the facts of the run node. Probes
+`q02`, `q06`, `q08` (the interpreter reads a freed cell; the `ir` pipeline gave no error;
+the old pipeline gives W0301).
+
+The choice: option (a), the exact form, not (b), the pending form. Each change is in
+`frames::reach` and `clause::note_cap_apps` (about 200 lines, most of them comments), and the census
+showed no change of a program of tiers 1 and 2 before the new probes. Option (b) would put
+the same programs out of scope and need a new pending reason, with no gain in precision.
+
+As built (`docs/ir.md` 6.5, "As built (HENV-SHADOW fix)"):
+
+- `frames::henv_unknown`: a call can run a function value whose handler environment
+  the facts do not know. Known: a constant (a function item), a local that
+  `closure_only` accepts (closures of the function capture each local handler that they
+  perform through), and a parameter of a function or a closure that gets no other value
+  (`entry_param`: the value existed before the frame). Not known: the result of a call, a
+  field, an element of a container, the result of an operation. A call of a function
+  value checks the callee and each argument; a call of a function item checks each
+  argument if the summary runs a value (`runs`, `unknown_runs`).
+- The review of the fix (scratchpad `henvrev/notes.md`; no soundness hole) found 3 new
+  false positives in scope (`fixes/henv/fp01_made_in_inner`, `fp02_vec_in_inner`,
+  `fp03_fail_inner`): `mk` is called in the inner handler H2, and its closure runs there,
+  so it performs to H2 only, but each call result was not known. Now a value that was
+  made in this run of the handled body of the innermost local handler of the effect at
+  the run node is known (`frames::made_under`, `docs/ir.md` 6.9): its local belongs to a
+  body that runs in each run of that handled body, and each whole write is a new
+  closure, a constant, a copy of such a local (also a field or an element of it), or the
+  result of a call of a function item whose environment sends the effect to that handler
+  first and whose `ret.fns` are only closures of the callee and function items; no
+  write of a part, no reference to the local. The bad forms of the review stay rejected
+  (tuple, `Option`, `Box`, `Rc`, a resume value, a maker of a maker, a new instance in a
+  loop), and two more scratch probes (a callee that gives back an outer closure; an
+  outer closure put into a `Vec` of H2). `entry_param` and `made_under` look only at the
+  body of the local and at the bodies with upvar locals (`writers`). The review also
+  said that a known `entry_param` value keeps the innermost local handler where past
+  the function is the destination of a closure of a caller: the innermost one is
+  necessary for a function item, and more than necessary (not wrong) for a closure; a
+  note in `docs/ir.md` 6.9 says so.
+- Round 2 of the review (scratchpad `henvrev2/`; 37 probes) found two gaps of
+  `made_under` that opened holes again: a declaration (`Vec.pop`, `Box.new`,
+  `Rc.clone`, `Weak.upgrade`: a result of type `T`, so `ret.fns` is empty) counted as a
+  maker (`p13` to `p16`); a closure that shares the cell of the local (a `Kept` capture)
+  wrote another value into it (`p07`, `p07d`). Now a maker needs an IR body and a
+  non-empty `ret.fns`, and a closure that shares the cell and can write it
+  (`shares_cell`, `writes_capture`) makes the local unknown. Round 3 found one more form,
+  a hole since stage C1 (`weft-r0kd2` misses it too): a closure of the function made in
+  H2 captures a closure that `mk` made in H and runs it (`p30`). A `closure_only` local
+  is now known only if its closures capture no other function value
+  (`plain_closures`), also in `value_effects`. An aggregate whose function parts are
+  `made_under` is known (`c30` `Option`, `c31` struct: the false positives of round 2
+  are gone). Left as false positives (issue #79; no row of the tiers has them): `c29`
+  (a `RetFn::Param` result), `c32` (the receiver `&vs` of `push`), `p07c` (a closure
+  writes the cell with a value made in H2; the rule above is conservative).
+- `frames::resolve_all`: each local handler on the chain of the environment that adds
+  the effect, up to a captured capability, and past the function. `frames::run_dests`
+  uses it for a row effect and for `Fail` if the chain has more than one such handler and
+  the call is `henv_unknown`; else it is `resolve`. The check runs only then, so the cost
+  does not change (a first form that ran it at each call made
+  `verify/s5/S5c_diff/scale/c8000.wf` 2.8 times slower).
+- `clause::note_cap_apps` gives a failure of such a value to each local `Fail` handler of
+  the chain.
+- The fact oracle gap: A5 passed on `q02`, because it failed only on a node with
+  `escapes_at` of the effect, and the node of the run sent the effect to H2. A5 now also
+  fails if no node of the frames of the component above the `handle` has `performs_at`
+  with the capability of the handler, for a clause with a resume point (a clause with
+  none aborts, and trace conformance checks the abort edge; a first form with no such
+  limit failed on 31 correct programs of tier 1, each a `Fail` clause at the end of a
+  scope). With the facts before the fix, A5 fails on each probe of `fixes/henv` (bad and
+  clean); with the facts of the fix, it passes.
+- Probes `tests/gate/probes/fixes/henv/` (a bad case and a clean twin of each): `q02`,
+  `q06`, `q08` of the review; `h01_vec` (an element of a `Vec`), `h02_clause_value` (a
+  clause gives the closure), `h03_field` (a field), `h04_callee_runs` (a callee runs the
+  closure). `h01_bad` and `h03_bad` are old misses (the old pipeline accepts them):
+  class `fixed`. The clean probes of the review: `fp01_made_in_inner`,
+  `fp02_vec_in_inner`, `fp03_fail_inner`, `c30_option_ok`, `c31_struct_ok`. The probes
+  of round 2 and 3, each bad and clean: `p13_pop`, `p14_box_new`, `p07_closure_writes`,
+  `p07d_closure_write_callee`, `p30_closure_captures_outer`. Tests: `ir_handlers.rs`
+  `a_closure_that_a_call_made_performs_to_each_local_handler_of_the_chain` (it fails
+  before the fix: no error on each bad probe),
+  `a_closure_made_in_the_run_of_the_inner_handler_performs_to_it` (it fails with the
+  first form of the fix: W0301 on `fp01`), `summary_oracle.rs`
+  `a_clause_that_no_node_runs_fails_the_clause_cover`.
+- The census of the fallbacks (the line "note: --facts=ir: the old pipeline checks the
+  program:"), against `weft-r0kd2` (scratchpad `r0k/d2/kd2-t1.tsv`, `kd2-t2.tsv`;
+  `henv/census/`): tier 1 (5212 files) 96 to 96, tier 2 (57393) 112 to 112, each reason
+  the same; no row moves in or out of scope, and before round 3 no diagnostic of a row
+  changes (round 3: two tier-2 rows, below). Three
+  tier-2 rows time out at 60 s in the census under load (`r3/quality/big/all_2.wf`,
+  `scale/c8000.wf`, `scale/h8000.wf`); alone, with no limit, they give the record of
+  `weft-r0kd2`, in the same time.
+- The diagnostics against `weft-r0kd2` on the lists `s00`, `s01`, `s02`, `s04`, `s06`,
+  `s07`, `s08`, `s10` of scratchpad `c14v` (7034 files): 3 files change
+  (`c1sign/v2/p7192_multi2_MK.wf`, `p7192_multi2_PS.wf`, `r67/v/rows/p7192_h5.wf`). Each
+  gets one more W0301; each is rejected by both pipelines already and faults (`ev.sh`:
+  held). On the 29 probes of `fixes/henv`, the 24 probes of the review (scratchpad
+  `henvrev/p`), the 37 probes of round 2 (`henvrev2`) and the 3 files: no HOLE; FP-IR
+  only on `c29`, `c32` and `p07c` (above). After round 3 the census of tier 2 has two
+  more changed rows, each rejected by both pipelines and faulting, and each still class
+  `changed` (ledger entry 287): `r2/oracle/runs/g3/p5307.wf` (one more W0302, at line
+  88) and `r2/oracle/runs/g5/p21857.wf` (a W0302 at line 101: `g12` captures `f8`, so
+  the run of `g12` runs the clauses of the local handlers).
+- Ledger: no entry. No row of tier 1 or tier 2 changes its class; the 29 probes are
+  new rows of tier 1 (27 `same`; `h01_vec_bad`, `h03_field_bad`: `fixed`).
+- The oracle caches: the interpreter sources changed (the fact oracle), so the caches of
+  tier 1 (both engines) and of tier 2 (`ir`) were made again. Each verdict is the same,
+  but for runs at the time limit or with a port in use: tier 1 `fixes/r0f/c01_serve_read_ok`
+  (timeout to benign) and `verify/partb/S4diff/p/wide3.wf` (timeout to not-runnable: it
+  has no `main`), on both engines; tier 2 7 rows between timeout, benign and clean. No
+  verdict changes to or from `fault`.
+- Gates (binaries scratchpad `henv/bin/weft-henv3`, `weft-gate-henv3`, after round 3):
+  tier 1 0 blockers (5241; 3946 same, 18 open, 309 fixed, 1 new-fp, 154 lost-clean, 146
+  moved, 667 changed); tier 2 (2 workers) 0 blockers (39919 same, 6 open, 92 fixed, 12
+  new-fp, 3480 lost-clean, 1858 moved, 12026 changed: each count as at R0k-d2); fact
+  oracle tier 1 0 failures (1414 pass, 8 faults, 21 timeouts); sigdiff tier 1 0 rows with
+  no entry. The changes of the review rounds do not change the interpreter sources, so
+  the oracle caches only get the rows of the new probes.
 
 #### R1 Standalone `typeck`, part 1
 

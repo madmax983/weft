@@ -1,0 +1,22 @@
+// HENV-SHADOW p13 (round 2 of the review): `Vec.pop` is called in the
+// handled body of H2, but it gives back the closure that `mk` made in H.
+// `Vec.pop` is a declaration (no IR body, no `ret.fns`), so it is not a
+// maker. The run in H2 goes to H.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn nop() { }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c0 = mk()
+        let vs = Vec.new()
+        vs.push(c0)
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let o = vs.pop()
+            match o { Some(g) => g(), None => {} } }
+        print(r)
+    }
+}
+fn main() { outer() }

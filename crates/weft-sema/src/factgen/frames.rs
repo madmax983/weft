@@ -358,6 +358,87 @@ pub fn resolve(p: &Program, tys: &TyTable, env: CapEnvId, effect: &str, value: b
     Dest::Past
 }
 
+/// Each destination of an abort of the effect `effect` from a function
+/// value in the capability environment `env` (HENV-SHADOW).
+///
+/// The facts do not know the handler environment of the value
+/// ([`henv_unknown`]).
+///
+/// A closure runs with the handlers where it was made. If a call made it in
+/// the handled body of a local handler H of the effect, and it runs in the
+/// handled body of an inner handler H2 of the same effect, its perform goes
+/// to H, not to H2. So the result has the handler of each handled body on
+/// the chain of `env` that adds the effect, up to the first environment
+/// that adds it and is not a handled body (a captured capability: past the
+/// function from there), and past the function. The first one is
+/// [`resolve`].
+pub fn resolve_all(
+    p: &Program,
+    tys: &TyTable,
+    env: CapEnvId,
+    effect: &str,
+    value: bool,
+) -> Vec<Dest> {
+    let mut out = Vec::new();
+    let mut at = Some(env);
+    // The chain has at most one environment for each id.
+    for _ in 0..=p.cap_envs.len() {
+        let Some(id) = at else { break };
+        let Some(e) = p.cap_envs.get(id.index()) else {
+            break;
+        };
+        if e.adds
+            .iter()
+            .any(|(x, _)| identity(tys, *x) == Some(effect))
+        {
+            let handler = p.bodies.iter().find_map(|b| match b.kind {
+                BodyKind::Handled(h) if b.cap_env == id => Some(h),
+                _ => None,
+            });
+            match handler {
+                Some(handler) => out.push(Dest::Handler { handler, value }),
+                None => break,
+            }
+        }
+        at = e.parent;
+    }
+    out.push(Dest::Past);
+    out
+}
+
+/// The destinations of an abort of the effect with identity `effect` in the
+/// capability environment `env` of call `at` (a body and its terminator),
+/// which can run a function value (HENV-SHADOW).
+///
+/// It is [`resolve`], or each destination of [`resolve_all`] if the chain has
+/// more than one local handler of the effect and the call can run a value
+/// whose handler environment is not known for the effect
+/// ([`henv_unknown`]). The check runs only if the chain has more than one
+/// such handler.
+///
+/// A known value goes to [`resolve`] and, at a run of a function value,
+/// past the function: a function item runs with the handlers of the run
+/// node (the innermost local handler), and a closure of a caller performs
+/// past the function.
+pub fn run_dests(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    at: (BodyId, &TermKind),
+    env: CapEnvId,
+    effect: &str,
+) -> Vec<Dest> {
+    let mut all = resolve_all(p, tys, env, effect, true);
+    let handlers = all
+        .iter()
+        .filter(|d| matches!(d, Dest::Handler { .. }))
+        .count();
+    if handlers < 2 || !henv_unknown(p, tys, sums, at, env, effect) {
+        all.truncate(1);
+    }
+    all
+}
+
 /// The first environment on the chain of `env` that adds the capability of
 /// `effect`, with the place of the capability there.
 pub fn adding_env(
@@ -533,9 +614,15 @@ fn reach(
                 CapArgs::Lexical(e) => Some(*e),
                 CapArgs::Root => None,
             };
-            let through =
-                |effect: &str| env.map_or(Dest::Past, |e| resolve(p, tys, e, effect, true));
             let intrinsic = p.fns.get(f.index()).is_some_and(|d| d.intrinsic.is_some());
+            // A function value of an argument that the callee runs performs
+            // through the handlers where it was made (HENV-SHADOW): each
+            // local handler of the chain of the call.
+            let through = |effect: &str| match env {
+                Some(e) if !intrinsic => run_dests(p, tys, sums, (body, t), e, effect),
+                Some(e) => vec![resolve(p, tys, e, effect, true)],
+                None => vec![Dest::Past],
+            };
             match sums.get(*f) {
                 Ok(sum) if !intrinsic => {
                     // A function value that the callee runs can abort in
@@ -543,25 +630,25 @@ fn reach(
                     if !sum.runs.is_empty() {
                         out.push(Dest::Past);
                         if full {
-                            out.push(fails(env));
+                            out.extend(through(FAIL));
                         }
                     }
                     for a in &sum.aborts {
-                        out.push(match a {
+                        match a {
                             Abort::Perform(pf) => match pf.cap {
-                                CapIface::Row => through(&pf.effect),
-                                CapIface::Cap(_) => Dest::Past,
+                                CapIface::Row => out.extend(through(&pf.effect)),
+                                CapIface::Cap(_) => out.push(Dest::Past),
                             },
-                            Abort::Raises => through(FAIL),
-                            Abort::Assert => Dest::Past,
-                        });
+                            Abort::Raises => out.extend(through(FAIL)),
+                            Abort::Assert => out.push(Dest::Past),
+                        }
                     }
                 }
                 // `sim.run`, `with_timeout` (a timeout is a failure at the
                 // call, 5.31), or a callee with no summary: each way.
                 _ => {
                     out.push(Dest::Past);
-                    out.push(through(FAIL));
+                    out.extend(through(FAIL));
                 }
             }
         }
@@ -614,18 +701,23 @@ fn reach(
         // the capability environment of the call, and a failure of the
         // runtime goes to the `Fail` handler there (plan stage F17.2,
         // D-FNVAL-ROW). A closure runs with the handlers where it was made:
-        // its effects can go past the function too.
+        // its effects can go past the function too. A closure that a call
+        // made (also through a field, a container or a clause) can hold a
+        // local handler that is not the innermost one of its effect at the
+        // run node: each local handler of the chain gets the effect
+        // (HENV-SHADOW, [`henv_unknown`]).
         TermKind::Call {
             callee: Callee::Value(f),
             caps: CapArgs::Lexical(e),
             ..
         } => {
+            let to = |effect: &str| run_dests(p, tys, sums, (body, t), *e, effect);
             out.push(Dest::Past);
             if full {
-                out.push(fails(Some(*e)));
+                out.extend(to(FAIL));
             }
             for effect in value_effects(p, tys, sums, body, f, *e) {
-                out.push(resolve(p, tys, *e, &effect, true));
+                out.extend(to(&effect));
             }
         }
         _ => out.push(Dest::Past),
@@ -686,7 +778,8 @@ fn served_dests(p: &Program, tys: &TyTable, d: Dest) -> Vec<Dest> {
 /// value whose type states a row can perform the effects of the row. A
 /// value with no stated row passes the effects of the call through: each
 /// effect of a local handler, except for a value that only a closure can
-/// give (a closure runs with the handlers where it was made).
+/// give (a closure runs with the handlers where it was made), if the
+/// closure captures no function value (`plain_closures`).
 fn value_effects(
     p: &Program,
     tys: &TyTable,
@@ -712,7 +805,13 @@ fn value_effects(
                 .filter(|e| local.iter().any(|x| x == e))
                 .map(str::to_string)
                 .collect(),
-            None if closure_only(p, Some(sums), body, q.local, 0) => Vec::new(),
+            // A closure that captures a function value runs it with the
+            // handlers where that value was made (HENV-SHADOW).
+            None if closure_only(p, Some(sums), body, q.local, 0)
+                && plain_closures(p, tys, sums, body, q.local, 0) =>
+            {
+                Vec::new()
+            }
             None => local,
         },
         _ => local,
@@ -763,6 +862,369 @@ pub fn runs_closure(p: &Program, body: BodyId, t: &TermKind) -> bool {
         } if q.proj.is_empty() => closure_only(p, None, body, q.local, 0),
         _ => false,
     }
+}
+
+/// True if call `at` can run a function value whose handler environment
+/// the facts do not know (HENV-SHADOW).
+///
+/// `at` is a body and its terminator; `env` is the capability environment
+/// of the call, and `effect` is the identity of the effect.
+///
+/// A closure runs with the handlers where it was made (the interpreter
+/// takes the handler environment of the closure value). A closure that a
+/// call made in the handled body of a local handler H of an effect, and
+/// that runs in the handled body of an inner handler H2 of the same
+/// effect, performs to H, not to H2. Then each local handler of the chain
+/// of the run node gets the effect ([`resolve_all`]).
+///
+/// The handler environment is known for these values only:
+///
+/// - a constant (a function item: it runs with the handlers of the run
+///   node);
+/// - a local that can only hold closures of this function or closures that
+///   perform nothing (`closure_only`): such a closure captures the
+///   capability of each local handler that it performs through;
+/// - a parameter of a function or a closure that gets no other value
+///   (`entry_param`): the value existed before the frame, so its handler
+///   environment holds no handler of the frame;
+/// - a value that was made in this run of the handled body of the innermost
+///   local handler of the effect at the call (`made_under`), also through a
+///   field or an element: the chain of its maker goes through that handler
+///   first.
+///
+/// The call can run each function value of its arguments (a callee whose
+/// summary runs a value, or a function value), and the callee itself for a
+/// call of a function value. Each other value counts: for example the result
+/// of an operation (a value that a clause gives), or the result of a call in
+/// the handled body of an outer handler (`q02`).
+pub fn henv_unknown(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    at: (BodyId, &TermKind),
+    env: CapEnvId,
+    effect: &str,
+) -> bool {
+    let (body, t) = at;
+    let TermKind::Call { callee, args, .. } = t else {
+        return false;
+    };
+    let Some(b) = p.body(body) else {
+        return true;
+    };
+    let inner = match resolve(p, tys, env, effect, true) {
+        Dest::Handler { handler, .. } => Some(handler),
+        Dest::Past => None,
+    };
+    let unknown = |op: &weft_ir::Operand| match op {
+        weft_ir::Operand::Const(_) => false,
+        weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) => {
+            let fns = b
+                .local(q.local)
+                .is_none_or(|d| crate::props::ir_has_fns(tys, d.ty));
+            let whole = q.proj.is_empty()
+                && ((closure_only(p, Some(sums), body, q.local, 0)
+                    && plain_closures(p, tys, sums, body, q.local, 0))
+                    || entry_param(p, body, q.local));
+            let made =
+                inner.is_some_and(|h| made_under(p, tys, sums, (body, q.local), h, effect, 0));
+            fns && !whole && !made
+        }
+    };
+    let runs_args = match callee {
+        Callee::Value(f) if unknown(f) => return true,
+        Callee::Value(_) => true,
+        Callee::Fn(f, _) => sums
+            .get(*f)
+            .map_or(true, |s| !s.runs.is_empty() || s.unknown_runs),
+    };
+    runs_args && args.iter().any(unknown)
+}
+
+/// The bodies that can write a local of body `owner`: the body itself and
+/// the bodies that name locals of a parent as upvar locals (clauses,
+/// handled bodies and scope bodies).
+fn writers(p: &Program, owner: BodyId) -> impl Iterator<Item = (BodyId, &weft_ir::Body)> {
+    p.bodies
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (BodyId(u32::try_from(i).unwrap_or(u32::MAX)), b))
+        .filter(move |(id, b)| *id == owner || b.kind.has_upvars())
+}
+
+/// True if body `b` runs in each run of handled body `handled`: it is that
+/// body, or a handled body, a clause or a scope body inside it (no closure
+/// body and no function body between them).
+fn in_run_of(p: &Program, b: BodyId, handled: BodyId) -> bool {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        if at == handled {
+            return true;
+        }
+        let Some(x) = p.body(at) else {
+            return false;
+        };
+        match (x.kind, x.parent) {
+            (BodyKind::Handled(_) | BodyKind::Clause(..) | BodyKind::Scope(_), Some(up)) => at = up,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// True if each value that local `at.1` of body `at.0` can hold was made in
+/// this run of the handled body of local handler `h`, by code whose
+/// capability environment sends the effect with identity `effect` to `h`
+/// first (HENV-SHADOW). Then the effect of such a value goes to `h` (or past
+/// the function), as [`resolve`] at a run node inside `h` says.
+///
+/// The local belongs to a body that runs in each run of the handled body
+/// (`in_run_of`), so its values do not outlive the run of the handler. Each
+/// whole write of it is a constant, a copy of a local with the same property
+/// (also of a field or an element of it), an aggregate (also a new closure:
+/// its operands are its captures, and it captures the capabilities that it
+/// performs through) whose operands with a function part have the same
+/// property, or the result of a call of a function item with an IR body
+/// through such an environment whose result can be closures that the callee
+/// makes and function items only (part `ret.fns`, not empty: a declaration
+/// such as `Vec.pop` gives no part). No write of a part, no reference to the
+/// local, and no closure that shares its cell (`shares_cell`): a callee or
+/// the closure could put another value into it.
+fn made_under(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    at: (BodyId, weft_ir::LocalId),
+    h: HandlerId,
+    effect: &str,
+    depth: usize,
+) -> bool {
+    if depth > COPY_DEPTH {
+        return false;
+    }
+    let Ok(owner) = super::alpha::owner_local(p, at.0, at.1) else {
+        return false;
+    };
+    let Some(handled) = p.handlers.get(h.index()).map(|d| d.handled) else {
+        return false;
+    };
+    if !in_run_of(p, owner.0, handled) {
+        return false;
+    }
+    let is_owner = |b: BodyId, q: &weft_ir::Place| {
+        super::alpha::owner_local(p, b, q.local).ok() == Some(owner)
+    };
+    let maker = |t: &TermKind| match t {
+        TermKind::Call {
+            callee: Callee::Fn(f, _),
+            caps: CapArgs::Lexical(e),
+            ..
+        } => {
+            let body = p
+                .fns
+                .get(f.index())
+                .is_some_and(|d| d.body.is_some() && d.intrinsic.is_none());
+            body && matches!(resolve(p, tys, *e, effect, true), Dest::Handler { handler, .. } if handler == h)
+                && sums.get(*f).is_ok_and(|s| {
+                    !s.ret.fns.is_empty()
+                        && s.ret.fns.iter().all(|x| {
+                            matches!(
+                                x,
+                                crate::analysis::summary::RetFn::Made(_)
+                                    | crate::analysis::summary::RetFn::Item(..)
+                            )
+                        })
+                })
+        }
+        _ => false,
+    };
+    if shares_cell(p, owner) {
+        return false;
+    }
+    let mut any = false;
+    for (bid, b) in writers(p, owner.0) {
+        // An operand of an aggregate: a value with a function part must
+        // have the same property.
+        let part_ok = |op: &weft_ir::Operand| match op {
+            weft_ir::Operand::Const(_) => true,
+            weft_ir::Operand::Copy(src) | weft_ir::Operand::Move(src) => {
+                b.local(src.local)
+                    .is_some_and(|d| !crate::props::ir_has_fns(tys, d.ty))
+                    || made_under(p, tys, sums, (bid, src.local), h, effect, depth + 1)
+            }
+        };
+        for blk in &b.blocks {
+            for s in &blk.stmts {
+                let weft_ir::StmtKind::Assign(q, rv) = &s.kind else {
+                    continue;
+                };
+                if matches!(rv, weft_ir::Rvalue::Ref(src) if is_owner(bid, src)) {
+                    return false;
+                }
+                if !is_owner(bid, q) {
+                    continue;
+                }
+                if !q.proj.is_empty() {
+                    return false;
+                }
+                any = true;
+                let ok = match rv {
+                    weft_ir::Rvalue::Aggregate(_, ops) => ops.iter().all(&part_ok),
+                    weft_ir::Rvalue::Use(op) => part_ok(op),
+                    _ => false,
+                };
+                if !ok {
+                    return false;
+                }
+            }
+            if let Some(q) = term_dest(&blk.term.kind).filter(|q| is_owner(bid, q)) {
+                if !q.proj.is_empty() || !maker(&blk.term.kind) {
+                    return false;
+                }
+                any = true;
+            }
+        }
+    }
+    any
+}
+
+/// True if a capture of mode `mode` shares the cell of its variable.
+const fn sharing(mode: weft_ir::CaptureMode) -> bool {
+    !matches!(
+        mode,
+        weft_ir::CaptureMode::ByMove | weft_ir::CaptureMode::Cap
+    )
+}
+
+/// True if a closure shares the cell of local `owner` (a `ByRef`, `Kept` or
+/// `Kont` capture of it) and can write the cell (`writes_capture`)
+/// (HENV-SHADOW).
+fn shares_cell(p: &Program, owner: (BodyId, weft_ir::LocalId)) -> bool {
+    p.closures.iter().any(|c| {
+        c.captures.iter().enumerate().any(|(k, cap)| {
+            sharing(cap.mode)
+                && super::alpha::owner_local(p, c.maker, cap.source.local).ok() == Some(owner)
+                && writes_capture(p, c, k)
+        })
+    })
+}
+
+/// True if the body of closure `c` (or a body with upvar locals inside it)
+/// can write capture `k` of its environment: a write of a place below
+/// `env.k`, a reference to such a place, or a closure that captures such a
+/// place again and shares its cell.
+fn writes_capture(p: &Program, c: &weft_ir::ClosureDecl, k: usize) -> bool {
+    let Some(env) = p.body(c.body).and_then(|b| {
+        b.locals
+            .iter()
+            .position(|d| matches!(d.kind, weft_ir::LocalKind::Env))
+            .and_then(|i| u32::try_from(i).ok())
+            .map(weft_ir::LocalId)
+    }) else {
+        return true;
+    };
+    let at_k = |b: BodyId, q: &weft_ir::Place| {
+        super::alpha::owner_local(p, b, q.local).ok() == Some((c.body, env))
+            && matches!(q.proj.first(), Some(weft_ir::Proj::Field(i)) if i.index() == k)
+    };
+    let in_bodies = writers(p, c.body).any(|(bid, b)| {
+        b.blocks.iter().any(|blk| {
+            blk.stmts.iter().any(|s| match &s.kind {
+                weft_ir::StmtKind::Assign(q, rv) => {
+                    at_k(bid, q) || matches!(rv, weft_ir::Rvalue::Ref(src) if at_k(bid, src))
+                }
+                _ => false,
+            }) || term_dest(&blk.term.kind).is_some_and(|q| at_k(bid, q))
+        })
+    });
+    in_bodies
+        || p.closures.iter().any(|d| {
+            d.captures
+                .iter()
+                .any(|cap| sharing(cap.mode) && at_k(d.maker, &cap.source))
+        })
+}
+
+/// True if the closures that local `l` of body `body` can hold (the local
+/// is `closure_only`) capture no value with a function part other than a
+/// local with the same property, and no closure shares the cell of the
+/// local (`shares_cell`). A closure captures the capability of each local
+/// handler that it performs through, but another function value that it
+/// captures runs with the handlers where that value was made (HENV-SHADOW).
+fn plain_closures(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    l: weft_ir::LocalId,
+    depth: usize,
+) -> bool {
+    if depth > COPY_DEPTH {
+        return false;
+    }
+    let Ok(owner) = super::alpha::owner_local(p, body, l) else {
+        return false;
+    };
+    if shares_cell(p, owner) {
+        return false;
+    }
+    let is_owner = |b: BodyId, q: &weft_ir::Place| {
+        super::alpha::owner_local(p, b, q.local).ok() == Some(owner)
+    };
+    writers(p, owner.0).all(|(bid, b)| {
+        b.blocks.iter().all(|blk| {
+            blk.stmts.iter().all(|s| match &s.kind {
+                weft_ir::StmtKind::Assign(q, rv) if is_owner(bid, q) => match rv {
+                    weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(_), ops) => {
+                        ops.iter().all(|op| match op {
+                            weft_ir::Operand::Const(_) => true,
+                            weft_ir::Operand::Copy(src) | weft_ir::Operand::Move(src) => {
+                                b.local(src.local)
+                                    .is_some_and(|d| !crate::props::ir_has_fns(tys, d.ty))
+                                    || (src.proj.is_empty()
+                                        && closure_only(p, Some(sums), bid, src.local, 0)
+                                        && plain_closures(p, tys, sums, bid, src.local, depth + 1))
+                            }
+                        })
+                    }
+                    weft_ir::Rvalue::Use(
+                        weft_ir::Operand::Copy(src) | weft_ir::Operand::Move(src),
+                    ) => plain_closures(p, tys, sums, bid, src.local, depth + 1),
+                    _ => true,
+                },
+                _ => true,
+            })
+        })
+    })
+}
+
+/// True if local `l` of body `body` is a parameter of a function or a
+/// closure (also through upvar locals) that no statement and no terminator
+/// of the program writes: its value is the value of the call. Only the body
+/// of the parameter and the bodies with upvar locals can write it.
+fn entry_param(p: &Program, body: BodyId, l: weft_ir::LocalId) -> bool {
+    let Ok(owner) = super::alpha::owner_local(p, body, l) else {
+        return false;
+    };
+    let param = p.body(owner.0).is_some_and(|b| {
+        matches!(b.kind, BodyKind::Fn(_) | BodyKind::Closure(_))
+            && b.local(owner.1)
+                .is_some_and(|d| matches!(d.kind, weft_ir::LocalKind::Param(_)))
+    });
+    if !param {
+        return false;
+    }
+    let writes = |b: BodyId, q: &weft_ir::Place| {
+        super::alpha::owner_local(p, b, q.local).ok() == Some(owner)
+    };
+    !writers(p, owner.0).any(|(bid, b)| {
+        b.blocks.iter().any(|blk| {
+            blk.stmts.iter().any(|s| match &s.kind {
+                weft_ir::StmtKind::Assign(q, _) => writes(bid, q),
+                _ => false,
+            }) || term_dest(&blk.term.kind).is_some_and(|q| writes(bid, q))
+        })
+    })
 }
 
 /// The most copies of a function value that [`closure_only`] follows.

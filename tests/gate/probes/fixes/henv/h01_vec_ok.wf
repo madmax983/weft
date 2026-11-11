@@ -1,0 +1,20 @@
+// HENV-SHADOW h01, the clean twin: the clause of H does not clear `v`.
+effect Run { fn run(x: u64) }
+fn mk() -> Vec<fn() / Run> {
+    let vs = Vec.new()
+    vs.push(|| run(1))
+    vs
+}
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { print(x)
+        resume(()) } } in {
+        let vs = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let g = vs[0]
+            g() }
+        print(r)
+    }
+}
+fn main() { outer() }

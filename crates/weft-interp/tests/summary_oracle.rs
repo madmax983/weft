@@ -562,3 +562,69 @@ fn a_clause_that_resumes_with_a_site_local_reads_it_at_the_perform_node() {
         ),
     }
 }
+
+/// HENV-SHADOW (probe `fixes/henv/q02_mk_in_outer_handler_ok`): `mk` is
+/// called in the handled body of H, so its closure runs with H. The closure
+/// runs in the handled body of the inner H2, and its `run` goes to H.
+const HENV_SHADOW: &str = "effect Run { fn run(x: u64) }\n\
+    fn mk() -> fn() / Run { || run(1) }\n\
+    fn outer() {\n\
+    let v = Vec.new()\n\
+    v.push(1)\n\
+    handle Run { fn run(x) { print(x)\n\
+    resume(()) } } in {\n\
+    let c = mk()\n\
+    let r = &v[0]\n\
+    handle Run { fn run(x) { resume(()) } } in { c() }\n\
+    print(r)\n\
+    }\n\
+    }\n\
+    fn main() { outer() }\n";
+
+/// A5 for HENV-SHADOW: the clause of the outer handler H runs from the run
+/// node of the closure, which is inside the handled body of the inner
+/// handler H2 of the same effect. The facts of the generator run the
+/// clauses of H and H2 at the run node, and pass. With the clause of H gone
+/// from the run node (the facts before the fix: the effect went only to
+/// H2), no node of `outer` runs the clause of H, and the oracle fails.
+#[test]
+fn a_clause_that_no_node_runs_fails_the_clause_cover() {
+    let c = check_abcd(HENV_SHADOW);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let report = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(o) => o.fact_oracle.expect("a fact oracle report"),
+        Err(e) => panic!("{}", e.message),
+    };
+    assert!(report.clause > 0, "the clause oracle checked nothing");
+    let broken = run_main_with_facts(&c, &opts(), |f| {
+        if f.name != "outer" {
+            return;
+        }
+        let runs: Vec<weft_facts::NodeId> = f
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.label == "c" && n.kind == "call")
+            .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+            .collect();
+        // The capability of H is the first one: H is the outer handler.
+        let outer = f
+            .performs_at
+            .iter()
+            .filter(|(n, _)| runs.contains(n))
+            .map(|&(_, k)| k)
+            .min()
+            .expect("the run node runs a clause");
+        let before = f.performs_at.len();
+        f.performs_at
+            .retain(|&(n, k)| !(runs.contains(&n) && k == outer));
+        assert!(f.performs_at.len() < before);
+    });
+    match broken {
+        Ok(_) => panic!("the facts with no run of the clause of H pass"),
+        Err(e) => {
+            assert!(e.message.starts_with("clause oracle (A5)"), "{}", e.message);
+            assert!(e.message.contains("no node of the frames"), "{}", e.message);
+        }
+    }
+}

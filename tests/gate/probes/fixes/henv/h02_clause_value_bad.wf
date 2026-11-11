@@ -1,0 +1,21 @@
+// HENV-SHADOW h02 (a clause value): the clause of `Get` calls `mk` and
+// gives its closure back to the handled body. The clause runs with the
+// handlers of its site, which hold H. The closure runs in the handled body
+// of H2, but its `run` goes to H, which clears `v` while `r` points into it.
+effect Run { fn run(x: u64) }
+effect Get { fn get() -> fn() / Run }
+fn mk() -> fn() / Run { || run(1) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        handle Get { fn get() { resume(mk()) } } in {
+            let c = get()
+            let r = &v[0]
+            handle Run { fn run(x) { resume(()) } } in { c() }
+            print(r)
+        }
+    }
+}
+fn main() { outer() }

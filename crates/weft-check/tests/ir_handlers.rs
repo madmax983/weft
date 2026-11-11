@@ -1186,3 +1186,90 @@ fn a_given_back_value_of_the_interface_keeps_the_old_pipeline() {
     assert!(fallback.is_none(), "{fallback:?}");
     assert_eq!(got, vec![("W0301".to_string(), 15)]);
 }
+
+/// The codes and lines of probe `name` of `tests/gate/probes/fixes/henv`
+/// with the `ir` pipeline. The program must be in scope.
+fn henv_codes(name: &str) -> Vec<(String, usize)> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/henv")
+        .join(name);
+    let src = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let opts = Options {
+        facts: weft_sema::FactGen::Ir,
+        ..Options::from_markers(&src)
+    };
+    let a = analyze_source(&src, opts)
+        .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
+    let c = check_analysis(a, &[]);
+    let fallback = c
+        .analysis
+        .ir_scope
+        .as_ref()
+        .and_then(|s| s.fallback.clone());
+    assert!(fallback.is_none(), "{name}: {fallback:?}");
+    let mut got: Vec<(String, usize)> = c
+        .diags
+        .iter()
+        .map(|d| (format!("{:?}", d.code), line_of(&src, d.span.lo)))
+        .collect();
+    got.sort();
+    got
+}
+
+/// HENV-SHADOW: a closure runs with the handlers where it was made. A
+/// closure that a call made in the handled body of a local handler H, and
+/// that runs in the handled body of an inner handler H2 of the same effect,
+/// performs to H. The source of the value is the result of a call (`q02`;
+/// `q06`: a nested closure; `q08`: a call in the closure), an element of a
+/// `Vec` (`h01`), a value that a clause gives (`h02`) or a field (`h03`), or
+/// a callee runs it (`h04`). The run node runs the clause of each local
+/// handler of the chain (`frames::resolve_all`): W0301 for the reference
+/// that the clause of H invalidates. The clean twins have no error. Each
+/// program is in scope. Probes `tests/gate/probes/fixes/henv`.
+#[test]
+fn a_closure_that_a_call_made_performs_to_each_local_handler_of_the_chain() {
+    for (name, line) in [
+        ("q02_mk_in_outer_handler", 17),
+        ("q06_nested_made", 16),
+        ("q08_mk_calls_row_fn", 15),
+        ("h01_vec", 20),
+        ("h02_clause_value", 17),
+        ("h03_field", 16),
+        ("h04_callee_runs", 16),
+        // Round 2 of the review: a declaration is no maker (`p13`, `p14`); a
+        // closure that shares the cell of the local writes it (`p07`,
+        // `p07d`). Round 3: a closure of the function that captures a value
+        // of H runs it with H (`p30`).
+        ("p13_pop", 19),
+        ("p14_box_new", 18),
+        ("p07_closure_writes", 19),
+        ("p07d_closure_write_callee", 17),
+        ("p30_closure_captures_outer", 16),
+    ] {
+        let bad = format!("{name}_bad.wf");
+        assert_eq!(henv_codes(&bad), vec![("W0301".to_string(), line)], "{bad}");
+        let ok = format!("{name}_ok.wf");
+        assert_eq!(henv_codes(&ok), Vec::new(), "{ok}");
+    }
+}
+
+/// HENV-SHADOW, the review of the fix: a closure that a call makes in this
+/// run of the handled body of the inner handler H2, and that runs there,
+/// performs to H2 only (`frames::made_under`). The clause of the outer
+/// handler H does not run at the run node: no error. The closure comes from
+/// the call (`fp01`), from an element of a `Vec` (`fp02`), or fails to the
+/// inner `Fail` handler (`fp03`); it goes through an `Option` (`c30`) or a
+/// field of a struct (`c31`): an aggregate whose function parts were made
+/// there.
+#[test]
+fn a_closure_made_in_the_run_of_the_inner_handler_performs_to_it() {
+    for name in [
+        "fp01_made_in_inner.wf",
+        "fp02_vec_in_inner.wf",
+        "fp03_fail_inner.wf",
+        "c30_option_ok.wf",
+        "c31_struct_ok.wf",
+    ] {
+        assert_eq!(henv_codes(name), Vec::new(), "{name}");
+    }
+}

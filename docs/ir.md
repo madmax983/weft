@@ -5050,6 +5050,52 @@ As built (follow-up F17.2, the third review of group D):
   `performs_at`, no `escapes_at` of the effect), its abort edges and its re-entry
   edges. The past destination stays (a closure made outside the handled body). The
   clauses get the state before the call (`transfer::term`).
+- As built (HENV-SHADOW fix, plan `core-ir.md` "HENV-SHADOW fix"). A closure runs with the
+  handler environment of its maker, innermost first. A closure that a call made in the
+  handled body of a local handler H, and that runs in the handled body of an inner local
+  handler H2 of the same effect, performs to H, not to H2. Before the fix `reach` and
+  `value_effects` resolved each effect only to the innermost local handler (`resolve`),
+  so the clause of H was not in the facts of the run node (probes
+  `fixes/henv/q02`, `q06`, `q08`: the interpreter reads a freed cell, the `ir` pipeline
+  gave no error). Now a call whose handler environment is not known
+  (`frames::henv_unknown`) resolves each effect of the value, and `Fail`, to each local
+  handler on the chain of `e` and past the function (`frames::resolve_all`). The
+  environment is known for a constant (a function item), a local that only closures of
+  the function or inert closures can give (`closure_only`: such a closure captures the
+  capability of each local handler that it performs through), and a parameter of a
+  function or a closure that gets no other value (`entry_param`: its value existed
+  before the frame). It is known too for a value that was made in this run of the handled
+  body of the innermost local handler H2 of the effect at the run node (`made_under`,
+  review of the fix, probes `fixes/henv/fp01` to `fp03`): the local belongs to a body
+  that runs in each run of that handled body, and each whole write of it is a
+  constant, a copy of such a local (also of a field or an element of it), an aggregate
+  (also a new closure: its operands are its captures) whose operands with a function
+  part have the same property, or the result of a call of a function item with an IR
+  body whose environment sends the effect to H2 first and whose `ret.fns` is not empty
+  and holds only closures that the callee makes and function items (a declaration such
+  as `Vec.pop` or `Box.new` gives no `ret.fns`: round 2 of the review, `p13`, `p14`); no
+  write of a part, no reference to the local, and no closure that shares the cell of the
+  local and writes it (`shares_cell`: a `ByRef`, `Kept` or `Kont` capture that the
+  closure body writes, takes a reference to, or captures again; `p07`, `p07d`). Such a
+  value performs to H2 or past the function. A `closure_only` local is known only if its
+  closures capture no function value other than such a local and no closure writes its
+  cell (`plain_closures`); the same rule holds for the `closure_only` exception of
+  `value_effects` (a closure made in H2 that captures a closure made in H runs it with
+  H: `p30`). Each other value is not known: for example the result of a
+  call in an outer handler (`q02`), a value that a clause gives, a value of a loop that
+  outlives a run of H2, or a container that a callee can change through a reference. A
+  known value keeps the innermost local handler and past the function: a function item
+  runs with the handlers of the run node (the innermost), and a closure of a caller (an
+  `entry_param` value) performs past the function. For a closure of a caller the
+  innermost local handler is more than necessary but not wrong; the summary that the
+  caller applies at its call checks the effect there. For a call of a function item
+  the rule holds if the summary runs a value (`runs`, `unknown_runs`) and an argument
+  holds such a value. `clause::note_cap_apps` gives a failure of such a value to each
+  local `Fail` handler of the chain too. The check runs only if the chain has more than
+  one local handler of the effect (`frames::run_dests`). The fact oracle (A5) now also
+  fails if no node of the frames of the component above the `handle` runs a clause with
+  a resume point (no `performs_at` with the capability of the handler and no
+  `escapes_at`).
 - A call in a closure body that gets the capability of an effect of its row from the
   environment of the closure (a captured capability, `handlers::captured_calls`) runs
   the clauses of the handler of the capture at the node, as a perform through the
@@ -5956,6 +6002,19 @@ D-FNVAL-ROW (d01, d02, d03, d06, d07, d08, d10, d11, d14, e02, k03, p01, s04, a0
 their clean twins before the fix, and on one program of the gate
 (`probes/r2/interp/repro/holds/ip_lexical.wf`). A closure that runs from a callee (a
 frame of another component) is not checked.
+
+**As built (HENV-SHADOW fix): the clause cover with no node that runs the clause.** A5
+passed on `fixes/henv/q02` with the facts before the fix: the run node of the closure
+sent the effect to the inner handler H2 (no `escapes_at`), so no node failed, but no
+node ran the clause of H either. Now A5 also fails if the frames of the component above
+the `handle` have no node with `performs_at` with the capability of the handler and no
+node with `escapes_at` of its effect ("no node of the frames of `f` above the `handle`
+has `performs_at` with the capability of the handler"), if the clause of the operation
+has a resume point. A clause with no resume point aborts to its handler, and trace
+conformance checks the abort edge (a first form with no such limit failed on 31 correct
+programs of tier 1: a `Fail` clause at the end of a scope). With the facts before the fix it
+fails on each probe of `fixes/henv` (bad and clean twins); with the facts of the fix it
+passes. Test: `summary_oracle.rs` `a_clause_that_no_node_runs_fails_the_clause_cover`.
 
 **As built (F19.3): the task check (ORACLE-GAP of the review of group E).** The oracle
 records each task that a frame starts at a node with one `spawned_at(T, _)` as a task of

@@ -50,7 +50,7 @@ impl super::Machine<'_, '_> {
                     _ => None,
                 })
                 .collect();
-            if let Err(m) = fo.clause_run(&uids, self.cur) {
+            if let Err(m) = fo.clause_run(&uids, self.cur, op) {
                 return Err(self.fault(m));
             }
         }

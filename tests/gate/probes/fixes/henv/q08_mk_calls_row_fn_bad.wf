@@ -1,0 +1,18 @@
+// B1' review q08: as q02, but the closure of `mk` calls `go`, which
+// performs `Run` through its row. The call passes the env of the closure
+// (the maker env, which holds H), so `run` goes to H, not to H2.
+effect Run { fn run(x: u64) }
+fn go() / Run { run(1) }
+fn mk() -> fn() / Run { || go() }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

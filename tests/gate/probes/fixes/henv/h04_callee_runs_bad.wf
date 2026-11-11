@@ -1,0 +1,19 @@
+// HENV-SHADOW h04 (a callee runs the value): as q02, but `apply` runs the
+// closure. `apply` has no handler, so the run node is the call of `apply`
+// in the handled body of H2. The `run` of the closure goes to H (where
+// `mk` was called), which clears `v` while `r` points into it.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn apply(f: fn() / Run) / Run { f() }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { apply(c) }
+        print(r)
+    }
+}
+fn main() { outer() }

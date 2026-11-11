@@ -1,0 +1,16 @@
+// B1' review q08, the clean twin: the clause of H does not clear `v`.
+effect Run { fn run(x: u64) }
+fn go() / Run { run(1) }
+fn mk() -> fn() / Run { || go() }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { print(x)
+        resume(()) } } in {
+        let c = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

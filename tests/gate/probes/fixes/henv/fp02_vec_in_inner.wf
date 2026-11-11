@@ -1,0 +1,19 @@
+// HENV-SHADOW fp02 (clean; the review of the fix): as fp01, but the
+// closure comes from an element of a `Vec` that `mk` gives in H2.
+effect Run { fn run(x: u64) }
+fn mk() -> Vec<fn() / Run> { let vs = Vec.new()
+    vs.push(|| run(1))
+    vs }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let vs = mk()
+            let g = vs[0]
+            g() }
+        print(r)
+    }
+}
+fn main() { outer() }

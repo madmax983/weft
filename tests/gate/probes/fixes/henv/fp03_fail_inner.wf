@@ -1,0 +1,15 @@
+// HENV-SHADOW fp03 (clean; the review of the fix): a closure that fails
+// is made in the inner `Fail` handler H2 and runs there. The failure goes
+// to H2, so the outer clause that clears `v` does not run.
+fn mk() -> fn() / fail { || fail("x") }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Fail { fn fail(m) { v.clear() } } in {
+        let r = &v[0]
+        handle Fail { fn fail(m) { print("inner") } } in { let c = mk()
+            c() }
+        print(r)
+    }
+}
+fn main() { outer() }

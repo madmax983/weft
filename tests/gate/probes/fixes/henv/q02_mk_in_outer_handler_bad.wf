@@ -1,0 +1,20 @@
+// B1' review q02: `mk` is called in the handled body of H (the clause of H
+// clears `v`). Its closure performs `Run` through the row of `mk`, so its
+// handler environment holds H. The closure runs in the handled body of the
+// harmless H2, but the perform goes to H (the maker env, innermost first):
+// `v.clear()` runs while `r` points into `v`. The read of `r` reads a freed
+// cell.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

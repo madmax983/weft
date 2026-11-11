@@ -1,0 +1,18 @@
+// HENV-SHADOW fp01 (clean; the review of the fix): `mk` is called in the
+// handled body of the inner handler H2, and the closure runs there. Its
+// `run` goes to H2, not to H, so the clause of H that clears `v` does not
+// run. The closure was made in this run of H2: its handler is known.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let c = mk()
+            c() }
+        print(r)
+    }
+}
+fn main() { outer() }

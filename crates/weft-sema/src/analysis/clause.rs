@@ -2375,21 +2375,25 @@ pub fn note_cap_apps(
             || a.summary.aborts.contains(&super::summary::Abort::Raises)
             || a.summary.performs.iter().any(|pf| pf.effect == fail)
     });
-    let env = p
+    let term = p
         .body(body)
         .and_then(|b| b.blocks.get(block.index()))
-        .and_then(|b| match &b.term.kind {
-            TermKind::Call {
-                caps: weft_ir::CapArgs::Lexical(e),
-                ..
-            } => Some(*e),
-            _ => None,
-        });
-    if let (true, Some(e)) = (fails, env) {
-        if let crate::factgen::frames::Dest::Handler { handler, .. } =
-            crate::factgen::frames::resolve(p, cx.tys, e, fail, true)
-        {
-            cx.hx.cap_active.insert((body, block, handler));
+        .map(|b| &b.term.kind);
+    let env = term.and_then(|t| match t {
+        TermKind::Call {
+            caps: weft_ir::CapArgs::Lexical(e),
+            ..
+        } => Some(*e),
+        _ => None,
+    });
+    if let (true, Some(e), Some(t)) = (fails, env, term) {
+        // A value whose handler environment the facts do not know fails to
+        // each local `Fail` handler of the chain (HENV-SHADOW).
+        let ds = crate::factgen::frames::run_dests(p, cx.tys, cx.sums, (body, t), e, fail);
+        for d in ds {
+            if let crate::factgen::frames::Dest::Handler { handler, .. } = d {
+                cx.hx.cap_active.insert((body, block, handler));
+            }
         }
     }
 }

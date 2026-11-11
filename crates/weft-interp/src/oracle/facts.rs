@@ -72,7 +72,12 @@
 //!   there with `escapes_at` of the effect of the handler and no
 //!   `performs_at` with the capability of the handler is a failure: the
 //!   facts send the effect past the function, and the clause does not run
-//!   at the node.
+//!   at the node. If no node of these frames has `performs_at` with the
+//!   capability of the handler, that is a failure too (HENV-SHADOW): the
+//!   facts send the effect to another handler, for example an inner
+//!   handler of the same effect, and the clause runs at no node. This
+//!   check is only for a clause with a resume point: a clause with none
+//!   aborts to its handler, and trace conformance checks the abort edge.
 //!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
@@ -1586,12 +1591,16 @@ impl FactOracle {
     /// handled body wait at their nodes; one such node must have
     /// `performs_at` with the capability of the handler. If none does and
     /// one has `escapes_at` of the effect of the handler, the facts send
-    /// the effect past the function: a failure.
+    /// the effect past the function: a failure. If none does and none has
+    /// `escapes_at`, the facts send the effect to another handler (an
+    /// inner handler of the same effect: HENV-SHADOW): a failure too, if the
+    /// clause of operation `op` has a resume point (a clause with none
+    /// aborts to the handler, and trace conformance checks the abort edge).
     ///
     /// # Errors
     ///
     /// The message of the failure.
-    pub fn clause_run(&mut self, frames: &[u64], task: usize) -> Result<(), String> {
+    pub fn clause_run(&mut self, frames: &[u64], task: usize, op: usize) -> Result<(), String> {
         let Some(fr) = frames
             .iter()
             .find(|u| tracked(**u))
@@ -1637,6 +1646,11 @@ impl FactOracle {
         // failure (the frame of a closure that runs a function with the
         // effect in its row, too).
         let mut escapes: Option<(NodeId, usize)> = None;
+        // A node of a frame of the component that has `performs_at` with
+        // the capability of the handler (`ran`), and the innermost node of
+        // such a frame with none (`silent`; HENV-SHADOW).
+        let mut ran = false;
+        let mut silent: Option<(NodeId, usize)> = None;
         let mut starts: Vec<(u64, usize, Vec<NodeId>)> = Vec::new();
         // The frames of the callees above the component (follow-up F19.5).
         let mut outer: Vec<(u64, usize)> = Vec::new();
@@ -1661,6 +1675,7 @@ impl FactOracle {
                                     cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k)))
                                 })
                                 .collect();
+                            ran |= !runs.is_empty();
                             starts.push((*uid, f.comp, if runs.is_empty() { group } else { runs }));
                         }
                         Some(_) => outer.push((*uid, f.comp)),
@@ -1687,8 +1702,12 @@ impl FactOracle {
                 .filter(|&n| cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k))))
                 .collect();
             if !runs.is_empty() {
+                ran = true;
                 starts.push((*uid, f.comp, runs));
                 continue;
+            }
+            if let Some(&n) = group.first() {
+                silent = Some((n, f.comp));
             }
             // A frame that does not run the clause (a closure that performs
             // through a capability that it captures) names the code of the
@@ -1707,6 +1726,37 @@ impl FactOracle {
         self.report.clause += 1;
         self.check_started(&starts, task, h)?;
         self.check_waits(&starts, &outer, task, h)?;
+        // HENV-SHADOW: a closure runs with the handlers where it was made, so
+        // the clause can run from a node that sends the effect to an inner
+        // handler of the same effect. Then no node of the component has
+        // `performs_at` with the capability of the handler, and the facts
+        // do not run the clause at all.
+        // Only for a clause with a resume point: a clause with none (a
+        // `Fail` clause at the end of a scope) aborts to the handler, and
+        // trace conformance checks the abort edge of the node.
+        let resumes = self
+            .input
+            .built
+            .program
+            .handlers
+            .get(h.index())
+            .and_then(|d| d.clauses.iter().find(|(o, _)| o.index() == op))
+            .and_then(|&(_, cb)| self.input.built.program.body(cb))
+            .is_some_and(|b| {
+                b.blocks.iter().any(|blk| {
+                    !blk.cleanup && matches!(blk.term.kind, weft_ir::TermKind::Resume { .. })
+                })
+            });
+        if let (true, Some(_), false, None, Some((n, ci))) = (resumes, cap, ran, escapes, silent) {
+            let (text, fname) = self
+                .comps
+                .get(ci)
+                .map(|c| (c.node_text(n), c.facts.name.clone()))
+                .unwrap_or_default();
+            return Err(format!(
+                "clause oracle (A5): in `{fname}` at {text}, a clause of the local handler of `{effect}` runs from the node, and no node of the frames of `{fname}` above the `handle` has `performs_at` with the capability of the handler"
+            ));
+        }
         let Some((n, ci)) = escapes else {
             return Ok(());
         };

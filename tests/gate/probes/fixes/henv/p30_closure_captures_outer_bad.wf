@@ -1,0 +1,19 @@
+// HENV-SHADOW p30 (round 3): a closure made in H2 captures the closure
+// that `mk` made in H, and runs it. The run in H2 goes to H. The local
+// `k` holds only closures of the function, but such a closure is known
+// only if it captures no other function value (`plain_closures`).
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c0 = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let k = || c0()
+            k() }
+        print(r)
+    }
+}
+fn main() { outer() }
