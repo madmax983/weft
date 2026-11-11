@@ -43,7 +43,7 @@ fn once_callee(st: &Stats) / mut(st), async {
 // A callee calls the closure that a maker returns.
 fn calls_result(st: &Stats) / mut(st), async {
     scope { s =>
-        run_maker(|| || { s.spawn(|| st.count += 1); 0 })
+        run_maker(|| || { s.spawn(|| st.count += 1); 0 })   //~ W0405 old:
         print(st.count)   //~ W0405
     }
 }
@@ -97,7 +97,7 @@ fn clause_task() / async {
                 }
                 resume(())
             }
-        } in run(|| note(1))   //~ W0314
+        } in run(|| note(1))   //~ old: W0314
     }
 }
 fn clause_calls() / async {

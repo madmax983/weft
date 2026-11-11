@@ -3210,6 +3210,31 @@ As built (plan stage R0g: continuations and capabilities in closures):
   The span is the clause, and the texts are those of the old lowering
   (`check_cont_escape`, `cont_to_body`).
 
+As built (plan stage R0k-d1: a clause run outside its handled body, and the strong update
+after a `resume`):
+
+- A run of a clause that maps to no node of the handled body (the reason A, "a perform
+  whose rest of the handled body the facts do not find"): a closure that captures the
+  capability of a local handler runs after the handled body ends (an escape), so the
+  perform finds no handler there, or another one. The resume of such a run has no region
+  of the rest of the handled body (`handlers::Region::of` gives none): the facts of the
+  resume get no change and no free of that region, so they can only miss an error, never
+  add one. The construct is pending (`handlers::REST_NOT_FOUND`, the rule of R0g above):
+  the `ir` pipeline checks the program first, and its error is final; else the old
+  pipeline checks it. Each A program of the tiers is rejected by the old pipeline (W0313,
+  W0314, W0503), because an A form is a run outside the handler.
+- The strong update after a `resume` (D4). After the `resume` of a `once` continuation
+  returns, the rest of the handled body has run once to its end, so a local of the site
+  that the rest of the handled body gives a whole value (an `Assign` of its upvar local
+  in the handled body) on each path after each node that runs a clause of the handler has
+  only its value at the end of the handled body: the value that the clause put there
+  before the `resume` is gone (`clause::must_written`, `State::join_values_but_keys`).
+  Else (a `multi` continuation, a write on some paths only, a body inside the handled
+  body that is not a closure body and that runs a clause of the handler) each local of the
+  site joins its value at the resume point, as before (the weak update). The strong update
+  lets the escape check see that a closure that performs through the handler does not
+  stay in the local (`fixes/r0g/d4_reassigned_ok`).
+
 As built (plan stage R0h: function values and references across operations):
 
 - A function value in an argument of an operation of a handler of a caller (C2,

@@ -1,0 +1,12 @@
+// Plan stage R0k-d1 (D4, the twin of d02_multi_weak): a `multi` continuation, and
+// `f` never holds a closure that performs through the handler.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        log("x")
+        f = || print(1)
+    }
+    f()
+}

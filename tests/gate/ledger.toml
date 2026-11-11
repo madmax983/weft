@@ -10808,3 +10808,65 @@ files = [
 codes = ["W0301", "W0312"]
 reason = "stage R0k-c2a (a probe of the design review of the R0k-c2 note): the outer clause of `main` clears `v` between its two resumes while `run` holds a reference into `v` across the row. The `ir` pipeline rejects the program with the weak form of D5 (W0301 at the copy of the frame of the call of `run`, line 19); the old pipeline gives W0312 at the same call. Both reject it; ev.sh: the program faults (held)"
 stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/62_cap_escape.wf",
+    "tests/programs/67_task_starts.wf",
+]
+codes = ["W0313", "W0314", "W0405"]
+reason = "stage R0k-d1: a run of a clause that maps to no node of the handled body (A) is pending with a weak form (the resume has no region), and the `ir` pipeline rejects both programs. `62_cap_escape`: W0314 at lines 93 and 96 (a function value given to `k` or to the operation `reg` of a caller can run as a task, the rule of code of a caller), and no W0313 there (the old pipeline gives W0313, and W0314 at line 93). `67_task_starts`: W0405 at line 46 (the task that `run_maker` starts mutates `st.count` while the call runs; a program with `calls_result` alone faults there, and `weft-r0kc1` gives the same W0405 for it), and no W0314 at line 100. The markers have `old:` words. ev.sh: no fault; both pipelines reject them"
+stage = "R0k"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/verify/partb/p/e1_fp.wf",
+]
+reason = "stage R0k-d1 (D4): after a `resume` of a `once` continuation, a local of the site that the rest of the handled body gives a whole value on each path has only that value (a strong update), so no capability leaves its handler, and the program is in scope. The `ir` pipeline gives no error; the old W0502 at lines 13 and 22 is on `f = || print(0)`, a closure that captures nothing, so it cannot be `once` (a false positive of the old pipeline, the class of this probe). The file has no `main`; with a `main` that calls each function, the interpreter runs it with no fault (ev.sh nofault)"
+signed_by = "reviewer R0k-d1: f = || print(0) captures nothing, so it is not once; with a main that calls each function, both engines run clean and the fact oracle passes"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00330_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m00535_62_cap_escape.wf",
+    "verify/s5/S5c/mut/progs/m00538_62_cap_escape.wf",
+    "verify/s5/S5c/mut/progs/m00856_62_cap_escape.wf",
+    "verify/s5/S5c/mut/progs/m00974_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m01141_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m01163_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m01478_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m01494_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m01725_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m01764_62_cap_escape.wf",
+    "verify/s5/S5c/mut/progs/m01889_62_cap_escape.wf",
+    "verify/s5/S5c/mut/progs/m02428_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m02684_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m02925_67_task_starts.wf",
+    "verify/s5/S5c/mut/progs/m02936_62_cap_escape.wf",
+]
+codes = ["W0313", "W0314", "W0405"]
+reason = "stage R0k-d1: the mutants of `62_cap_escape` and `67_task_starts` come into scope as the corpus files do (A pending with no resume region; the `ir` pipeline rejects them): W0314 in place of W0313 for a function value given to a parameter or to an operation of a caller, the W0405 of the task that `run_maker` starts, one W0314 fewer. ev.sh: no fault, both pipelines reject them"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "r3/oracle/sweep3/apply__task_outlives.wf",
+    "r3/oracle/sweep3/apply__task_result.wf",
+    "r3/oracle/sweep3/nested__task_outlives.wf",
+    "r3/oracle/sweep3/nested__task_result.wf",
+]
+codes = ["W0313", "W0314", "W0405"]
+reason = "stage R0k-d1: an escaped closure whose inner closure performs through the capability runs on a task (`task_outlives`, `task_result`): the run of the clause maps to no node of the handled body (A, pending, no resume region), and the `ir` pipeline rejects the program with a part of the codes of the old pipeline (W0314, or W0313, at the run of the value; the other code of the old pipeline is missing). ev.sh: the program faults, and the `ir` pipeline rejects it (held)"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["tasks", "pins", "reaches"]
+files = ["tests/programs/67_task_starts.wf"]
+reason = "stage R0k-d1: `67_task_starts` comes into scope (A pending, the `ir` pipeline rejects it). `clause_task`, `from_field` and `from_field_ok` have the row of the old pipeline (`mut() [Async] raises`); the parts `tasks`, `pins` and `reaches` come from the summaries of the `ir` pipeline (the task starts and the reached function values of the bodies), as for the other programs of the tasks families that are in scope"
+stage = "R0k"

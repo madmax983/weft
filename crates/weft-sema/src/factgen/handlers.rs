@@ -3035,7 +3035,7 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> R {
         multi: multi_handlers(facts, hx, &multi),
     };
     for &(r, h, c) in &hx.resumes {
-        let Some(seen) = rg.of(h, c)? else {
+        let Some(seen) = rg.of(h, c) else {
             continue;
         };
         // The frame of the clause waits at its `resume`: the rest of the
@@ -3327,19 +3327,21 @@ impl Region<'_> {
     /// runs again from the node (D-COPY-WAIT): the region has those nodes
     /// too.
     ///
-    /// # Errors
-    ///
-    /// Returns [`AlphaError::Later`] if a run of the clause maps to no node
-    /// of the handled body.
-    fn of(&self, h: HandlerId, c: BodyId) -> Result<Option<HashSet<NodeId>>, AlphaError> {
-        let Some(hb) = self.handled(h) else {
-            return Ok(None);
-        };
+    /// A run of the clause that maps to no node of the handled body (a run
+    /// outside the handled body: an escape, W0313) gives no region: the
+    /// weak form of stage R0k-d1. With no region the resume has no change
+    /// and no free of the rest of the handled body, so the facts can only
+    /// miss an error, and the program is in scope only if the `ir`
+    /// pipeline rejects it (`clause::note_pending`, [`REST_NOT_FOUND`]).
+    fn of(&self, h: HandlerId, c: BodyId) -> Option<HashSet<NodeId>> {
+        let hb = self.handled(h)?;
         let body = self.body_nodes(hb);
         let Some(starts) = self.starts(c, &body) else {
-            return Err(AlphaError::Later(
-                "a perform whose rest of the handled body the facts do not find (stage F17)",
-            ));
+            clause::note_pending(crate::factgen::Unsupported {
+                group: crate::irbuild::scope::Group::A,
+                reason: REST_NOT_FOUND.to_string(),
+            });
+            return None;
         };
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.walk(&starts, &body, &mut seen);
@@ -3375,9 +3377,14 @@ impl Region<'_> {
                 seen.extend(self.ends(hm));
             }
         }
-        Ok(Some(seen))
+        Some(seen)
     }
 }
+
+/// Why the facts of a resume have no region: a run of the clause maps to
+/// no node of the handled body (stage F17; pending from stage R0k-d1).
+pub const REST_NOT_FOUND: &str =
+    "a perform whose rest of the handled body the facts do not find (stage F17)";
 
 /// What a change or a free of a place is for a parameter of a clause
 /// ([`through_param`]).

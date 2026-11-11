@@ -1,0 +1,14 @@
+// Plan stage R0k-d1 (D4, bad): the rest of the handled body gives `f` a new
+// value on one path only, so `f` can keep the closure that performs through
+// the handler, and `main` runs it after the `handle` (W0313).
+effect Log { fn log(msg: String) }
+fn main() {
+    let c = false
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        f = || log("x")
+        f()
+        if c { f = || print(1) }
+    }
+    f()
+}

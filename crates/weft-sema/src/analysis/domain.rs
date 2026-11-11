@@ -912,6 +912,41 @@ impl State {
         }
     }
 
+    /// [`State::join_values_but`] with no join for the locals `strong`: they
+    /// keep their value in `self` (a strong update after a `resume`, stage
+    /// R0k-d1, `clause::must_written`).
+    pub fn join_values_but_keys(
+        &mut self,
+        o: &Self,
+        of: &dyn Fn(BodyId) -> bool,
+        strong: &std::collections::BTreeSet<Key>,
+    ) {
+        if strong.is_empty() {
+            self.join_values_but(o, of);
+            return;
+        }
+        self.join_values_but(o, &|b| of(b) || strong.iter().any(|k| k.0 == b));
+        // The other locals of the bodies of `strong` still join.
+        let mut new: Vec<(Key, Rc<Tree>)> = Vec::new();
+        for (k, t) in o.vals.iter() {
+            if of(k.0) || strong.contains(k) || !strong.iter().any(|x| x.0 == k.0) {
+                continue;
+            }
+            if let Some(mine) = self.vals.get(*k) {
+                if Rc::ptr_eq(mine, t) || mine.includes(t) || **mine == **t {
+                    continue;
+                }
+                let mut j = (**mine).clone();
+                if j.join(t) {
+                    new.push((*k, Rc::new(j)));
+                }
+            }
+        }
+        for (k, t) in new {
+            self.vals.insert(k, t);
+        }
+    }
+
     /// Joins `o` into `self`: a union of the values and of the may parts,
     /// and an intersection of the must parts. Returns true if `self`
     /// changed.

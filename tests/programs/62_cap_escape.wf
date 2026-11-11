@@ -90,10 +90,10 @@ fn to_storing_callee(h: &Holder) / mut(h) {
 }
 // `k` can also run the closure as a task (W0314).
 fn to_parameter(k: fn(fn())) {
-    handle Log { fn log(m) { resume(()) } } in k(|| log("late"))   //~ W0313 W0314
+    handle Log { fn log(m) { resume(()) } } in k(|| log("late"))   //~ W0314 old: W0313 W0314
 }
 fn to_outer_operation() / Reg {
-    handle Log { fn log(m) { resume(()) } } in reg(|| log("late"))   //~ W0313
+    handle Log { fn log(m) { resume(()) } } in reg(|| log("late"))   //~ W0314 old: W0313
 }
 fn to_storing_closure() {
     let v = Vec.new()

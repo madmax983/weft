@@ -2303,3 +2303,68 @@ fn main() {
         assert!(p.copy.is_none(), "a view of the copies");
     }
 }
+
+/// Stage R0k-d1: a run of a clause outside its handled body (A) is pending
+/// with a weak form, and a strong update after a `resume` of a `once`
+/// continuation (D4).
+mod r0kd1 {
+    /// The scope of the `ir` pipeline for the probe `name` of
+    /// `tests/gate/probes/fixes/r0kd1`: the reason of the fallback and of
+    /// the pending construct.
+    fn scope(name: &str) -> (Option<String>, Option<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0kd1")
+            .join(name);
+        let src =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(&src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let s = a.ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// A: the run of the clause maps to no node of the handled body. The
+    /// program is not a fallback of the fact generator: it is pending, and
+    /// the check decides (the `ir` pipeline rejects it: W0313).
+    #[test]
+    fn a_run_of_a_clause_outside_its_handled_body_is_pending() {
+        let (fallback, pending) = scope("a01_escape_bad.wf");
+        assert!(fallback.is_none(), "{fallback:?}");
+        assert!(
+            pending
+                .as_deref()
+                .is_some_and(|r| r.contains(weft_sema::factgen::handlers::REST_NOT_FOUND)),
+            "{pending:?}"
+        );
+    }
+
+    /// D4: a `once` continuation and a whole write of `f` on each path of
+    /// the rest of the handled body: after the `resume`, `f` has only that
+    /// value, so no escape is pending and the program is in scope.
+    #[test]
+    fn a_must_written_local_gets_a_strong_update_after_a_once_resume() {
+        assert_eq!(scope("d01_strong_ok.wf"), (None, None));
+    }
+
+    /// D4: a `multi` continuation keeps the weak update, so the escape of
+    /// the closure in `f` stays pending (the program falls back).
+    #[test]
+    fn a_multi_continuation_keeps_the_weak_update() {
+        let (_, pending) = scope("d02_multi_weak.wf");
+        assert!(
+            pending
+                .as_deref()
+                .is_some_and(|r| r.contains("a capability that leaves its handler")),
+            "{pending:?}"
+        );
+    }
+}

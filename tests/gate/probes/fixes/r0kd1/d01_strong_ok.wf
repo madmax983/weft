@@ -1,0 +1,14 @@
+// Plan stage R0k-d1 (D4, clean): the clause resumes a `once` continuation,
+// and the rest of the handled body gives `f` a new value on each path after
+// the run of the clause, so after the `resume` `f` holds only that value (a
+// strong update): no closure that performs through the handler leaves it.
+effect Log { fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}
