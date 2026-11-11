@@ -10790,3 +10790,21 @@ files = [
 finding = "R0k3-HENV"
 reason = "stage R0k-b1 design check (m3): the closure that `mk_cap` makes performs `Run` through the handler environment of the call of `mk_cap`, and the clause of `main` keeps the function value, which reads a local of `outer` after `outer` ends. The `ir` pipeline keeps the old pipeline (C2), and the old pipeline misses the fault. A copy of the closure body at the run node (R0k-b1 as written) would change the handler of the perform; the direction B1' (an explicit handler environment in the closure value) must reject it"
 stage = "R0k"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0kc2/m7_rc_shared.wf",
+]
+finding = "R0k2C-M7"
+reason = "stage R0k-c2a (a probe of the design review of the R0k-c2 note): the clause of `Pick` performs the `multi` operation `choose` of `main` after a reference into a `Vec` in an `rc` object is taken; `run` clears the `Vec` after the `handle`, and the second copy of the clause reads the reference: a read of a freed cell. D5 keeps the old pipeline (the weak form of R0g has no re-entry of a clause), and the old pipeline misses the fault. The re-entry of the full R0k-c2 design (shared places after the previous run) must reject it"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0kc2/m1_outside_ref_cleared.wf",
+]
+codes = ["W0301", "W0312"]
+reason = "stage R0k-c2a (a probe of the design review of the R0k-c2 note): the outer clause of `main` clears `v` between its two resumes while `run` holds a reference into `v` across the row. The `ir` pipeline rejects the program with the weak form of D5 (W0301 at the copy of the frame of the call of `run`, line 19); the old pipeline gives W0312 at the same call. Both reject it; ev.sh: the program faults (held)"
+stage = "R0k"

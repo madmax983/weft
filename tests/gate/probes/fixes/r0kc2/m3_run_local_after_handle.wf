@@ -1,0 +1,21 @@
+// Plan stage R0k-c2 (a probe of the design review of the R0k-c2 note; an acceptance test of the stage).
+// D5: run clears its own local after the handle in the first run; the second copy of the clause reads a reference into it (copied frame: valid)
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run() -> u64 / Choice {
+    let w = Vec.new()
+    w.push(3)
+    let r = &w[0]
+    let x = handle Pick { fn pick() {
+        let b = choose()
+        print(r)
+        resume(1)
+    } } in body()
+    w.clear()
+    x
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run()) }
+}

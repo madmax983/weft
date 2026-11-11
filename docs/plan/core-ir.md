@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 (D1a, D1c): this stage; R0k-c2 (D5, C8): design note, for review |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (the cheap step R0k-c2a is not possible: this stage) |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -4073,7 +4073,8 @@ R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/
   5 programs that come into scope) and the 19 mutants of tier 2: no HOLE, no FP-IR; the
   fact oracle passes on each copy.
 
-R0k-c2 design note (D5 and C8: a re-entry of a clause frame; not built, for review):
+R0k-c2 design note (D5 and C8: a re-entry of a clause frame; not built; the design review
+gave GO WITH CHANGES, and this text has its changes, scratchpad `r0kc2des/notes.md`):
 
 - The forms. A clause performs a `multi` operation of a handler of a caller (D5) or of a
   local handler (C8) after or before its `resume`; each later `resume` of that handler
@@ -4083,30 +4084,83 @@ R0k-c2 design note (D5 and C8: a re-entry of a clause frame; not built, for revi
   `r2/fidelity/p/multi_nested_drop`, `multi_nested_drop2`, `multi_nested_ok`, the copy of
   `multi_nested_drop` in `weft-interp`, `R2c/fd2_v1_three_levels`); tier 2: 5 (four of the
   same files, `r2/oracle/runs/m1/p1669`). `fd2_v2` and `fd2_v3` also need it (with D1).
+  The fallback also hides a fault that the old pipeline misses: `fixes/r0kc2/m7_rc_shared`
+  (a read of a freed cell in the second copy; open-old `R0k2C-M7`), so the stage is a
+  soundness gain too.
 - No IR copy: the number of re-entries is a value of the run. The facts need the design
   of the R0d note: re-entry edges in the component of the clause from its `Return`, its
   landing and its `Resume` nodes to a `Copy` node of the row; a run of the analysis of the
-  clause from the block after the row (the locals of the clause copied, the heap of the
-  end of the function); each node that runs the clause as a row of the function (a `Copy`
-  node with edges from the `Return`s of the function to its `Landing`; for a row in the
-  `post` part, a `Copy` phase of the `Post` node of the `handle`); the cycles of E2; for C8
-  the `Post` of the local `multi` handler in place of the `Return` of the function.
+  clause from the block after the row; each node that runs the clause as a row of the
+  function (a `Copy` node with edges from the `Return`s of the function to its `Landing`;
+  for a row in the `post` part, a `Copy` phase of the `Post` node of the `handle`); the
+  cycles of E2; for C8 the `Post` of the local `multi` handler in place of the `Return` of
+  the function. A clause frame that waits at its `resume` waits there in the copy too
+  (`copy_list`).
+- The continuation records. The machine copies them: `copy_frames`
+  (`weft-interp/src/machine/effects.rs`, the copy of a `Frame::Clause` and of the nested
+  continuation records) gives each copy of a clause frame a new record of its
+  continuation, in the state of the record at the row, with a copy of its frames
+  (`proofs/link/README.md`, "Differences"). Each copy resumes or drops its own record. So
+  the re-entry state of the continuation local of the clause, and of each continuation in
+  a copied frame, is its state at the row, not the state at the end of the previous copy
+  (E6). The facts take the row state: the re-entry seed has the locals of the copied
+  frames as at the row node (as the re-entry of a function body does, OL-R2a). A carried
+  state (the state at the end of the previous copy) would only be conservative for a
+  `once` continuation (a fresh one is W0503 across the row in both models, `m4`; one that
+  is used before the row is used in both, `m5`), but it is not the model, so the facts do
+  not use it.
+- The re-entry heap rule (E5), for every frame of the continuation: the clause frame, the
+  function that has the local handler and its `post` code, the callers up to the handled
+  body of the `multi` handler, and the frames of the nested continuations. A place that
+  these frames own (their slots and temporaries, and the buffers that their values own,
+  `heap.owned_cells`: a `Vec` or a `Box`, from the types) takes its state at the row, and
+  a reference into it is valid as at the row (the machine remaps it to the copy): `m3`
+  (the function clears its own local after the `handle`; the second copy reads a
+  reference into its copy: clean). A shared place (an `rc` object, a place of a frame
+  above the `multi` handler, a cell that no copied frame owns) takes its state after the
+  previous run and the code of the outer clause between the resumes: `m7` (the function
+  clears a `Vec` in an `rc` object after the `handle`: a read of a freed cell), `m1` (the
+  outer clause clears a vector of `main` between its resumes: W0301). This is the rule of
+  the re-entry of a function body (owned cells copied, `rc` shared), applied to all the
+  copied frames, not only to the locals of the clause. "The heap of the end of the
+  function" for owned places gives a false W0301 on `m3`.
 - The check of the environments. The handler environment of a clause frame is static (the
-  outer environment of the handler), so it is exact. A copied clause frame shares its
-  continuation objects with the first run: the machine copies frames, not the
-  continuations in them. A `multi` continuation can resume again on each re-entry
-  (`multi_nested_drop` runs clean); a `once` one cannot (the old pipeline gives W0503 for a
-  `once` continuation that is live across the row). So the re-entry state must keep the
-  state of the continuation local of the clause (used or not), and the cycle must carry
-  it.
+  outer environment of the handler), so it is exact. The ownership of the cells that a
+  copy duplicates is a property of the values at the run; the facts decide it from the
+  types, as the re-entry of a function body does (`m3` and `m7` are the probes).
+- Proofs: E1 to E4 for the new cycle (a run of a value of the interface in the re-entered
+  region is `many` unless they hold), and:
+  - E5: the owned/shared split of the re-entry state (above), with the references into
+    owned cells remapped;
+  - E6: the state of each continuation record at the re-entry is its state at the row;
+  - E7: each value that is not `many` (a task handle, a scope, a `!Move` value, a fresh
+    `once` continuation) and that is live across the row in any copied frame, not only in
+    the clause, is W0503 (as the old pipeline gives; `m4`).
+- The fact oracle (A4). It must name the copied cells (the `map` of `copy_frames`) as the
+  places of the copied frame, so that an access in a copy is checked against the facts of
+  the `Copy` node, and check the state of each reference at the re-entry (valid for an
+  owned place, as after the previous run for a shared one). Two mutation tests: a build
+  whose re-entry state takes the state at the end of the function for owned places must
+  fail the oracle on `m3`, and one that takes the row state for shared places must fail it
+  on `m7`.
 - What it needs: the new nodes and edges (`handlers.rs`, `nodes.rs`, `frames.rs`), the
-  re-run of the clause in the analysis (`run_rows` for a clause body, now pending), a new
-  cover of the fact oracle for copied clause frames (A4), and the proofs of E1 to E4 for
-  the new cycle. Size L. No spec relation changes.
+  re-run of the clause in the analysis (`run_rows` for a clause body, now pending, and a
+  seed of the facts of the clause after the row: the facts of a clause have one seed at
+  its entry today, `Handlers::info`), A4 with the names of the copied cells, and the
+  proofs E1 to E7. Size L + M (A4). No spec relation changes.
+- The cheap step (stage R0k-c2a) is not possible: D5 and C8 are already under the rule of
+  R0g (`Scope::pending`), and their weak form has no re-entry, so the `ir` pipeline
+  accepts `m7` and the old pipeline checks it. A weak form that rejects `m7` needs the
+  re-entry edges into the clause after the row (the new seed of the facts of the clause,
+  the main part of this design), and it cannot drop the owned/shared split: a re-entry
+  with the state at the end of the function for all places gives the false W0301 of
+  `m3`, an error that the full facts do not give. So `m7` stays open (ledger) until this
+  stage.
 - Acceptance: the 7 files of tier 1 and the 5 of tier 2 in scope with no change of their
-  records; probes with a bad case (a `once` continuation resumed again after the re-entry,
-  W0503) and a clean twin for D5 and C8, for a row before and after the `resume`, and for
-  the `post` part.
+  records; the probes of `tests/gate/probes/fixes/r0kc2/`: `m1_outside_ref_cleared` (W0301)
+  and `m1_ok`, `m3_run_local_after_handle` (clean), `m5_once_used_before_row` (clean),
+  `m6_abort_in_copy` (clean), `m7_rc_shared` (W0301) and `m7b_rc_shared_ok`, `m8_c8_local`
+  (W0301), and `m2`, `m4` (W0503 across the row) of the review.
 
 #### R1 Standalone `typeck`, part 1
 
