@@ -1,0 +1,11 @@
+// Plan stage R0k-d2 (E4, clean): the task closure runs `r`, which it gets
+// through the environment of the closure `g` that makes the scope; `r` has
+// one value, so no write lies in the window (in scope).
+fn main() / async {
+    let r = || print(1)
+    let g = || {
+        scope { s => s.spawn(|| r()) }
+        print(0)
+    }
+    g()
+}

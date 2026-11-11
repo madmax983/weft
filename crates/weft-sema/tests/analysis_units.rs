@@ -2105,3 +2105,323 @@ mod copies {
         }
     }
 }
+
+/// The copies of a closure that resumes the continuation of its clause
+/// (stage R0k-c1, `instantiate::instantiate_kont`). Each refusal is a hard
+/// rule (`docs/ir.md` 6.1, "As built (plan stage R0k-c1)").
+mod kont_copies {
+    use weft_ir::{BodyKind, LocalKind, Program, Rvalue, StmtKind, TermKind};
+    use weft_sema::factgen::instantiate::{instantiate_kont, Instantiated};
+
+    /// The analysis of `src` and its IR.
+    fn built(src: &str) -> (weft_sema::Analysis, weft_sema::irbuild::Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The source of probe `name` of `tests/gate/probes/fixes/r0kc`.
+    fn probe(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0kc")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The copies of the program of `src`, if a closure got one.
+    fn copies(src: &str) -> Option<Instantiated> {
+        let (_, b) = built(src);
+        instantiate_kont(&b).filter(|i| !i.covered.is_empty())
+    }
+
+    /// The clause bodies of `p`.
+    fn clauses(p: &Program) -> Vec<&weft_ir::Body> {
+        p.bodies
+            .iter()
+            .filter(|b| matches!(b.kind, BodyKind::Clause(..)))
+            .collect()
+    }
+
+    /// True if a clause of `p` makes closure `c`.
+    fn makes(p: &Program, c: weft_ir::ClosureId) -> bool {
+        clauses(p).iter().any(|b| {
+            b.blocks.iter().flat_map(|k| &k.stmts).any(|s| {
+                matches!(&s.kind, StmtKind::Assign(_, Rvalue::Aggregate(weft_ir::AggKind::Closure(x), _)) if *x == c)
+            })
+        })
+    }
+
+    /// True if a clause of `p` resumes its own continuation local.
+    fn resumes_own(p: &Program) -> bool {
+        clauses(p).iter().any(|b| {
+            b.blocks.iter().any(|k| match &k.term.kind {
+                TermKind::Resume { kont, .. } => {
+                    kont.is_local() && matches!(b.local_kind(kont.local), Some(LocalKind::Kont(_)))
+                }
+                _ => false,
+            })
+        })
+    }
+
+    /// A `once` continuation moves into the closure: the run gets a copy
+    /// that resumes the continuation of the clause, and the make goes.
+    #[test]
+    fn a_once_continuation_closure_gets_a_copy_and_its_make_goes() {
+        let inst = copies(&probe("c01_once_ok.wf")).expect("a copy");
+        assert_eq!(inst.closure_calls, 1);
+        let c = *inst.covered.iter().next().expect("a closure");
+        assert!(!makes(&inst.built.program, c), "the make stays");
+        assert!(resumes_own(&inst.built.program), "no resume of the clause");
+    }
+
+    /// A `multi` continuation is captured by copy: the copy reads it, and
+    /// the make stays.
+    #[test]
+    fn a_multi_continuation_closure_keeps_its_make() {
+        let inst = copies(&probe("c02_multi_ok.wf")).expect("a copy");
+        assert_eq!(inst.closure_calls, 1);
+        let c = *inst.covered.iter().next().expect("a closure");
+        assert!(makes(&inst.built.program, c), "the make goes");
+        assert!(resumes_own(&inst.built.program), "no resume of the clause");
+    }
+
+    /// D1c: the callee that gets the closure gets a copy at the call, then
+    /// the run in that copy gets a copy of the closure body.
+    #[test]
+    fn a_closure_given_to_a_callee_gets_a_copy_in_the_copy_of_the_callee() {
+        let inst = copies(&probe("c04_callee_ok.wf")).expect("a copy");
+        assert_eq!(inst.calls, 1);
+        assert_eq!(inst.closure_calls, 1);
+        assert!(resumes_own(&inst.built.program), "no resume of the clause");
+    }
+
+    /// Each refusal of the probes: two runs, a perform between the make and
+    /// the run, a call that can abort between them, a borrow of the closure
+    /// value, a make in a body inside the clause, a field on the chain.
+    #[test]
+    fn the_probes_of_a_refusal_get_no_copy() {
+        for name in [
+            "c03_two_runs_ok.wf",
+            "c05_perform_between_ok.wf",
+            "c06_call_between_ok.wf",
+            "c07_use_after_ok.wf",
+            "c08_nested_ok.wf",
+            "c09_field_ok.wf",
+        ] {
+            assert!(copies(&probe(name)).is_none(), "{name}: a copy");
+        }
+    }
+
+    /// The continuation is named again after the make (a `resume` of the
+    /// clause after the run): no copy.
+    #[test]
+    fn a_continuation_named_after_the_make_refuses_the_copy() {
+        let src = "effect Tick { multi fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+        let k = || resume(())
+        k()
+        resume(())
+    } } in { tick() }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// A body inside the clause names a local of the chain (it runs the
+    /// closure again): no copy.
+    #[test]
+    fn a_body_inside_the_clause_that_names_the_chain_refuses_the_copy() {
+        let src = "effect Tick { multi fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+        let k = || resume(())
+        k()
+        handle Other { fn other() { resume(()) } } in { k() }
+    } } in { tick() }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// A task runs the closure: a spawn is no call, so no copy.
+    #[test]
+    fn a_spawn_of_the_closure_gets_no_copy() {
+        let src = "effect Tick { fn tick() }
+fn main() / async {
+    handle Tick { fn tick() {
+        let k = || resume(())
+        scope { s => s.spawn(k) }
+    } } in { tick() }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// A path from the make that does not reach the run (a branch): no copy.
+    #[test]
+    fn a_path_from_the_make_that_misses_the_run_refuses_the_copy() {
+        let src = "effect Tick { fn tick(b: bool) }
+fn main() {
+    handle Tick { fn tick(b) {
+        let k = || resume(())
+        if b { k() }
+    } } in { tick(true) }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// The program with the copies is the view that the check takes if the
+    /// facts without them find no error (`factgen::Pending::copy`).
+    #[test]
+    fn a_pending_program_with_copies_gets_the_view_of_the_copies() {
+        let (a, _) = built(&probe("c01_once_ok.wf"));
+        let p = a
+            .ir_scope
+            .as_ref()
+            .and_then(|s| s.pending.as_ref())
+            .expect("pending");
+        assert!(p.copy.is_some(), "no view of the copies");
+        let (a, _) = built(&probe("c03_two_runs_ok.wf"));
+        let p = a
+            .ir_scope
+            .as_ref()
+            .and_then(|s| s.pending.as_ref())
+            .expect("pending");
+        assert!(p.copy.is_none(), "a view of the copies");
+    }
+}
+
+/// Stage R0k-d1: a run of a clause outside its handled body (A) is pending
+/// with a weak form, and a strong update after a `resume` of a `once`
+/// continuation (D4).
+mod r0kd1 {
+    /// The scope of the `ir` pipeline for the probe `name` of
+    /// `tests/gate/probes/fixes/r0kd1`: the reason of the fallback and of
+    /// the pending construct.
+    fn scope(name: &str) -> (Option<String>, Option<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0kd1")
+            .join(name);
+        let src =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(&src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let s = a.ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// A: the run of the clause maps to no node of the handled body. The
+    /// program is not a fallback of the fact generator: it is pending, and
+    /// the check decides (the `ir` pipeline rejects it: W0313).
+    #[test]
+    fn a_run_of_a_clause_outside_its_handled_body_is_pending() {
+        let (fallback, pending) = scope("a01_escape_bad.wf");
+        assert!(fallback.is_none(), "{fallback:?}");
+        assert!(
+            pending
+                .as_deref()
+                .is_some_and(|r| r.contains(weft_sema::factgen::handlers::REST_NOT_FOUND)),
+            "{pending:?}"
+        );
+    }
+
+    /// D4: a `once` continuation and a whole write of `f` on each path of
+    /// the rest of the handled body: after the `resume`, `f` has only that
+    /// value, so no escape is pending and the program is in scope.
+    #[test]
+    fn a_must_written_local_gets_a_strong_update_after_a_once_resume() {
+        assert_eq!(scope("d01_strong_ok.wf"), (None, None));
+    }
+
+    /// D4: a `multi` continuation keeps the weak update, so the escape of
+    /// the closure in `f` stays pending (the program falls back).
+    #[test]
+    fn a_multi_continuation_keeps_the_weak_update() {
+        let (_, pending) = scope("d02_multi_weak.wf");
+        assert!(
+            pending
+                .as_deref()
+                .is_some_and(|r| r.contains("a capability that leaves its handler")),
+            "{pending:?}"
+        );
+    }
+}
+
+/// Stage R0k-d2: a task that runs a shared function variable is late
+/// (`TASK_LATE`, pending) only if a write of the variable lies in the window
+/// of the task: from the spawn to the `join` of its handle, in the scope body
+/// of the spawn.
+mod r0kd2 {
+    /// The reason of the fallback and of the pending construct of probe
+    /// `name` of `tests/gate/probes/fixes/r0kd2`.
+    fn scope(name: &str) -> (Option<String>, Option<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0kd2")
+            .join(name);
+        let src =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(&src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let s = a.ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// True if the pending reason is the late task.
+    fn late(p: Option<&str>) -> bool {
+        p.is_some_and(|r| r.contains("a task that runs a function variable that gets a new value"))
+    }
+
+    /// A write before the spawn (two paths) or after the `join`: the program
+    /// is in scope.
+    #[test]
+    fn a_write_out_of_the_window_of_the_task_is_not_late() {
+        assert_eq!(scope("s1_before_spawn_ok.wf"), (None, None));
+        assert_eq!(scope("s2_after_join_ok.wf"), (None, None));
+    }
+
+    /// A write between the spawn and the `join` is late.
+    #[test]
+    fn a_write_in_the_window_of_the_task_is_late() {
+        let (_, pending) = scope("s2_in_window_bad.wf");
+        assert!(late(pending.as_deref()), "{pending:?}");
+    }
+
+    /// A spawn in a closure on the scope of the body around it: the task can
+    /// outlive the closure body, so each other write counts.
+    #[test]
+    fn a_spawn_in_a_closure_on_an_outer_scope_stays_conservative() {
+        let (_, pending) = scope("s4_spawn_in_closure_ok.wf");
+        assert!(late(pending.as_deref()), "{pending:?}");
+    }
+}

@@ -1,0 +1,11 @@
+// Plan stage R0k-d2 (E4, bad): the same shape, and the scope body gives `f`
+// a new value after the closure spawns the task: the task can run either
+// value (the program keeps the fallback).
+fn main() / async {
+    let f = || print(1)
+    scope { s =>
+        let go = || s.spawn(|| f())
+        go()
+        f = || print(2)
+    }
+}

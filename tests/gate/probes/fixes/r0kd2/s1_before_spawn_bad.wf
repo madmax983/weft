@@ -1,0 +1,14 @@
+// Plan stage R0k-d2 (E4, bad): the same shape, and one value of `f`
+// changes `v` while the scope body reads `v` before the join: a task
+// changes a place that other code reads (W0405).
+fn main() / async {
+    let c = true
+    let v = Vec.new()
+    v.push(1)
+    let f = if c { || v.push(2) } else { || print(2) }
+    scope { s =>
+        let t = s.spawn(|| f())
+        print(v.len())
+        t.join()
+    }
+}

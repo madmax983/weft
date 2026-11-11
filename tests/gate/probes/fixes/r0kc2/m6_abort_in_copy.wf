@@ -1,0 +1,18 @@
+// Plan stage R0k-c2 (a probe of the design review of the R0k-c2 note; an acceptance test of the stage).
+// D5: the second copy fails; a Fail handler in run catches; a linear value of main with no on abort is held across
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run() -> u64 / Choice {
+    handle Fail { fn fail(m) { 7 } } in {
+        handle Pick { fn pick() {
+            let b = choose()
+            if b { resume(1) } else { { fail("second")
+                0 } }
+        } } in body()
+    }
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run()) }
+}

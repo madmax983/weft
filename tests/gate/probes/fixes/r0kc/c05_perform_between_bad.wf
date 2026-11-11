@@ -1,0 +1,24 @@
+// Plan stage R0k-c1 (bad): a perform lies between the make and the run: no copy, the program keeps the fallback.
+// The clause clears `v` after the handled body took `keep = &v[0]`:
+// the read of `keep` after the `handle` is a read of a freed cell (W0301).
+effect Tick { fn tick() }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Ask { fn ask() { resume(1) } } in {
+        handle Tick { fn tick() {
+                let k = || resume(())
+                let y = ask()
+                k()
+                v.clear()
+            } } in {
+            tick()
+            keep = &v[0]
+        }
+    }
+    print(keep + 1)
+}

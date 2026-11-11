@@ -1,0 +1,15 @@
+// Plan stage R0k-d1 (A, bad): a closure that captures the capability of a
+// local handler leaves the handled body in a struct; its inner closure
+// performs through it, and `apply` runs the inner closure after the
+// `handle`: the perform finds no handler (W0313). The run of the clause maps
+// to no node of the handled body, so the facts of the resume have no region
+// (the weak form), and the program is in scope only if the `ir` pipeline
+// rejects it.
+effect Ask { fn ask() -> u64 }
+struct H { f: fn() }
+fn apply(f: fn()) { f() }
+fn call_h(h: &H) { let g = h.f; g() }
+fn main() {
+    let h = handle Ask { fn ask() { resume(5) } } in { H { f: || apply(|| print(ask())) } }
+    call_h(&h)
+}

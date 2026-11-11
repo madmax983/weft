@@ -1,0 +1,16 @@
+// Plan stage R0k-c2 (a probe of the design review of the R0k-c2 note; an acceptance test of the stage).
+// C8: the clause of Ask performs pick (local multi handler) after its resume; the second resume of pick re-enters the Ask clause, which reads a reference into a Vec that the handled body cleared
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true)
+        v.clear()
+        resume(false) } } in {
+        let r = &v[0]
+        handle Ask { fn ask() { resume(1)
+            let b = pick()
+            print(r) } } in { print(ask()) }
+    }
+}

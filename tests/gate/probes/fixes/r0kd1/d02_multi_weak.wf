@@ -1,0 +1,14 @@
+// Plan stage R0k-d1 (D4, weak): a `multi` continuation can run the rest of
+// the handled body more than once, so the update after the `resume` stays
+// weak, and the program keeps its fallback (D4) although it runs clean.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}

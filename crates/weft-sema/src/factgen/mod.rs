@@ -424,10 +424,7 @@ fn check_supported(
                 TermKind::Resume { kont, .. } => {
                     match crate::analysis::clause::kont_handler(p, bid, kont) {
                         Some((_, c, _)) if c == bid => {}
-                        _ => crate::analysis::clause::note_pending(Unsupported {
-                            group: Group::D,
-                            reason: crate::analysis::clause::KONT_CAPTURED.to_string(),
-                        }),
+                        _ => crate::analysis::clause::note_kont_pending(p, bid),
                     }
                 }
                 // The task terminators of a body that splices into a
@@ -2645,6 +2642,32 @@ pub fn components_built(
     let Err(u) = &first else {
         return (built, first);
     };
+    // A `resume` of a captured continuation: the copies of stage R0k-c1, as
+    // `run` makes them (`kont_view`).
+    if u.reason == crate::analysis::clause::KONT_CAPTURED {
+        let Some(inst) = instantiate::instantiate_kont(&built) else {
+            return (built, first);
+        };
+        let covered: std::collections::BTreeSet<weft_ir::BodyId> = inst
+            .covered
+            .iter()
+            .filter_map(|c| inst.built.program.closures.get(c.index()).map(|d| d.body))
+            .collect();
+        if covered.is_empty() {
+            return (built, first);
+        }
+        let second = {
+            let _weak = inst
+                .weak_ok
+                .then(crate::analysis::transfer::WeakRowOps::enter);
+            let _covered = crate::analysis::clause::KontCovered::enter(covered);
+            components(a, &inst.built)
+        };
+        return match second {
+            Ok(x) => (inst.built, Ok(x)),
+            Err(_) => (built, first),
+        };
+    }
     let Some(inst) = instantiate::wanted(u)
         .then(|| instantiate::instantiate(&built))
         .flatten()
@@ -3898,7 +3921,7 @@ pub struct Scope {
 
 /// A program that the `ir` pipeline checks only if it rejects it (stage
 /// R0g, [`Scope::pending`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct Pending {
     /// Why the facts are not whole: the reason of the fallback if the `ir`
     /// pipeline finds no error.
@@ -3908,7 +3931,24 @@ pub struct Pending {
     /// [`Analysis::ir_facts`]. True if the pipeline is [`crate::FactGen::Ir`]:
     /// the check then gives the `ir` view alone.
     pub ir_view: bool,
+    /// The facts of the program with the copies of stage R0k-c1
+    /// (`instantiate::instantiate_kont`), if each construct with no full
+    /// facts is a `resume` of a captured continuation and the copies cover
+    /// each one. The check uses them only if the `ir` facts without the
+    /// copies find no error (so no program that is in scope changes): then
+    /// the `ir` pipeline checks the program with them.
+    pub copy: Option<Box<IrFacts>>,
 }
+
+impl PartialEq for Pending {
+    fn eq(&self, other: &Self) -> bool {
+        self.reason == other.reason
+            && self.ir_view == other.ir_view
+            && self.copy.is_some() == other.copy.is_some()
+    }
+}
+
+impl Eq for Pending {}
 
 impl Scope {
     /// True if the `ir` pipeline checks the program.
@@ -4086,24 +4126,121 @@ pub(crate) fn run(
         built = inst.built;
     }
     // A construct that the facts do not model: the check decides (stage
-    // R0g).
-    if let Some(u) = crate::analysis::clause::take_pending().first() {
+    // R0g). A `resume` of a captured continuation can get a copy of the
+    // closure body at its run (stage R0k-c1): the check takes those facts if
+    // the facts without the copies find no error.
+    let pend = crate::analysis::clause::take_pending();
+    if let Some(u) = pend.first() {
+        let kont = pend
+            .iter()
+            .all(|x| x.reason == crate::analysis::clause::KONT_CAPTURED);
+        let copy = if kont {
+            kont_view(a, &built, &s, no_runtime, kept.clone())
+        } else {
+            None
+        };
         s.pending = Some(Pending {
             reason: u.to_string(),
             ir_view: false,
+            copy,
         });
     }
-    exports::fill(a, &built, &mut facts);
+    let out = finish(
+        a,
+        &built,
+        facts,
+        kept,
+        (emitted, effects, on_abort),
+        no_runtime,
+    );
+    (s, Some(out))
+}
+
+/// The facts of the program `built` with the copies of stage R0k-c1
+/// (`instantiate::instantiate_kont`), if they have no construct with no full
+/// facts ([`Pending::copy`]).
+fn kont_view(
+    a: &Analysis,
+    built: &Built,
+    s: &Scope,
+    no_runtime: bool,
+    kept: Vec<Diagnostic>,
+) -> Option<Box<IrFacts>> {
+    let inst = instantiate::instantiate_kont(built)?;
+    let covered: std::collections::BTreeSet<weft_ir::BodyId> = inst
+        .covered
+        .iter()
+        .filter_map(|c| inst.built.program.closures.get(c.index()).map(|d| d.body))
+        .collect();
+    if covered.is_empty() {
+        return None;
+    }
+    let _ = crate::analysis::clause::take_pending();
+    let _weak = inst
+        .weak_ok
+        .then(crate::analysis::transfer::WeakRowOps::enter);
+    let _covered = crate::analysis::clause::KontCovered::enter(covered);
+    let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
+    let emitted = std::cell::RefCell::new(Vec::new());
+    let effects = std::cell::RefCell::new(Vec::new());
+    let on_abort = std::cell::RefCell::new(None);
+    let second = {
+        let input = Input {
+            analysis: a,
+            built: &inst.built,
+            scope: s,
+            diags: &emitted,
+            effects: &effects,
+            no_runtime,
+            on_abort: &on_abort,
+        };
+        emit(&input, &mut facts)
+    };
+    let left = crate::analysis::clause::take_pending();
+    if second.is_err() || !left.is_empty() {
+        return None;
+    }
+    let out = finish(
+        a,
+        &inst.built,
+        facts,
+        kept,
+        (emitted, effects, on_abort),
+        no_runtime,
+    );
+    let _ = crate::analysis::clause::take_pending();
+    Some(Box::new(out))
+}
+
+/// The cells of one emit: its diagnostics, its effects, and its `W0118` rows.
+type EmitCells = (
+    std::cell::RefCell<Vec<Diagnostic>>,
+    std::cell::RefCell<Vec<(crate::FnId, crate::program::EffectSig)>>,
+    std::cell::RefCell<Option<Vec<Diagnostic>>>,
+);
+
+/// The result of [`run`] from the facts `facts` of an emit of program
+/// `built`: the exports, the pruned rows, the signatures and the
+/// diagnostics.
+fn finish(
+    a: &Analysis,
+    built: &Built,
+    mut facts: Vec<FnFacts>,
+    kept: Vec<Diagnostic>,
+    (emitted, effects, on_abort): EmitCells,
+    no_runtime: bool,
+) -> IrFacts {
+    exports::fill(a, built, &mut facts);
     // The rows that no rule reads go (stage C1.4).
     for f in &mut facts {
         prune::prune(f);
     }
     // An emit that gives no W0118 (a test hook): the summaries give it.
     let on_abort = on_abort.into_inner().unwrap_or_else(|| {
-        let sums = summaries(a, &built);
-        checks::on_abort_rows(a, &built, &sums, no_runtime)
+        let sums = summaries(a, built);
+        checks::on_abort_rows(a, built, &sums, no_runtime)
     });
-    let (sigs, no_ir) = ir_sigs(a, &built, effects.into_inner());
+    let (sigs, no_ir) = ir_sigs(a, built, effects.into_inner());
     let bodies = a
         .decls
         .iter()
@@ -4145,15 +4282,12 @@ pub(crate) fn run(
     }
     diags.extend(built.diags.iter().cloned());
     diags.extend(emitted.into_inner());
-    (
-        s,
-        Some(IrFacts {
-            bodies,
-            diags,
-            sigs,
-            no_ir,
-        }),
-    )
+    IrFacts {
+        bodies,
+        diags,
+        sigs,
+        no_ir,
+    }
 }
 
 /// The bodies of the component of the function or test body `entry`.

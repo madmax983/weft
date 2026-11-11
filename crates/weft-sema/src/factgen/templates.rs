@@ -6367,11 +6367,24 @@ const TASK_AGAIN: &str = "a task that runs a callback more than once";
 /// a new value is not in scope (plan stage F19).
 const TASK_LATE: &str = "a task that runs a function variable that gets a new value";
 
-/// True if the closure value `f` runs a capture that is a shared cell (a
-/// `ByRef` or a `Kept` capture) of a variable that more than one statement
-/// gives a whole value: a task that runs `f` runs the value of the cell at
-/// that time.
-fn runs_rebound_cell(p: &weft_ir::Program, f: &FnVal, sums: &crate::analysis::Summaries) -> bool {
+/// True if the closure value `f` that the task of the terminator at block
+/// `at.1` of body `at.0` runs runs a capture that is a shared cell (a
+/// `ByRef` or a `Kept` capture) that can get a new whole value while the
+/// task can run: the task runs the value of the cell at that time, and the
+/// run at the spawn node applies only the values of the cell there.
+///
+/// Stage R0k-d2: the cell is the variable that the capture names, whole,
+/// through the upvar locals and the `Kept` and `ByRef` captures of the
+/// makers (`instantiate::whole_cell_of`); a capture that names no such
+/// variable (a part of a variable, a place behind a reference) counts as
+/// late. A whole write of the cell counts only in the window of the task
+/// ([`late_write`]).
+fn runs_rebound_cell(
+    p: &weft_ir::Program,
+    f: &FnVal,
+    sums: &crate::analysis::Summaries,
+    at: (BodyId, weft_ir::BlockId),
+) -> bool {
     let (FnVal::Closure(c) | FnVal::Made(c)) = f else {
         return false;
     };
@@ -6385,28 +6398,129 @@ fn runs_rebound_cell(p: &weft_ir::Program, f: &FnVal, sums: &crate::analysis::Su
         if !matches!(
             cap.mode,
             weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
-        ) || !cap.source.proj.is_empty()
-        {
-            return !cap.source.proj.is_empty();
+        ) {
+            return false;
         }
-        let Ok(owner) = super::alpha::owner_local(p, decl.maker, cap.source.local) else {
+        let Some(cell) = super::instantiate::whole_cell_of(p, decl.maker, &cap.source) else {
             return true;
         };
-        let mut sets = 0usize;
-        for (bi, b) in p.bodies.iter().enumerate() {
-            let bid = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
-            for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
-                if let weft_ir::StmtKind::Assign(q, _) = &s.kind {
-                    if q.proj.is_empty()
-                        && super::alpha::owner_local(p, bid, q.local).ok() == Some(owner)
-                    {
-                        sets += 1;
-                    }
-                }
+        late_write(p, cell, at)
+    })
+}
+
+/// True if a statement or a terminator can give the cell `cell` a new
+/// value while the task of the terminator at block `at.1` of body `at.0`
+/// can run (stage R0k-d2): a write whose place names the whole cell
+/// (`instantiate::whole_cell_of`), an `Assign` or the destination of a
+/// terminator, in a body that is not outside the window:
+///
+/// - A spawn on the scope of its own body (a scope body, through its scope
+///   capability) or a `fork`: a body above the body of the terminator does
+///   not run while the task can run (it waits at the scope or at the
+///   `fork`), so its writes do not count. In the body of the terminator, a
+///   write counts if a path from the terminator reaches it (a loop too),
+///   and for a spawn the path stops at a `join` of the handle that the spawn
+///   gives; a `fork` waits for its branches, so no write of its own body
+///   counts.
+/// - Each other write counts: a body inside the body of the terminator (a
+///   task, a clause, a closure), a body that the code of the window can call
+///   or run. For any other terminator (a spawn on a scope of another body:
+///   the task can outlive the body) the variable is late if it has more than
+///   one whole write (the rule of plan stage R0j).
+fn late_write(
+    p: &weft_ir::Program,
+    cell: (BodyId, weft_ir::LocalId),
+    (b, k): (BodyId, weft_ir::BlockId),
+) -> bool {
+    let Some(body) = p.body(b) else {
+        return true;
+    };
+    let Some(term) = body.block(k).map(|x| &x.term.kind) else {
+        return true;
+    };
+    // The window of the task in its own body: `Some(handle)` for a spawn on
+    // the scope of the body, `Some(None)` for a `fork`, `None` else.
+    let own_scope = |o: &Operand| {
+        o.place().is_some_and(|q| {
+            q.is_local() && matches!(body.local_kind(q.local), Some(weft_ir::LocalKind::ScopeCap))
+        })
+    };
+    let window: Option<Option<weft_ir::LocalId>> = match term {
+        weft_ir::TermKind::Spawn { scope, dest, .. }
+            if matches!(body.kind, weft_ir::BodyKind::Scope(_)) && own_scope(scope) =>
+        {
+            Some(dest.as_ref().filter(|d| d.is_local()).map(|d| d.local))
+        }
+        weft_ir::TermKind::Fork { .. } => Some(None),
+        _ => None,
+    };
+    let fork = matches!(term, weft_ir::TermKind::Fork { .. });
+    // The number of whole writes of the cell in a block.
+    let writes = |x: BodyId, blk: &weft_ir::Block| {
+        let assigns = blk
+            .stmts
+            .iter()
+            .filter(|s| {
+                matches!(&s.kind, weft_ir::StmtKind::Assign(q, _)
+                    if super::instantiate::whole_cell_of(p, x, q) == Some(cell))
+            })
+            .count();
+        let dest = blk
+            .term
+            .kind
+            .dest()
+            .is_some_and(|q| super::instantiate::whole_cell_of(p, x, q) == Some(cell));
+        assigns + usize::from(dest)
+    };
+    // The blocks of the body of the terminator that a path from it reaches,
+    // up to a `join` of the handle of the spawn.
+    let mut reached = vec![false; body.blocks.len()];
+    let mut work: Vec<weft_ir::BlockId> = term
+        .normal_successors()
+        .into_iter()
+        .chain(term.unwind())
+        .collect();
+    while let Some(x) = work.pop() {
+        match reached.get_mut(x.index()) {
+            Some(r) if !*r => *r = true,
+            _ => continue,
+        }
+        let Some(blk) = body.block(x) else { continue };
+        let joins = match (&blk.term.kind, window) {
+            (weft_ir::TermKind::Join { task, .. }, Some(Some(h))) => {
+                task.place().is_some_and(|q| q.is_local() && q.local == h)
+            }
+            _ => false,
+        };
+        if !joins {
+            work.extend(blk.term.kind.normal_successors());
+            work.extend(blk.term.kind.unwind());
+        }
+    }
+    // With no window: more than one whole write (the rule of plan stage
+    // R0j: the one write gives the variable its value before the task can
+    // read it).
+    let mut all = 0usize;
+    for (i, x) in p.bodies.iter().enumerate() {
+        let xid = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        for (bi, blk) in x.blocks.iter().enumerate() {
+            let n = writes(xid, blk);
+            if n == 0 {
+                continue;
+            }
+            all += n;
+            let counts = match window {
+                Some(_) if xid != b && crate::analysis::clause::inside(p, b, xid) => false,
+                Some(_) if xid == b => !fork && reached.get(bi).copied().unwrap_or(true),
+                Some(_) => true,
+                None => all > 1,
+            };
+            if counts {
+                return true;
             }
         }
-        sets > 1
-    })
+    }
+    false
 }
 
 /// Why a call of a function value that runs a value of its arguments as a
@@ -6816,7 +6930,10 @@ fn task_start(
     // apply (`zz_late`, `late_task`).
     // Plan stage R0j: the later values of the cell are not in the run at
     // `n`, so the program is in scope only if the `ir` pipeline rejects it.
-    if fns.iter().any(|f| runs_rebound_cell(em.p, f, em.sums)) {
+    if fns
+        .iter()
+        .any(|f| runs_rebound_cell(em.p, f, em.sums, (body, block)))
+    {
         pending(crate::irbuild::scope::Group::E, TASK_LATE);
     }
     // Code of a caller that runs as a task (a parameter, a closure that

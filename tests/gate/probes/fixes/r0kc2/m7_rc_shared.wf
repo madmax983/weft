@@ -1,0 +1,22 @@
+// Plan stage R0k-c2 (a probe of the design review of the R0k-c2 note; an acceptance test of the stage).
+// D5: an rc object is shared between the copies; the first run clears its Vec; the second copy reads a reference into it taken before the row
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run(b: Rc<B>) -> u64 / Choice, mut(B) {
+    let r = &b.v[0]
+    let x = handle Pick { fn pick() {
+        let c = choose()
+        print(r)
+        resume(1)
+    } } in body()
+    b.v.clear()
+    x
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(b)) }
+}

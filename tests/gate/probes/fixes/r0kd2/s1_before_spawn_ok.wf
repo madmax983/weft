@@ -1,0 +1,11 @@
+// Plan stage R0k-d2 (E4, clean): `f` gets its value on one of two paths
+// before the spawn, so the task runs a value that the state at the spawn
+// has: no write of `f` lies in the window of the task (in scope).
+fn main() / async {
+    let c = true
+    let f = if c { || print(1) } else { || print(2) }
+    scope { s =>
+        let t = s.spawn(|| f())
+        t.join()
+    }
+}

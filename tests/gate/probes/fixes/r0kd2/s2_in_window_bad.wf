@@ -1,0 +1,11 @@
+// Plan stage R0k-d2 (E4, the late twin): `g` gets a new value after the
+// spawn and before the `join`: the task can run the new value, which the
+// run at the spawn node does not apply, so the program keeps the fallback.
+fn main() / async {
+    let g = || print(0)
+    scope { s =>
+        let t = s.spawn(|| g())
+        g = || print(2)
+        t.join()
+    }
+}

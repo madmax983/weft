@@ -65,8 +65,10 @@ pub fn check_analysis(mut analysis: Analysis, files: &[SourceFile]) -> Checked {
 /// [`Analysis::ir_facts`], those of the `ir` pipeline. If the check of the
 /// `ir` facts finds an error, the `ir` pipeline rejects the program and
 /// gives the result (alone, or as [`Checked::ir`] next to the check of the
-/// old facts). Else the facts can miss an error, so the old pipeline checks
-/// the program: the scope gets the reason of the fallback.
+/// old facts). Else, if the program has the facts of the copies of stage
+/// R0k-c1 (`weft_sema::factgen::Pending::copy`), they check it, and it is in
+/// scope. Else the facts can miss an error, so the old pipeline checks the
+/// program: the scope gets the reason of the fallback.
 fn check_pending(
     mut analysis: Analysis,
     files: &[SourceFile],
@@ -79,6 +81,22 @@ fn check_pending(
         view.sigs = facts.sigs;
         let ir = check_bodies(view, files);
         if !ir.ok() {
+            if p.ir_view {
+                return ir;
+            }
+            let mut c = check_bodies(analysis, files);
+            c.ir = Some(Box::new(ir));
+            return c;
+        }
+        // The facts without the copies find no error: the facts of the
+        // program with the copies of stage R0k-c1, if they cover each
+        // construct, check the program (`Pending::copy`).
+        if let Some(copy) = p.copy {
+            let mut view = analysis.clone();
+            view.bodies = copy.bodies;
+            view.diags = copy.diags;
+            view.sigs = copy.sigs;
+            let ir = check_bodies(view, files);
             if p.ir_view {
                 return ir;
             }

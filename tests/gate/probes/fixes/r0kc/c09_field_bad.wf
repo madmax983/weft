@@ -1,0 +1,22 @@
+// Plan stage R0k-c1 (bad): the closure (of a `multi` continuation) goes through a field of a struct: no copy, the program keeps the fallback.
+// The clause clears `v` after the handled body took `keep = &v[0]`:
+// the read of `keep` after the `handle` is a read of a freed cell (W0301).
+effect Tick { multi fn tick() }
+struct H { f: fn() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let h = H { f: || resume(()) }
+            let g = h.f
+            g()
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

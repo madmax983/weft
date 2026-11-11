@@ -1682,6 +1682,56 @@ pub fn note_pending(u: crate::factgen::Unsupported) {
     });
 }
 
+thread_local! {
+    /// The bodies of the closures whose one run has a copy of their body
+    /// (stage R0k-c1, [`KontCovered`]).
+    static KONT_COVERED: std::cell::RefCell<BTreeSet<BodyId>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+/// While a value of this type is live, a `resume` of a captured
+/// continuation in the body of a closure of the set (or in a body inside
+/// it) is not a construct with no full facts (stage R0k-c1).
+///
+/// Such a closure resumes the continuation of the clause that makes it, and
+/// its one run has a copy of its body (`factgen::instantiate::
+/// instantiate_kont`): the copy has the resume point of the clause, and no
+/// run applies the summary of the closure. The facts of the closure body
+/// keep the weak form of the `resume` (it moves its argument and uses the
+/// continuation).
+#[derive(Debug)]
+pub struct KontCovered {
+    old: BTreeSet<BodyId>,
+}
+
+impl KontCovered {
+    /// Covers the closure bodies `bodies` until the value drops.
+    pub fn enter(bodies: BTreeSet<BodyId>) -> Self {
+        let old = KONT_COVERED.with(|c| c.replace(bodies));
+        Self { old }
+    }
+}
+
+impl Drop for KontCovered {
+    fn drop(&mut self) {
+        let old = std::mem::take(&mut self.old);
+        KONT_COVERED.with(|c| c.replace(old));
+    }
+}
+
+/// Notes [`KONT_CAPTURED`] for a `resume` of a captured continuation in
+/// body `body`, but not in a body that [`KontCovered`] covers.
+pub fn note_kont_pending(p: &Program, body: BodyId) {
+    let covered = KONT_COVERED.with(|c| c.borrow().iter().any(|&cb| inside(p, body, cb)));
+    if covered {
+        return;
+    }
+    note_pending(crate::factgen::Unsupported {
+        group: crate::irbuild::scope::Group::D,
+        reason: KONT_CAPTURED.to_string(),
+    });
+}
+
 /// The constructs of [`note_pending`] since the last call, which clears
 /// them.
 pub fn take_pending() -> Vec<crate::factgen::Unsupported> {
@@ -1854,7 +1904,7 @@ fn resume_with(
     resumed: &Tree,
 ) -> Result<(), AlphaError> {
     let p = cx.p;
-    let (_, cb, multi) = kont_handler(p, body, kont)
+    let (h, cb, multi) = kont_handler(p, body, kont)
         .ok_or(AlphaError::Later("a continuation in a closure (stage F16)"))?;
     transfer::moves(p, body, st, [arg])?;
     if !multi {
@@ -1864,10 +1914,127 @@ fn resume_with(
     }
     if let Some(ex) = exit {
         let mut after = ex.with_bodies_of(st, &|b| inside(p, b, cb));
-        after.join_values_but(st, &|b| inside(p, b, cb));
+        // A `once` continuation: a local of the site that the rest of the
+        // handled body gives a whole value on each path has that value
+        // after the `resume` (a strong update, stage R0k-d1).
+        let strong = if multi {
+            BTreeSet::new()
+        } else {
+            must_written(cx, h)?
+        };
+        after.join_values_but_keys(st, &|b| inside(p, b, cb), &strong);
         *st = after;
     }
     transfer::bind_result(cx, body, st, &[], dest, resumed.clone())
+}
+
+/// The locals of the site that the rest of the handled body of handler `h`
+/// gives a whole value on each path, after each node that runs a clause of
+/// `h` (stage R0k-d1, D4): the state keys of their upvar locals.
+///
+/// After a `resume` of a `once` continuation the rest of the handled body
+/// has run once, to its end, and a value that the clause put into such a
+/// local before the `resume` is gone, so the value at the end of the
+/// handled body is the value. The set is empty (each local joins, the weak
+/// update) if a body inside the handled body that is not a closure body
+/// runs a clause of `h`, or if no node of the handled body runs one. Only a
+/// whole `Assign` of the upvar local in the handled body itself counts as a
+/// write.
+///
+/// # Errors
+///
+/// The errors of `transfer::move_path`.
+fn must_written(cx: &Cx<'_>, h: HandlerId) -> Result<BTreeSet<super::domain::Key>, AlphaError> {
+    let p = cx.p;
+    let mut out = BTreeSet::new();
+    let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+        return Ok(out);
+    };
+    let Some(b) = p.body(hb) else {
+        return Ok(out);
+    };
+    let runs_h = |x: BodyId, t: &TermKind| {
+        crate::factgen::frames::clause_handlers(p, cx.tys, cx.sums, x, t).contains(&h)
+    };
+    // A body inside the handled body (not a closure body: its performs are
+    // runs at the node that runs the closure) that runs a clause of `h`.
+    for (i, x) in p.bodies.iter().enumerate() {
+        let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        if id == hb || !inside(p, id, hb) || p.closure_of(id).is_some() {
+            continue;
+        }
+        if x.blocks.iter().any(|k| runs_h(id, &k.term.kind)) {
+            return Ok(out);
+        }
+    }
+    let runs: Vec<usize> = b
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, k)| !k.cleanup && runs_h(hb, &k.term.kind))
+        .map(|(i, _)| i)
+        .collect();
+    if runs.is_empty() {
+        return Ok(out);
+    }
+    for (li, d) in b.locals.iter().enumerate() {
+        if !matches!(d.kind, LocalKind::Upvar(_)) {
+            continue;
+        }
+        let u = weft_ir::LocalId(u32::try_from(li).unwrap_or(u32::MAX));
+        let writes = |k: &weft_ir::Block| {
+            k.stmts.iter().any(|s| {
+                matches!(&s.kind, weft_ir::StmtKind::Assign(q, _) if q.local == u && q.is_local())
+            })
+        };
+        // The blocks from which each path to a `Return` writes `u`: the
+        // greatest fixpoint (a path with no end needs no write).
+        let n = b.blocks.len();
+        let mut w = vec![true; n];
+        loop {
+            let mut changed = false;
+            for (i, k) in b.blocks.iter().enumerate() {
+                let v = if k.cleanup {
+                    false
+                } else if writes(k) {
+                    true
+                } else {
+                    let succ = k.term.kind.normal_successors();
+                    !succ.is_empty()
+                        && !matches!(k.term.kind, TermKind::Return)
+                        && succ
+                            .iter()
+                            .all(|s| w.get(s.index()).copied().unwrap_or(false))
+                };
+                if w.get(i).copied() != Some(v) {
+                    if let Some(x) = w.get_mut(i) {
+                        *x = v;
+                    }
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let after_each_run = runs.iter().all(|&r| {
+            b.blocks.get(r).is_some_and(|k| {
+                let succ = k.term.kind.normal_successors();
+                !succ.is_empty()
+                    && succ
+                        .iter()
+                        .all(|s| w.get(s.index()).copied().unwrap_or(false))
+            })
+        });
+        if after_each_run {
+            if let Some((key, path)) = transfer::move_path(p, hb, &Place::local(u))? {
+                if path.is_empty() {
+                    out.insert(key);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The transfer of a `handle` of handler `h` in body `body`: the run of the
@@ -3175,10 +3342,7 @@ pub fn resume(
         // A continuation in a closure (stage R0g): no resume point. The
         // argument moves, and the result is a plain value. The program is
         // in scope only if the `ir` pipeline rejects it.
-        note_pending(crate::factgen::Unsupported {
-            group: crate::irbuild::scope::Group::D,
-            reason: KONT_CAPTURED.to_string(),
-        });
+        note_kont_pending(p, body);
         transfer::moves(p, body, st, [arg])?;
         return transfer::bind_result(cx, body, st, &[], dest, Tree::leaf(AbsVal::plain()));
     };

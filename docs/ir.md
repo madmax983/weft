@@ -2343,6 +2343,56 @@ phases, the verifier, the fact oracle runs the copy).
   it to its callee, where a local handler serves the effect keeps the old pipeline, and a
   `spawn`, a `fork`, a `perform` or a `resume` that gives such a value away keeps it too.
 
+As built (plan stage R0k-c1, `instantiate::instantiate_kont`): a closure that a clause
+makes and that resumes the continuation of the clause (the reason D1, "a `resume` of a
+captured continuation") gets a copy of its body at its one run, so the `resume` is a
+resume point of the clause. The closure is made in the clause, so its handler environment
+is the static environment of its declaration, and its `Kont` capture is the continuation
+of the same activation of the clause. A callee that gets such a closure gets a copy at
+the call first (D1c, as R0k-a: its bounds, `weak_ok`, the verifier), then the run in that
+copy gets the copy of the closure body (D1a).
+
+- The phase. The copies apply only to a program whose constructs with no full facts are
+  all such a `resume` (stage R0g, `Scope::pending`). The emit of the program with the
+  copies, with the closures of the copies covered (`clause::KontCovered`: their bodies
+  keep the weak form of the `resume`, and no run applies their summary), must give no
+  error and no construct with no full facts: then its facts are `Pending::copy`. The check
+  (`weft_check::check_pending`) takes the facts without the copies first: if they find an
+  error, the result is as before (so no program in scope changes); else it takes the
+  facts of the copies, and the program is in scope. The fact oracle runs the program with
+  the copies (`factgen::components_built`).
+- The hard rules. Each one is checked on the IR of the clause body; if one fails, the run
+  keeps the summary and the program its fallback (`Inst::kont_copy`):
+  1. The run is a call (`Call` of a function value `copy l` or `move l`), not a spawn, a
+     fork or a task.
+  2. The closure value goes from the make to `l` along a chain of whole locals
+     (`x = move y` or `x = copy y`): no field, no container, no reference. Each local of
+     the chain is a variable or a temporary with one write and one read (the next step
+     or the run) besides `Live`, `Dead` and the drops of the cleanup blocks.
+  3. No body inside the clause names a local of the chain or the continuation local
+     (through an upvar local or a capture; `nested_uses`, which is `nested_writes` of
+     R0k-a2 for each kind of use).
+  4. The closure is made by the clause, captures the `Kont` local of the clause and no
+     value `ByMove`, and its body uses only fields of its environment.
+  5. The continuation local is named nowhere else in the clause body after the make, and
+     not before it either: no use, no borrow, no move, no drop; only `Dead` and
+     `UnwindKont`, the end of its scope and the cleanup of the builder, and none of them
+     between the make and the run.
+  6. Each path of the CFG from the make reaches the run, with no cycle, through blocks
+     that are not cleanup blocks and whose terminators are `Goto` or `Switch`: no unwind
+     edge, no abort edge, no perform, no call. The statements on those paths are only
+     `Live` and `Dead` of other locals and the steps of the chain.
+- A `once` continuation (a `move` capture) moves into the closure value at the make. The
+  copy resumes the continuation local, so the make and the steps of the chain go, and the
+  copy does not mention the closure value. By rules 2, 5 and 6 nothing runs between the
+  make and the run, and the value has no other use, so the program with the copy does
+  what the program does. A `multi` continuation (a `copy` capture) keeps the make, and the
+  copy reads the source, as in R0k-a2.
+- The verifier. The cleanup chain of a copy ends the values of the closure frame, then
+  goes to the chain of the clause, which starts with `UnwindKont`: V16 (`KontNotFirst`)
+  does not hold for the chains that start in the blocks of a copy, and the machine ends
+  them in the same order as before the copy.
+
 ### 6.2 Nodes and phases
 
 Each statement is one node. Each terminator is one node (phase `Main`), and some
@@ -3103,6 +3153,16 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   places or holds a nonportable value (`transfer::TASK_RUN`) stays with the old
   pipeline: with the weak facts the worst way of a foreign task gives W0403 at the call
   of a clean program (`fixes/r0j/j07_run_ok.wf`).
+  From plan stage R0k-d2 a task that runs a shared variable (a `Kept` or `ByRef` capture,
+  also through the environment of the makers) is late (E4) only if a write of the variable
+  can run while the task can run (`templates::late_write`): the cell is the variable that
+  the capture names (`instantiate::cell_of`); for a spawn on the scope of its own body,
+  or a `fork`, the bodies above it wait, so their writes do not count, and in the body
+  itself a write counts if a path from the terminator reaches it (for a spawn, up to a
+  `join` of its handle; a `fork` waits for its branches); each other write counts. With
+  no write in that window the value of the variable for the whole task is its value at
+  the spawn, which the state of the spawn node has, so the run at the spawn node applies
+  each value that the task can run, and the program is in scope.
 
 As built (plan stage R0g: continuations and capabilities in closures):
 
@@ -3159,6 +3219,31 @@ As built (plan stage R0g: continuations and capabilities in closures):
   clause ends (also after its `resume`), or in the argument of a `resume` of the clause.
   The span is the clause, and the texts are those of the old lowering
   (`check_cont_escape`, `cont_to_body`).
+
+As built (plan stage R0k-d1: a clause run outside its handled body, and the strong update
+after a `resume`):
+
+- A run of a clause that maps to no node of the handled body (the reason A, "a perform
+  whose rest of the handled body the facts do not find"): a closure that captures the
+  capability of a local handler runs after the handled body ends (an escape), so the
+  perform finds no handler there, or another one. The resume of such a run has no region
+  of the rest of the handled body (`handlers::Region::of` gives none): the facts of the
+  resume get no change and no free of that region, so they can only miss an error, never
+  add one. The construct is pending (`handlers::REST_NOT_FOUND`, the rule of R0g above):
+  the `ir` pipeline checks the program first, and its error is final; else the old
+  pipeline checks it. Each A program of the tiers is rejected by the old pipeline (W0313,
+  W0314, W0503), because an A form is a run outside the handler.
+- The strong update after a `resume` (D4). After the `resume` of a `once` continuation
+  returns, the rest of the handled body has run once to its end, so a local of the site
+  that the rest of the handled body gives a whole value (an `Assign` of its upvar local
+  in the handled body) on each path after each node that runs a clause of the handler has
+  only its value at the end of the handled body: the value that the clause put there
+  before the `resume` is gone (`clause::must_written`, `State::join_values_but_keys`).
+  Else (a `multi` continuation, a write on some paths only, a body inside the handled
+  body that is not a closure body and that runs a clause of the handler) each local of the
+  site joins its value at the resume point, as before (the weak update). The strong update
+  lets the escape check see that a closure that performs through the handler does not
+  stay in the local (`fixes/r0g/d4_reassigned_ok`).
 
 As built (plan stage R0h: function values and references across operations):
 
