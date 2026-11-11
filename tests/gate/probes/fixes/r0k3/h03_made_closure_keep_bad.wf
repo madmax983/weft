@@ -1,0 +1,24 @@
+// Plan stage R0k-b1 (design check, m3): the closure of `mk_cap` performs
+// `Run` through the handler of the call of `mk_cap` (the handler of `main`),
+// whose clause keeps `g`. `g` reads `r`, which points into `v` of `outer`,
+// and `main` runs `g` after `outer` ends: a read of a freed cell. A copy of
+// the closure body at `c()` that took the handlers of the run node would
+// give `g` to the harmless local handler of `outer`, and the copied program
+// would have no fault.
+effect Run { fn run(g: fn()) }
+fn noop() {}
+fn mk_cap(h: fn()) -> fn() / Run { || run(h) }
+fn outer() / Run {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let c = mk_cap(|| print(r))
+    handle Run { fn run(g) { resume(()) } } in { c() }
+    v.clear()
+}
+fn main() {
+    let keep = noop
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in { outer() }
+    keep()
+}

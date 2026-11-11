@@ -1,0 +1,19 @@
+// Plan stage R0k-b1 (design check, the clean twin of m3): the clause of the
+// handler of `main` does not keep `g`, so no code runs `g` after `outer`
+// ends.
+effect Run { fn run(g: fn()) }
+fn noop() {}
+fn mk_cap(h: fn()) -> fn() / Run { || run(h) }
+fn outer() / Run {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let c = mk_cap(|| print(r))
+    handle Run { fn run(g) { resume(()) } } in { c() }
+    v.clear()
+}
+fn main() {
+    let keep = noop
+    handle Run { fn run(g) { resume(()) } } in { outer() }
+    keep()
+}

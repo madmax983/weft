@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2: this stage; R0k-b1: design |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z) |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -3851,8 +3851,8 @@ R0k-a2 as built (static closure copies, generic callees, the closure guard; `doc
   HOLE, no new FP-IR; `rv_p07`, `c09_generic_two_bad`, `c09_generic` and `w05` go from an
   old miss with a fallback to rejected by the `ir` pipeline.
 
-R0k-b1 design note: copies of closure bodies with an environment local (not built; for
-review before a build):
+R0k-b1 design note: copies of closure bodies with an environment local (not built: B1 as
+written is not sound, see "R0k-b1 design check" after the note):
 
 - The forms. After R0k-a2 the C2 and D3 fallbacks are performs in closures whose value at
   the run node the IR does not show (R0k design note): (2) a closure that a callee makes
@@ -3952,6 +3952,54 @@ review before a build):
   callee overwrites (`put_fns`) before the run; a closure assigned in a scope body, a clause
   and a task before the run (`u03` to `u10` of the review of R0k-a2, in the form of B1); a
   `once` closure copied at two run nodes (the second run is W0502).
+
+R0k-b1 design check (the stage stopped before the build; probes `fixes/r0k3/`):
+
+- Why B1 as written is not sound. A closure runs with the handler environment of its
+  maker: the interpreter runs a closure value with the handlers of the point where it was
+  made (`c.henv`), and a function item with the handlers of the call. The IR builder gives
+  a closure a `Cap` capture only for an effect that a local handler serves where the
+  closure is made. Each other effect of the closure body uses the handler environment of
+  the maker: a perform through the row, a call that passes the root environment, a
+  failure of the runtime to `Fail`. That environment is not a field of the closure value,
+  so `CopyEnv` does not hold it, and `FnVal::Made(c)` names the code but not the
+  environment. A copy of the closure body at the run node takes the handlers of the run
+  node, so it changes the target of those performs, calls and failures. For a closure
+  that a callee makes (form 2; forms 3 and 5 with a closure of a callee) the environment
+  is that of the call of the maker, which the run node does not know. The probes:
+  `h01_row_in_maker_env` (m1: a closure made in the handled body of `Run` runs in the
+  handled body of `Note`, and its `note` goes to the row of `main`: W0805);
+  `h02_made_closure_row` (m2: the closure of `mk` runs in the local handler of `outer`,
+  and its `run` goes to the handler of `main`: the program prints 1, not 9);
+  `h03_made_closure_keep_bad` (m3: the same, and the clause of `main` keeps the function
+  value, which reads a local of `outer` after `outer` ends: a read of a freed cell; today
+  the C2 fallback, and the old pipeline misses it, ledger `R0k3-HENV`; a copy with the
+  handlers of the run node gives the value to the harmless local handler, and the copied
+  program has no fault, a hole) and its clean twin `h03_made_closure_keep_ok`.
+- The exact subset. A closure that the function of the run node makes (in its body, or in
+  its handled bodies, clauses and scope bodies) has the static environment of its
+  declaration (`cap_env`), and the copy can map the row and the calls through it, as
+  R0k-a2 does; a function item value runs with the handlers of the run node. The subset
+  gains about 0 files of the tiers (by a read of the targets): each target file keeps a
+  reason. A closure that a callee makes (`mk_cap`, `mk_job`, `mk_struct`, `mk`,
+  `mk_spawner`): `85_op_args`, `e2b_e_job`, `e2b_e_mk_job`, `e2b_e_struct`,
+  `e2b_variants`, the fuzz copy of 85, and the 31 tier-2 mutants of 66 and 85. A run in
+  another function through a parameter (`run_it`, `apply`): `v1c_stored`, `g26`. A clause
+  that gets the value from a call (a parameter of a clause is `Unknown` at a call) and
+  runs it as a task (W0314, a task run stays a fallback): `e2b_e_job`, the
+  `callee_gives*` functions of 85. A capability that leaves its handler (W0313): `box_out`
+  of 66, `a4_get_own`, `a2_escapes`. Other reasons: `rv_p04` (D5), `g2_lexical` and
+  `a04` to `a06` (D3), `u03` to `u11` (two values at the run node), and the large
+  programs with task runs (`r3/oracle/runs/m3a/p6152`, `m3b/p26666`).
+- The direction for a later B1'. The handler environment becomes explicit: the builder
+  gives each closure a capture for each effect of its row and for `Fail`, and at the
+  point where the closure is made binds each capture to the capability of the maker (a
+  pass-on capability for an effect that the maker performs through its row, `Row(E)`).
+  Then the closure value holds its environment, and `CopyEnv` is exact: `env.k` of such a
+  capture is the capability of the maker at the run. B1' needs a new capture form or a
+  new capability operand, the verifier, both interpreter engines, the fact oracle and α.
+  It is needed for R0z (forms 2 to 5, the 31 tier-2 mutants of 66 and 85), and it needs a
+  design review of its own.
 
 #### R1 Standalone `typeck`, part 1
 
