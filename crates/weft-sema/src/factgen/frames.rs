@@ -124,6 +124,15 @@ pub fn row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: 
     if p.handlers.is_empty() || !has_multi_ops(tys) {
         return false;
     }
+    // A node that runs a clause that can wait at a `multi` operation of a
+    // caller before its first `resume` waits there too (stage R0k-c2): a
+    // later `resume` runs the rest of the clause again, then the code after
+    // the node.
+    own_row_multi(p, tys, sums, body, t) || runs_row_clause(p, tys, sums, body, t)
+}
+
+/// [`row_multi`] with no clause that the node runs.
+fn own_row_multi(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId, t: &TermKind) -> bool {
     let multi_effect = |id: &str| {
         tys.effects()
             .iter()
@@ -302,6 +311,215 @@ fn recaptures_multi(p: &Program, tys: &TyTable, c: weft_ir::ClosureId) -> bool {
                         })
             })
     })
+}
+
+/// Where the nodes of a clause can wait at a `multi` operation of a handler
+/// of a caller (stage R0k-c2, [`clause_rows`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClauseRows {
+    /// Such a node runs before the first `resume` of the clause (the
+    /// `pre` part): the node that runs the clause waits there too.
+    pub pre: bool,
+    /// Such a node runs after a `resume` of the clause (the `post` part,
+    /// at `Post` of the `handle`).
+    pub post: bool,
+}
+
+/// The most levels of clauses inside clauses that [`clause_rows`] reads.
+/// A deeper level counts as a row in both parts (a conservative result).
+const CLAUSE_ROW_DEPTH: usize = 8;
+
+thread_local! {
+    /// The levels of [`clause_rows`] that run now.
+    static CLAUSE_ROW_LEVEL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The rows of clause body `cb` (stage R0k-c2), and where they run.
+///
+/// A row is a node of the clause, or of a body that splices into it, that
+/// can wait at a `multi` operation of a handler of a caller ([`row_multi`]).
+/// It runs before or after the first `resume` of the clause. A node of a
+/// body that splices into the clause runs where the block of the clause
+/// that runs that body runs.
+pub fn clause_rows(p: &Program, tys: &TyTable, sums: &Summaries, cb: BodyId) -> ClauseRows {
+    let level = CLAUSE_ROW_LEVEL.with(std::cell::Cell::get);
+    if level >= CLAUSE_ROW_DEPTH {
+        return ClauseRows {
+            pre: true,
+            post: true,
+        };
+    }
+    CLAUSE_ROW_LEVEL.with(|c| c.set(level + 1));
+    let out = clause_rows_at(p, tys, sums, cb);
+    CLAUSE_ROW_LEVEL.with(|c| c.set(level));
+    out
+}
+
+/// [`clause_rows`] at one level.
+fn clause_rows_at(p: &Program, tys: &TyTable, sums: &Summaries, cb: BodyId) -> ClauseRows {
+    let mut out = ClauseRows::default();
+    let Some(b) = p.body(cb) else {
+        return out;
+    };
+    if !matches!(b.kind, BodyKind::Clause(..)) {
+        return out;
+    }
+    let (pre, post) = resume_parts(b);
+    for (i, x) in p.bodies.iter().enumerate() {
+        let sb = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        if super::handlers::splice_root(p, sb) != cb {
+            continue;
+        }
+        let Some(anchor) = anchor_block(p, sb, cb) else {
+            continue;
+        };
+        let is_row = |t: &TermKind| {
+            own_row_multi(p, tys, sums, sb, t) || runs_row_clause(p, tys, sums, sb, t)
+        };
+        for (j, blk) in x.blocks.iter().enumerate() {
+            if blk.cleanup || !is_row(&blk.term.kind) {
+                continue;
+            }
+            // A block of the clause counts where it is; a block of a body
+            // that splices into the clause counts where its site block is.
+            let at = if sb == cb { j } else { anchor.index() };
+            out.pre |= pre.get(at).copied().unwrap_or(true);
+            out.post |= post.get(at).copied().unwrap_or(true);
+        }
+    }
+    out
+}
+
+/// The blocks of clause body `b` that run before its first `resume`
+/// (reached from the entry with no `Resume` on the way) and the blocks that
+/// run after a `resume`, by block index. The `Resume` block itself runs
+/// before.
+fn resume_parts(b: &weft_ir::Body) -> (Vec<bool>, Vec<bool>) {
+    let n = b.blocks.len();
+    let mut pre = vec![false; n];
+    let mut post = vec![false; n];
+    let mut work = vec![b.entry];
+    let mut after: Vec<BlockId> = Vec::new();
+    while let Some(x) = work.pop() {
+        match pre.get_mut(x.index()) {
+            Some(s) if !*s => *s = true,
+            _ => continue,
+        }
+        let Some(blk) = b.blocks.get(x.index()) else {
+            continue;
+        };
+        let succ = blk.term.kind.successors();
+        if matches!(blk.term.kind, TermKind::Resume { .. }) {
+            after.extend(succ);
+        } else {
+            work.extend(succ);
+        }
+    }
+    let mut work = after;
+    while let Some(x) = work.pop() {
+        match post.get_mut(x.index()) {
+            Some(s) if !*s => *s = true,
+            _ => continue,
+        }
+        if let Some(blk) = b.blocks.get(x.index()) {
+            work.extend(blk.term.kind.successors());
+        }
+    }
+    (pre, post)
+}
+
+/// The block of body `root` whose terminator runs body `sb` (a handled body
+/// or a scope body that splices into `root`, through each body on the
+/// way); `sb` itself if it is `root`.
+fn anchor_block(p: &Program, sb: BodyId, root: BodyId) -> Option<BlockId> {
+    if sb == root {
+        return p.body(root).map(|b| b.entry);
+    }
+    let mut at = sb;
+    for _ in 0..=p.bodies.len() {
+        let x = p.body(at)?;
+        let site = x.parent?;
+        let sbody = p.body(site)?;
+        let blk = sbody.blocks.iter().position(|blk| match &blk.term.kind {
+            TermKind::Handle { handler, .. } => p
+                .handlers
+                .get(handler.index())
+                .is_some_and(|d| d.handled == at),
+            TermKind::Scope { scope, .. } => {
+                p.scopes.get(scope.index()).is_some_and(|d| d.body == at)
+            }
+            _ => false,
+        })?;
+        if site == root {
+            return Some(BlockId(u32::try_from(blk).unwrap_or(u32::MAX)));
+        }
+        at = site;
+    }
+    None
+}
+
+/// True if terminator `t` of body `body` runs a clause of a local handler
+/// that can wait at a `multi` operation of a handler of a caller before its
+/// first `resume` ([`clause_rows`], stage R0k-c2).
+pub fn runs_row_clause(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    t: &TermKind,
+) -> bool {
+    let op = match t {
+        TermKind::Perform {
+            cap: CapOperand::Local(_),
+            op,
+            ..
+        } => Some(*op),
+        TermKind::Call { .. } => None,
+        _ => return false,
+    };
+    clause_handlers(p, tys, sums, body, t).iter().any(|&h| {
+        let Some(d) = p.handlers.get(h.index()) else {
+            return false;
+        };
+        d.clauses
+            .iter()
+            .filter(|(o, _)| op.is_none_or(|x| x == *o))
+            .any(|&(_, c)| clause_rows(p, tys, sums, c).pre)
+    })
+}
+
+/// The blocks of body `body` whose `handle` has a row after a `resume`.
+///
+/// The handler has a clause that can wait at a `multi` operation of a
+/// handler of a caller after its first `resume` ([`ClauseRows::post`],
+/// stage R0k-c2): a later `resume` runs the rest of that clause again, then
+/// the code after the `handle`.
+pub fn post_row_handles(
+    p: &Program,
+    tys: &TyTable,
+    sums: &Summaries,
+    body: BodyId,
+) -> Vec<BlockId> {
+    let Some(b) = p.body(body) else {
+        return Vec::new();
+    };
+    if p.handlers.is_empty() || !has_multi_ops(tys) {
+        return Vec::new();
+    }
+    b.blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, blk)| !blk.cleanup)
+        .filter(|(_, blk)| match &blk.term.kind {
+            TermKind::Handle { handler, .. } => p.handlers.get(handler.index()).is_some_and(|d| {
+                d.clauses
+                    .iter()
+                    .any(|&(_, c)| clause_rows(p, tys, sums, c).post)
+            }),
+            _ => false,
+        })
+        .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect()
 }
 
 /// The blocks of body `body` whose terminator can wait at a `multi`
@@ -1697,9 +1915,13 @@ impl Frames {
         for (&(body, block), hs) in &f.runs {
             for &h in hs {
                 let hb = p.handlers.get(h.index()).map(|d| d.handled);
-                if hb.is_some_and(|hb| crate::analysis::clause::spliced_into(p, body, hb))
-                    && crate::analysis::clause::multi_twice(p, h)
-                {
+                // A node in a clause inside the handled body too (C8,
+                // stage R0k-c2).
+                let inside = |hb: BodyId| {
+                    crate::analysis::clause::spliced_into(p, body, hb)
+                        || super::handlers::local_chain(p, body, hb).is_some_and(|c| !c.is_empty())
+                };
+                if hb.is_some_and(inside) && crate::analysis::clause::multi_twice(p, h) {
                     f.reentry.entry(h).or_default().push((body, block));
                 }
             }

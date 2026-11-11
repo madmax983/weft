@@ -1,0 +1,21 @@
+// Plan stage R0k-c2 (a probe of the stage: a row in the code of a clause after its resume).
+// bad twin of b10_post_row_after_ok: `run` reads the reference after the handler and then
+// clears the object; the second copy of the clause returns to the code after the handler,
+// which reads a freed cell
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(n: u64) }
+fn run(b: &Rc<B>) -> u64 / Choice, mut(B) {
+    let r = &b.v[0]
+    handle Log { fn log(n) { resume(())
+        let c = choose() } } in log(1)
+    print(r)
+    b.v.clear()
+    1
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&b)) }
+}

@@ -1,0 +1,20 @@
+// Plan stage R0k-c2 (a probe of the stage: E7, a value that is not `many` across the row).
+// bad twin of b06_once_across_ok: the clause holds its linear value across the row, so each
+// copy of the clause frame ends a copy of it (W0503)
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run() -> u64 / Choice {
+    handle Pick { fn pick() {
+        let l = Lk { id: 1 }
+        let b = choose()
+        unlock(l)
+        resume(1)
+    } } in body()
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run()) }
+}

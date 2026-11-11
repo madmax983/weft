@@ -1,0 +1,25 @@
+// Plan stage R0k-c2 (a probe of the stage: the rest of the handled body runs again).
+// clean: the handled body reads a reference into an `rc` object after the perform; `run`
+// reads the object after the handler
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn run(b: &Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let x = handle Pick { fn pick() {
+        let c = choose()
+        resume(1)
+    } } in {
+        let y = pick()
+        print(r)
+        y
+    }
+    print(b.v.len())
+    x
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&b)) }
+}

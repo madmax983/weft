@@ -3862,8 +3862,8 @@ preview with `--groups ABCD` until stage F17):
   handled bodies that splice into it) that run such a clause
   (`Frames::reentries`) get a `Copy` node: `Post` → `P.Copy` → `P.Ret`. The clause
   code between two `resume`s runs at `Post` (the `post` part), then the rest of the
-  handled body runs again. A node in a clause or a closure inside the handled body
-  is not in scope.
+  handled body runs again. A node in a closure inside the handled body is not in
+  scope; a node in a clause inside it is (stage R0k-c2, below).
 - Re-entry edges of a handler of a caller (OL-R2a). A node that can wait at a
   `multi` operation of a caller (`frames::row_multi`: a perform of a `multi`
   operation through the row; a call whose summary performs one through the row that
@@ -3872,7 +3872,7 @@ preview with `--groups ABCD` until stage F17):
   gets a `Copy` node with an edge from each `Return` of the function (or closure)
   body: `Return` → `P.Copy` → `P.Ret`. Only in a program that declares a `multi`
   operation and a handler: with no handler (group D off) the facts do not change.
-  A node in a clause is not in scope.
+  A node in a clause has the re-entry of stage R0k-c2 (below).
 - The `Copy` rule (`handlers::copy_node`). The copied frames are the frames of the
   handled body (local handler) or of the function (handler of a caller), with the
   handled bodies that splice into them, and the callee frame of a call. Each variable
@@ -3958,6 +3958,62 @@ preview with `--groups ABCD` until stage F17):
   copied frames (it resumes them again: the facts give the accesses of that run to
   the re-entry nodes), and a clause that an op of a copied frame runs has no known
   site.
+
+As built (plan stage R0k-c2: the re-entry of a clause frame, D5 and C8; the design note
+of the stage in `docs/plan/core-ir.md`):
+
+- The forms. A clause (or a body that splices into it) performs a `multi` operation of a
+  handler of a caller (D5), or a node of a clause inside the handled body of a local
+  `multi` handler runs a clause of that handler that can resume more than once (C8). A
+  later `resume` runs the rest of the clause again from a copy of the frames
+  (`copy_frames` of the machine): each copy of a clause frame has a continuation record of
+  its own, in its state at the row (E6).
+- The rows of a clause (`frames::clause_rows`): the rows of the clause body and of the
+  bodies that splice into it, where they run (before the first `resume`, `pre`, or after
+  it, `post`). A node that runs a clause with a `pre` row waits at the operation too: it is
+  a node of `frames::row_multi` (`frames::runs_row_clause`), with a `Copy` node and an edge
+  from each `Return` of the function, and edges from its `Copy` node to the `FrameEnd`
+  node of each abort destination (`NodeTable::copy_abort_edges`: the rest of the clause
+  can end with no `resume` or abort). A `handle` with a `post` row gets a `Copy` node of
+  copy `ROW` with an edge from each `Return` of the function and an edge to its `Post`
+  node (`NodeTable::post_row_edges`).
+- The facts of the clause (`emit_clause`): each row of the clause gets a `Copy` node with
+  an edge from each `Return` of the function or closure that the clause runs below
+  (`handlers::clause_chain`: the clause frames up to that body). For C8 each such node of
+  the clause gets an edge from `Post` of the `handle` of the local handler
+  (`NodeTable::clause_reentry_edges`, `handlers::local_chain`).
+- The `Copy` rule (E5): the copied frames are the frames of the function (or of the
+  handled body of the local handler) and the frames of the chain of clauses
+  (`handlers::copy_node`, `chain`). A variable whose value points only into them gets
+  `rebound_at` (and `empty_at` if it is not linear): its place is owned and copied, so a
+  reference into it is valid as at the row. A variable that points into a shared place (an
+  `rc` group, a place of a caller, a place of a frame above the handler) keeps its state,
+  the state after the previous run. The `Copy` nodes of a clause are not code of the
+  clause at the node that runs it (`clause_nodes`).
+- The analysis. A row of a clause below a function body gets the heap slots of the
+  `Return`s of the function (`clause::Handlers::row_heap`); its normal edge joins them
+  (`analysis::edges`), in each run of the clause. The run of the facts of the clause
+  runs again from the block after the row with the state of the row and these slots
+  (`analysis::run_rows`, the second seed). A C8 node joins the values of the locals
+  outside the handled body at the later `resume` and the heap
+  (`clause::Handlers::row_join`).
+- E7. A value that is not `many` and that is live across the row in the clause frame is
+  W0503 at the row; in the frame of the function it is W0503 at the node that runs the
+  clause (`multi_at`); a linear value gets no `empty_at` at the `Copy` node.
+- The fact oracle (A4 of re-entries, `FactOracle::note_reentries`, `reentry_copy`): at a
+  `multi` operation, each followed frame of the continuation keeps the references of its
+  locals and the `Copy` nodes of the frames of its component. At each copy of the frames
+  (each `resume`), a reference into a copied cell (the `map` of `copy_frames`) whose
+  variable points only into places of the copied frames must be bound again at a `Copy`
+  node, and at a later copy a reference into a shared cell that an access since the
+  operation ended must not be.
+- Open, older than the stage (the re-entry of a function body has them too). A precision
+  loss: a reference through an `Rc` handle of a copied frame is invalid at the re-entry
+  after the end of the handle in the previous run (a false W0301). A gap: the variable
+  "the copy of the frame" of a call (D-MULTI-MID) points only into the places below the
+  references that the call uses, not into the `rc` groups that they reach, so a change of
+  such a group by the code of the outer clause between two `resume`s does not reach the
+  reference of the copied callee frame.
 
 As built (plan stage F17 part 0, the findings of the independent review of group D;
 `factgen/handlers.rs` `Region`): the region of the continuation of a `resume` is the

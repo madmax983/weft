@@ -10792,15 +10792,6 @@ reason = "stage R0k-b1 design check (m3): the closure that `mk_cap` makes perfor
 stage = "R0k"
 
 [[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0kc2/m7_rc_shared.wf",
-]
-finding = "R0k2C-M7"
-reason = "stage R0k-c2a (a probe of the design review of the R0k-c2 note): the clause of `Pick` performs the `multi` operation `choose` of `main` after a reference into a `Vec` in an `rc` object is taken; `run` clears the `Vec` after the `handle`, and the second copy of the clause reads the reference: a read of a freed cell. D5 keeps the old pipeline (the weak form of R0g has no re-entry of a clause), and the old pipeline misses the fault. The re-entry of the full R0k-c2 design (shared places after the previous run) must reject it"
-stage = "R0k"
-
-[[entry]]
 class = "changed"
 files = [
     "tests/gate/probes/fixes/r0kc2/m1_outside_ref_cleared.wf",
@@ -10928,4 +10919,23 @@ files = [
 ]
 reason = "stage R0k-d2 (E4): as the entry above, with the rule of whole writes (a write of a part of the cell, as `two6.a[0] = 5` in `g3a/p1314`, is no write of the function variable) and, for a spawn in a closure on an outer scope (`g3b/p13880`), one whole write of the variable. The `ir` pipeline accepts each program, and the interpreter runs it with no fault (ev.sh nofault, also with the oracle of data races). The old W0405 is at an access after a `join` in a callee (`join_it(t)`), or at an access of another field than the one that the task changes (`w5.es` and `w5.ns`)"
 signed_by = "reviewer R0k-d2: the old W0405 is on an access after the join of the task (a handle from a tuple or a join in a callee); p13297 reads a re-initialized variable through a by-reference capture; p13259 gives the closure to a callee that calls it, and Tx has on abort; ev.sh nofault on all 33 with both engines and the race oracle"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0kc2b/b04_frame_above_bad.wf",
+]
+codes = ["W0301", "W0312"]
+reason = "stage R0k-c2 (a probe of the stage: a frame above the `multi` handler): the clause of `main` clears the vector of `main` between its two resumes while the clause of `Pick` in `run` holds a reference into it across the row. The `ir` pipeline rejects the program with W0301 at the copy of the frame of the call of `mid` (line 22); the old pipeline gives W0312 at the same call, as for `fixes/r0kc2/m1_outside_ref_cleared`. Both reject it; ev.sh: the program faults (held)"
+stage = "R0k"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r2/oracle/probes/i5_nested_multi.wf",
+    "tests/gate/probes/r3/redteam/p/e2_spared.wf",
+]
+codes = ["W0602"]
+reason = "stage R0k-c2 (C8): the clause of `Ask` performs `pick` of a local `multi` handler before its `resume`. Before the stage the `ir` pipeline rejected the program with the weak form (no re-entry of the clause); with the re-entry of the clause the linear value is live across the `resume` of the clause, which can abort, so W0602 is at the `resume` (line 7 in `i5_nested_multi`, 38 in `e2_spared`) and not at the perform of `ask`. The codes do not change; both pipelines reject the programs"
 stage = "R0k"

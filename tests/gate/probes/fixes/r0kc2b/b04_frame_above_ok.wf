@@ -1,0 +1,22 @@
+// Plan stage R0k-c2 (a probe of the stage: a frame above the `multi` handler).
+// clean: `main` holds the vector above the handler of `Choice`; `mid` is between the
+// handler and `run` (a copied frame); the outer clause reads the vector between its resumes
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run(v: &Vec<u64>) -> u64 / Choice {
+    let r = &v[0]
+    handle Pick { fn pick() {
+        let b = choose()
+        print(r)
+        resume(1)
+    } } in body()
+}
+fn mid(v: &Vec<u64>) -> u64 / Choice { run(v) + 1 }
+fn main() {
+    let v = Vec.new()
+    v.push(5)
+    handle Choice { fn choose() { resume(true)
+        print(v.len())
+        resume(false) } } in { print(mid(&v)) }
+}

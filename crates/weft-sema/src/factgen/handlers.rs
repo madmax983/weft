@@ -138,6 +138,66 @@ pub fn splice_root(p: &Program, b: BodyId) -> BodyId {
     at
 }
 
+/// The frames of the chain of clauses that body `b` runs in (stage R0k-c2).
+///
+/// The chain is the body that the nodes of `b` splice into, if it is a
+/// clause body, then the body that the site of its handler splices into,
+/// and so on up to a function, test or closure body (the last one). `None`
+/// if `b` does not splice into a clause body, or if the chain does not end
+/// at such a body.
+///
+/// A `multi` resume of an operation of a handler of a caller at a node of
+/// `b` copies each of these frames: the clause frames wait at the nodes
+/// that run them, and the last body waits until the operation of its
+/// caller resumes.
+pub fn clause_chain(p: &Program, b: BodyId) -> Option<Vec<BodyId>> {
+    let mut out = Vec::new();
+    let mut at = splice_root(p, b);
+    for _ in 0..=p.bodies.len() {
+        let x = p.body(at)?;
+        out.push(at);
+        match x.kind {
+            BodyKind::Clause(h, _) => {
+                let site = p.handlers.get(h.index())?.site;
+                at = splice_root(p, site);
+            }
+            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Closure(_) => {
+                return (out.len() > 1).then_some(out);
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The clause frames between body `b` and the handled body `hb` of a local
+/// handler (C8, stage R0k-c2).
+///
+/// They are the clause bodies on the way from `b` (or from a body that
+/// splices into it) up to a body that splices into `hb`, the innermost
+/// first. Empty if `b` splices into `hb`; `None` if the way passes a body
+/// that is not a clause, a handled body or a scope body (a closure), or
+/// does not reach `hb`.
+pub fn local_chain(p: &Program, b: BodyId, hb: BodyId) -> Option<Vec<BodyId>> {
+    let mut out = Vec::new();
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        if clause::spliced_into(p, at, hb) {
+            return Some(out);
+        }
+        let x = p.body(at)?;
+        match x.kind {
+            BodyKind::Clause(h, _) => {
+                out.push(at);
+                at = p.handlers.get(h.index())?.site;
+            }
+            BodyKind::Handled(_) | BodyKind::Scope(_) => at = x.parent?,
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// True if body `b` splices into a function, test, clause or closure body.
 ///
 /// `b` is such a body, or a handled body or a scope body whose site is one (through each
@@ -1182,12 +1242,15 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
 /// callee that can wait at a `multi` operation of a caller: the node gets
 /// a variable for the copy of the callee frame. `row_returns`
 /// are the `Return` nodes of the function if the node can also wait at a
-/// `multi` operation of a caller.
+/// `multi` operation of a caller. `chain` is the chain of clause frames of a
+/// node of a clause (`clause_chain` or `local_chain`, stage R0k-c2): the
+/// copied frames are those frames (with the bodies that splice into them)
+/// too.
 pub fn copy_node(
     em: &mut Em<'_>,
     (c, main): (NodeId, NodeId),
     (block, root, local): (BlockId, BodyId, bool),
-    row_returns: &[NodeId],
+    (row_returns, chain): (&[NodeId], Option<&[BodyId]>),
     st: &State,
     t: &TermKind,
 ) {
@@ -1195,15 +1258,18 @@ pub fn copy_node(
     let body = em.body;
     // The copied frames: the frames of body `root` (the handled body of a
     // local handler, or the body of a function or of a closure for a
-    // handler of a caller), and of the bodies that splice into it.
+    // handler of a caller), and of the bodies that splice into it; or the
+    // frames of the chain of clauses.
     let hb = root;
+    let in_frames = |b: BodyId| {
+        (inside(p, b, hb) && !in_clause_or_closure(p, b, hb))
+            || chain.is_some_and(|c| c.contains(&splice_root(p, b)))
+    };
     let frame = matches!(t, TermKind::Call { .. }).then(|| transfer::run_inst(body, block));
     let roots = &*em.roots;
     let facts = &*em.facts;
     let copied = |q: PlaceId| match roots.role(facts.place(q).root) {
-        Some(Role::Local(k) | Role::Cell(k)) => {
-            inside(p, k.0, hb) && !in_clause_or_closure(p, k.0, hb)
-        }
+        Some(Role::Local(k) | Role::Cell(k)) => in_frames(k.0),
         Some(Role::Frame(i)) => Some(i) == frame,
         _ => false,
     };
@@ -1214,7 +1280,7 @@ pub fn copy_node(
     let mut outside: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
     let mut held_linear: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
     for (k, tree) in st.trees() {
-        if !inside(p, k.0, hb) || in_clause_or_closure(p, k.0, hb) {
+        if !in_frames(k.0) {
             continue;
         }
         let v = tree.flat();
@@ -1234,10 +1300,7 @@ pub fn copy_node(
     // hold them.
     let moved = moved_at_main(em, t);
     let fresh = |k: &(BodyId, weft_ir::LocalId)| {
-        inside(p, k.0, hb)
-            && !in_clause_or_closure(p, k.0, hb)
-            && !outside.contains(k)
-            && !moved.contains(k)
+        in_frames(k.0) && !outside.contains(k) && !moved.contains(k)
     };
     let mut vars: Vec<VarId> = Vec::new();
     let mut linear: HashSet<VarId> = HashSet::new();
@@ -1358,9 +1421,7 @@ pub fn copy_node(
         // A place in the copied frames gets a new copy too (the `Copy` rule):
         // the copy of the frame holds the copied place, not the old one.
         places.retain(|&q| match em.roots.role(em.facts.place(q).root) {
-            Some(Role::Local(k) | Role::Cell(k)) => {
-                !inside(p, k.0, hb) || in_clause_or_closure(p, k.0, hb)
-            }
+            Some(Role::Local(k) | Role::Cell(k)) => !in_frames(k.0),
             Some(Role::Frame(i)) => Some(i) != frame,
             _ => true,
         });
@@ -1598,6 +1659,27 @@ fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet
         let n = *n;
         if key.dest != NORMAL {
             continue;
+        }
+        // The `Copy` node of a node of the clause that a later `resume` runs
+        // again (stage R0k-c2): the re-entry, not code that runs at the node
+        // that runs the clause (that node has a `Copy` node of its own).
+        if key.phase == Phase::Copy && key.body == c {
+            let handle = b
+                .blocks
+                .get(key.block.index())
+                .is_some_and(|blk| matches!(blk.term.kind, TermKind::Handle { .. }));
+            if !handle {
+                continue;
+            }
+        }
+        if key.phase == Phase::Copy && key.body != c {
+            let row = p
+                .body(key.body)
+                .and_then(|x| x.blocks.get(key.block.index()))
+                .is_some_and(|blk| !matches!(blk.term.kind, TermKind::Handle { .. }));
+            if row {
+                continue;
+            }
         }
         let Some((block, at, phase)) = place_of(key) else {
             continue;
