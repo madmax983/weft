@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z) |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 (D1a, D1c): this stage; R0k-c2 (D5, C8): design note, for review |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -4000,6 +4000,113 @@ R0k-b1 design check (the stage stopped before the build; probes `fixes/r0k3/`):
   new capability operand, the verifier, both interpreter engines, the fact oracle and α.
   It is needed for R0z (forms 2 to 5, the 31 tier-2 mutants of 66 and 85), and it needs a
   design review of its own.
+
+R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
+6.1, "As built (plan stage R0k-c1)"):
+
+- The design check (scratchpad `r0k/c/notes.md`). D1 has four forms in the tiers: a
+  closure that the clause makes and runs (D1a), the same closure given to a callee that
+  runs it (D1c), a `resume` in a scope body while a task of the scope is alive (D1b), and
+  a resume in a task, a fork or a closure that the runtime runs (`sim.run`,
+  `with_timeout`). For D1a and D1c the identity is exact: the closure is made in the clause,
+  so its handler environment is the static environment of its declaration (the gap of
+  R0k-b1 does not apply), and its `Kont` capture is the continuation of the same
+  activation of the clause. The other forms stay fallbacks (task work, and code of the
+  runtime).
+- The copy (`instantiate::instantiate_kont`, `Inst::kont_copy`, `kont_wants`). A run of a
+  closure in a clause that resumes the continuation of the clause gets a copy of the
+  closure body; a callee that gets such a closure gets a copy at the call first (the
+  rules of R0k-a: bounds, `weak_ok`, the verifier). The hard rules of `docs/ir.md` 6.1 (a
+  call, a chain of whole locals, no use in a body inside the clause, no other use of the
+  continuation, each path from the make reaches the run with no unwind edge, no abort,
+  no perform and no call) decide the copy; if one fails, the program keeps its fallback.
+  For a `once` continuation the make and the steps of the chain go (the copy resumes the
+  continuation local); for a `multi` one the make stays and the copy reads the source.
+  V16 (`KontNotFirst`) does not hold for a cleanup chain that starts in a block of a copy.
+- The phase (`factgen::run`, `kont_view`, `Pending::copy`, `weft_check::check_pending`,
+  `factgen::components_built`). The copies apply only to a program whose constructs with
+  no full facts are all `KONT_CAPTURED`. The emit with the copies covers the closures of
+  the copies (`clause::KontCovered`: their bodies keep the weak `resume`, and no run applies
+  their summary) and must have no construct with no full facts. The check takes the facts
+  without the copies first: with an error, the result is as before; else the facts of the
+  copies check the program, and it is in scope. So no program that was in scope changes.
+- Tests: `analysis_units` `kont_copies` (the `once` copy and the removal of the make, the
+  `multi` copy, D1c, each refusal: two runs, a perform between, a call between, a borrow of
+  the value, a make in a body inside the clause, a field, the continuation named again, a
+  body inside the clause that names the chain, a spawn, a path that misses the run, and
+  the view of the copies); `weft-interp` `copies.rs`
+  `the_copies_of_continuation_closures_do_not_change_the_runs` (each probe of `fixes/r0kc`
+  and `fixes/r0g` with such a copy runs with and without it with the same output and
+  fault; at least 8 probes, at least 4 with the removal of the make). Probes
+  `tests/gate/probes/fixes/r0kc/` (bad: W0301 after the clause clears a vector that the
+  handled body borrowed; clean twin): `c01_once`, `c02_multi`, `c04_callee` (in scope),
+  `c03_two_runs`, `c05_perform_between`, `c06_call_between`, `c07_use_after`,
+  `c08_nested`, `c09_field` (fallback).
+- The fallbacks, against `weft-r0ka2r2`, tier 1 (5188 files; scratchpad
+  `r0k/c/r2-t1b.tsv`, `kc1-t1.tsv`): all 107 to 96, D1 39 to 28. The 11 rows that change:
+  `fixes/r0g/d1_kont_once_ok` (accepted), `d1_kont_post_ref`,
+  `ir/judge_sound/j2_post_resume_closure`, `R2c/rr5_v8_resume_in_closure`,
+  `rr5_v9_closure_resume_frees` (W0301, the same codes and lines as the old pipeline),
+  and the probes `c01`, `c02`, `c04` (bad and clean). No other row changes.
+  Tier 2 (57393; `r0k/c/r2-t2.tsv`, `kc1-t2.tsv`): all 232 to 212, D1 49 to 27 (C2 39, D3
+  1, D5 5 do not change). The 22 rows that change come into scope, each rejected by both
+  pipelines: `j2`, `rr5_v8`, `rr5_v9` (as in tier 1) and 19 mutants of `rr5_v8` in
+  `r3/oracle/runs/m3a` and `m3b` (a closure that resumes in the clause, and the same closure
+  given to `call_it`), with the codes of the old pipeline. Two of them
+  (`m3a/p2942`, `m3a/p4814`) lose the old W0301 at line 119: the mutant clears the
+  vector before the perform, so the clause takes `r` after the clear and nothing changes
+  it later; a variant that `main` reaches runs clean and the `ir` pipeline accepts it
+  (scratchpad `r0k/c/x/h2.wf`), so that W0301 was a false positive of the old pipeline.
+  Both stay rejected (W0301 at line 81; ledger entry of the class `changed` of the earlier
+  stages). No other row changes (7 large programs time out at 120 s in the census with
+  `weft-r0ka2r2`, a slower build; with `r0k/b1/bin/weft-b1note`, the release build of the
+  same code, their rows are the same as with `weft-r0kc1`).
+- Gates (binaries `r0k/c/bin/weft-r0kc1`, `weft-gate-r0kc1`): tier 1 0 blockers (5188;
+  3900 same, 17 open, 307 fixed, 1 new-fp, 0 lost-fault, 153 lost-clean, 146 moved, 664
+  changed: the 18 new probes are `same`, and each other count is that of R0k-b1); tier 2
+  (2 workers) 0 blockers (39987 same, 6 open, 92 fixed, 12 new-fp, 0 lost-fault, 3446
+  lost-clean, 1858 moved, 11992 changed: the two rows above leave `same`); fact oracle
+  tier 1 0 failures (8 faults, 22 timeouts, 1386 pass); sigdiff tier 1 0 rows with no
+  entry. The interpreter sources do not change (the differential test runs the copy
+  through the public API), so the oracle caches only get the rows of the new probes.
+  `ereview/ev.sh` against `weft-r0ka2r2` on the 23 rows of tier 1 (the 18 probes and the
+  5 programs that come into scope) and the 19 mutants of tier 2: no HOLE, no FP-IR; the
+  fact oracle passes on each copy.
+
+R0k-c2 design note (D5 and C8: a re-entry of a clause frame; not built, for review):
+
+- The forms. A clause performs a `multi` operation of a handler of a caller (D5) or of a
+  local handler (C8) after or before its `resume`; each later `resume` of that handler
+  runs the rest of the clause again from a copy of the clause frame, then the code that
+  the clause returns to (the rest of the function after the `handle`). Tier 1: 7 files,
+  all clean (`fixes/r0g/d5_after_resume_ok`, `c8_nested_after_ok`,
+  `r2/fidelity/p/multi_nested_drop`, `multi_nested_drop2`, `multi_nested_ok`, the copy of
+  `multi_nested_drop` in `weft-interp`, `R2c/fd2_v1_three_levels`); tier 2: 5 (four of the
+  same files, `r2/oracle/runs/m1/p1669`). `fd2_v2` and `fd2_v3` also need it (with D1).
+- No IR copy: the number of re-entries is a value of the run. The facts need the design
+  of the R0d note: re-entry edges in the component of the clause from its `Return`, its
+  landing and its `Resume` nodes to a `Copy` node of the row; a run of the analysis of the
+  clause from the block after the row (the locals of the clause copied, the heap of the
+  end of the function); each node that runs the clause as a row of the function (a `Copy`
+  node with edges from the `Return`s of the function to its `Landing`; for a row in the
+  `post` part, a `Copy` phase of the `Post` node of the `handle`); the cycles of E2; for C8
+  the `Post` of the local `multi` handler in place of the `Return` of the function.
+- The check of the environments. The handler environment of a clause frame is static (the
+  outer environment of the handler), so it is exact. A copied clause frame shares its
+  continuation objects with the first run: the machine copies frames, not the
+  continuations in them. A `multi` continuation can resume again on each re-entry
+  (`multi_nested_drop` runs clean); a `once` one cannot (the old pipeline gives W0503 for a
+  `once` continuation that is live across the row). So the re-entry state must keep the
+  state of the continuation local of the clause (used or not), and the cycle must carry
+  it.
+- What it needs: the new nodes and edges (`handlers.rs`, `nodes.rs`, `frames.rs`), the
+  re-run of the clause in the analysis (`run_rows` for a clause body, now pending), a new
+  cover of the fact oracle for copied clause frames (A4), and the proofs of E1 to E4 for
+  the new cycle. Size L. No spec relation changes.
+- Acceptance: the 7 files of tier 1 and the 5 of tier 2 in scope with no change of their
+  records; probes with a bad case (a `once` continuation resumed again after the re-entry,
+  W0503) and a clean twin for D5 and C8, for a row before and after the `resume`, and for
+  the `post` part.
 
 #### R1 Standalone `typeck`, part 1
 

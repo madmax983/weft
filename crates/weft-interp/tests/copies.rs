@@ -9,7 +9,9 @@
 //! output and the fault of the two runs. The files in `tests/copies` add
 //! the forms that a wrong copy of the parameters shows: two parameters of
 //! the same type, named arguments in the other order, `self`, a struct that
-//! holds a reference, and an abort path.
+//! holds a reference, and an abort path. The copies of a closure that
+//! resumes the continuation of its clause (stage R0k-c1, `instantiate_kont`)
+//! have a test of their own, with the probes of `fixes/r0kc` and `fixes/r0g`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
@@ -95,4 +97,88 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     assert!(copied >= 40, "only {copied} probes have copies");
     assert_eq!(local, 7, "each file in tests/copies must get a copy");
     assert!(closures >= 8, "only {closures} probes have closure copies");
+}
+
+/// The copies of stage R0k-c1 (`instantiate_kont`) do not change what a
+/// program does: each probe of `fixes/r0kc` and `fixes/r0g` with such a
+/// copy runs with and without it with the same output and fault, also when
+/// the make of a closure with a `once` continuation goes.
+#[test]
+fn the_copies_of_continuation_closures_do_not_change_the_runs() {
+    let opts = RunOptions {
+        oracle: true,
+        workers: 1,
+        max_steps: Some(5_000_000),
+        ..RunOptions::default()
+    };
+    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixes = here.join("../../tests/gate/probes/fixes");
+    let mut files = Vec::new();
+    for dir in [fixes.join("r0kc"), fixes.join("r0g")] {
+        for e in fs::read_dir(&dir).unwrap().flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "wf") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let (mut copied, mut removed) = (0, 0);
+    for p in files {
+        let src = fs::read_to_string(&p).unwrap();
+        if !src.contains("fn main") {
+            continue;
+        }
+        let name = p.display().to_string();
+        let c = check_source(&name, &src, Options::default());
+        let built = weft_sema::irbuild::build(&c.analysis);
+        let Some(inst) = weft_sema::factgen::instantiate::instantiate_kont(&built) else {
+            continue;
+        };
+        if inst.covered.is_empty() {
+            continue;
+        }
+        copied += 1;
+        // A `once` continuation: the make of the closure goes.
+        let made = inst.built.program.bodies.iter().any(|b| {
+            b.blocks.iter().flat_map(|k| &k.stmts).any(|s| {
+                matches!(&s.kind, weft_ir::StmtKind::Assign(_, weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(x), _)) if inst.covered.contains(x))
+            })
+        });
+        if !made {
+            removed += 1;
+        }
+        let a = seen(run_main(&c, &opts));
+        let b = seen(run_kont_copied(&c, &inst.built, &opts));
+        assert_eq!(a, b, "{name}: the run of the copy differs");
+    }
+    assert!(
+        copied >= 8,
+        "only {copied} probes have copies of continuation closures"
+    );
+    assert!(
+        removed >= 4,
+        "only {removed} probes lose the make of the closure"
+    );
+}
+
+/// Runs `fn main` of the program `built` (the program of `checked` with
+/// copies) on the IR engine.
+fn run_kont_copied(
+    checked: &weft_check::Checked,
+    built: &weft_sema::irbuild::Built,
+    opts: &RunOptions,
+) -> Result<weft_interp::RunOutcome, RuntimeError> {
+    weft_sema::on_large_stack(|| {
+        let analysis = &checked.analysis;
+        let code = weft_interp::compile_ir::compile_ir(&analysis.program, built)
+            .unwrap_or_else(|f| panic!("no code for the copy: {f}"));
+        let rt = weft_interp::runtime::Runtime::with_code(
+            &analysis.program,
+            analysis.sigs.as_slice(),
+            weft_interp::stealable_spans(checked),
+            code,
+        );
+        weft_interp::run_runtime_main(&rt, opts)
+    })
 }

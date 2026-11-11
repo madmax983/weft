@@ -2105,3 +2105,201 @@ mod copies {
         }
     }
 }
+
+/// The copies of a closure that resumes the continuation of its clause
+/// (stage R0k-c1, `instantiate::instantiate_kont`). Each refusal is a hard
+/// rule (`docs/ir.md` 6.1, "As built (plan stage R0k-c1)").
+mod kont_copies {
+    use weft_ir::{BodyKind, LocalKind, Program, Rvalue, StmtKind, TermKind};
+    use weft_sema::factgen::instantiate::{instantiate_kont, Instantiated};
+
+    /// The analysis of `src` and its IR.
+    fn built(src: &str) -> (weft_sema::Analysis, weft_sema::irbuild::Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The source of probe `name` of `tests/gate/probes/fixes/r0kc`.
+    fn probe(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0kc")
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The copies of the program of `src`, if a closure got one.
+    fn copies(src: &str) -> Option<Instantiated> {
+        let (_, b) = built(src);
+        instantiate_kont(&b).filter(|i| !i.covered.is_empty())
+    }
+
+    /// The clause bodies of `p`.
+    fn clauses(p: &Program) -> Vec<&weft_ir::Body> {
+        p.bodies
+            .iter()
+            .filter(|b| matches!(b.kind, BodyKind::Clause(..)))
+            .collect()
+    }
+
+    /// True if a clause of `p` makes closure `c`.
+    fn makes(p: &Program, c: weft_ir::ClosureId) -> bool {
+        clauses(p).iter().any(|b| {
+            b.blocks.iter().flat_map(|k| &k.stmts).any(|s| {
+                matches!(&s.kind, StmtKind::Assign(_, Rvalue::Aggregate(weft_ir::AggKind::Closure(x), _)) if *x == c)
+            })
+        })
+    }
+
+    /// True if a clause of `p` resumes its own continuation local.
+    fn resumes_own(p: &Program) -> bool {
+        clauses(p).iter().any(|b| {
+            b.blocks.iter().any(|k| match &k.term.kind {
+                TermKind::Resume { kont, .. } => {
+                    kont.is_local() && matches!(b.local_kind(kont.local), Some(LocalKind::Kont(_)))
+                }
+                _ => false,
+            })
+        })
+    }
+
+    /// A `once` continuation moves into the closure: the run gets a copy
+    /// that resumes the continuation of the clause, and the make goes.
+    #[test]
+    fn a_once_continuation_closure_gets_a_copy_and_its_make_goes() {
+        let inst = copies(&probe("c01_once_ok.wf")).expect("a copy");
+        assert_eq!(inst.closure_calls, 1);
+        let c = *inst.covered.iter().next().expect("a closure");
+        assert!(!makes(&inst.built.program, c), "the make stays");
+        assert!(resumes_own(&inst.built.program), "no resume of the clause");
+    }
+
+    /// A `multi` continuation is captured by copy: the copy reads it, and
+    /// the make stays.
+    #[test]
+    fn a_multi_continuation_closure_keeps_its_make() {
+        let inst = copies(&probe("c02_multi_ok.wf")).expect("a copy");
+        assert_eq!(inst.closure_calls, 1);
+        let c = *inst.covered.iter().next().expect("a closure");
+        assert!(makes(&inst.built.program, c), "the make goes");
+        assert!(resumes_own(&inst.built.program), "no resume of the clause");
+    }
+
+    /// D1c: the callee that gets the closure gets a copy at the call, then
+    /// the run in that copy gets a copy of the closure body.
+    #[test]
+    fn a_closure_given_to_a_callee_gets_a_copy_in_the_copy_of_the_callee() {
+        let inst = copies(&probe("c04_callee_ok.wf")).expect("a copy");
+        assert_eq!(inst.calls, 1);
+        assert_eq!(inst.closure_calls, 1);
+        assert!(resumes_own(&inst.built.program), "no resume of the clause");
+    }
+
+    /// Each refusal of the probes: two runs, a perform between the make and
+    /// the run, a call that can abort between them, a borrow of the closure
+    /// value, a make in a body inside the clause, a field on the chain.
+    #[test]
+    fn the_probes_of_a_refusal_get_no_copy() {
+        for name in [
+            "c03_two_runs_ok.wf",
+            "c05_perform_between_ok.wf",
+            "c06_call_between_ok.wf",
+            "c07_use_after_ok.wf",
+            "c08_nested_ok.wf",
+            "c09_field_ok.wf",
+        ] {
+            assert!(copies(&probe(name)).is_none(), "{name}: a copy");
+        }
+    }
+
+    /// The continuation is named again after the make (a `resume` of the
+    /// clause after the run): no copy.
+    #[test]
+    fn a_continuation_named_after_the_make_refuses_the_copy() {
+        let src = "effect Tick { multi fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+        let k = || resume(())
+        k()
+        resume(())
+    } } in { tick() }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// A body inside the clause names a local of the chain (it runs the
+    /// closure again): no copy.
+    #[test]
+    fn a_body_inside_the_clause_that_names_the_chain_refuses_the_copy() {
+        let src = "effect Tick { multi fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+        let k = || resume(())
+        k()
+        handle Other { fn other() { resume(()) } } in { k() }
+    } } in { tick() }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// A task runs the closure: a spawn is no call, so no copy.
+    #[test]
+    fn a_spawn_of_the_closure_gets_no_copy() {
+        let src = "effect Tick { fn tick() }
+fn main() / async {
+    handle Tick { fn tick() {
+        let k = || resume(())
+        scope { s => s.spawn(k) }
+    } } in { tick() }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// A path from the make that does not reach the run (a branch): no copy.
+    #[test]
+    fn a_path_from_the_make_that_misses_the_run_refuses_the_copy() {
+        let src = "effect Tick { fn tick(b: bool) }
+fn main() {
+    handle Tick { fn tick(b) {
+        let k = || resume(())
+        if b { k() }
+    } } in { tick(true) }
+}
+";
+        assert!(copies(src).is_none());
+    }
+
+    /// The program with the copies is the view that the check takes if the
+    /// facts without them find no error (`factgen::Pending::copy`).
+    #[test]
+    fn a_pending_program_with_copies_gets_the_view_of_the_copies() {
+        let (a, _) = built(&probe("c01_once_ok.wf"));
+        let p = a
+            .ir_scope
+            .as_ref()
+            .and_then(|s| s.pending.as_ref())
+            .expect("pending");
+        assert!(p.copy.is_some(), "no view of the copies");
+        let (a, _) = built(&probe("c03_two_runs_ok.wf"));
+        let p = a
+            .ir_scope
+            .as_ref()
+            .and_then(|s| s.pending.as_ref())
+            .expect("pending");
+        assert!(p.copy.is_none(), "a view of the copies");
+    }
+}

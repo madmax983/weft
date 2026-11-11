@@ -2343,6 +2343,56 @@ phases, the verifier, the fact oracle runs the copy).
   it to its callee, where a local handler serves the effect keeps the old pipeline, and a
   `spawn`, a `fork`, a `perform` or a `resume` that gives such a value away keeps it too.
 
+As built (plan stage R0k-c1, `instantiate::instantiate_kont`): a closure that a clause
+makes and that resumes the continuation of the clause (the reason D1, "a `resume` of a
+captured continuation") gets a copy of its body at its one run, so the `resume` is a
+resume point of the clause. The closure is made in the clause, so its handler environment
+is the static environment of its declaration, and its `Kont` capture is the continuation
+of the same activation of the clause. A callee that gets such a closure gets a copy at
+the call first (D1c, as R0k-a: its bounds, `weak_ok`, the verifier), then the run in that
+copy gets the copy of the closure body (D1a).
+
+- The phase. The copies apply only to a program whose constructs with no full facts are
+  all such a `resume` (stage R0g, `Scope::pending`). The emit of the program with the
+  copies, with the closures of the copies covered (`clause::KontCovered`: their bodies
+  keep the weak form of the `resume`, and no run applies their summary), must give no
+  error and no construct with no full facts: then its facts are `Pending::copy`. The check
+  (`weft_check::check_pending`) takes the facts without the copies first: if they find an
+  error, the result is as before (so no program in scope changes); else it takes the
+  facts of the copies, and the program is in scope. The fact oracle runs the program with
+  the copies (`factgen::components_built`).
+- The hard rules. Each one is checked on the IR of the clause body; if one fails, the run
+  keeps the summary and the program its fallback (`Inst::kont_copy`):
+  1. The run is a call (`Call` of a function value `copy l` or `move l`), not a spawn, a
+     fork or a task.
+  2. The closure value goes from the make to `l` along a chain of whole locals
+     (`x = move y` or `x = copy y`): no field, no container, no reference. Each local of
+     the chain is a variable or a temporary with one write and one read (the next step
+     or the run) besides `Live`, `Dead` and the drops of the cleanup blocks.
+  3. No body inside the clause names a local of the chain or the continuation local
+     (through an upvar local or a capture; `nested_uses`, which is `nested_writes` of
+     R0k-a2 for each kind of use).
+  4. The closure is made by the clause, captures the `Kont` local of the clause and no
+     value `ByMove`, and its body uses only fields of its environment.
+  5. The continuation local is named nowhere else in the clause body after the make, and
+     not before it either: no use, no borrow, no move, no drop; only `Dead` and
+     `UnwindKont`, the end of its scope and the cleanup of the builder, and none of them
+     between the make and the run.
+  6. Each path of the CFG from the make reaches the run, with no cycle, through blocks
+     that are not cleanup blocks and whose terminators are `Goto` or `Switch`: no unwind
+     edge, no abort edge, no perform, no call. The statements on those paths are only
+     `Live` and `Dead` of other locals and the steps of the chain.
+- A `once` continuation (a `move` capture) moves into the closure value at the make. The
+  copy resumes the continuation local, so the make and the steps of the chain go, and the
+  copy does not mention the closure value. By rules 2, 5 and 6 nothing runs between the
+  make and the run, and the value has no other use, so the program with the copy does
+  what the program does. A `multi` continuation (a `copy` capture) keeps the make, and the
+  copy reads the source, as in R0k-a2.
+- The verifier. The cleanup chain of a copy ends the values of the closure frame, then
+  goes to the chain of the clause, which starts with `UnwindKont`: V16 (`KontNotFirst`)
+  does not hold for the chains that start in the blocks of a copy, and the machine ends
+  them in the same order as before the copy.
+
 ### 6.2 Nodes and phases
 
 Each statement is one node. Each terminator is one node (phase `Main`), and some

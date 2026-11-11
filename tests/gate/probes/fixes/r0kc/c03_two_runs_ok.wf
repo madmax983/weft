@@ -1,0 +1,19 @@
+// Plan stage R0k-c1 (ok): the closure runs two times: no copy, the program keeps the fallback.
+// The clean twin: the clause does not clear `v`.
+effect Tick { multi fn tick() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let k = || resume(())
+            k()
+            k()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

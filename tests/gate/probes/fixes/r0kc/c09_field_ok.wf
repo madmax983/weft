@@ -1,0 +1,20 @@
+// Plan stage R0k-c1 (ok): the closure (of a `multi` continuation) goes through a field of a struct: no copy, the program keeps the fallback.
+// The clean twin: the clause does not clear `v`.
+effect Tick { multi fn tick() }
+struct H { f: fn() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let h = H { f: || resume(()) }
+            let g = h.f
+            g()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

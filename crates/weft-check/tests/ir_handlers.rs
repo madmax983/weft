@@ -1046,7 +1046,9 @@ fn r0g_codes(name: &str) -> (Vec<(String, usize)>, Option<String>) {
 /// pipeline rejects it (`Scope::pending`): W0313 for a continuation that
 /// leaves its clause, W0502 for a `once` closure that resumes two times,
 /// W0503 for a `once` continuation that is live across the operation. A
-/// clean program of these forms falls back. The forms with full facts (a
+/// clean program of these forms falls back, but a clean program whose
+/// closure gets a copy of its body at its one run in the clause (stage
+/// R0k-c1) is in scope. The forms with full facts (a
 /// closure that a clause gives to the site, a capability of a closure that a
 /// closure made, an escape through an abort past the handler) are in scope.
 #[test]
@@ -1063,23 +1065,20 @@ fn a_construct_with_no_full_facts_is_in_scope_only_if_the_ir_pipeline_rejects_it
     check("d4_abort_past.wf", &[("W0313", 8)]);
     check("c6_made_cap_live.wf", &[("W0301", 14)]);
     check("c4_value_dangling.wf", &[("W0301", 6), ("W0301", 7)]);
-    for (name, why) in [
-        (
-            "d1_kont_once_ok.wf",
-            "a `resume` of a captured continuation",
-        ),
-        (
-            "d5_after_resume_ok.wf",
-            "a `multi` operation of a handler of a caller in a clause",
-        ),
-    ] {
-        let (got, fallback) = r0g_codes(name);
-        assert!(
-            fallback.as_deref().is_some_and(|f| f.contains(why)),
-            "{name}: {fallback:?}"
-        );
-        assert!(got.is_empty(), "{name}: {got:?}");
-    }
+    // A closure that resumes a `once` continuation and runs once in its
+    // clause gets a copy of its body (stage R0k-c1): it is in scope, with no
+    // error.
+    check("d1_kont_once_ok.wf", &[]);
+    let (name, why) = (
+        "d5_after_resume_ok.wf",
+        "a `multi` operation of a handler of a caller in a clause",
+    );
+    let (got, fallback) = r0g_codes(name);
+    assert!(
+        fallback.as_deref().is_some_and(|f| f.contains(why)),
+        "{name}: {fallback:?}"
+    );
+    assert!(got.is_empty(), "{name}: {got:?}");
 }
 
 /// Review of stage R0g (B1): a closure whose value holds its environment (a

@@ -1,0 +1,21 @@
+// Plan stage R0k-c1 (ok): a body inside the clause (a handled body) makes and runs the closure: no copy, the program keeps the fallback.
+// The clean twin: the clause does not clear `v`.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                let k = || resume(())
+                k()
+            }
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

@@ -1105,10 +1105,7 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
         // R0g): the facts do not model the resume point
         // (`clause::KONT_CAPTURED`). The node moves its argument and uses
         // the continuation, and its result is a plain value.
-        clause::note_pending(crate::factgen::Unsupported {
-            group: crate::irbuild::scope::Group::D,
-            reason: clause::KONT_CAPTURED.to_string(),
-        });
+        clause::note_kont_pending(em.p, body);
         let n = nodes.main;
         operand_moves(em, n, st, arg, false, true)?;
         operand_moves(
