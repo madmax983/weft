@@ -2368,3 +2368,60 @@ mod r0kd1 {
         );
     }
 }
+
+/// Stage R0k-d2: a task that runs a shared function variable is late
+/// (`TASK_LATE`, pending) only if a write of the variable lies in the window
+/// of the task: from the spawn to the `join` of its handle, in the scope body
+/// of the spawn.
+mod r0kd2 {
+    /// The reason of the fallback and of the pending construct of probe
+    /// `name` of `tests/gate/probes/fixes/r0kd2`.
+    fn scope(name: &str) -> (Option<String>, Option<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0kd2")
+            .join(name);
+        let src =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(&src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let s = a.ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// True if the pending reason is the late task.
+    fn late(p: Option<&str>) -> bool {
+        p.is_some_and(|r| r.contains("a task that runs a function variable that gets a new value"))
+    }
+
+    /// A write before the spawn (two paths) or after the `join`: the program
+    /// is in scope.
+    #[test]
+    fn a_write_out_of_the_window_of_the_task_is_not_late() {
+        assert_eq!(scope("s1_before_spawn_ok.wf"), (None, None));
+        assert_eq!(scope("s2_after_join_ok.wf"), (None, None));
+    }
+
+    /// A write between the spawn and the `join` is late.
+    #[test]
+    fn a_write_in_the_window_of_the_task_is_late() {
+        let (_, pending) = scope("s2_in_window_bad.wf");
+        assert!(late(pending.as_deref()), "{pending:?}");
+    }
+
+    /// A spawn in a closure on the scope of the body around it: the task can
+    /// outlive the closure body, so each other write counts.
+    #[test]
+    fn a_spawn_in_a_closure_on_an_outer_scope_stays_conservative() {
+        let (_, pending) = scope("s4_spawn_in_closure_ok.wf");
+        assert!(late(pending.as_deref()), "{pending:?}");
+    }
+}

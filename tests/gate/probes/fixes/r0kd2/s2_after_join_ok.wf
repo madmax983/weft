@@ -1,0 +1,11 @@
+// Plan stage R0k-d2 (E4, clean): `g` gets a new value after the `join` of
+// the task: that write is out of the window (in scope).
+fn main() / async {
+    let g = || print(0)
+    scope { s =>
+        let t = s.spawn(|| g())
+        t.join()
+        g = || print(2)
+        g()
+    }
+}

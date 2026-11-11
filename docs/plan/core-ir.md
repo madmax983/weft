@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible); R0k-d1 (A, D4): this stage |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible); R0k-d1 done (8be4ab5); R0k-d2 (E4): this stage |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -4223,6 +4223,66 @@ built (plan stage R0k-d1)"; the census and the design check: scratchpad
   `weft-r0kc1` on the 90 A rows, the D4 rows and the 6 probes: no HOLE, no FP-IR (the A rows
   that come into scope are held or rejected by both pipelines; `d4_reassigned_ok` and
   `e1_fp` run clean).
+
+R0k-d2 as built (E4, `TASK_LATE`: the window of a task; `docs/ir.md` 6.4; the census and
+the design: scratchpad `r0k/d2/notes.md`):
+
+- The census (45 rows: tier 1 4, all clean; tier 2 41). The rule of R0j
+  (`templates::runs_rebound_cell`) made a task late if the variable of a `Kept` or `ByRef`
+  capture that the task runs had more than one whole `Assign` anywhere, or if the capture
+  came through the environment of the maker (`env.k`). Two shapes: the other writes are
+  before the spawn (two arms of a `match`) or after the `join` (tier 1); the task closure
+  is made in a closure, so the capture is `env.k` (tier 2, 41).
+- The rule now (`templates::late_write`): the cell is the variable that the capture
+  names, whole, through upvar locals and the `Kept` and `ByRef` captures of the makers
+  (`instantiate::whole_cell_of`); a capture of a part of a variable or of a place behind
+  a reference is late, as before. For a spawn on the scope of its own body (a scope body,
+  through its `ScopeCap`) or a `fork`, a whole write (an `Assign` or a terminator
+  destination) counts only in the window: in the body of the terminator on a path from it
+  (for a spawn up to a `join` of its handle; a `fork` waits for its branches, so none),
+  in a body inside it, or in a body that the window can call; the bodies above it wait, so
+  their writes do not count. For any other spawn (on a scope of another body: the task can
+  outlive the body) the rule of R0j stays: more than one whole write. Soundness: with no
+  write in the window the value of the cell for the whole task is its value at the spawn,
+  which the state of the spawn node has, so the run at the spawn node is exact. A late
+  task stays pending (the rule of R0g).
+- A first form of the rule counted each write of the cell, also a write of a part of it
+  (`w3.score += 1`) and the one write that gives the variable its value; the tier-2
+  census showed 9 programs in scope that it put out of scope (`r3/oracle/runs/g3a/p1675`
+  and 8 more: a spawn in a clause on the scope of the outer body). The rule above (whole
+  writes; more than one with no window) keeps each of them in scope.
+- What stays: a write in the window (each such program of the probes is also a W0405
+  race, which both pipelines reject); a spawn in a closure on an outer scope with two
+  writes (`s4_spawn_in_closure_ok`; the `p13880` shape); a write of a part of the
+  variable is not a write of the cell (a function value has no parts).
+- Probes `tests/gate/probes/fixes/r0kd2/` (a bad case and a clean twin of each shape):
+  `s1_before_spawn` (two paths before the spawn; bad: the value of `f` changes `v` while
+  the scope body reads it: W0405), `s2_after_join_ok` and `s2_in_window_bad` (a write after
+  the `join`, a write in the window: W0405), `s3_nested_closure_ok` (the capture through
+  the environment of `g`; the next reason, `VALUE_TASKS`, keeps the fallback) and
+  `s3_nested_closure_late` (W0405), `s4_spawn_in_closure_ok` (conservative: the fallback
+  stays) and `s4_spawn_in_closure_bad` (W0405). Tests: `analysis_units` `r0kd2`.
+- The fallbacks, against `weft-r0kd1` (scratchpad `r0k/d2/kd1-t1b.tsv`, `kd2-t1.tsv`,
+  `kd2-t2.tsv`): tier 1 (5212 files) 102 to 96, E4 8 to 1 (`s4_spawn_in_closure_ok`); the
+  rows that change: `fixes/r0i/rb/n01_option_spawn`, `n11_enum_nongeneric_spawn`,
+  `q02_pop_spawn`, `fixes/r0j/j02_late_ok` and the probes `s1_before_spawn_ok`,
+  `s2_after_join_ok` come into scope with no error; `s3_nested_closure_ok` changes its
+  reason (E4 to `VALUE_TASKS`). Tier 2 (57393): 149 to 112, E4 41 to 0; 37 rows come into
+  scope (4 clean seeds, accepted; 33 that the old pipeline rejects and the `ir` pipeline
+  accepts, with no fault: lost-clean, UNSIGNED), 4 change their reason to C (`VALUE_TASKS`,
+  R0e fix 2); no row leaves the scope. The 33 lost-clean rows: the old W0405 is at an
+  access after a `join` that it does not see (a handle in a tuple: `let (t, _) = pt`; a
+  `join` in a callee: `join_it(t)`) or at another field than the one that the task changes;
+  in `g3b/p13297` the old W0301 is on a closure call after its captured variable was moved
+  and got a new value; in `g3b/p13259` the old W0601 is on a closure that `apply` calls once.
+- Gates (binaries `r0k/d2/bin/weft-r0kd2`, `weft-gate-r0kd2`): tier 1 0 blockers (5212;
+  3919 same, 18 open, 307 fixed, 1 new-fp, 154 lost-clean, 146 moved, 667 changed); tier 2
+  (2 workers) 0 blockers (39919 same, 6 open, 92 fixed, 12 new-fp, 0 lost-fault, 3480
+  lost-clean, 1858 moved, 12026 changed); fact oracle tier 1 0 failures (1396 pass, 8 faults, 22 timeouts); sigdiff tier 1 0 rows
+  with no entry (a `sig` entry for `n11_enum_nongeneric_spawn` and `s4_spawn_in_closure_bad`:
+  the parts `reaches` and `pins`). `ereview/ev.sh` against `weft-r0kd1` on the 12 rows of
+  tier 1 (the 4 programs and the 8 probes) and on the 37 rows of tier 2 that come into
+  scope: no HOLE, no FP-IR.
 
 #### R1 Standalone `typeck`, part 1
 

@@ -855,8 +855,10 @@ fn the_task_fallbacks_are_pending() {
             include_str!("../../../tests/gate/probes/fixes/r0j/j01_again_ok.wf"),
             "runs a callback more than once",
         ),
+        // A late task (stage R0k-d2: a spawn in a closure on an outer scope,
+        // with two writes of the variable).
         (
-            include_str!("../../../tests/gate/probes/fixes/r0j/j02_late_ok.wf"),
+            include_str!("../../../tests/gate/probes/fixes/r0kd2/s4_spawn_in_closure_ok.wf"),
             "function variable that gets a new value",
         ),
         (
@@ -879,6 +881,16 @@ fn the_task_fallbacks_are_pending() {
         let p = scope.pending.as_ref().expect("pending");
         assert!(p.reason.contains(reason), "{}: {src}", p.reason);
     }
+    // Stage R0k-d2: the writes of the variable of `j02_late_ok` are out of the
+    // window of the task (one before the spawn, one after the `join`): the
+    // program has full facts.
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j02_late_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
     // A spawn on one of two nested scopes has full facts: the task ends at
     // the outer scope (`SiteScope::end`).
     let src = include_str!("../../../tests/gate/probes/fixes/r0j/j06_unowned_ok.wf");

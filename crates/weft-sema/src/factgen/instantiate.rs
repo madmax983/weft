@@ -2575,7 +2575,7 @@ fn single_value(body: &Body, l: LocalId) -> Option<One> {
 /// of a closure body goes to the source of a `Kept` capture `k`, and
 /// `(*env.k)` to the source of a `ByRef` capture `k`, in the maker. `None`
 /// for a place that names no local cell (a place behind a reference).
-fn cell_of(p: &Program, x: BodyId, q: &Place) -> Option<(BodyId, LocalId)> {
+pub(crate) fn cell_of(p: &Program, x: BodyId, q: &Place) -> Option<(BodyId, LocalId)> {
     let (mut body, mut q) = (x, q.clone());
     for _ in 0..=p.bodies.len() {
         let b = p.body(body)?;
@@ -2612,6 +2612,43 @@ fn cell_of(p: &Program, x: BodyId, q: &Place) -> Option<(BodyId, LocalId)> {
                 }
                 return Some((body, q.local));
             }
+        }
+    }
+    None
+}
+
+/// [`cell_of`] for a place that names the whole cell: no projection is left
+/// after the upvar locals and the environment fields (stage R0k-d2). `None`
+/// for a part of a cell, a place behind a reference, or no cell.
+pub(crate) fn whole_cell_of(p: &Program, x: BodyId, q: &Place) -> Option<(BodyId, LocalId)> {
+    let (mut body, mut q) = (x, q.clone());
+    for _ in 0..=p.bodies.len() {
+        let b = p.body(body)?;
+        match b.local_kind(q.local)? {
+            LocalKind::Upvar(t) => {
+                body = b.parent?;
+                q.local = t;
+            }
+            LocalKind::Env => {
+                let (_, d) = p.closure_of(body)?;
+                let Some(Proj::Field(k)) = q.proj.first() else {
+                    return None;
+                };
+                let cap = d.captures.get(k.index())?;
+                let rest: Vec<Proj> = match cap.mode {
+                    weft_ir::CaptureMode::Kept => q.proj.get(1..)?.to_vec(),
+                    weft_ir::CaptureMode::ByRef => match q.proj.get(1) {
+                        Some(Proj::Deref(weft_ir::DerefKind::Ref)) => q.proj.get(2..)?.to_vec(),
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                let mut src = cap.source.clone();
+                src.proj.extend(rest);
+                body = d.maker;
+                q = src;
+            }
+            _ => return q.proj.is_empty().then_some((body, q.local)),
         }
     }
     None

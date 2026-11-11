@@ -1,0 +1,12 @@
+// Plan stage R0k-d2 (E4): the spawn is in a closure on the scope of the
+// body around it, so the task can outlive the closure body, and the rule
+// stays conservative: a second write of `f` anywhere keeps the fallback,
+// although this program is clean.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let go = || s.spawn(|| f())
+        go()
+    }
+}

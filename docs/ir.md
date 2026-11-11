@@ -3153,6 +3153,16 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   places or holds a nonportable value (`transfer::TASK_RUN`) stays with the old
   pipeline: with the weak facts the worst way of a foreign task gives W0403 at the call
   of a clean program (`fixes/r0j/j07_run_ok.wf`).
+  From plan stage R0k-d2 a task that runs a shared variable (a `Kept` or `ByRef` capture,
+  also through the environment of the makers) is late (E4) only if a write of the variable
+  can run while the task can run (`templates::late_write`): the cell is the variable that
+  the capture names (`instantiate::cell_of`); for a spawn on the scope of its own body,
+  or a `fork`, the bodies above it wait, so their writes do not count, and in the body
+  itself a write counts if a path from the terminator reaches it (for a spawn, up to a
+  `join` of its handle; a `fork` waits for its branches); each other write counts. With
+  no write in that window the value of the variable for the whole task is its value at
+  the spawn, which the state of the spawn node has, so the run at the spawn node applies
+  each value that the task can run, and the program is in scope.
 
 As built (plan stage R0g: continuations and capabilities in closures):
 

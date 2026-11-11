@@ -10870,3 +10870,62 @@ parts = ["tasks", "pins", "reaches"]
 files = ["tests/programs/67_task_starts.wf"]
 reason = "stage R0k-d1: `67_task_starts` comes into scope (A pending, the `ir` pipeline rejects it). `clause_task`, `from_field` and `from_field_ok` have the row of the old pipeline (`mut() [Async] raises`); the parts `tasks`, `pins` and `reaches` come from the summaries of the `ir` pipeline (the task starts and the reached function values of the bodies), as for the other programs of the tasks families that are in scope"
 stage = "R0k"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r3/oracle/runs/g3a/p1869.wf",
+    "r3/oracle/runs/g3a/p3302.wf",
+    "r3/oracle/runs/g3a/p4359.wf",
+    "r3/oracle/runs/g3b/p11398.wf",
+    "r3/oracle/runs/g3b/p12250.wf",
+    "r3/oracle/runs/g3b/p13259.wf",
+    "r3/oracle/runs/g3b/p13297.wf",
+    "r3/oracle/runs/g3b/p14601.wf",
+    "r3/oracle/runs/g3b/p15436.wf",
+    "r3/oracle/runs/g3b/p16541.wf",
+    "r3/oracle/runs/g3b/p18466.wf",
+    "r3/oracle/runs/g3b/p20553.wf",
+    "r3/oracle/runs/g3b/p20874.wf",
+    "r3/oracle/runs/g3b/p20892.wf",
+    "r3/oracle/runs/g3p/p42484.wf",
+    "r3/oracle/runs/g3p/p45169.wf",
+    "r3/oracle/runs/g3p/p47339.wf",
+    "r3/oracle/runs/g4a/p1828.wf",
+    "r3/oracle/runs/g4a/p266.wf",
+    "r3/oracle/runs/g4a/p2889.wf",
+    "r3/oracle/runs/g4a/p3302.wf",
+    "r3/oracle/runs/g4a/p7903.wf",
+    "r3/oracle/runs/g4p/p20874.wf",
+    "r3/oracle/runs/g4p/p25551.wf",
+    "r3/oracle/runs/g4p/p26126.wf",
+    "r3/oracle/runs/g4p/p26714.wf",
+    "r3/oracle/runs/t3/p266.wf",
+]
+reason = "stage R0k-d2 (E4): the task closure runs a shared variable that has no write in the window of the task (from the spawn to the `join` of its handle), so the run at the spawn node is the whole run, and the program is in scope; the `ir` pipeline accepts it, and the interpreter runs it with no fault (ev.sh nofault, also with the oracle of data races). The old pipeline rejects it with W0405 at an access after the `join` of the task: it does not see that `join` when the handle goes through a tuple (`let pt = (s.spawn(..), 1); let (t, _) = pt; t.join()`) or when a callee joins it (`join_it(t)`). In `g3b/p13297` the old W0301 is on `cv12()` after `v12` is moved and gets a new value (the closure shares the cell of `v12`, so the call reads the new vector); in `g3b/p13259` the old W0601 is on `|| commit(t1)`, which `apply` calls once on each normal path (`Tx` has an `on abort` function)"
+signed_by = "reviewer R0k-d2: the old W0405 is on an access after the join of the task (a handle from a tuple or a join in a callee); p13297 reads a re-initialized variable through a by-reference capture; p13259 gives the closure to a callee that calls it, and Tx has on abort; ev.sh nofault on all 33 with both engines and the race oracle"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["reaches", "pins"]
+files = [
+    "tests/gate/probes/fixes/r0i/rb/n11_enum_nongeneric_spawn.wf",
+    "tests/gate/probes/fixes/r0kd2/s4_spawn_in_closure_bad.wf",
+]
+reason = "stage R0k-d2: the programs come into scope (E4 with no write in the window of the task; `s4_spawn_in_closure_bad` through the pending rule, rejected). `main` has the row of the old pipeline (`mut() [Async] raises`); the parts `reaches` and `pins` come from the summaries of the `ir` pipeline (the reached function values and the pinned tasks of the body), as for the other task programs in scope"
+stage = "R0k"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r3/oracle/runs/g3a/p1314.wf",
+    "r3/oracle/runs/g3b/p13880.wf",
+    "r3/oracle/runs/g3b/p15027.wf",
+    "r3/oracle/runs/g3b/p17637.wf",
+    "r3/oracle/runs/g3b/p18563.wf",
+    "r3/oracle/runs/g3p/p42513.wf",
+]
+reason = "stage R0k-d2 (E4): as the entry above, with the rule of whole writes (a write of a part of the cell, as `two6.a[0] = 5` in `g3a/p1314`, is no write of the function variable) and, for a spawn in a closure on an outer scope (`g3b/p13880`), one whole write of the variable. The `ir` pipeline accepts each program, and the interpreter runs it with no fault (ev.sh nofault, also with the oracle of data races). The old W0405 is at an access after a `join` in a callee (`join_it(t)`), or at an access of another field than the one that the task changes (`w5.es` and `w5.ns`)"
+signed_by = "reviewer R0k-d2: the old W0405 is on an access after the join of the task (a handle from a tuple or a join in a callee); p13297 reads a re-initialized variable through a by-reference capture; p13259 gives the closure to a callee that calls it, and Tx has on abort; ev.sh nofault on all 33 with both engines and the race oracle"
+stage = "R0k"

@@ -1,0 +1,14 @@
+// Plan stage R0k-d2 (E4, the late twin): `g` gives `r` a new value after
+// the spawn, in the scope body: the task can run it, so the program keeps
+// the fallback.
+fn main() / async {
+    let r = || print(1)
+    let g = || {
+        scope { s =>
+            s.spawn(|| r())
+            r = || print(2)
+        }
+        print(0)
+    }
+    g()
+}
