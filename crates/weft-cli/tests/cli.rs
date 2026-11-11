@@ -1050,9 +1050,10 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     // which gets no copy; a
     // handler in a closure body is in scope from stage R0d) goes to the old
     // pipeline, and the command says why on standard error. A clean program
-    // with a `multi` operation of a handler of a caller in a clause
-    // (`nested_run.wf`) falls back too (stage R0g: the `ir` pipeline checks
-    // such a program only if it rejects it).
+    // with a task that runs a callback more than once (`nested_run.wf`)
+    // falls back too (stage R0j: the `ir` pipeline checks such a program
+    // only if it rejects it; until stage R0k-c2 this program had a `multi`
+    // operation of a handler of a caller in a clause, which is in scope now).
     let dir = scratch(
         "fallback",
         &[
@@ -1062,7 +1063,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
             ),
             (
                 "nested_run.wf",
-                "effect Choice { multi fn choose() -> bool }\neffect Log { fn log(n: u64) }\nfn quiet() / Choice { handle Log { fn log(n) { resume(()); let b = choose() } } in log(1) }\nfn main() { handle Choice { fn choose() { resume(true) } } in quiet() }\ntest \"quiet\" { handle Choice { fn choose() { resume(true) } } in quiet() }\n",
+                "struct C { k: u64 }\nfn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) { scope { s => s.spawn(|| g(f)) }\n w.k += 1 }\nfn main() / async { let c = C { k: 0 }\n mid(|x| { x(); x() }, || print(c.k), &c) }\ntest \"again\" { let c = C { k: 0 }\n mid(|x| { x(); x() }, || print(c.k), &c) }\n",
             ),
         ],
     );
@@ -1092,7 +1093,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         out.stderr
     );
     // Each command that checks takes the switch.
-    // `nested_run.wf` has such a clause too.
+    // `nested_run.wf` falls back too.
     let run = format!("{dir}/nested_run.wf");
     let rules = "examples/lints/ref_across_abort.dl";
     for args in [
@@ -1253,10 +1254,18 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
         "{}",
         forked.stderr
     );
-    // A program that is not in scope (a `multi` operation of a handler of a
-    // caller in a clause, a fallback of stage F16): the oracle checks
+    // A program that is not in scope (a task that runs a callback more than
+    // once, a fallback of stage R0j; a `multi` operation of a handler of a
+    // caller in a clause is in scope from stage R0k-c2): the oracle checks
     // nothing.
-    let nested = format!("{INTERP}/multi_nested_drop.wf");
+    let dir = scratch(
+        "fact_oracle_out",
+        &[(
+            "again.wf",
+            "struct C { k: u64 }\nfn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) { scope { s => s.spawn(|| g(f)) }\n w.k += 1 }\nfn main() / async { let c = C { k: 0 }\n mid(|x| { x(); x() }, || print(c.k), &c) }\n",
+        )],
+    );
+    let nested = format!("{dir}/again.wf");
     let out = cmd(&["run", "--fact-oracle", &nested]);
     assert!(
         out.stderr.contains("the oracle checks nothing"),

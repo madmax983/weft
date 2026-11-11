@@ -1,0 +1,24 @@
+// Stage R0k-c2 fix 1 (a probe of the review of stage R0k-c2: a reference parameter of a clause across a row).
+// a clause local struct holds an Rc; a ref through it; the first copy clears the rc vec after resume
+struct B { v: Vec<u64> }
+struct S { r: Rc<B> }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run() -> u64 / Choice, mut(B) {
+    handle Pick { fn pick() {
+        let o = Rc.new(B { v: Vec.new() })
+        o.v.push(3)
+        let s = S { r: o }
+        let r = &s.r.v[0]
+        let b = choose()
+        print(r)
+        let y = resume(1)
+        s.r.v.clear()
+        y
+    } } in body()
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run()) }
+}

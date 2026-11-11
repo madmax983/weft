@@ -1,0 +1,19 @@
+// HENV-SHADOW p14, the clean twin: the clause of H does not clear `v`.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+struct B { f: fn() / Run }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { print(x)
+        resume(()) } } in {
+        let c0 = mk()
+        
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let b = Box.new(B { f: c0 })
+            let g = b.f
+            g() }
+        print(r)
+    }
+}
+fn main() { outer() }

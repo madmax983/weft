@@ -1,0 +1,18 @@
+// HENV-SHADOW c30 (clean; round 2 of the review): the closure that `mk`
+// makes in H2 goes into an `Option` (an aggregate) and runs in H2. It
+// performs to H2 only.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn nop() { }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let o = Some(mk())
+            match o { Some(g) => g(), None => {} } }
+        print(r)
+    }
+}
+fn main() { outer() }

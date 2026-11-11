@@ -1,0 +1,20 @@
+// Plan stage R0k-c2 (a probe of the stage: C8, a nested `multi` resume of a node in a clause).
+// clean: the clause of `Ask` (a `multi` operation) performs `pick` (a local `multi`
+// handler) before its resume;
+// the second resume of `pick` runs the rest of the clause of `Ask` again, which reads a
+// reference into a vector that nothing changes
+effect Pick { multi fn pick() -> bool }
+effect Ask { multi fn ask() -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true)
+        print(v.len())
+        resume(false) } } in {
+        let r = &v[0]
+        handle Ask { fn ask() {
+            let b = pick()
+            print(r)
+            resume(1) } } in { print(ask()) }
+    }
+}

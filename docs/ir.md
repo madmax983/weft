@@ -3862,8 +3862,8 @@ preview with `--groups ABCD` until stage F17):
   handled bodies that splice into it) that run such a clause
   (`Frames::reentries`) get a `Copy` node: `Post` → `P.Copy` → `P.Ret`. The clause
   code between two `resume`s runs at `Post` (the `post` part), then the rest of the
-  handled body runs again. A node in a clause or a closure inside the handled body
-  is not in scope.
+  handled body runs again. A node in a closure inside the handled body is not in
+  scope; a node in a clause inside it is (stage R0k-c2, below).
 - Re-entry edges of a handler of a caller (OL-R2a). A node that can wait at a
   `multi` operation of a caller (`frames::row_multi`: a perform of a `multi`
   operation through the row; a call whose summary performs one through the row that
@@ -3872,7 +3872,7 @@ preview with `--groups ABCD` until stage F17):
   gets a `Copy` node with an edge from each `Return` of the function (or closure)
   body: `Return` → `P.Copy` → `P.Ret`. Only in a program that declares a `multi`
   operation and a handler: with no handler (group D off) the facts do not change.
-  A node in a clause is not in scope.
+  A node in a clause has the re-entry of stage R0k-c2 (below).
 - The `Copy` rule (`handlers::copy_node`). The copied frames are the frames of the
   handled body (local handler) or of the function (handler of a caller), with the
   handled bodies that splice into them, and the callee frame of a call. Each variable
@@ -3958,6 +3958,109 @@ preview with `--groups ABCD` until stage F17):
   copied frames (it resumes them again: the facts give the accesses of that run to
   the re-entry nodes), and a clause that an op of a copied frame runs has no known
   site.
+
+As built (plan stage R0k-c2: the re-entry of a clause frame, D5 and C8; the design note
+of the stage in `docs/plan/core-ir.md`):
+
+- The forms. A clause (or a body that splices into it) performs a `multi` operation of a
+  handler of a caller (D5), or a node of a clause inside the handled body of a local
+  `multi` handler runs a clause of that handler that can resume more than once (C8). A
+  later `resume` runs the rest of the clause again from a copy of the frames
+  (`copy_frames` of the machine): each copy of a clause frame has a continuation record of
+  its own, in its state at the row (E6).
+- The rows of a clause (`frames::clause_rows`): the rows of the clause body and of the
+  bodies that splice into it, where they run (before the first `resume`, `pre`, or after
+  it, `post`). A node that runs a clause with a `pre` row waits at the operation too: it is
+  a node of `frames::row_multi` (`frames::runs_row_clause`), with a `Copy` node and an edge
+  from each `Return` of the function, and edges from its `Copy` node to the `FrameEnd`
+  node of each abort destination (`NodeTable::copy_abort_edges`: the rest of the clause
+  can end with no `resume` or abort). A `handle` with a `post` row gets a `Copy` node of
+  copy `ROW` with an edge from each `Return` of the function and an edge to its `Post`
+  node (`NodeTable::post_row_edges`).
+- The facts of the clause (`emit_clause`): each row of the clause gets a `Copy` node with
+  an edge from each `Return` of the function or closure that the clause runs below
+  (`handlers::clause_chain`: the clause frames up to that body). For C8 each such node of
+  the clause gets an edge from `Post` of the `handle` of the local handler
+  (`NodeTable::clause_reentry_edges`, `handlers::local_chain`).
+- The `Copy` rule (E5): the copied frames are the frames of the function (or of the
+  handled body of the local handler) and the frames of the chain of clauses
+  (`handlers::copy_node`, `chain`). A variable whose value points only into them gets
+  `rebound_at` (and `empty_at` if it is not linear): its place is owned and copied, so a
+  reference into it is valid as at the row. A variable that points into a shared place (an
+  `rc` group, a place of a caller, a place of a frame above the handler) keeps its state,
+  the state after the previous run. The `Copy` nodes of a clause are not code of the
+  clause at the node that runs it (`clause_nodes`).
+- The analysis. A row of a clause below a function body gets the heap slots of the
+  `Return`s of the function (`clause::Handlers::row_heap`); its normal edge joins them
+  (`analysis::edges`), in each run of the clause. The run of the facts of the clause
+  runs again from the block after the row with the state of the row and these slots
+  (`analysis::run_rows`, the second seed). A C8 node joins the values of the locals
+  outside the handled body at the later `resume` and the heap
+  (`clause::Handlers::row_join`).
+- E7. A value that is not `many` and that is live across the row in the clause frame is
+  W0503 at the row; in the frame of the function it is W0503 at the node that runs the
+  clause (`multi_at`); a linear value gets no `empty_at` at the `Copy` node.
+- The fact oracle (A4 of re-entries, `FactOracle::note_reentries`, `reentry_copy`): at a
+  `multi` operation, each followed frame of the continuation keeps the references of its
+  locals and the `Copy` nodes of the frames of its component. At each copy of the frames
+  (each `resume`), a reference into a copied cell (the `map` of `copy_frames`) whose
+  variable points only into places of the copied frames must be bound again at a `Copy`
+  node, and at a later copy a reference into a shared cell that an access since the
+  operation ended must not be.
+- Open, older than the stage (the re-entry of a function body has them too). A precision
+  loss: a reference through an `Rc` handle of a copied frame is invalid at the re-entry
+  after the end of the handle in the previous run (a false W0301). A gap: the variable
+  "the copy of the frame" of a call (D-MULTI-MID) points only into the places below the
+  references that the call uses, not into the `rc` groups that they reach, so a change of
+  such a group by the code of the outer clause between two `resume`s does not reach the
+  reference of the copied callee frame.
+
+As built (plan stage R0k-c2 fix 1: a parameter of a clause at the re-entry of a clause
+frame; the finding of the review of R0k-c2):
+
+- The gap. A parameter of a clause (and each variable of the clause frame that points
+  into it) points into the `Param` or `Held` place of the clause. The `Copy` rule keeps
+  the state of such a variable: the place is shared. But the code of the previous run
+  changes the argument at the node that runs the clause, not the `Param` place: only the
+  run node and the `resume` map the two places. So a `clear` or a `push` of the argument
+  between two copies left the parameter valid (a read of a freed cell in the next copy).
+- The rule (`handlers::reentry_args`, from `project`; the form after the second review of
+  the fix). For each `Copy` node whose copied frames have clause frames
+  (`handlers::ClauseCopy`, noted by `copy_node`), each variable `V` of such a clause frame
+  that the node does not bind again and that points into a `Param` or `Held` place of its
+  clause gets a shadow variable (`handlers::shadow`, named "the argument of `V`",
+  `arg_shadow_name`). The shadow variable points into the places of the argument (σ of
+  each run of the clause that is not `Post`, through `Mapper`, with the handle places of
+  the `Rc` handles on the way), but not into a place that the node copies (a local of a
+  copied frame, or the callee frame of the run node): there the copy is valid. These
+  places are on shadow roots (one for each root of an argument, kind `Arg`). Each change,
+  lend, free or moved part of a place of such a root at a node that a node that runs the
+  clause can reach (forward on the graph) is also a change of the same place of its
+  shadow root; so is the end or the move of the owner of the root there. A change before
+  the first run, or on a path with no run (a loop that runs 0 times, the other branch of
+  an `if`), does not count. The shadow variable never gets a new value: a later run of
+  the clause gives it no new state, so a change after an earlier run stays
+  (`fixes/r0kc2c/n04_loop_rebind_bad`, `n05_two_runs_rebind_bad`). Its uses are the uses
+  of `V` that a `Copy` node that keeps `V` reaches before a new value of `V`: W0301
+  there if the change can reach the `Copy` node. `V` itself does not change. An argument
+  that is a place of a parameter of an outer clause of the chain maps again through the
+  runs of that clause. A linear or `!Move` variable gets no shadow variable (E7).
+- The `rc` form (`RC_ACROSS_ROW`, in `reentry_args`). For a row of a handler of a caller
+  (D5), a variable of a copied clause frame that keeps its state and points into an `rc`
+  group, or whose argument is in an `rc` group (`n19_rc_param_arg_bad`), makes the
+  program pending: the clause of the caller can change the group through another handle
+  between two `resume`s, and its facts do not see the reference. The error of the `ir`
+  pipeline is final; with no error the old pipeline checks the program. A variable of the
+  frame of the function has the same gap (older than the stage, as above,
+  `n18_rc_handled_frame_bad`): it stays open.
+- The fact oracle (A4 of re-entries). At a later copy, a reference of a clause frame
+  into a shared cell whose target an access since the operation freed or moved, or whose
+  `Vec` buffer the access wrote as a whole (an unstable step), must have a variable that
+  is invalid at a `Copy` node, or whose shadow variable is (`invalid(V, P)`: the checker
+  with a use of each variable at each `Copy` node, `copy_invalid`). Another write above
+  the target only must not bind it again. In the frame of a function the change can come from a clause of a caller
+  between two `resume`s: the facts of the caller check it (D-MULTI-MID), so there the
+  rule of R0k-c2 stays.
 
 As built (plan stage F17 part 0, the findings of the independent review of group D;
 `factgen/handlers.rs` `Region`): the region of the continuation of a `resume` is the
@@ -5050,6 +5153,52 @@ As built (follow-up F17.2, the third review of group D):
   `performs_at`, no `escapes_at` of the effect), its abort edges and its re-entry
   edges. The past destination stays (a closure made outside the handled body). The
   clauses get the state before the call (`transfer::term`).
+- As built (HENV-SHADOW fix, plan `core-ir.md` "HENV-SHADOW fix"). A closure runs with the
+  handler environment of its maker, innermost first. A closure that a call made in the
+  handled body of a local handler H, and that runs in the handled body of an inner local
+  handler H2 of the same effect, performs to H, not to H2. Before the fix `reach` and
+  `value_effects` resolved each effect only to the innermost local handler (`resolve`),
+  so the clause of H was not in the facts of the run node (probes
+  `fixes/henv/q02`, `q06`, `q08`: the interpreter reads a freed cell, the `ir` pipeline
+  gave no error). Now a call whose handler environment is not known
+  (`frames::henv_unknown`) resolves each effect of the value, and `Fail`, to each local
+  handler on the chain of `e` and past the function (`frames::resolve_all`). The
+  environment is known for a constant (a function item), a local that only closures of
+  the function or inert closures can give (`closure_only`: such a closure captures the
+  capability of each local handler that it performs through), and a parameter of a
+  function or a closure that gets no other value (`entry_param`: its value existed
+  before the frame). It is known too for a value that was made in this run of the handled
+  body of the innermost local handler H2 of the effect at the run node (`made_under`,
+  review of the fix, probes `fixes/henv/fp01` to `fp03`): the local belongs to a body
+  that runs in each run of that handled body, and each whole write of it is a
+  constant, a copy of such a local (also of a field or an element of it), an aggregate
+  (also a new closure: its operands are its captures) whose operands with a function
+  part have the same property, or the result of a call of a function item with an IR
+  body whose environment sends the effect to H2 first and whose `ret.fns` is not empty
+  and holds only closures that the callee makes and function items (a declaration such
+  as `Vec.pop` or `Box.new` gives no `ret.fns`: round 2 of the review, `p13`, `p14`); no
+  write of a part, no reference to the local, and no closure that shares the cell of the
+  local and writes it (`shares_cell`: a `ByRef`, `Kept` or `Kont` capture that the
+  closure body writes, takes a reference to, or captures again; `p07`, `p07d`). Such a
+  value performs to H2 or past the function. A `closure_only` local is known only if its
+  closures capture no function value other than such a local and no closure writes its
+  cell (`plain_closures`); the same rule holds for the `closure_only` exception of
+  `value_effects` (a closure made in H2 that captures a closure made in H runs it with
+  H: `p30`). Each other value is not known: for example the result of a
+  call in an outer handler (`q02`), a value that a clause gives, a value of a loop that
+  outlives a run of H2, or a container that a callee can change through a reference. A
+  known value keeps the innermost local handler and past the function: a function item
+  runs with the handlers of the run node (the innermost), and a closure of a caller (an
+  `entry_param` value) performs past the function. For a closure of a caller the
+  innermost local handler is more than necessary but not wrong; the summary that the
+  caller applies at its call checks the effect there. For a call of a function item
+  the rule holds if the summary runs a value (`runs`, `unknown_runs`) and an argument
+  holds such a value. `clause::note_cap_apps` gives a failure of such a value to each
+  local `Fail` handler of the chain too. The check runs only if the chain has more than
+  one local handler of the effect (`frames::run_dests`). The fact oracle (A5) now also
+  fails if no node of the frames of the component above the `handle` runs a clause with
+  a resume point (no `performs_at` with the capability of the handler and no
+  `escapes_at`).
 - A call in a closure body that gets the capability of an effect of its row from the
   environment of the closure (a captured capability, `handlers::captured_calls`) runs
   the clauses of the handler of the capture at the node, as a perform through the
@@ -5956,6 +6105,19 @@ D-FNVAL-ROW (d01, d02, d03, d06, d07, d08, d10, d11, d14, e02, k03, p01, s04, a0
 their clean twins before the fix, and on one program of the gate
 (`probes/r2/interp/repro/holds/ip_lexical.wf`). A closure that runs from a callee (a
 frame of another component) is not checked.
+
+**As built (HENV-SHADOW fix): the clause cover with no node that runs the clause.** A5
+passed on `fixes/henv/q02` with the facts before the fix: the run node of the closure
+sent the effect to the inner handler H2 (no `escapes_at`), so no node failed, but no
+node ran the clause of H either. Now A5 also fails if the frames of the component above
+the `handle` have no node with `performs_at` with the capability of the handler and no
+node with `escapes_at` of its effect ("no node of the frames of `f` above the `handle`
+has `performs_at` with the capability of the handler"), if the clause of the operation
+has a resume point. A clause with no resume point aborts to its handler, and trace
+conformance checks the abort edge (a first form with no such limit failed on 31 correct
+programs of tier 1: a `Fail` clause at the end of a scope). With the facts before the fix it
+fails on each probe of `fixes/henv` (bad and clean twins); with the facts of the fix it
+passes. Test: `summary_oracle.rs` `a_clause_that_no_node_runs_fails_the_clause_cover`.
 
 **As built (F19.3): the task check (ORACLE-GAP of the review of group E).** The oracle
 records each task that a frame starts at a node with one `spawned_at(T, _)` as a task of

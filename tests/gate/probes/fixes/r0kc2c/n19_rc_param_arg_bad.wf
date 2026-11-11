@@ -1,0 +1,20 @@
+// Stage R0k-c2 fix 1 (a probe of the second review of the fix: a path with no run of the clause, or two runs of it).
+// rc form with an op arg: the handled body passes a ref into the rc to pick; main's clause clears the rc through a clone between resumes
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick(r: &u64) -> u64 }
+fn run(b: &Rc<B>) -> u64 / Choice {
+    handle Pick { fn pick(r) {
+        let c = choose()
+        print(r)
+        resume(1)
+    } } in pick(&b.v[0])
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice { fn choose() { resume(true)
+        b2.v.clear()
+        resume(false) } } in { print(run(&b)) }
+}

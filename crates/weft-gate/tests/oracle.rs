@@ -397,8 +397,8 @@ fn the_committed_caches_cover_tier_1() {
 
 /// The fact oracle (stage F9, `docs/ir.md` 8.5): a program in scope that the
 /// `ir` pipeline accepts runs with it and passes; a program that the `ir`
-/// pipeline rejects, and a program out of scope (a `multi` operation of a
-/// handler of a caller in a clause, a fallback of stage F16), do not run.
+/// pipeline rejects, and a program out of scope (a task that runs a callback
+/// more than once, a fallback of stage R0j), do not run.
 /// The child processes get `--fact-oracle`.
 #[test]
 fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
@@ -416,7 +416,7 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
             vec![
                 entry("clean.wf"),
                 entry("w0301.wf"),
-                entry("fact_nested_handler.wf"),
+                entry("fact_out_of_scope.wf"),
             ],
             s,
         );

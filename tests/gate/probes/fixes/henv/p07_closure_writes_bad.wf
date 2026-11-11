@@ -1,0 +1,22 @@
+// HENV-SHADOW p07 (round 2 of the review): `g` gets its value from `mk` in
+// H2, but the closure `set` shares the cell of `g` and writes the closure
+// that `mk` made in H into it. The run of `g` in H2 goes to H.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn nop() / Run { }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c0 = mk()
+        
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let g = mk()
+            let set = || { g = c0 }
+            set()
+            g() }
+        print(r)
+    }
+}
+fn main() { outer() }

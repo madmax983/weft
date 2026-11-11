@@ -123,6 +123,28 @@ pub struct Handlers {
     /// a body passed: the body, the block, the block after the node and the
     /// state on its normal edge (`super::run`).
     pub rows: Vec<(BodyId, BlockId, BlockId, State)>,
+    /// For each node of a clause that can wait at a `multi` operation of a
+    /// handler of a caller (stage R0k-c2, E5): the heap slots at the
+    /// `Return`s of the function (or closure) that the clause runs below
+    /// (`crate::factgen::handlers::clause_chain`). A later `resume` runs the
+    /// rest of the clause again from a copy of the frames: the locals of the
+    /// copied frames have their state at the node, and the shared places
+    /// their state after the previous run. So the normal edge of the node
+    /// joins these slots (`super::edges`).
+    pub row_heap: BTreeMap<(BodyId, BlockId), State>,
+    /// For each node of a clause inside the handled body of a local `multi`
+    /// handler that runs a clause of the handler that can resume more than
+    /// once (C8, stage R0k-c2): the state of the re-entry and the handled
+    /// body. A later `resume` runs the rest of the clause again from a copy
+    /// of the frames inside the handled body: the normal edge of the node
+    /// joins the values of the locals outside the handled body and the heap
+    /// of that state (`super::edges`).
+    pub row_join: BTreeMap<(BodyId, BlockId), (State, BodyId)>,
+    /// The `Copy` nodes of the facts whose copied frames include frames of
+    /// clauses (stage R0k-c2 fix 1, `crate::factgen::handlers::copy_node`):
+    /// `crate::factgen::handlers::project` relates the variables of these
+    /// frames that point into a parameter of their clause to the arguments.
+    pub clause_copies: Vec<crate::factgen::handlers::ClauseCopy>,
     /// The run nodes whose function values can resume more than once (the
     /// analysis finds them: an applied summary is `multi`, plan stage F16).
     /// They are nodes of `crate::factgen::frames::row_multi` too.
@@ -1329,9 +1351,16 @@ pub fn handle_run(
             out.push((re.body, re.block, s.clone(), values.clone()));
             if re.body == hb {
                 changed |= join_seed(&mut again, re.next, &s);
-            } else {
+            } else if spliced_into(p, re.body, hb) {
                 let seeds = cx.hx.extra.entry(re.body).or_default();
                 changed |= join_seed_list(seeds, re.next, &s);
+            } else {
+                // A node in a clause inside the handled body (C8, stage
+                // R0k-c2): the normal edge of the node joins the values of
+                // the locals outside the handled body at the later
+                // `resume` and the heap (`super::edges`), in each run of
+                // the clause.
+                changed |= join_row(cx, (re.body, re.block), hb, &s);
             }
         }
         if !changed {
@@ -1344,6 +1373,17 @@ pub fn handle_run(
             ));
         }
     }
+}
+
+/// Joins the state `s` into the re-entry join of node `at` of a clause
+/// inside handled body `hb` (`Handlers::row_join`). Returns true if it
+/// changed.
+fn join_row(cx: &mut Cx<'_>, at: (BodyId, BlockId), hb: BodyId, s: &State) -> bool {
+    if let Some((have, _)) = cx.hx.row_join.get_mut(&at) {
+        return have.join(s);
+    }
+    cx.hx.row_join.insert(at, (s.clone(), hb));
+    true
 }
 
 /// Joins the state `s` into the seed of block `b` in `seeds`. Returns true
@@ -1806,10 +1846,14 @@ pub fn note_reentry(cx: &mut Cx<'_>, body: BodyId, block: BlockId, t: &TermKind,
             continue;
         };
         let spliced = spliced_into(p, body, hb);
+        // A node in a clause inside the handled body (C8, stage R0k-c2):
+        // the clause frames on the way are copied frames too.
+        let in_clause = !spliced
+            && crate::factgen::handlers::local_chain(p, body, hb).is_some_and(|c| !c.is_empty());
         let Some(o) = cx.hx.open_mut(h) else {
             continue;
         };
-        if !spliced {
+        if !spliced && !in_clause {
             o.nested = true;
             continue;
         }
@@ -2375,21 +2419,25 @@ pub fn note_cap_apps(
             || a.summary.aborts.contains(&super::summary::Abort::Raises)
             || a.summary.performs.iter().any(|pf| pf.effect == fail)
     });
-    let env = p
+    let term = p
         .body(body)
         .and_then(|b| b.blocks.get(block.index()))
-        .and_then(|b| match &b.term.kind {
-            TermKind::Call {
-                caps: weft_ir::CapArgs::Lexical(e),
-                ..
-            } => Some(*e),
-            _ => None,
-        });
-    if let (true, Some(e)) = (fails, env) {
-        if let crate::factgen::frames::Dest::Handler { handler, .. } =
-            crate::factgen::frames::resolve(p, cx.tys, e, fail, true)
-        {
-            cx.hx.cap_active.insert((body, block, handler));
+        .map(|b| &b.term.kind);
+    let env = term.and_then(|t| match t {
+        TermKind::Call {
+            caps: weft_ir::CapArgs::Lexical(e),
+            ..
+        } => Some(*e),
+        _ => None,
+    });
+    if let (true, Some(e), Some(t)) = (fails, env, term) {
+        // A value whose handler environment the facts do not know fails to
+        // each local `Fail` handler of the chain (HENV-SHADOW).
+        let ds = crate::factgen::frames::run_dests(p, cx.tys, cx.sums, (body, t), e, fail);
+        for d in ds {
+            if let crate::factgen::frames::Dest::Handler { handler, .. } = d {
+                cx.hx.cap_active.insert((body, block, handler));
+            }
         }
     }
 }

@@ -747,6 +747,7 @@ pub fn emit_parts(
         })
         .collect();
     table.row_reentry_edges(p, facts, entry, &known.iter().copied().collect::<Vec<_>>());
+    clause_row_edges(&mut table, p, &tys, sums, facts, &frames, entry, &spliced);
     let states = loop {
         let st = {
             let mut cx = crate::analysis::Cx {
@@ -1303,6 +1304,50 @@ fn sim_blocks(
         .retain(|(n, e)| !(nodes.contains(n) && crate::effects::is_std(e)));
 }
 
+/// The re-entry edges of stage R0k-c2 in the bodies `bodies` (body `root`
+/// and the bodies that splice into it, or a clause body and the bodies that
+/// splice into it): the abort edges of the `Copy` node of each node that
+/// runs a clause that can wait at a `multi` operation of a handler of a
+/// caller before its first `resume` (`nodes::NodeTable::copy_abort_edges`),
+/// and the re-entry of each `handle` whose clause can wait there after a
+/// `resume` (`nodes::NodeTable::post_row_edges`), from the `Return`s of
+/// `root`.
+#[allow(clippy::too_many_arguments)]
+fn clause_row_edges(
+    table: &mut nodes::NodeTable,
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    sums: &crate::analysis::Summaries,
+    facts: &mut FnFacts,
+    frames: &frames::Frames,
+    root: weft_ir::BodyId,
+    bodies: &[weft_ir::BodyId],
+) {
+    let mut runs = Vec::new();
+    let mut handles = Vec::new();
+    for &b in bodies {
+        let Some(body) = p.body(b) else {
+            continue;
+        };
+        for x in frames::row_multi_nodes(p, tys, sums, b) {
+            let runs_clause = body
+                .blocks
+                .get(x.index())
+                .is_some_and(|blk| frames::runs_row_clause(p, tys, sums, b, &blk.term.kind));
+            if runs_clause {
+                runs.push((b, x));
+            }
+        }
+        handles.extend(
+            frames::post_row_handles(p, tys, sums, b)
+                .into_iter()
+                .map(|x| (b, x)),
+        );
+    }
+    table.copy_abort_edges(facts, frames, &runs);
+    table.post_row_edges(p, facts, root, &handles);
+}
+
 /// The run nodes that the analysis found whose function values can resume
 /// more than once (`clause::Handlers::dyn_rows`, plan stage F16) and that
 /// are not in `known`. They go into `known`.
@@ -1655,6 +1700,7 @@ fn closure_summary(
         cb,
         &known.iter().copied().collect::<Vec<_>>(),
     );
+    clause_row_edges(&mut table, p, &tys, sums, &mut facts, &frames, cb, &spliced);
     let mut hx = crate::analysis::clause::Handlers::default();
     let (env, states) = loop {
         let r = {
@@ -2150,6 +2196,9 @@ fn emit_closure(
         .collect();
     out.table
         .row_reentry_edges(p, out.facts, cb, &known.iter().copied().collect::<Vec<_>>());
+    clause_row_edges(
+        out.table, p, out.tys, cx.sums, out.facts, &frames, cb, &spliced,
+    );
     let params = decls::closure_params(p, out.tys, out.facts, out.roots, cb)?;
     let mut hx = crate::analysis::clause::Handlers::default();
     hx.escapes = cx.escapes.to_vec();
@@ -2430,6 +2479,27 @@ fn emit_clause(
     for &b in &spliced {
         out.table.splice(p, out.facts, b, frames);
     }
+    // The re-entry edges after a node of the clause that can wait at a
+    // `multi` operation of a handler of a caller (stage R0k-c2): from each
+    // `Return` of the function (or closure) that the clause runs below.
+    if let Some(root) = handlers::clause_chain(p, cb).and_then(|c| c.last().copied()) {
+        let rows: Vec<(weft_ir::BodyId, weft_ir::BlockId)> = spliced
+            .iter()
+            .flat_map(|&b| {
+                frames::row_multi_nodes(p, out.tys, cx.sums, b)
+                    .into_iter()
+                    .map(move |x| (b, x))
+            })
+            .collect();
+        out.table.row_reentry_edges(p, out.facts, root, &rows);
+        clause_row_edges(
+            out.table, p, out.tys, cx.sums, out.facts, frames, root, &spliced,
+        );
+    }
+    // The re-entry edges of the nodes of the clause that a later `resume` of
+    // a local `multi` handler runs again (C8, stage R0k-c2).
+    out.table
+        .clause_reentry_edges(p, out.facts, frames, &spliced);
     let sp = weft_facts::Span {
         lo: body.origin.span.lo,
         hi: body.origin.span.hi,
@@ -3514,9 +3584,21 @@ fn emit_block(
         // the smaller set of copied frames: the frames up to the local
         // handler. A local outside them keeps its state at the copy.
         let local = frames.reentry_root(em.p, bid, block);
+        // A node of a clause (stage R0k-c2): the copied frames are the
+        // frames of the chain of clauses up to the function.
+        let chain = match local {
+            None if row => handlers::clause_chain(em.p, bid),
+            // A node in a clause inside the handled body of the local
+            // handler (C8): the clause frames on the way.
+            Some(hb) => handlers::local_chain(em.p, bid, hb).filter(|c| !c.is_empty()),
+            None => None,
+        };
         let root = match local {
             Some(r) => r,
-            None if row => handlers::splice_root(em.p, bid),
+            None if row => chain
+                .as_ref()
+                .and_then(|c| c.last().copied())
+                .unwrap_or_else(|| handlers::splice_root(em.p, bid)),
             None => bid,
         };
         let row_returns: Vec<weft_facts::NodeId> = if row && local.is_some() {
@@ -3557,7 +3639,7 @@ fn emit_block(
             em,
             (c, n),
             (block, root, local.is_some() || known),
-            &row_returns,
+            (&row_returns, chain.as_deref()),
             &st,
             &blk.term.kind,
         );
@@ -3641,6 +3723,52 @@ fn emit_handle(
             .then(|| frames.rerun_spares(p, h))
             .flatten();
         handlers::handle_post(em, exit, &[post], (h, spares));
+        // A clause that can wait at a `multi` operation of a caller after its
+        // `resume` (stage R0k-c2): a later `resume` runs its rest again, then
+        // the code after the `handle`, from a copy of the frames.
+        let row_copy = table.get(NodeKey {
+            body: site,
+            block,
+            at: TERM,
+            phase: Phase::Copy,
+            dest: nodes::ROW,
+        });
+        if let Some(c) = row_copy {
+            let mut sr = out.after.clone();
+            let clauses: Vec<weft_ir::BodyId> = p
+                .handlers
+                .get(h.index())
+                .map(|d| d.clauses.iter().map(|(_, c)| *c).collect())
+                .unwrap_or_default();
+            for ((b, _), (s, _)) in &em.hx.reentry {
+                if clauses
+                    .iter()
+                    .any(|&c| crate::analysis::clause::inside(p, *b, c))
+                {
+                    sr.join(s);
+                }
+            }
+            em.holders.before(c, &sr, em.facts);
+            let chain = handlers::clause_chain(p, site);
+            let root = chain
+                .as_ref()
+                .and_then(|c| c.last().copied())
+                .unwrap_or_else(|| handlers::splice_root(p, site));
+            let term = p
+                .body(site)
+                .and_then(|b| b.blocks.get(block.index()))
+                .map(|b| b.term.kind.clone());
+            if let Some(term) = term {
+                handlers::copy_node(
+                    em,
+                    (c, post),
+                    (block, root, false),
+                    (&[], chain.as_deref()),
+                    &sr,
+                    &term,
+                );
+            }
+        }
     }
     if let Some(landing) = table.get(at(Phase::Landing)) {
         em.holders.before(

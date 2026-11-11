@@ -1,0 +1,19 @@
+// HENV-SHADOW h03 (a field): `mk` puts its closure into a field of a
+// struct. The closure runs in the handled body of H2, but its `run` goes to
+// H (where `mk` was called), which clears `v` while `r` points into it.
+effect Run { fn run(x: u64) }
+struct B { f: fn() / Run }
+fn mk() -> B { B { f: || run(1) } }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let b = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let g = b.f
+            g() }
+        print(r)
+    }
+}
+fn main() { outer() }

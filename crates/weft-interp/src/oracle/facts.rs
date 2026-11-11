@@ -72,7 +72,12 @@
 //!   there with `escapes_at` of the effect of the handler and no
 //!   `performs_at` with the capability of the handler is a failure: the
 //!   facts send the effect past the function, and the clause does not run
-//!   at the node.
+//!   at the node. If no node of these frames has `performs_at` with the
+//!   capability of the handler, that is a failure too (HENV-SHADOW): the
+//!   facts send the effect to another handler, for example an inner
+//!   handler of the same effect, and the clause runs at no node. This
+//!   check is only for a clause with a resume point: a clause with none
+//!   aborts to its handler, and trace conformance checks the abort edge.
 //!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
@@ -94,6 +99,7 @@ use std::rc::Rc;
 use weft_facts::{FnFacts, NodeId, PlaceId, TaskId, VarId};
 use weft_ir::{BodyId, DerefKind, FieldIdx, LocalId, Proj, VariantIdx};
 use weft_sema::factgen::alpha::{self, Roots};
+use weft_sema::factgen::handlers;
 use weft_sema::factgen::holders::PartVersions;
 use weft_sema::factgen::nodes::{Phase, NORMAL, TERM};
 use weft_sema::factgen::vars::VarKey;
@@ -156,6 +162,10 @@ pub struct FactReport {
     /// Such references whose local has no `points_into` place: A4 does not
     /// check them.
     pub resume_unnamed: u64,
+    /// The checks of A4 of re-entries (stage R0k-c2): a reference of a frame
+    /// of a `multi` continuation whose node has a `Copy` node, at a copy of
+    /// the frame (each `resume` of the continuation).
+    pub reentry: u64,
     /// The checks of A5 (plan stage F17.2): a clause of a local handler
     /// runs, and a node of its handled body has `performs_at` with the
     /// capability of the handler.
@@ -317,6 +327,35 @@ struct Wait {
     names: Option<Vec<Vec<PlaceId>>>,
 }
 
+/// A frame of a `multi` continuation whose node has a `Copy` node in the
+/// facts (A4 of re-entries, stage R0k-c2): each later `resume` runs a copy
+/// of the frame again from the node, and the `Copy` node gives the state of
+/// its locals there. A place that the copied frames own has a copy in the
+/// state at the operation (E5: a reference into it is valid); a shared place
+/// has its state after the previous run.
+#[derive(Clone, Debug)]
+struct Reentry {
+    /// The component of the frame.
+    comp: usize,
+    /// The `Copy` nodes of the node of the frame.
+    copies: Vec<NodeId>,
+    /// The task of the frame.
+    task: usize,
+    /// Each reference that a local of the frame holds at the operation,
+    /// with the local.
+    refs: Vec<(Target, LocalId)>,
+    /// The references whose target an access since the operation reached
+    /// (a write strictly above it, a move at or above it, a free), with the
+    /// kind of the access.
+    hits: Vec<(usize, &'static str)>,
+    /// For each reference: its target is a place in the buffer of a `Vec`
+    /// (stage R0k-c2 fix 1). A write of the whole buffer (as `clear` or
+    /// `push`) changes the elements: an unstable step.
+    bufs: Vec<bool>,
+    /// The copies of the frame so far.
+    runs: usize,
+}
+
 /// The target of a reference parameter at the entry of a frame, or a
 /// captured cell of a frame of a closure body.
 #[derive(Clone, Debug)]
@@ -418,6 +457,15 @@ pub struct FactOracle {
     wait_cells: HashMap<CellId, Vec<(u64, usize)>>,
     /// The last key of a copy of a waiting frame.
     copy_keys: u64,
+    /// The frames of `multi` continuations with a `Copy` node (A4 of
+    /// re-entries, stage R0k-c2), by frame.
+    reentries: HashMap<u64, Reentry>,
+    /// The re-entries and the references that point into each cell.
+    reentry_cells: HashMap<CellId, Vec<(u64, usize)>>,
+    /// For each component of a re-entry (stage R0k-c2 fix 1): the
+    /// variables with a place that are invalid at each `Copy` node of the
+    /// unit, by the checker ([`copy_invalid`]).
+    copy_invalid: HashMap<usize, HashSet<(VarId, NodeId)>>,
     /// The frames of scope bodies ([`LIGHT`]): the oracle follows them only
     /// for the task check (follow-up F19.3).
     light: HashMap<u64, FrameFacts>,
@@ -965,6 +1013,9 @@ impl FactOracle {
             waits: HashMap::new(),
             wait_cells: HashMap::new(),
             copy_keys: COPY_KEYS,
+            reentries: HashMap::new(),
+            reentry_cells: HashMap::new(),
+            copy_invalid: HashMap::new(),
             light: HashMap::new(),
             light_last: None,
             activation: HashMap::new(),
@@ -1586,12 +1637,16 @@ impl FactOracle {
     /// handled body wait at their nodes; one such node must have
     /// `performs_at` with the capability of the handler. If none does and
     /// one has `escapes_at` of the effect of the handler, the facts send
-    /// the effect past the function: a failure.
+    /// the effect past the function: a failure. If none does and none has
+    /// `escapes_at`, the facts send the effect to another handler (an
+    /// inner handler of the same effect: HENV-SHADOW): a failure too, if the
+    /// clause of operation `op` has a resume point (a clause with none
+    /// aborts to the handler, and trace conformance checks the abort edge).
     ///
     /// # Errors
     ///
     /// The message of the failure.
-    pub fn clause_run(&mut self, frames: &[u64], task: usize) -> Result<(), String> {
+    pub fn clause_run(&mut self, frames: &[u64], task: usize, op: usize) -> Result<(), String> {
         let Some(fr) = frames
             .iter()
             .find(|u| tracked(**u))
@@ -1637,6 +1692,11 @@ impl FactOracle {
         // failure (the frame of a closure that runs a function with the
         // effect in its row, too).
         let mut escapes: Option<(NodeId, usize)> = None;
+        // A node of a frame of the component that has `performs_at` with
+        // the capability of the handler (`ran`), and the innermost node of
+        // such a frame with none (`silent`; HENV-SHADOW).
+        let mut ran = false;
+        let mut silent: Option<(NodeId, usize)> = None;
         let mut starts: Vec<(u64, usize, Vec<NodeId>)> = Vec::new();
         // The frames of the callees above the component (follow-up F19.5).
         let mut outer: Vec<(u64, usize)> = Vec::new();
@@ -1661,6 +1721,7 @@ impl FactOracle {
                                     cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k)))
                                 })
                                 .collect();
+                            ran |= !runs.is_empty();
                             starts.push((*uid, f.comp, if runs.is_empty() { group } else { runs }));
                         }
                         Some(_) => outer.push((*uid, f.comp)),
@@ -1687,8 +1748,12 @@ impl FactOracle {
                 .filter(|&n| cap.is_some_and(|k| c.facts.performs_at.contains(&(n, k))))
                 .collect();
             if !runs.is_empty() {
+                ran = true;
                 starts.push((*uid, f.comp, runs));
                 continue;
+            }
+            if let Some(&n) = group.first() {
+                silent = Some((n, f.comp));
             }
             // A frame that does not run the clause (a closure that performs
             // through a capability that it captures) names the code of the
@@ -1707,6 +1772,37 @@ impl FactOracle {
         self.report.clause += 1;
         self.check_started(&starts, task, h)?;
         self.check_waits(&starts, &outer, task, h)?;
+        // HENV-SHADOW: a closure runs with the handlers where it was made, so
+        // the clause can run from a node that sends the effect to an inner
+        // handler of the same effect. Then no node of the component has
+        // `performs_at` with the capability of the handler, and the facts
+        // do not run the clause at all.
+        // Only for a clause with a resume point: a clause with none (a
+        // `Fail` clause at the end of a scope) aborts to the handler, and
+        // trace conformance checks the abort edge of the node.
+        let resumes = self
+            .input
+            .built
+            .program
+            .handlers
+            .get(h.index())
+            .and_then(|d| d.clauses.iter().find(|(o, _)| o.index() == op))
+            .and_then(|&(_, cb)| self.input.built.program.body(cb))
+            .is_some_and(|b| {
+                b.blocks.iter().any(|blk| {
+                    !blk.cleanup && matches!(blk.term.kind, weft_ir::TermKind::Resume { .. })
+                })
+            });
+        if let (true, Some(_), false, None, Some((n, ci))) = (resumes, cap, ran, escapes, silent) {
+            let (text, fname) = self
+                .comps
+                .get(ci)
+                .map(|c| (c.node_text(n), c.facts.name.clone()))
+                .unwrap_or_default();
+            return Err(format!(
+                "clause oracle (A5): in `{fname}` at {text}, a clause of the local handler of `{effect}` runs from the node, and no node of the frames of `{fname}` above the `handle` has `performs_at` with the capability of the handler"
+            ));
+        }
         let Some((n, ci)) = escapes else {
             return Ok(());
         };
@@ -1736,6 +1832,7 @@ impl FactOracle {
         heap: &Heap,
         task: usize,
     ) {
+        self.note_reentries(frames, heap, task);
         for pair in frames.windows(2) {
             let (Some(&(fu, fcode, fslots)), Some(&(gu, gcode, gslots))) =
                 (pair.first(), pair.get(1))
@@ -1858,6 +1955,272 @@ impl FactOracle {
         }
     }
 
+    /// A4 of re-entries (stage R0k-c2): a `multi` operation takes the frames
+    /// `frames` into its continuation. Each frame that the oracle follows
+    /// and whose node has a `Copy` node gets a record of the references that
+    /// its locals hold now ([`Reentry`]).
+    fn note_reentries(
+        &mut self,
+        frames: &[(u64, &Code, &[Option<CellId>])],
+        heap: &Heap,
+        task: usize,
+    ) {
+        // The `Copy` nodes of the node of each frame. The frames of one
+        // component (a function body, its handled bodies and its clauses)
+        // share them: a local of the function that the clause names goes
+        // on at the `Copy` node of the clause too.
+        let mut by_unit: HashMap<usize, Vec<NodeId>> = HashMap::new();
+        let mut followed: Vec<(u64, usize)> = Vec::new();
+        for &(u, _, _) in frames {
+            if !tracked(u) {
+                continue;
+            }
+            let Some(f) = self.frames.get(&u) else {
+                continue;
+            };
+            let Some(comp) = self.comps.get(f.comp) else {
+                continue;
+            };
+            followed.push((u, f.comp));
+            let group = comp.group(&f.cur);
+            let copies = by_unit.entry(comp.unit).or_default();
+            for m in 0..comp.succ.len() {
+                let copy = comp
+                    .facts
+                    .nodes
+                    .get(m)
+                    .is_some_and(|x| x.kind.ends_with(" copy"))
+                    && comp
+                        .succ
+                        .get(m)
+                        .is_some_and(|ss| ss.iter().any(|y| group.contains(y)));
+                let n = NodeId(u32_of(m));
+                if copy && !copies.contains(&n) {
+                    copies.push(n);
+                }
+            }
+        }
+        for &(u, code, slots) in frames {
+            let Some(&(_, ci)) = followed.iter().find(|(x, _)| *x == u) else {
+                continue;
+            };
+            let Some(comp) = self.comps.get(ci) else {
+                continue;
+            };
+            let copies = by_unit.get(&comp.unit).cloned().unwrap_or_default();
+            if copies.is_empty() {
+                continue;
+            }
+            let mut refs = Vec::new();
+            for (s, cell) in slots.iter().enumerate() {
+                let (Some(cell), Some(&l)) = (cell, code.slot_locals.get(s)) else {
+                    continue;
+                };
+                let l = LocalId(l);
+                if !comp.of_local.contains_key(&l) {
+                    continue;
+                }
+                let Ok(x) = heap.slot(*cell) else {
+                    continue;
+                };
+                let mut out = Vec::new();
+                refs_of(heap, &x.val, &mut Vec::new(), &[], false, 0, &mut out);
+                refs.extend(out.into_iter().map(|t| (t, l)));
+            }
+            self.drop_reentry(u);
+            if refs.is_empty() {
+                continue;
+            }
+            for (i, (t, _)) in refs.iter().enumerate() {
+                self.reentry_cells.entry(t.cell()).or_default().push((u, i));
+            }
+            let bufs = refs
+                .iter()
+                .map(|(t, _)| {
+                    matches!(t, Target::Place(_))
+                        && heap
+                            .slot(t.cell())
+                            .is_ok_and(|x| x.kind == crate::heap::SlotKind::Buf)
+                })
+                .collect();
+            self.reentries.insert(
+                u,
+                Reentry {
+                    comp: ci,
+                    copies,
+                    task,
+                    refs,
+                    hits: Vec::new(),
+                    bufs,
+                    runs: 0,
+                },
+            );
+        }
+    }
+
+    /// Removes the re-entry record of frame `u`, if there is one.
+    fn drop_reentry(&mut self, u: u64) {
+        let Some(r) = self.reentries.remove(&u) else {
+            return;
+        };
+        for (t, _) in &r.refs {
+            if let Some(v) = self.reentry_cells.get_mut(&t.cell()) {
+                v.retain(|(k, _)| *k != u);
+                if v.is_empty() {
+                    self.reentry_cells.remove(&t.cell());
+                }
+            }
+        }
+    }
+
+    /// A4 of re-entries (stage R0k-c2): a `resume` copies the frame `u` of
+    /// a `multi` continuation, and `map` gives the new cell of each cell
+    /// that the copied frames own; `bodies` are the IR bodies of the copied
+    /// frames. For each reference that a local of the frame held at the
+    /// operation:
+    ///
+    /// - its target is a copied cell (an owned place, valid in the copy, E5):
+    ///   if each `points_into` place of a variable of the local is a place
+    ///   of a local of a copied frame, the `Copy` node binds the variable
+    ///   again;
+    /// - at a later copy (not the first), its target is a shared cell that
+    ///   an access since the operation reached: the `Copy` node does not
+    ///   bind a variable of the local again (its state is the state after
+    ///   the previous run).
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure.
+    pub fn reentry_copy(
+        &mut self,
+        u: u64,
+        map: &std::collections::BTreeMap<CellId, CellId>,
+        bodies: &[u32],
+    ) -> Result<(), String> {
+        let Some(r) = self.reentries.get_mut(&u) else {
+            return Ok(());
+        };
+        r.runs += 1;
+        let r = r.clone();
+        let Some(comp) = self.comps.get(r.comp) else {
+            return Ok(());
+        };
+        let rebound: HashSet<VarId> = comp
+            .facts
+            .rebound_at
+            .iter()
+            .filter(|(_, n)| r.copies.contains(n))
+            .map(|(v, _)| *v)
+            .collect();
+        let copied_place = |q: PlaceId| match comp.roots.role(comp.facts.place(q).root) {
+            Some(alpha::Role::Local(k) | alpha::Role::Cell(k)) => bodies.contains(&k.0 .0),
+            _ => false,
+        };
+        let nodes = || -> String {
+            r.copies
+                .iter()
+                .map(|&n| comp.node_text(n))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        for (i, (t, l)) in r.refs.iter().enumerate() {
+            let vars: Vec<VarId> = comp
+                .of_local
+                .get(l)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|v| comp.points.get(v).is_some_and(|ps| !ps.is_empty()))
+                .collect();
+            if vars.is_empty() {
+                continue;
+            }
+            self.report.reentry += 1;
+            let owned = map.contains_key(&t.cell());
+
+            if owned {
+                for v in &vars {
+                    let all_copied = comp
+                        .points
+                        .get(v)
+                        .is_some_and(|ps| ps.iter().all(|&q| copied_place(q)));
+                    if all_copied && !rebound.contains(v) {
+                        return Err(format!(
+                            "summary oracle (A4): in `{}` at {}, a `multi` `resume` runs a copy of a frame again, and `{}` holds a reference into a cell that the copy owns (valid in the copy, E5); the `Copy` node does not bind it again",
+                            comp.facts.name,
+                            nodes(),
+                            var_name(&comp.facts, *v),
+                        ));
+                    }
+                }
+                continue;
+            }
+            if r.runs < 2 {
+                continue;
+            }
+            let Some(&(_, what)) = r.hits.iter().find(|(j, _)| *j == i) else {
+                continue;
+            };
+            if let Some(v) = vars.iter().find(|v| rebound.contains(v)) {
+                return Err(format!(
+                    "summary oracle (A4): in `{}` at {}, a `multi` `resume` runs a copy of a frame again, and the code since the operation made {what} of the target of `{}`, a place that the copies share (E5); the `Copy` node binds it again",
+                    comp.facts.name,
+                    nodes(),
+                    var_name(&comp.facts, *v),
+                ));
+            }
+            // Stage R0k-c2 fix 1: in a clause frame, a free or a move of the
+            // target, or a write of the buffer of a `Vec` above it (an
+            // unstable step), makes the reference invalid. So a variable of
+            // the local must be invalid at a `Copy` node (`invalid(V, P)` of
+            // the checker). Another write above a place can keep the
+            // reference valid (only stable steps, rule 4): it only must not
+            // bind it again. In the frame of a function the change can come
+            // from a clause of a caller between two `resume`s: the facts of
+            // the caller check it at the `Copy` node of their call
+            // (D-MULTI-MID), not the facts of the frame. A variable that
+            // points into a parameter of its clause has a shadow variable
+            // for its argument (`handlers::arg_shadow_name`): the shadow
+            // variable can be the invalid one.
+            let strict = comp.clause
+                && (matches!(what, "a free" | "a move" | "a write of the buffer")
+                    || matches!(t, Target::Elems(_)));
+            if !strict {
+                continue;
+            }
+            let invalid = self
+                .copy_invalid
+                .entry(r.comp)
+                .or_insert_with(|| copy_invalid(&comp.facts));
+            let shadows: Vec<VarId> = vars
+                .iter()
+                .map(|v| handlers::arg_shadow_name(&var_name(&comp.facts, *v)))
+                .flat_map(|name| {
+                    comp.facts
+                        .vars
+                        .iter()
+                        .enumerate()
+                        .filter(move |(_, x)| x.name == name)
+                        .map(|(j, _)| VarId(u32_of(j)))
+                })
+                .collect();
+            let made_invalid = vars
+                .iter()
+                .chain(&shadows)
+                .any(|v| r.copies.iter().any(|&n| invalid.contains(&(*v, n))));
+            if !made_invalid {
+                let v = vars.first().copied().unwrap_or(VarId(0));
+                return Err(format!(
+                    "summary oracle (A4): in `{}` at {}, a `multi` `resume` runs a copy of a frame again, and the code since the operation made {what} of the target of `{}`, a place that the copies share (E5); the variable is not invalid at the `Copy` node",
+                    comp.facts.name,
+                    nodes(),
+                    var_name(&comp.facts, v),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Records wait `w` with key `key`.
     fn add_wait(&mut self, key: u64, w: Wait) {
         for (i, (t, _)) in w.refs.iter().enumerate() {
@@ -1885,6 +2248,7 @@ impl FactOracle {
     /// reference of a waiting clause frame of the task (not the frame of the
     /// op) is a hit of that wait.
     pub fn wait_events(&mut self, task: usize, uid: u64, events: &[HeapEvent]) {
+        self.reentry_events(task, events);
         if self.waits.is_empty() {
             return;
         }
@@ -1923,6 +2287,54 @@ impl FactOracle {
                 });
                 if reached && !w.hits.iter().any(|(j, _)| *j == i) {
                     w.hits.push((i, what));
+                }
+            }
+        }
+    }
+
+    /// A4 of re-entries: the accesses `events` of task `task`. An access
+    /// that ends the target of a reference of a [`Reentry`] of the task (a
+    /// write strictly above the target, a move at or above it, a free) is a
+    /// hit of that record.
+    fn reentry_events(&mut self, task: usize, events: &[HeapEvent]) {
+        if self.reentries.is_empty() {
+            return;
+        }
+        for e in events {
+            let (cell, path, what) = match e {
+                HeapEvent::Write(p, false) => (p.cell, Some(p.path.as_slice()), "a write"),
+                HeapEvent::Take(p) => (p.cell, Some(p.path.as_slice()), "a move"),
+                HeapEvent::Free(c) => (*c, None, "a free"),
+                _ => continue,
+            };
+            let Some(rs) = self.reentry_cells.get(&cell) else {
+                continue;
+            };
+            for &(key, i) in rs {
+                let Some(r) = self.reentries.get_mut(&key) else {
+                    continue;
+                };
+                if r.task != task {
+                    continue;
+                }
+                let reached = r.refs.get(i).is_some_and(|(t, _)| match (t, path, what) {
+                    (_, None, _) => true,
+                    (Target::Elems(_), Some(p), _) => p.is_empty(),
+                    (Target::Place(tp), Some(p), "a move") => tp.path.starts_with(p),
+                    (Target::Place(tp), Some(p), _) => {
+                        tp.path.len() > p.len() && tp.path.starts_with(p)
+                    }
+                });
+                // A write of the whole buffer of a `Vec` above an element
+                // (stage R0k-c2 fix 1).
+                let what = match (what, path) {
+                    ("a write", Some(p)) if p.is_empty() && r.bufs.get(i) == Some(&true) => {
+                        "a write of the buffer"
+                    }
+                    _ => what,
+                };
+                if reached && !r.hits.iter().any(|(j, _)| *j == i) {
+                    r.hits.push((i, what));
                 }
             }
         }
@@ -3081,6 +3493,40 @@ fn var_name(f: &FnFacts, v: VarId) -> String {
     f.vars
         .get(v.index())
         .map_or_else(|| format!("{v}"), |i| i.name.clone())
+}
+
+/// The variables with a place that are invalid at each `Copy` node of the
+/// facts `f` (A4 of re-entries, stage R0k-c2 fix 1): `invalid(V, P)` of
+/// the checker. The checker reports `error(V, P)` for each use of an
+/// invalid variable, so the facts get a use of each such variable at each
+/// `Copy` node first.
+fn copy_invalid(f: &FnFacts) -> HashSet<(VarId, NodeId)> {
+    let copies: Vec<NodeId> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind.ends_with(" copy"))
+        .map(|(i, _)| NodeId(u32_of(i)))
+        .collect();
+    if copies.is_empty() {
+        return HashSet::new();
+    }
+    let mut vars: Vec<VarId> = f.points_into.iter().map(|(v, _)| *v).collect();
+    vars.sort();
+    vars.dedup();
+    let mut probe = f.clone();
+    for &v in &vars {
+        for &n in &copies {
+            probe.uses.push((v, n));
+        }
+    }
+    let report = weft_check::rules::check(&probe);
+    report
+        .violations
+        .error
+        .into_iter()
+        .filter(|(_, n)| copies.contains(n))
+        .collect()
 }
 
 /// The local of the slot that holds cell `c`, if one does.

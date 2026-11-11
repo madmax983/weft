@@ -1,0 +1,19 @@
+// Stage R0k-c2 fix 1 (a probe of the review of stage R0k-c2: a reference parameter of a clause across a row).
+// D5 clean: the op arg points into a local of run (copied); run clears it after the handle
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick(r: &u64) -> u64 }
+fn run() -> u64 / Choice {
+    let w = Vec.new()
+    w.push(4)
+    let x = handle Pick { fn pick(r) {
+        let c = choose()
+        print(r)
+        resume(1)
+    } } in pick(&w[0])
+    w.clear()
+    x
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run()) }
+}

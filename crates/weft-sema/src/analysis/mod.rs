@@ -103,6 +103,21 @@ pub fn edges(
     // A node that runs a clause that can resume more than once: a later
     // `resume` runs the code after it again (plan stage F16).
     clause::note_reentry(cx, body, blk_id, term, &st);
+    // A node of a clause that can wait at a `multi` operation of a caller:
+    // a later `resume` goes on with the heap after the previous run (stage
+    // R0k-c2, E5).
+    if let Some(h) = cx.hx.row_heap.get(&(body, blk_id)) {
+        st.join_heap(h);
+    }
+    // A node of a clause inside the handled body of a local `multi`
+    // handler (C8): the locals outside the handled body as at the later
+    // `resume`.
+    if let Some((s, hb)) = cx.hx.row_join.get(&(body, blk_id)) {
+        let p = cx.p;
+        let hb = *hb;
+        st.join_values_but(s, &|b| clause::inside(p, b, hb));
+        st.join_heap(s);
+    }
     // A terminator that runs a clause: the abort edge gets the state of the
     // clause where it aborts (plan stage F15, `clause::AbortEdge`).
     let hook = cx.hx.abort_edge.take();
@@ -252,6 +267,15 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
 }
 
 /// The runs of [`run_with`].
+///
+/// A node of a clause that runs below the body (a clause of a handler of
+/// the body, or a clause inside such a clause:
+/// `crate::factgen::handlers::clause_chain`) that can wait at a `multi`
+/// operation of a handler of a caller (stage R0k-c2) gets the heap slots of
+/// the `Return`s of the body in `clause::Handlers::row_heap`: a later
+/// `resume` runs the rest of the clause again after the previous run (E5).
+/// The run of the clause body itself (its facts) runs again from the block
+/// after each such node of the clause, as the body does for its own nodes.
 fn run_rows(
     cx: &mut Cx<'_>,
     (body, b): (BodyId, &weft_ir::Body),
@@ -260,6 +284,14 @@ fn run_rows(
 ) -> Result<States, AlphaError> {
     let p = cx.p;
     let mut again: std::collections::BTreeMap<BlockId, State> = std::collections::BTreeMap::new();
+    let root = matches!(
+        b.kind,
+        weft_ir::BodyKind::Fn(_) | weft_ir::BodyKind::Test(_) | weft_ir::BodyKind::Closure(_)
+    );
+    let in_chain = |rb: BodyId| {
+        crate::factgen::handlers::clause_chain(p, rb).is_some_and(|c| c.contains(&body))
+    };
+    let clause = matches!(b.kind, weft_ir::BodyKind::Clause(..)) && in_chain(body);
     for round in 0..=ROW_ROUNDS {
         let mut seeds = first.to_vec();
         seeds.extend(again.iter().map(|(x, s)| (*x, s.clone())));
@@ -268,52 +300,83 @@ fn run_rows(
         if rows.is_empty() {
             return Ok(states);
         }
-        let root = matches!(
-            b.kind,
-            weft_ir::BodyKind::Fn(_) | weft_ir::BodyKind::Test(_) | weft_ir::BodyKind::Closure(_)
-        );
-        // A node of a handled body that splices into the body: the
-        // `handle` adds its re-entry state to the seeds of the handled body
-        // (`clause::Handlers::extra`). A node of a clause: not in scope.
-        if !root
-            || rows
-                .iter()
-                .any(|r| crate::factgen::handlers::splice_root(p, r.0) != body)
-        {
-            // The facts have no re-entry of a clause (the design note of
-            // stage R0d): the program is in scope only if the `ir` pipeline
-            // rejects it (stage R0g), as the old pipeline does with W0503
-            // for a `once` continuation that is live across the operation.
-            clause::note_pending(crate::factgen::Unsupported {
-                group: crate::irbuild::scope::Group::D,
-                reason: "a `multi` operation of a handler of a caller in a clause (stage F16)"
-                    .to_string(),
-            });
+        // The nodes of the body and of the handled bodies that splice into
+        // it (`own`), and the nodes of the clauses that run below the body
+        // (`below`). Any other node: not in scope.
+        let mut own = Vec::new();
+        let mut below = Vec::new();
+        for r in rows {
+            // A node of a clause that only the analysis finds (a run of a
+            // function value that can resume more than once,
+            // `clause::Handlers::dyn_rows`): the facts have no re-entry of
+            // the nodes that run the clause for it (they come from the
+            // nodes of `frames::row_multi` before the analysis). Not in
+            // scope.
+            let in_clause = crate::factgen::handlers::clause_chain(p, r.0).is_some();
+            if in_clause && !static_row(cx, r.0, r.1) {
+                note_row_pending();
+                return Ok(states);
+            }
+            if crate::factgen::handlers::splice_root(p, r.0) == body {
+                own.push(r);
+            } else if (root || clause) && in_chain(r.0) {
+                below.push(r);
+            } else {
+                note_row_pending();
+                return Ok(states);
+            }
+        }
+        if !root && !clause && !own.is_empty() {
+            note_row_pending();
             return Ok(states);
         }
         let mut ret: Option<State> = None;
-        for s in ends.returns.values() {
-            match &mut ret {
-                Some(r) => {
-                    r.join(s);
+        if root {
+            for s in ends.returns.values() {
+                if let Some(r) = &mut ret {
+                    r.join_heap(s);
+                } else {
+                    let mut h = State::new();
+                    h.join_heap(s);
+                    ret = Some(h);
                 }
-                None => ret = Some(s.clone()),
             }
         }
         let mut changed = false;
-        for (rb, block, next, st) in rows {
+        // The nodes of the clauses below the body: the heap at the `Return`s
+        // of the body joins at their normal edges (`super::edges`), and at
+        // their `Copy` nodes.
+        if root {
+            let h = ret.clone().unwrap_or_default();
+            for (rb, block, _, st) in below {
+                if let Some(have) = cx.hx.row_heap.get_mut(&(rb, block)) {
+                    changed |= have.join_heap(&h);
+                } else {
+                    cx.hx.row_heap.insert((rb, block), h.clone());
+                    changed = true;
+                }
+                let mut s = st;
+                s.join_heap(&h);
+                join_reentry(cx, (rb, block), &s);
+            }
+        }
+        for (rb, block, next, st) in own {
             let mut s = st;
-            if let Some(r) = &ret {
-                s.join_heap(r);
-            }
-            match cx.hx.reentry.get_mut(&(rb, block)) {
-                Some((have, _)) => {
-                    have.join(&s);
+            if root {
+                if let Some(r) = &ret {
+                    s.join_heap(r);
                 }
-                None => {
-                    cx.hx.reentry.insert((rb, block), (s.clone(), Tree::none()));
-                }
+            } else {
+                // A node of the clause body: the heap that the run of the
+                // body found (the facts of a clause come after the analysis
+                // of its function).
+                let Some(h) = cx.hx.row_heap.get(&(rb, block)) else {
+                    note_row_pending();
+                    return Ok(states);
+                };
+                s.join_heap(h);
             }
+            join_reentry(cx, (rb, block), &s);
             if rb == body {
                 if let Some(have) = again.get_mut(&next) {
                     changed |= have.join(&s);
@@ -335,6 +398,40 @@ fn run_rows(
     Err(AlphaError::Later(
         "a body whose re-runs after a `multi` operation do not end (stage F16)",
     ))
+}
+
+/// True if the terminator of block `block` of body `body` is a node of
+/// `crate::factgen::frames::row_multi` (a row that the facts know before the
+/// analysis).
+fn static_row(cx: &Cx<'_>, body: BodyId, block: BlockId) -> bool {
+    cx.p.body(body)
+        .and_then(|b| b.blocks.get(block.index()))
+        .is_some_and(|blk| {
+            crate::factgen::frames::row_multi(cx.p, cx.tys, cx.sums, body, &blk.term.kind)
+        })
+}
+
+/// Notes a node that can wait at a `multi` operation of a handler of a
+/// caller where the facts have no re-entry for it: the program is in scope
+/// only if the `ir` pipeline rejects it (stage R0g).
+fn note_row_pending() {
+    clause::note_pending(crate::factgen::Unsupported {
+        group: crate::irbuild::scope::Group::D,
+        reason: "a `multi` operation of a handler of a caller in a clause (stage F16)".to_string(),
+    });
+}
+
+/// Joins the state `s` into the re-entry state of node `at`
+/// (`clause::Handlers::reentry`).
+fn join_reentry(cx: &mut Cx<'_>, at: (BodyId, BlockId), s: &State) {
+    match cx.hx.reentry.get_mut(&at) {
+        Some((have, _)) => {
+            have.join(s);
+        }
+        None => {
+            cx.hx.reentry.insert(at, (s.clone(), Tree::none()));
+        }
+    }
 }
 
 /// Runs the analysis of body `body` from the states `seeds` at some blocks.

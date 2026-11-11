@@ -173,6 +173,13 @@ pub struct NodeKey {
 /// The index of the terminator in [`NodeKey::at`].
 pub const TERM: u32 = u32::MAX;
 
+/// The copy of the [`Phase::Copy`] node of a `handle` for a later row.
+///
+/// It is the re-entry after a node in the code of a clause after its
+/// `resume` (stage R0k-c2, [`NodeTable::post_row_edges`]). The copy
+/// [`NORMAL`] is the cycle of a clause that runs more than once.
+pub const ROW: u32 = u32::MAX - 1;
+
 /// The name of a terminator, for node labels.
 pub const fn term_name(t: &TermKind) -> &'static str {
     match t {
@@ -998,6 +1005,71 @@ impl NodeTable {
         }
     }
 
+    /// The re-entry edges of the nodes of the bodies `bodies` (a clause and
+    /// the bodies that splice into it) that a later `resume` of a local
+    /// `multi` handler runs again (C8, stage R0k-c2,
+    /// [`Frames::reentries`]): an edge from `Post` of the `handle` of the
+    /// handler to the `Copy` node of the node, then to its `Ret`. The nodes
+    /// of a clause come into the table after the `handle`.
+    pub fn clause_reentry_edges(
+        &mut self,
+        p: &Program,
+        facts: &mut FnFacts,
+        frames: &Frames,
+        bodies: &[BodyId],
+    ) {
+        let at = |body, block, phase| NodeKey {
+            body,
+            block,
+            at: TERM,
+            phase,
+            dest: NORMAL,
+        };
+        for (i, d) in p.handlers.iter().enumerate() {
+            let h = weft_ir::HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
+            let nodes: Vec<(BodyId, BlockId)> = frames
+                .reentries(h)
+                .iter()
+                .copied()
+                .filter(|(b, _)| bodies.contains(b))
+                .collect();
+            if nodes.is_empty() {
+                continue;
+            }
+            let Some(site) = p.bodies.get(d.site.index()) else {
+                continue;
+            };
+            let Some(block) = site.blocks.iter().position(|blk| {
+                !blk.cleanup
+                    && matches!(&blk.term.kind, TermKind::Handle { handler, .. } if *handler == h)
+            }) else {
+                continue;
+            };
+            let block = BlockId(u32::try_from(block).unwrap_or(u32::MAX));
+            let Some(post) = self.get(at(d.site, block, Phase::Post)) else {
+                continue;
+            };
+            for (pb, pblk) in nodes {
+                let Some(ret) = self.get(at(pb, pblk, Phase::Ret)) else {
+                    continue;
+                };
+                let r = facts.node(ret).clone();
+                let kind = r
+                    .kind
+                    .strip_suffix(" ret")
+                    .map_or_else(|| "copy".to_string(), |k| format!("{k} copy"));
+                let c = self.node(
+                    facts,
+                    at(pb, pblk, Phase::Copy),
+                    r.span,
+                    [&r.label, &kind, &r.at],
+                );
+                facts.cfg_edge.push((post, c));
+                facts.cfg_edge.push((c, ret));
+            }
+        }
+    }
+
     /// The re-entry edges after the nodes `rows` (of body `root` and of the
     /// handled bodies that splice into it) that can wait
     /// at a `multi` operation of a handler of a caller (OL-R2a, plan stage
@@ -1055,6 +1127,95 @@ impl NodeTable {
                 facts.cfg_edge.push((x, c));
             }
             facts.cfg_edge.push((c, ret));
+        }
+    }
+
+    /// The abort edges of the `Copy` node of each node of `rows` that runs a
+    /// clause that can wait at a `multi` operation of a handler of a caller
+    /// (stage R0k-c2): a later `resume` runs the rest of the clause again,
+    /// and that code can abort as the node can (an end of the clause with no
+    /// `resume` aborts to its handler). An edge from the `Copy` node to the
+    /// `FrameEnd` node of each abort destination of the node.
+    pub fn copy_abort_edges(
+        &mut self,
+        facts: &mut FnFacts,
+        frames: &Frames,
+        rows: &[(BodyId, BlockId)],
+    ) {
+        for &(pb, pblk) in rows {
+            let at = |phase, dest| NodeKey {
+                body: pb,
+                block: pblk,
+                at: TERM,
+                phase,
+                dest,
+            };
+            let Some(c) = self.get(at(Phase::Copy, NORMAL)) else {
+                continue;
+            };
+            for d in frames.dests(pb, pblk) {
+                if let Some(e) = self.get(at(Phase::FrameEnd, d.id())) {
+                    facts.cfg_edge.push((c, e));
+                }
+            }
+        }
+    }
+
+    /// The re-entry edges of each `handle` of `handles` (of body `root` or
+    /// of a body that splices into a clause below it) whose handler has a
+    /// clause that can wait at a `multi` operation of a handler of a caller
+    /// after its first `resume` (stage R0k-c2): a later `resume` runs the
+    /// rest of the clause again, then the code after the `handle`. An edge
+    /// from each `Return` of `root` to a `Copy` node of the `handle` (copy
+    /// [`ROW`]), then to its `Post` node, where the code of the clauses after
+    /// their `resume` runs.
+    pub fn post_row_edges(
+        &mut self,
+        p: &Program,
+        facts: &mut FnFacts,
+        root: BodyId,
+        handles: &[(BodyId, BlockId)],
+    ) {
+        let Some(b) = p.bodies.get(root.index()) else {
+            return;
+        };
+        let returns: Vec<NodeId> = b
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, blk)| !blk.cleanup && matches!(blk.term.kind, TermKind::Return))
+            .filter_map(|(i, _)| {
+                self.get(NodeKey {
+                    body: root,
+                    block: BlockId(u32::try_from(i).unwrap_or(u32::MAX)),
+                    at: TERM,
+                    phase: Phase::Main,
+                    dest: NORMAL,
+                })
+            })
+            .collect();
+        for &(hb, hblk) in handles {
+            let at = |phase, dest| NodeKey {
+                body: hb,
+                block: hblk,
+                at: TERM,
+                phase,
+                dest,
+            };
+            let Some(post) = self.get(at(Phase::Post, NORMAL)) else {
+                continue;
+            };
+            let info = facts.node(post).clone();
+            let c = self.node(
+                facts,
+                at(Phase::Copy, ROW),
+                info.span,
+                ["handle row copy", "handle row copy", &info.at],
+            );
+            for &x in &returns {
+                facts.cfg_edge.push((x, c));
+            }
+            facts.cfg_edge.push((c, post));
         }
     }
 

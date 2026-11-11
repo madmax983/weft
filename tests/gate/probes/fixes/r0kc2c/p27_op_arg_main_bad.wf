@@ -1,0 +1,21 @@
+// Stage R0k-c2 fix 1 (a probe of the review of stage R0k-c2: a reference parameter of a clause across a row).
+// no rc, no params: all in main; the handled body of Pick passes a ref into a vec of main above Choice
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick(r: &u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in {
+        let y = handle Pick { fn pick(r) {
+            let c = choose()
+            print(r)
+            resume(1)
+        } } in {
+            let x = pick(&v[0])
+            v.clear()
+            x
+        }
+        print(y)
+    }
+}

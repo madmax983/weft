@@ -1,0 +1,18 @@
+// Plan stage R0k-c2 (a probe of the stage: C8, a nested `multi` resume of a node in a clause).
+// bad twin of b05_c8_pre_ok: the clause of `Pick` clears the vector between its resumes;
+// the second run of the rest of the clause of `Ask` reads a freed cell
+effect Pick { multi fn pick() -> bool }
+effect Ask { multi fn ask() -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true)
+        v.clear()
+        resume(false) } } in {
+        let r = &v[0]
+        handle Ask { fn ask() {
+            let b = pick()
+            print(r)
+            resume(1) } } in { print(ask()) }
+    }
+}

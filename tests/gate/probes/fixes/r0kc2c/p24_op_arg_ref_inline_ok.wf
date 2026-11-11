@@ -1,0 +1,21 @@
+// Stage R0k-c2 fix 1 (a probe of the review of stage R0k-c2: a reference parameter of a clause across a row).
+// the handled body passes a ref into its local vec to pick; it clears the local after pick (copied)
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick(r: &u64) -> u64 }
+fn run() -> u64 / Choice {
+    handle Pick { fn pick(r) {
+        let c = choose()
+        print(r)
+        resume(1)
+    } } in {
+        let w = Vec.new()
+        w.push(2)
+        let x = pick(&w[0])
+        w.clear()
+        x
+    }
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run()) }
+}

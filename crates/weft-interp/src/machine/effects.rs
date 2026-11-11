@@ -50,7 +50,7 @@ impl super::Machine<'_, '_> {
                     _ => None,
                 })
                 .collect();
-            if let Err(m) = fo.clause_run(&uids, self.cur) {
+            if let Err(m) = fo.clause_run(&uids, self.cur, op) {
                 return Err(self.fault(m));
             }
         }
@@ -188,7 +188,7 @@ impl super::Machine<'_, '_> {
         };
         let frames = if rec.k.multi {
             let tmpl = std::mem::take(&mut rec.frames);
-            let copy = self.copy_frames(&tmpl);
+            let copy = self.copy_frames(&tmpl)?;
             self.conts[k].frames = tmpl;
             copy
         } else {
@@ -1099,8 +1099,10 @@ impl super::Machine<'_, '_> {
     /// fresh copies, so each resume starts from the captured state. A clause
     /// frame in them gets a copy of its continuation, with a copy of its frames:
     /// each copy resumes or drops its own continuation. The clauses of a handler
-    /// mark in them capture the copied cells.
-    fn copy_frames(&mut self, frames: &[Frame]) -> Vec<Frame> {
+    /// mark in them capture the copied cells. The fact oracle checks the
+    /// state of the references of the copied frames at the copy (A4 of
+    /// re-entries, stage R0k-c2).
+    fn copy_frames(&mut self, frames: &[Frame]) -> R<Vec<Frame>> {
         // The continuations of the clause frames, also inside those continuations.
         let mut nested: Vec<(ContId, Vec<Frame>)> = Vec::new();
         let mut work = clause_conts(frames);
@@ -1162,6 +1164,32 @@ impl super::Machine<'_, '_> {
             let n = self.heap.alloc(kind, Value::Moved);
             map.insert(c, n);
         }
+        // A4 of re-entries: each frame that the oracle follows goes on from
+        // its node in the copy.
+        if let Some(fo) = self.facts.as_mut() {
+            let mut bodies: Vec<u32> = Vec::new();
+            let mut uids: Vec<u64> = Vec::new();
+            for f in lists.iter().copied().flatten() {
+                if let Frame::Code(cf) = f {
+                    bodies.extend(cf.code.locs.iter().map(|l| l.body));
+                    if crate::oracle::facts::tracked(cf.uid) {
+                        uids.push(cf.uid);
+                    }
+                }
+            }
+            bodies.sort_unstable();
+            bodies.dedup();
+            let mut failed = None;
+            for u in uids {
+                if let Err(m) = fo.reentry_copy(u, &map, &bodies) {
+                    failed = Some(m);
+                    break;
+                }
+            }
+            if let Some(m) = failed {
+                return Err(self.fault(m));
+            }
+        }
         let pairs: Vec<(CellId, CellId)> = map.iter().map(|(a, b)| (*a, *b)).collect();
         for (old, new) in pairs {
             let v = self
@@ -1180,7 +1208,7 @@ impl super::Machine<'_, '_> {
                 rec.frames = copy;
             }
         }
-        self.copy_list(frames, &map, &kmap)
+        Ok(self.copy_list(frames, &map, &kmap))
     }
 
     /// Copies a list of frames with the cell map `map` and the continuation map

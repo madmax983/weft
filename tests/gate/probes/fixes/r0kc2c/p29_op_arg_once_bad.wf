@@ -1,0 +1,17 @@
+// Stage R0k-c2 fix 1 (a probe of the review of stage R0k-c2: a reference parameter of a clause across a row).
+// control: no multi; the clause reads the op arg after its resume; the handled body clears the vec
+effect Pick { fn pick(r: &u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(4)
+    let y = handle Pick { fn pick(r) {
+        let z = resume(1)
+        print(r)
+        z
+    } } in {
+        let x = pick(&v[0])
+        v.clear()
+        x
+    }
+    print(y)
+}

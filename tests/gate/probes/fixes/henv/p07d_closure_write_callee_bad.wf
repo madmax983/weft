@@ -1,0 +1,20 @@
+// HENV-SHADOW p07d (round 2 of the review): as p07, but a callee runs the
+// closure that writes `g`.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn call(f: fn()) { f() }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c0 = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in {
+            let g = mk()
+            call(|| { g = c0 })
+            g() }
+        print(r)
+    }
+}
+fn main() { outer() }

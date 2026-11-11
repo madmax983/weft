@@ -1,0 +1,19 @@
+// B1' review q06: the closure of `mk` makes an inner closure and runs it.
+// The inner closure performs `Run` through the row of the outer closure,
+// so its handler environment is the one of the outer closure: the maker
+// env of `mk` (H). The outer closure runs in H2; the `run` goes to H.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || { let g = || run(1)
+    g() } }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c = mk()
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

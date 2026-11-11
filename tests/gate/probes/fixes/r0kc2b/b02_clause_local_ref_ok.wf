@@ -1,0 +1,21 @@
+// Plan stage R0k-c2 (a probe of the stage: a reference into a clause local across a row).
+// clean: the first copy clears the local after the read; the second copy reads its own
+// copy of the local, in the state at the row
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run() -> u64 / Choice {
+    handle Pick { fn pick() {
+        let w = Vec.new()
+        w.push(1)
+        let r = &w[0]
+        let b = choose()
+        print(r)
+        if b { w.clear() }
+        resume(1)
+    } } in body()
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run()) }
+}

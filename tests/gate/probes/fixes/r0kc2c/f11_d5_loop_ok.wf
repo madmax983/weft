@@ -1,0 +1,22 @@
+// Stage R0k-c2 fix 1 (a probe of the second review of the fix: a path with no run of the clause, or two runs of it).
+// D5 clean: the handled body performs pick in a loop; v is pushed only before the handle
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick(r: &u64) -> u64 }
+fn run(v: &Vec<u64>) -> u64 / Choice, mut(v) {
+    v.push(2)
+    handle Pick { fn pick(r) {
+        let c = choose()
+        print(r)
+        resume(1)
+    } } in {
+        let s = 0
+        for i in 0..2 { s = s + pick(&v[0]) }
+        s
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&v)) }
+}

@@ -1,0 +1,23 @@
+// Plan stage R0k-c2 (a probe of the stage: an `rc` object shared between the runs).
+// clean twin of b03_rc_between_bad: the first copy reads the object after its resume, and
+// does not clear it
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run(b: &Rc<B>) -> u64 / Choice, mut(B) {
+    handle Pick { fn pick() {
+        let r = &b.v[0]
+        let c = choose()
+        print(r)
+        let y = resume(1)
+        print(b.v.len())
+        y
+    } } in body()
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&b)) }
+}

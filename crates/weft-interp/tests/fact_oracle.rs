@@ -986,3 +986,160 @@ fn a_task_of_a_callee_that_runs_with_a_clause_must_have_a_task_of_the_call() {
     }
     assert!(n >= 13, "{n}");
 }
+
+/// The source of probe `name` of `tests/gate/probes/fixes/r0kc2`.
+fn r0kc2(name: &str) -> String {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0kc2")
+        .join(name);
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// The `Copy` nodes of `f` (stage F16, R0k-c2).
+fn copy_nodes(f: &FnFacts) -> Vec<weft_facts::NodeId> {
+    f.nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind.ends_with(" copy"))
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .collect()
+}
+
+/// A4 of re-entries (stage R0k-c2), the first mutation: facts whose
+/// re-entry state takes the state at the end of the function for the places
+/// that the copied frames own (no `rebound_at` at the `Copy` nodes). In
+/// `m3_run_local_after_handle` the second copy of the clause reads a
+/// reference into its own copy of the vector of `run`: the oracle fails at
+/// the copy.
+#[test]
+fn a_copy_node_that_does_not_bind_an_owned_reference_again_fails_a4() {
+    let m = broken(&r0kc2("m3_run_local_after_handle.wf"), |f| {
+        let copies = copy_nodes(f);
+        f.rebound_at.retain(|(_, n)| !copies.contains(n));
+    });
+    assert!(
+        m.starts_with("summary oracle (A4)") && m.contains("does not bind it again"),
+        "{m}"
+    );
+}
+
+/// A4 of re-entries (stage R0k-c2), the second mutation: facts whose
+/// re-entry state takes the state at the row for the shared places (a
+/// `rebound_at` of each variable with a place at the `Copy` nodes). In
+/// `fixes/r0kc2c/p27_op_arg_main_bad` the handled body of `Pick` clears the
+/// vector of `main`, which the copies share, after the clause of `Pick`
+/// takes a reference into it across `choose`: the oracle fails at the second
+/// copy, before the read of the freed cell. With the facts as the generator
+/// gives them (the `ir` pipeline rejects the program: W0301), the run
+/// reaches the read and the memory oracle finds it. (`m7_rc_shared`, the
+/// first probe of this test, is pending from stage R0k-c2 fix 1: the fact
+/// oracle does not run on it.)
+#[test]
+fn a_copy_node_that_binds_a_shared_reference_again_fails_a4() {
+    let c = check(&r0kc2c("p27_op_arg_main_bad.wf"));
+    assert!(c.ir.as_ref().is_some_and(|ir| !ir.ok()), "{:?}", c.diags);
+    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the fault does not show"),
+        Err(e) => e.message,
+    };
+    assert!(m.contains("freed cell") && !m.contains("A4"), "{m}");
+    let m = match run_main_with_facts(&c, &opts(), |f| {
+        let copies = copy_nodes(f);
+        let vars: Vec<weft_facts::VarId> = f.points_into.iter().map(|(v, _)| *v).collect();
+        for &n in &copies {
+            for &v in &vars {
+                f.rebound_at.push((v, n));
+            }
+        }
+    }) {
+        Ok(_) => panic!("the broken facts pass"),
+        Err(e) => e.message,
+    };
+    assert!(
+        m.starts_with("summary oracle (A4)") && m.contains("binds it again"),
+        "{m}"
+    );
+}
+
+/// The source of probe `name` of `tests/gate/probes/fixes/r0kc2c`.
+fn r0kc2c(name: &str) -> String {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0kc2c")
+        .join(name);
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// Removes the places of the shadow variables of the variables `r`
+/// (`handlers::arg_shadow_name`): the facts before the fix.
+fn no_arg_shadows(f: &mut FnFacts) {
+    let name = weft_sema::factgen::handlers::arg_shadow_name("r");
+    let w: Vec<weft_facts::VarId> = f
+        .vars
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.name == name)
+        .map(|(i, _)| weft_facts::VarId(u32::try_from(i).unwrap()))
+        .collect();
+    f.points_into.retain(|(v, _)| !w.contains(v));
+}
+
+/// A4 of re-entries (stage R0k-c2 fix 1), the third mutation: facts in
+/// which the shadow variable of a reference parameter of a clause does not
+/// point into the places of its argument (the facts before the fix). In
+/// `p30_c8_op_arg_between_bad` the clause of `Ask` holds its parameter `r`
+/// (a reference into the vector `v`) across `pick`, and the clause of
+/// `Pick` clears `v` between its two resumes. In `n05_two_runs_rebind_bad`
+/// the handled body clears `v` after the first run of the clause and runs
+/// it again with a reference into `w`. With these facts no variable of `r`
+/// is invalid at the `Copy` node: the oracle fails at the later copy,
+/// before the read of the freed cell. With the facts as the generator gives
+/// them (the `ir` pipeline rejects the program: W0301), the run reaches the
+/// read and the memory oracle finds it.
+#[test]
+fn a_clause_parameter_that_stays_valid_at_the_copy_after_a_free_fails_a4() {
+    for name in ["p30_c8_op_arg_between_bad.wf", "n05_two_runs_rebind_bad.wf"] {
+        let c = check(&r0kc2c(name));
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| !ir.ok()),
+            "{name}: {:?}",
+            c.diags
+        );
+        let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+            Ok(_) => panic!("{name}: the fault does not show"),
+            Err(e) => e.message,
+        };
+        assert!(m.contains("freed cell") && !m.contains("A4"), "{name}: {m}");
+        let m = match run_main_with_facts(&c, &opts(), no_arg_shadows) {
+            Ok(_) => panic!("{name}: the broken facts pass"),
+            Err(e) => e.message,
+        };
+        assert!(
+            m.starts_with("summary oracle (A4)") && m.contains("not invalid"),
+            "{name}: {m}"
+        );
+    }
+}
+
+/// Each probe of stage R0k-c2 (`fixes/r0kc2`, `fixes/r0kc2b`, `fixes/r0kc2c`) that the `ir`
+/// pipeline accepts runs with no failure of the fact oracle, and A4 of
+/// re-entries checks the references of the copied frames.
+#[test]
+fn the_probes_of_the_reentry_of_a_clause_pass_the_fact_oracle() {
+    let mut checked = 0;
+    for d in ["r0kc2", "r0kc2b", "r0kc2c"] {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes")
+            .join(d);
+        for p in programs(&dir) {
+            let src = fs::read_to_string(&p).unwrap();
+            let c = check(&src);
+            if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+                continue;
+            }
+            let r = run_main(&c, &opts());
+            assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+            checked += r.map_or(0, |o| o.fact_oracle.map_or(0, |f| f.reentry));
+        }
+    }
+    assert!(checked > 0, "{checked}");
+}

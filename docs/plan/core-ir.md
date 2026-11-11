@@ -1924,7 +1924,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i | The other old inputs, part a: `Analysis::sigs` (the declaration parts, `pins`, `reaches`, `old_rows`, the rows of the functions with no IR, `fip`, the on-abort rows), the seed facts, `body::roots` (R0i design note, R0i as built, R0i fix as built) | | done (f5a179d, fix 07d8576) |
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
-| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); R0k-c2 (D5, C8): next |
+| R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
 | R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against | | S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
@@ -4001,6 +4001,70 @@ R0k-b1 design check (the stage stopped before the build; probes `fixes/r0k3/`):
   It is needed for R0z (forms 2 to 5, the 31 tier-2 mutants of 66 and 85), and it needs a
   design review of its own.
 
+R0k-b1' design review (the review of the direction B1'; not built; scratchpad
+`b1prev/notes.md`, probes `b1prev/p/`):
+
+- The verdict: GO WITH CHANGES. The copy must use the handler environment of the maker.
+  B1' as written is not sound and not complete:
+  - The interpreter does not read captures. `Op::PerformCap` dispatches by the henv of
+    the frame (`machine/exec.rs`), and `compile_ir` does not read `CapArgs`. So a copy
+    that runs in the frame of the run node uses the henv of the run node for each
+    perform, call, closure, `handle`, `scope`, `fork` and native.
+  - A failure of the runtime (`join`, a scope end, `fork`, `with_timeout`, a read) has
+    no capability operand, so a `Fail` capture does not cover it.
+  - A capability names one handler instance, and the facts name a static handler. A
+    value that leaves the handler, or a new instance in a loop, goes to the next handler
+    of the chain at run time.
+  - The new captures change the facts of programs in scope: q04_ok and q07_ok get a new
+    W0313 (the old pipeline gives it; the program has no fault).
+  - A silent row (a type with no row) has no known effects in the builder.
+- The six changes:
+  1. A copy region with a static environment (`CopyRegion { blocks, env: CapEnvId,
+     callee }`). `env` is the `cap_env` of the closure for a closure of the same
+     function, or the `CapArgs::Lexical` env of the maker call for a closure that a
+     callee makes (also through a field and through a clause). Two maker calls are two
+     values: no copy.
+  2. Each construct in the region that reads the henv resolves through `env`: a perform
+     through the row (also the pass-on form), the env of a call, the `Fail` of `Join`,
+     `Fork`, `ScopeWait`, of the natives and of a call, and the `cap_env` of each closure
+     and `handle` of the region. The facts read it in `frames::reach`, `env_of`,
+     `site_env_of`, `resolve`, `value_effects` and `call_handlers`.
+  3. The extent rule. For each local handler that `env` binds, the run node, the maker
+     call and each local that the value goes through are in the same handled body of
+     that handler. A heap slot (Box, Vec, Rc) is refused. Else the program keeps the
+     fallback.
+  4. The IR engine runs the region with the henv of the closure value: a henv stack in
+     `CodeFrame`, with `PushHenv` at the entry of the copy and `PopHenv` at each exit and
+     at the landing pad. The `debug_assert` of `PerformCap` then checks the region.
+  5. No builder change. No new fields on closures of programs in scope. The escape check
+     (W0313) and `captured_handlers` do not change.
+  6. The fact oracle checks A5 at each node of a region: a clause that runs is in the
+     facts of that node.
+- The sizes: `CopyRegion` S; the probe run M; `instantiate` L for B1 and M for the B1'
+  part; the verifier S-M; the facts M; the fact oracle S-M; the IR engine M; the AST
+  engine and the summaries 0. B1' as written is L + L.
+- The census (the C2 and D3 rows of weft-r0kd2). Tier 1 (34 rows): 9 likely come into
+  scope (`66_cap_paths`, `a05_by_value` two files, `a06_ends` two files,
+  `h01_row_in_maker_env`, `b2_call`, `h03_made_closure_keep` two files), 3 maybe
+  (`g2_lexical`, `v1c_stored`, `g26`), 22 stay (task runs of a clause, two values at the
+  run node, D5, group A, a value that leaves its handler). Tier 2 (64 rows): 14 likely
+  (the 13 mutants of 66 and `b2_call`), 2 maybe, 48 stay. Most of the gain needs B1
+  (`CopyEnv`, the probe run, the clause-run copy) and change 2, not the env of a callee
+  maker.
+- The acceptance probes. Each bad twin is rejected or keeps the fallback, and each clean
+  twin gets no new error: c10, c11 (a new instance: fallback), c13 to c17, c18 (the old
+  pipeline misses it today: B1' must reject it), c19, and `fixes/r0k3` h01, h02, h03.
+  q01, q03, q04, q05, q07 and q09 do not change (no new W0313 on q04_ok and q07_ok).
+  In `copies.rs`, h02 prints 1 with and without the copy. The fact oracle fails on a copy
+  that runs with the henv of the run node.
+- The review found a hole in scope on main (HENV-SHADOW, the probes q02, q06 and q08): a
+  closure that a callee makes, with the callee called in the handled body of a local
+  handler H, runs in the handled body of an inner handler of the same effect. At run time
+  the perform goes to H; the facts give only the inner handler and the row. B1' does not
+  close it (the copies apply only to fallback programs), so a separate stage closes it
+  first. The review also found an FP of the `ir` pipeline on q09_ok (W0805 from the row
+  destination of a closure run; issue #79).
+
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):
 
@@ -4073,7 +4137,7 @@ R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/
   5 programs that come into scope) and the 19 mutants of tier 2: no HOLE, no FP-IR; the
   fact oracle passes on each copy.
 
-R0k-c2 design note (D5 and C8: a re-entry of a clause frame; not built; the design review
+R0k-c2 design note (D5 and C8: a re-entry of a clause frame; built, R0k-c2 as built below; the design review
 gave GO WITH CHANGES, and this text has its changes, scratchpad `r0kc2des/notes.md`):
 
 - The forms. A clause performs a `multi` operation of a handler of a caller (D5) or of a
@@ -4161,6 +4225,216 @@ gave GO WITH CHANGES, and this text has its changes, scratchpad `r0kc2des/notes.
   and `m1_ok`, `m3_run_local_after_handle` (clean), `m5_once_used_before_row` (clean),
   `m6_abort_in_copy` (clean), `m7_rc_shared` (W0301) and `m7b_rc_shared_ok`, `m8_c8_local`
   (W0301), and `m2`, `m4` (W0503 across the row) of the review.
+
+R0k-c2 as built (D5 and C8: the re-entry of a clause frame; `docs/ir.md` 6.5, "As built
+(plan stage R0k-c2)"; the notes of the build: scratchpad `r0k/c2/notes2.md`):
+
+- The rows of a clause (`frames::clause_rows`): the nodes of the clause, and of the bodies
+  that splice into it, of `frames::row_multi`, before the first `resume` (`pre`) or after
+  it (`post`). A node that runs a clause with a `pre` row is a node of `row_multi` too
+  (`frames::runs_row_clause`): it waits at the operation while the clause waits. So it
+  gets the re-entry of a node of a function body (OL-R2a): a `Copy` node with an edge from
+  each `Return` of the function, and the analysis runs the rest of the handled body again
+  from the block after it. Its `Copy` node also has an edge to the `FrameEnd` node of each
+  abort destination of the node (`NodeTable::copy_abort_edges`): the rest of the clause
+  can end with no `resume` (an abort to its handler) or abort. A `handle` whose clause has
+  a `post` row gets a `Copy` node (copy `nodes::ROW`) with an edge from each `Return` and
+  an edge to its `Post` node (`NodeTable::post_row_edges`); its template is the `Copy`
+  rule with the state of the rows.
+- The re-entry edges into the clause (E6, E5). Each row of the clause gets a `Copy` node
+  with an edge from each `Return` of the function (or closure) below which the clause runs
+  (`handlers::clause_chain`; `emit_clause`). The `Copy` rule (`handlers::copy_node`, the
+  argument `chain`) copies the frames of the function and of the chain of clauses: a
+  variable whose value points only into them (a local, its `Vec` and `Box` buffers; the
+  continuation local of the clause, in its state at the row) is bound again, and empty if
+  it is not linear; a variable that points into a shared place (an `rc` group, a place of
+  a caller or of a frame above the handler) keeps its state after the previous run. The
+  `Copy` nodes of a clause are not code of the clause at the node that runs it
+  (`handlers::clause_nodes`): the node has its own `Copy` node.
+- The analysis. The run of a function body gives each row of a clause below it the heap
+  slots of its `Return`s (`clause::Handlers::row_heap`); the normal edge of the row joins
+  them in each run of the clause (`analysis::edges`). The run of the facts of a clause
+  runs the clause again from the block after each of its rows with the state of the row
+  and these slots (the second seed, `analysis::run_rows`).
+- C8 (`clause::handle_run`, `handlers::local_chain`). A node of a clause inside the
+  handled body of a local `multi` handler that runs a clause of the handler that can
+  resume more than once is a re-entry of the handler (`Frames::reentries`): an edge from
+  `Post` of the `handle` to its `Copy` node, then to its `Ret`
+  (`NodeTable::clause_reentry_edges`); its normal edge joins the values of the locals
+  outside the handled body at the later `resume` and the heap
+  (`clause::Handlers::row_join`); the copied frames are the frames of the handled body and
+  of the clauses on the way.
+- E7. A value that is not `many` and that is live across the row: in the clause frame,
+  W0503 at the row (the continuation of `m4`, the linear value of
+  `fixes/r0kc2b/b06_once_across_bad`); in the frame of the function, W0503 at the node that
+  runs the clause (`multi_at`, as before); the `Copy` node gives a linear value no
+  `empty_at`.
+- What stays (the reason D5, with the text of R0g): a row of a clause that only the
+  analysis finds (`clause::Handlers::dyn_rows`, a run of a function value that can resume
+  more than once): the nodes that run the clause get no re-entry for it, so the program
+  keeps the pending rule (`analysis::static_row`). `c15/clause_after_m` (a post part that
+  runs a value that performs a `multi` operation) and `r2/oracle/runs/m1/p1669` (a clause
+  that runs its parameter) keep the fallback.
+- The fact oracle (A4 of re-entries; `FactOracle::note_reentries`, `reentry_copy`,
+  `reentry_events`; `copy_frames` gives a fault). At a `multi` operation each followed
+  frame of the continuation keeps the references of its locals and the `Copy` nodes of the
+  frames of its component (the frame of a function waits at its `handle`, so its locals go
+  on at the `Copy` nodes of its handled body and its clauses). At each copy of the frames
+  (each `resume`): a reference into a cell of the `map` of `copy_frames` whose variable
+  points only into places of the copied frames must have `rebound_at` at one of the
+  `Copy` nodes (an owned place, valid in the copy); at a later copy, a reference into a
+  shared cell that a write strictly above it, a move or a free reached since the operation
+  must not. The two mutation tests (`weft-interp` `fact_oracle.rs`): facts with no
+  `rebound_at` at the `Copy` nodes (the state at the end of the function for owned places)
+  fail A4 on `m3`; facts with a `rebound_at` of each variable at the `Copy` nodes (the row
+  state for shared places) fail A4 on `m7`, before the read of the freed cell.
+- Open (older than the stage; the re-entry of a function body has them too; scratchpad
+  `r0k/c2/y`): a reference through an `Rc` handle of a copied frame is invalid at the
+  re-entry after the end of the handle in the previous run (a false W0301:
+  `root_rc_ok.wf` with `weft-r0kd2`, `rc_clause_ok.wf`); and the variable "the copy of the
+  frame" of a call (D-MULTI-MID) points only into the places below the references that the
+  call uses, not into the `rc` groups that they reach: a change of such a group by the
+  outer clause between two `resume`s does not reach the copied callee frame
+  (`root_rc_between.wf`: HOLE with `weft-r0kd2`; `root_rc_fo.wf`: an A4 failure on a clean
+  program). The probes of the stage keep out of both forms; the four bad probes
+  `b07`-`b10` (rejected) fail the old A4 of copies in `main` for the second reason.
+- Probes `tests/gate/probes/fixes/r0kc2b/` (a bad case and a clean twin of each):
+  `b01_vec_owned` (a `Vec` of the clause: clean; in an `rc` object: W0301),
+  `b02_clause_local_ref`, `b03_rc_between` (an `rc` object of `main` shared by the
+  copies), `b04_frame_above` (a vector of `main` above the handler), `b05_c8_pre` (C8),
+  `b06_once_across` (E7), `b07_abort_in_copy` (the second copy fails to a `Fail` handler of
+  `run`), `b08_handled_after` (the rest of the handled body runs again), `b09_post_row`
+  and `b10_post_row_after` (a row after the `resume`). Tests: `analysis_units` `r0kc2`
+  (the re-entry edges of the seed, E5, E7, C8); `fact_oracle.rs` (the two mutations, and
+  each probe that the `ir` pipeline accepts passes the fact oracle with A4 of re-entries).
+- The fallbacks, against `weft-r0kd2` (census by the note of `weft check`; scratchpad
+  `r0k/d2/kd2-t1.tsv`, `kd2-t2.tsv`, `r0k/c2/w4-t1.tsv`, `w4-t2.tsv`): tier 1 (5232
+  files, the 20 new probes) 96 to 83: D5 12 to 0, C8 1 to 0. The 13 rows come into scope
+  with no error but `m7_rc_shared` (W0301 at line 11; the old pipeline misses the fault,
+  so the open-old entry `R0k2C-M7` goes): `multi_nested_drop` (two copies),
+  `multi_nested_drop2`, `multi_nested_ok`, `fd2_v1_three_levels`, `d5_after_resume_ok`,
+  `c8_nested_after_ok`, `m1_ok`, `m3`, `m5`, `m6`, `m7b`. No row leaves the scope.
+  `verify/s5/R2c/p/o5` (C8, rejected) gets the W0302 of the old pipeline. Tier 2 (57393)
+  112 to 108: D5 5 to 1. `multi_nested_drop`, `_drop2`, `_ok` and `fd2_v1` come into
+  scope with no error; `r2/oracle/runs/m1/p1669` keeps the fallback (a row that only the
+  analysis finds: the clause runs its parameter `f`); `o5` as in tier 1. No row of tier 1
+  or tier 2 leaves the scope, and no other row changes its codes.
+- Gates (binaries `r0k/c2/bin/weft-r0kc2`, `weft-gate-r0kc2`): tier 1 0 blockers (5232;
+  3930 same, 17 open, 314 fixed, 1 new-fp, 154 lost-clean, 148 moved, 668 changed; the
+  new probes have their old records in `tests/gate/baseline-tier1.jsonl`); tier 2 (2
+  workers) 0 blockers (39917 same, 6 open, 92 fixed, 12 new-fp, 0 lost-fault, 3480
+  lost-clean, 1860 moved, 12026 changed: the copies of `i5_nested_multi` and `e2_spared`
+  are `moved`); fact
+  oracle tier 1 0 failures (8 faults, 22 timeouts, 1418 pass); sigdiff tier 1 0 rows with
+  no entry. Ledger: `R0k2C-M7` removed; `changed` `b04_frame_above_bad` (W0301 for the
+  W0312 of the old pipeline); `moved` `i5_nested_multi`, `e2_spared` (W0602 at the
+  `resume` of the clause). The interpreter sources change (A4), so the oracle caches of
+  tier 1 (both engines) and of tier 2 run again. `ereview/ev.sh` on the rows that change
+  and the probes (40 rows of tier 1, 6 of tier 2): no HOLE, no FP-IR (22 no fault, 9
+  held, 2 rejected by both, 7 oldmiss: `m7` and the bad probes `b01`, `b03`, `b07` to
+  `b10`, which the `ir` pipeline rejects and the old pipeline misses).
+
+R0k-c2 fix 1 as built (a parameter of a clause at the re-entry of a clause frame; the BLOCK
+of the review of R0k-c2 and the findings of the second review of the fix; `docs/ir.md`
+6.5, "As built (plan stage R0k-c2 fix 1)"; the notes: scratchpad `r0k/c2f1/notes.md`,
+`r0k/c2f2/notes.md`):
+
+- The finding. A clause of a `multi` operation holds its reference parameter `r` across a
+  row (D5: a `multi` operation of a handler of a caller; C8: `pick()` of a local `multi`
+  handler), and the code of the previous run changes the place that `r` points into
+  (`clear`, `push`) before the next copy: the next copy reads a freed cell. The `ir`
+  pipeline rejected the form where the clause takes the reference itself, but not the
+  form with the parameter: `r` points into the `Param` place of the clause, which the
+  `Copy` rule keeps as a shared place, and only the run node and the `resume` map that
+  place to the argument. The `once` form was correct (`p29`: W0301).
+- The fix (`handlers::reentry_args` and `handlers::shadow`, from `project`;
+  `handlers::ClauseCopy`, noted by `copy_node`; the form after the second review of the
+  fix). A variable `V` of a copied clause frame that the `Copy` node does not bind again
+  and that points into a `Param` or `Held` place of its clause gets a shadow variable
+  ("the argument of `V`"). It points into the places of the argument at each run of the
+  clause (σ, with the handle places of the `Rc` handles), on a shadow root for each root,
+  but not into a place that the node copies (a local of a copied frame, or the callee
+  frame of the run node: `p23_op_arg_ref_ok`, `p32_d5_op_arg_owned_ok`). Only the nodes
+  that a node that runs the clause reaches (forward on the graph) change the shadow
+  places: each change, lend, free and moved part of a place of the root there, and the
+  end or the move of the owner of the root. The shadow variable never gets a new value,
+  and its uses are the uses of `V` that the `Copy` node reaches. So a change before the
+  first run or on a path with no run (`f06`, `f09`, `f11`, `f13`, `f14`, `f15`: a loop
+  that can run 0 times, an `if`) does not count, and a change after an earlier run stays
+  when a later run gives the clause a new argument (`n04_loop_rebind_bad`,
+  `n05_two_runs_rebind_bad`, `n06_c8_two_runs_bad`). The first form of the fix (`V`
+  itself pointed into the argument and got a new value at each run) had both faults.
+  `V` itself does not change. An argument in a parameter of another clause (an outer
+  clause of the chain, or a clause that runs the clause: `m04_c8_forward_bad`) maps again
+  through the runs of that clause.
+- The `rc` form (`RC_ACROSS_ROW`, in `reentry_args`). For a row of a handler of a caller,
+  a variable of a copied frame (of a clause or of the function) that keeps its state and
+  points into an `rc` group, or an argument in an `rc` group, makes the program pending
+  (`p08_rc_between_param_bad`, `n19_rc_param_arg_bad`, `n18_rc_handled_frame_bad`: the
+  clause of the caller clears the group through another handle between two `resume`s;
+  neither the facts of the caller nor those of the callee see both). The program keeps
+  the old pipeline if the `ir` pipeline finds no error, and the old pipeline misses the
+  fault (open-old `R0k2C-RC-BETWEEN`). The re-entry of a function body with no clause
+  frame keeps the gap (older than the stage, `root_rc_between`). `fixes/r0kc2/m7_rc_shared`
+  and `m7b_rc_shared_ok` are pending now (`m7` stays rejected).
+- A4 of re-entries (stage R0k-c2 fix 1). At a later copy, a reference of a clause frame
+  into a shared cell whose target an access since the operation freed or moved, or whose
+  `Vec` buffer it wrote as a whole, must have a variable that is invalid at a `Copy` node,
+  or a shadow variable that is (`invalid(V, P)` of the checker:
+  `FactOracle::copy_invalid` runs the checker with a use of each variable at each `Copy`
+  node). Another write above a place (only stable steps can follow) only must not bind
+  the variable again. Not in the frame of a function: there a clause of a caller can make
+  the change, and the facts of the caller check it (`summary_oracle.rs`
+  `a_copy_of_a_callee_frame_needs_a_use_at_the_copy_node`). On a rejected program the rule
+  can fail where the error is in the facts of a caller (`p33_d5_op_arg_between_bad` and
+  the `q` probes of the second review). The mutation test (`fact_oracle.rs`): with no
+  places for the shadow variables of `r`, A4 fails on `p30` and on `n05` at the later
+  copy, before the read of the freed cell. The mutation of R0k-c2 that binds each shared
+  variable again at the `Copy` nodes runs on `p27_op_arg_main_bad` now (`m7` is pending).
+- Probes `tests/gate/probes/fixes/r0kc2c/` (the probes of the two reviews): `p23_op_arg_ref`,
+  `p24_op_arg_ref_inline`, `p27_op_arg_main`, `p30_c8_op_arg_between`,
+  `p38_c8_op_arg_push`, `n04_loop_rebind`, `n05_two_runs_rebind`, `n06_c8_two_runs`,
+  `m04_c8_forward` (a bad case and a clean twin), `p25_op_arg_mutref_bad`,
+  `p37_op_arg_two_ops_bad`, `p32_d5_op_arg_owned_ok`, `p29_op_arg_once_bad` (`once`),
+  `p04_struct_rc_field_bad` (W0301), the clean forms `f06`, `f09`, `f11`, `f13`, `f14`,
+  `f15`, and the `rc` forms `p08`, `n18`, `n19`. The clean twin `p04_struct_rc_field_ok`
+  gets W0301 (the precision loss `rc_clause_ok`, older than the stage; the R0k-c2 binary
+  gives the same error): it is not a probe of tier 1, because a second `new-fp` row of
+  the probes is more than the 0.1 % of §2.5 (scratchpad `r0k/c2f1/held/`). Tests:
+  `analysis_units` `r0kc2` (the shadow variable: D5, C8; the clean twin; only a change
+  after a run counts, `f11` and `n05`; the `rc` forms are pending); `fact_oracle.rs`
+  (the mutations; the probes pass A4).
+- The fallbacks (census by the note of `weft check`; scratchpad `r0k/c2f2/f2-t1.tsv`,
+  `f2-t2.tsv`; the tree with the HENV-SHADOW fix). Tier 1 (5293 files): 91. Against the
+  first form of the fix (85 of 5248): the new `n18` and `n19` are pending, and the clean
+  twins `fixes/r0kc2b/b07` to `b10` go back to the pending rule of the `rc` form (a
+  reference of the frame of `run` into an `rc` object across the row; clean in both
+  pipelines); no other row changes. Against `weft-henv3` (96 of 5212, before R0k-c2): the
+  12 D5 and C8 rows of R0k-c2 come into scope. The bad probes of the reviews that
+  `weft-r0kc2` accepts get W0301. Tier 2 (57393): 108 (the first form of the fix: 108;
+  `weft-henv3`: 111 with one time-out row); no row changes against the first form but
+  `r2/oracle/runs/g5/p21857` (W0302 too, from the HENV-SHADOW fix: `weft-henv3` gives it).
+- ev.sh (`r0k/c2f2/ev-final.tsv`, 204 rows: `r0kc2rev2`, `r0kc2rev`, `fixes/r0kc2*`,
+  `fixes/henv`): no HOLE. The bad forms `m`, `n`, `q` and `p` that `weft-r0kd2` holds or
+  misses are held or rejected (oldmiss); `n18` and `n19` are pending and the old pipeline
+  misses them (oldmiss). The clean `f` probes give no fault and no error (the first form of
+  the fix gave W0301 on `f06` to `f15`). One FP-IR: `p04_struct_rc_field_ok` (the older
+  precision loss). The A4 failures are on rejected programs only (`p33`, the `q` probes,
+  `p18`, `p01`: the error is in the facts of a caller).
+- Gates (release binaries `r0k/c2f2/bin/weft-r0kc2f2`, `weft-gate-r0kc2f2`): tier 1 0
+  blockers (5293; 3974 same, 20 open, 326 fixed, 1 new-fp, 0 lost-fault, 154 lost-clean,
+  148 moved, 670 changed; the new probes have their old records in
+  `tests/gate/baseline-tier1.jsonl`); tier 2 (2 workers) 0 blockers (39917 same, 6 open,
+  92 fixed, 12 new-fp, 0 lost-fault, 3480 lost-clean, 1860 moved, 12026 changed); fact
+  oracle tier 1 0 failures (8 faults, 22 timeouts, 1446 pass); sigdiff tier 1 0 rows with
+  no entry. The code diffs against `weft-henv3` (scratchpad `c14v/cmpint2.sh`, sets `s00`,
+  `s01`, `s02`, `s04`, `s06`, `s07`, `s08`, `s10`): 12 files, the 12 diffs of R0k-c2
+  against `weft-r0kd2` (`i5_nested_multi` two copies, `e2_spared`, `o5`, `h04`, `m7`,
+  `b01`, `b03`, `b07` to `b10`).
+  Ledger: `changed` `p30_c8_op_arg_between_bad` and `m04_c8_forward_bad` (W0301 for the
+  W0312 of the old pipeline); open-old `R0k2C-RC-BETWEEN` (`p08`, `n18`, `n19`). No new
+  `lost-clean` row. The interpreter sources change (A4), so the oracle caches of tier 1
+  (both engines) and of tier 2 run again.
 
 R0k-d1 as built (A through the pending rule, D4; the depth bound stays; `docs/ir.md`, "As
 built (plan stage R0k-d1)"; the census and the design check: scratchpad
@@ -4319,6 +4593,131 @@ the facts with a weak form accept (census with `weft-r0kd2`):
   cheap is E2 for `c09` (the code of the caller runs `f` once; a copy of `mid` at the call
   shows it): one program, no stage. The whole gain of R0k-d3 is about 8 clean programs of
   tier 1 (probes) and 4 of tier 2.
+
+##### HENV-SHADOW fix
+
+The hole (in scope since stage C1; the R0k-b1' review, scratchpad `b1prev/notes.md`): a
+closure runs with the handler environment of its maker (`c.henv` in `call_value`). A
+callee `mk` makes a closure that performs an effect E through its row. `mk` is called in
+the handled body of a local handler H of E, and the closure runs in the handled body of
+an inner local handler H2 of E. At run time the perform goes to H. The facts resolved E
+only to the innermost local handler, H2, and past the function (`frames::reach`,
+`value_effects`), so the clause of H was not in the facts of the run node. Probes
+`q02`, `q06`, `q08` (the interpreter reads a freed cell; the `ir` pipeline gave no error;
+the old pipeline gives W0301).
+
+The choice: option (a), the exact form, not (b), the pending form. Each change is in
+`frames::reach` and `clause::note_cap_apps` (about 200 lines, most of them comments), and the census
+showed no change of a program of tiers 1 and 2 before the new probes. Option (b) would put
+the same programs out of scope and need a new pending reason, with no gain in precision.
+
+As built (`docs/ir.md` 6.5, "As built (HENV-SHADOW fix)"):
+
+- `frames::henv_unknown`: a call can run a function value whose handler environment
+  the facts do not know. Known: a constant (a function item), a local that
+  `closure_only` accepts (closures of the function capture each local handler that they
+  perform through), and a parameter of a function or a closure that gets no other value
+  (`entry_param`: the value existed before the frame). Not known: the result of a call, a
+  field, an element of a container, the result of an operation. A call of a function
+  value checks the callee and each argument; a call of a function item checks each
+  argument if the summary runs a value (`runs`, `unknown_runs`).
+- The review of the fix (scratchpad `henvrev/notes.md`; no soundness hole) found 3 new
+  false positives in scope (`fixes/henv/fp01_made_in_inner`, `fp02_vec_in_inner`,
+  `fp03_fail_inner`): `mk` is called in the inner handler H2, and its closure runs there,
+  so it performs to H2 only, but each call result was not known. Now a value that was
+  made in this run of the handled body of the innermost local handler of the effect at
+  the run node is known (`frames::made_under`, `docs/ir.md` 6.9): its local belongs to a
+  body that runs in each run of that handled body, and each whole write is a new
+  closure, a constant, a copy of such a local (also a field or an element of it), or the
+  result of a call of a function item whose environment sends the effect to that handler
+  first and whose `ret.fns` are only closures of the callee and function items; no
+  write of a part, no reference to the local. The bad forms of the review stay rejected
+  (tuple, `Option`, `Box`, `Rc`, a resume value, a maker of a maker, a new instance in a
+  loop), and two more scratch probes (a callee that gives back an outer closure; an
+  outer closure put into a `Vec` of H2). `entry_param` and `made_under` look only at the
+  body of the local and at the bodies with upvar locals (`writers`). The review also
+  said that a known `entry_param` value keeps the innermost local handler where past
+  the function is the destination of a closure of a caller: the innermost one is
+  necessary for a function item, and more than necessary (not wrong) for a closure; a
+  note in `docs/ir.md` 6.9 says so.
+- Round 2 of the review (scratchpad `henvrev2/`; 37 probes) found two gaps of
+  `made_under` that opened holes again: a declaration (`Vec.pop`, `Box.new`,
+  `Rc.clone`, `Weak.upgrade`: a result of type `T`, so `ret.fns` is empty) counted as a
+  maker (`p13` to `p16`); a closure that shares the cell of the local (a `Kept` capture)
+  wrote another value into it (`p07`, `p07d`). Now a maker needs an IR body and a
+  non-empty `ret.fns`, and a closure that shares the cell and can write it
+  (`shares_cell`, `writes_capture`) makes the local unknown. Round 3 found one more form,
+  a hole since stage C1 (`weft-r0kd2` misses it too): a closure of the function made in
+  H2 captures a closure that `mk` made in H and runs it (`p30`). A `closure_only` local
+  is now known only if its closures capture no other function value
+  (`plain_closures`), also in `value_effects`. An aggregate whose function parts are
+  `made_under` is known (`c30` `Option`, `c31` struct: the false positives of round 2
+  are gone). Left as false positives (issue #79; no row of the tiers has them): `c29`
+  (a `RetFn::Param` result), `c32` (the receiver `&vs` of `push`), `p07c` (a closure
+  writes the cell with a value made in H2; the rule above is conservative).
+- `frames::resolve_all`: each local handler on the chain of the environment that adds
+  the effect, up to a captured capability, and past the function. `frames::run_dests`
+  uses it for a row effect and for `Fail` if the chain has more than one such handler and
+  the call is `henv_unknown`; else it is `resolve`. The check runs only then, so the cost
+  does not change (a first form that ran it at each call made
+  `verify/s5/S5c_diff/scale/c8000.wf` 2.8 times slower).
+- `clause::note_cap_apps` gives a failure of such a value to each local `Fail` handler of
+  the chain.
+- The fact oracle gap: A5 passed on `q02`, because it failed only on a node with
+  `escapes_at` of the effect, and the node of the run sent the effect to H2. A5 now also
+  fails if no node of the frames of the component above the `handle` has `performs_at`
+  with the capability of the handler, for a clause with a resume point (a clause with
+  none aborts, and trace conformance checks the abort edge; a first form with no such
+  limit failed on 31 correct programs of tier 1, each a `Fail` clause at the end of a
+  scope). With the facts before the fix, A5 fails on each probe of `fixes/henv` (bad and
+  clean); with the facts of the fix, it passes.
+- Probes `tests/gate/probes/fixes/henv/` (a bad case and a clean twin of each): `q02`,
+  `q06`, `q08` of the review; `h01_vec` (an element of a `Vec`), `h02_clause_value` (a
+  clause gives the closure), `h03_field` (a field), `h04_callee_runs` (a callee runs the
+  closure). `h01_bad` and `h03_bad` are old misses (the old pipeline accepts them):
+  class `fixed`. The clean probes of the review: `fp01_made_in_inner`,
+  `fp02_vec_in_inner`, `fp03_fail_inner`, `c30_option_ok`, `c31_struct_ok`. The probes
+  of round 2 and 3, each bad and clean: `p13_pop`, `p14_box_new`, `p07_closure_writes`,
+  `p07d_closure_write_callee`, `p30_closure_captures_outer`. Tests: `ir_handlers.rs`
+  `a_closure_that_a_call_made_performs_to_each_local_handler_of_the_chain` (it fails
+  before the fix: no error on each bad probe),
+  `a_closure_made_in_the_run_of_the_inner_handler_performs_to_it` (it fails with the
+  first form of the fix: W0301 on `fp01`), `summary_oracle.rs`
+  `a_clause_that_no_node_runs_fails_the_clause_cover`.
+- The census of the fallbacks (the line "note: --facts=ir: the old pipeline checks the
+  program:"), against `weft-r0kd2` (scratchpad `r0k/d2/kd2-t1.tsv`, `kd2-t2.tsv`;
+  `henv/census/`): tier 1 (5212 files) 96 to 96, tier 2 (57393) 112 to 112, each reason
+  the same; no row moves in or out of scope, and before round 3 no diagnostic of a row
+  changes (round 3: two tier-2 rows, below). Three
+  tier-2 rows time out at 60 s in the census under load (`r3/quality/big/all_2.wf`,
+  `scale/c8000.wf`, `scale/h8000.wf`); alone, with no limit, they give the record of
+  `weft-r0kd2`, in the same time.
+- The diagnostics against `weft-r0kd2` on the lists `s00`, `s01`, `s02`, `s04`, `s06`,
+  `s07`, `s08`, `s10` of scratchpad `c14v` (7034 files): 3 files change
+  (`c1sign/v2/p7192_multi2_MK.wf`, `p7192_multi2_PS.wf`, `r67/v/rows/p7192_h5.wf`). Each
+  gets one more W0301; each is rejected by both pipelines already and faults (`ev.sh`:
+  held). On the 29 probes of `fixes/henv`, the 24 probes of the review (scratchpad
+  `henvrev/p`), the 37 probes of round 2 (`henvrev2`) and the 3 files: no HOLE; FP-IR
+  only on `c29`, `c32` and `p07c` (above). After round 3 the census of tier 2 has two
+  more changed rows, each rejected by both pipelines and faulting, and each still class
+  `changed` (ledger entry 287): `r2/oracle/runs/g3/p5307.wf` (one more W0302, at line
+  88) and `r2/oracle/runs/g5/p21857.wf` (a W0302 at line 101: `g12` captures `f8`, so
+  the run of `g12` runs the clauses of the local handlers).
+- Ledger: no entry. No row of tier 1 or tier 2 changes its class; the 29 probes are
+  new rows of tier 1 (27 `same`; `h01_vec_bad`, `h03_field_bad`: `fixed`).
+- The oracle caches: the interpreter sources changed (the fact oracle), so the caches of
+  tier 1 (both engines) and of tier 2 (`ir`) were made again. Each verdict is the same,
+  but for runs at the time limit or with a port in use: tier 1 `fixes/r0f/c01_serve_read_ok`
+  (timeout to benign) and `verify/partb/S4diff/p/wide3.wf` (timeout to not-runnable: it
+  has no `main`), on both engines; tier 2 7 rows between timeout, benign and clean. No
+  verdict changes to or from `fault`.
+- Gates (binaries scratchpad `henv/bin/weft-henv3`, `weft-gate-henv3`, after round 3):
+  tier 1 0 blockers (5241; 3946 same, 18 open, 309 fixed, 1 new-fp, 154 lost-clean, 146
+  moved, 667 changed); tier 2 (2 workers) 0 blockers (39919 same, 6 open, 92 fixed, 12
+  new-fp, 3480 lost-clean, 1858 moved, 12026 changed: each count as at R0k-d2); fact
+  oracle tier 1 0 failures (1414 pass, 8 faults, 21 timeouts); sigdiff tier 1 0 rows with
+  no entry. The changes of the review rounds do not change the interpreter sources, so
+  the oracle caches only get the rows of the new probes.
 
 #### R1 Standalone `typeck`, part 1
 

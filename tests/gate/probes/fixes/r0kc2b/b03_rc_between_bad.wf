@@ -1,0 +1,24 @@
+// Plan stage R0k-c2 (a probe of the stage: an `rc` object shared between the runs).
+// bad: the clause takes a reference into an `rc` object of `main` before the row; the
+// first copy clears the object after its resume; the copies share the object (an `rc`
+// is not copied), so the second copy reads a freed cell
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run(b: &Rc<B>) -> u64 / Choice, mut(B) {
+    handle Pick { fn pick() {
+        let r = &b.v[0]
+        let c = choose()
+        print(r)
+        let y = resume(1)
+        b.v.clear()
+        y
+    } } in body()
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&b)) }
+}

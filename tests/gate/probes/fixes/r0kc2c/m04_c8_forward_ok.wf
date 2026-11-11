@@ -1,0 +1,18 @@
+// Stage R0k-c2 fix 1 (the clean twin of m04_c8_forward_bad: the clause of Pick only reads v between its resumes).
+effect Pick { multi fn pick() -> bool }
+effect Ask { multi fn ask(r: &u64) -> u64 }
+effect Tell { multi fn tell(t: &u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true)
+        print(v.len())
+        resume(false) } } in {
+        handle Tell { fn tell(t) {
+            let b = pick()
+            print(t)
+            resume(1) } } in {
+            handle Ask { fn ask(r) { resume(tell(r)) } } in { print(ask(&v[0])) }
+        }
+    }
+}

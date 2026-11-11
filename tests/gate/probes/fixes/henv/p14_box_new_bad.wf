@@ -1,0 +1,21 @@
+// HENV-SHADOW p14 (round 2 of the review): `Box.new` is called in H2 with
+// a struct that holds the closure that `mk` made in H. The run in H2 goes
+// to H. `Box.new` is a declaration, so it is not a maker.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+struct B { f: fn() / Run }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in {
+        let c0 = mk()
+        
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { let b = Box.new(B { f: c0 })
+            let g = b.f
+            g() }
+        print(r)
+    }
+}
+fn main() { outer() }

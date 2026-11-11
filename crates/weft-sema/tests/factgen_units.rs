@@ -1217,7 +1217,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // `ByMove` captures bind, as the parameters of a function.
         // The entry of a clause: its parameters and its continuation bind;
         // `Main` of a `handle`: the capability binds (plan stage F14).
-        "entry" | "closure entry" | "clause entry" | "handle" => {
+        // The `Copy` node of a `handle` whose clause can wait at a `multi`
+        // operation of a caller after its `resume` (stage R0k-c2): the copy
+        // of the frames of the function, as the `Copy` node of a row.
+        "entry" | "closure entry" | "clause entry" | "handle" | "handle row copy" => {
             (&["cfg_edge", "rebound_at", "empty_at"], &[])
         }
         // `Live` of the temporary that the value of an assignment starts

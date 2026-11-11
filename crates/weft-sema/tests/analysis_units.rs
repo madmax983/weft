@@ -2425,3 +2425,338 @@ mod r0kd2 {
         assert!(late(pending.as_deref()), "{pending:?}");
     }
 }
+
+/// Stage R0k-c2: the re-entry of a clause frame after a `multi` operation of
+/// a handler of a caller (D5) or of a local handler (C8).
+mod r0kc2 {
+    use weft_facts::{FnFacts, NodeId, VarId};
+
+    /// The source of probe `name` of `tests/gate/probes/fixes/<dir>`.
+    fn probe(dir: &str, name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes")
+            .join(dir)
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The scope of `src` (the fallback and the pending construct) and the
+    /// facts of the component of function `f`.
+    fn facts(src: &str, f: &str) -> (Option<String>, Option<String>, FnFacts) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let s = a.ir_scope.clone().expect("a scope");
+        let b = weft_sema::irbuild::build(&a);
+        let comps = weft_sema::factgen::components(&a, &b).unwrap_or_else(|e| panic!("{e}"));
+        let c = comps
+            .into_iter()
+            .find(|c| c.facts.name == f)
+            .unwrap_or_else(|| panic!("no component `{f}`"));
+        (s.fallback, s.pending.map(|p| p.reason), c.facts)
+    }
+
+    /// The nodes of `f` whose kind is `kind`.
+    fn nodes(f: &FnFacts, kind: &str) -> Vec<NodeId> {
+        f.nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.kind == kind)
+            .map(|(i, _)| NodeId(u32::try_from(i).unwrap_or(u32::MAX)))
+            .collect()
+    }
+
+    /// The variables of `f` named `name`.
+    fn vars(f: &FnFacts, name: &str) -> Vec<VarId> {
+        f.vars
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.name == name)
+            .map(|(i, _)| VarId(u32::try_from(i).unwrap_or(u32::MAX)))
+            .collect()
+    }
+
+    /// The `Copy` node of the `perform` of `choose` in the clause: the node
+    /// with an edge to the `Ret` node of the perform.
+    fn row_copy(f: &FnFacts) -> NodeId {
+        let rets: Vec<NodeId> = nodes(f, "perform ret")
+            .into_iter()
+            .filter(|n| f.node(*n).label == "choose")
+            .collect();
+        nodes(f, "perform copy")
+            .into_iter()
+            .find(|c| f.cfg_edge.iter().any(|(a, b)| a == c && rets.contains(b)))
+            .expect("a copy node of the row")
+    }
+
+    /// The seed of the clause after the row: the clause of `Pick` performs
+    /// `choose` of `main`; the facts of `run` have an edge from each
+    /// `Return` of `run` to the `Copy` node of the perform, then to its `Ret`
+    /// node, and the node of the handled body that runs the clause (the call
+    /// of `body`) gets a `Copy` node too. The program is in scope.
+    #[test]
+    fn a_row_of_a_clause_gets_a_reentry_edge_from_the_returns_of_the_function() {
+        let (fallback, pending, f) = facts(&probe("r0kc2", "m3_run_local_after_handle.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+        let c = row_copy(&f);
+        let returns = nodes(&f, "return");
+        assert!(
+            f.cfg_edge
+                .iter()
+                .any(|(a, b)| *b == c && returns.contains(a)),
+            "no edge from a `Return` to the copy"
+        );
+        let call_copy = nodes(&f, "call copy");
+        assert!(
+            call_copy.iter().any(|c| f
+                .cfg_edge
+                .iter()
+                .any(|(a, b)| b == c && returns.contains(a))),
+            "the call of `body` has no re-entry"
+        );
+    }
+
+    /// E5: the `Copy` node of the row binds again the reference into a
+    /// local of `run` (a place that the copied frames own: `m3`), and does
+    /// not bind again the reference into a vector of `main` (a shared place:
+    /// `fixes/r0kc2c/p25_op_arg_mutref_bad`; the reference into an `rc`
+    /// object of `m7` is pending from stage R0k-c2 fix 1).
+    #[test]
+    fn the_copy_of_a_row_of_a_clause_binds_only_the_owned_references_again() {
+        let (_, _, f) = facts(&probe("r0kc2", "m3_run_local_after_handle.wf"), "run");
+        let c = row_copy(&f);
+        let r = vars(&f, "r");
+        assert!(
+            r.iter().any(|v| f.rebound_at.contains(&(*v, c))),
+            "the owned reference is not bound again"
+        );
+        let (fallback, pending, f) = facts(&probe("r0kc2c", "p25_op_arg_mutref_bad.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+        let c = row_copy(&f);
+        let r = vars(&f, "r");
+        assert!(!r.is_empty());
+        assert!(
+            r.iter().all(|v| !f.rebound_at.contains(&(*v, c))),
+            "the shared reference is bound again"
+        );
+    }
+
+    /// E7: a linear value of the clause that is live across the row gets
+    /// its copy at the `Copy` node with no `empty_at` (the copy is linear),
+    /// and the row is a `multi` point: W0503. A value that ends before the
+    /// row is not live there.
+    #[test]
+    fn a_linear_value_of_the_clause_across_the_row_is_not_emptied_by_the_copy() {
+        let (fallback, pending, f) = facts(&probe("r0kc2b", "b06_once_across_bad.wf"), "run");
+        assert_eq!(fallback, None);
+        let _ = pending;
+        let c = row_copy(&f);
+        let l: Vec<VarId> = vars(&f, "l")
+            .into_iter()
+            .filter(|v| f.var(*v).linear)
+            .collect();
+        assert!(!l.is_empty());
+        assert!(l.iter().any(|v| f.rebound_at.contains(&(*v, c))));
+        assert!(l.iter().all(|v| !f.empty_at.contains(&(*v, c))));
+        let rows: Vec<NodeId> = nodes(&f, "perform")
+            .into_iter()
+            .filter(|n| f.node(*n).label == "choose")
+            .collect();
+        assert!(rows.iter().any(|n| f.multi_at.contains(n)));
+        let (fallback, pending, _) = facts(&probe("r0kc2b", "b06_once_across_ok.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+    }
+
+    /// The shadow variables of the variables `r` of `f` (stage R0k-c2 fix 1,
+    /// `handlers::arg_shadow_name`).
+    fn shadows(f: &FnFacts) -> Vec<VarId> {
+        vars(f, &weft_sema::factgen::handlers::arg_shadow_name("r"))
+    }
+
+    /// The places that the variables `vs` of `f` point into (by display).
+    fn points(f: &FnFacts, vs: &[VarId]) -> Vec<String> {
+        let mut out: Vec<String> = f
+            .points_into
+            .iter()
+            .filter(|(v, _)| vs.contains(v))
+            .map(|(_, q)| f.place(*q).display.clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The nodes of `f` that change, free or lend a place that a variable of
+    /// `vs` points into (the same root), by label.
+    fn changed_at(f: &FnFacts, vs: &[VarId]) -> Vec<String> {
+        let roots: Vec<_> = f
+            .points_into
+            .iter()
+            .filter(|(v, _)| vs.contains(v))
+            .map(|(_, q)| f.place(*q).root)
+            .collect();
+        let mut out: Vec<String> = f
+            .mutates_at
+            .iter()
+            .chain(&f.releases_at)
+            .chain(&f.lends_mut)
+            .filter(|(_, q)| roots.contains(&f.place(*q).root))
+            .map(|(n, _)| f.node(*n).label.clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// True if a variable `r` of `f` gets a new value at a `perform` of
+    /// operation `op`.
+    fn r_bound_at_perform(f: &FnFacts, op: &str) -> bool {
+        let r = vars(f, "r");
+        let at: Vec<NodeId> = nodes(f, "perform")
+            .into_iter()
+            .filter(|n| f.node(*n).label == op)
+            .collect();
+        f.rebound_at
+            .iter()
+            .any(|(v, n)| r.contains(v) && at.contains(n))
+    }
+
+    /// Stage R0k-c2 fix 1 (D5): the parameter `r` of the clause of `Pick`
+    /// points into the vector `v` of `main` (the argument, through the
+    /// parameter of `run`), a place that the copies share. Its shadow
+    /// variable points into the argument, the `clear` after the `perform`
+    /// changes it, and it is used where `r` is used after the row. The
+    /// `perform` does not bind `r` again. The program is in scope.
+    #[test]
+    fn a_clause_parameter_across_a_row_has_a_shadow_variable_for_its_argument() {
+        let (fallback, pending, f) = facts(&probe("r0kc2c", "p25_op_arg_mutref_bad.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+        let w = shadows(&f);
+        assert_eq!(w.len(), 1);
+        let ps = points(&f, &w);
+        assert!(ps.iter().any(|q| q.starts_with('v')), "{ps:?}");
+        assert!(changed_at(&f, &w).contains(&"clear".to_string()));
+        assert!(f.uses.iter().any(|(v, _)| w.contains(v)));
+        assert!(!r_bound_at_perform(&f, "pick"));
+        let c = row_copy(&f);
+        assert!(w.iter().all(|v| !f.rebound_at.iter().any(|(x, _)| x == v)));
+        assert!(vars(&f, "r")
+            .iter()
+            .all(|v| !f.rebound_at.contains(&(*v, c))));
+    }
+
+    /// Stage R0k-c2 fix 1 (C8): the parameter `r` of the clause of `Ask`
+    /// (inside the handled body of the local `multi` handler `Pick`) has a
+    /// shadow variable into `v[]` of `main`; in the clean twin no node
+    /// changes its places.
+    #[test]
+    fn a_clause_parameter_across_a_local_multi_operation_has_a_shadow_variable() {
+        let (fallback, pending, f) =
+            facts(&probe("r0kc2c", "p30_c8_op_arg_between_bad.wf"), "main");
+        assert_eq!((fallback, pending), (None, None));
+        let w = shadows(&f);
+        assert!(points(&f, &w).iter().any(|q| q == "v[]"));
+        assert!(!changed_at(&f, &w).is_empty());
+        let (fallback, pending, f) = facts(&probe("r0kc2c", "p30_c8_op_arg_between_ok.wf"), "main");
+        assert_eq!((fallback, pending), (None, None));
+        let w = shadows(&f);
+        assert!(points(&f, &w).iter().any(|q| q == "v[]"));
+        assert!(changed_at(&f, &w).is_empty(), "{:?}", changed_at(&f, &w));
+    }
+
+    /// Stage R0k-c2 fix 1, the clean twin: the argument of `r` is a place of
+    /// a local of `run`, which the copy copies (an owned place). So `r` gets
+    /// no shadow variable.
+    #[test]
+    fn a_clause_parameter_into_a_copied_place_has_no_shadow_variable() {
+        let (fallback, pending, f) = facts(&probe("r0kc2c", "p32_d5_op_arg_owned_ok.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+        assert!(shadows(&f).is_empty());
+        assert!(points(&f, &vars(&f, "r"))
+            .iter()
+            .all(|q| q.starts_with('r')));
+    }
+
+    /// Stage R0k-c2 fix 1, the second review: only a change that a node that
+    /// runs the clause reaches counts. The `push` before the `handle`
+    /// (`f11`) does not change the shadow places; the `clear` between two
+    /// runs (`n05`) does, and the second run does not bind `r` again, so the
+    /// change after the first run stays.
+    #[test]
+    fn only_a_change_after_a_run_of_the_clause_changes_the_shadow_places() {
+        let (fallback, pending, f) = facts(&probe("r0kc2c", "f11_d5_loop_ok.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+        let w = shadows(&f);
+        assert!(!w.is_empty());
+        assert!(changed_at(&f, &w).is_empty(), "{:?}", changed_at(&f, &w));
+        let (fallback, pending, f) = facts(&probe("r0kc2c", "n05_two_runs_rebind_bad.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+        let w = shadows(&f);
+        assert!(changed_at(&f, &w).contains(&"clear".to_string()));
+        assert!(!r_bound_at_perform(&f, "pick"));
+    }
+
+    /// The scope of the program `src` (its fallback and the reason of its
+    /// pending construct).
+    fn scope_of(src: &str) -> (Option<String>, String) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let s = a.ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason).unwrap_or_default())
+    }
+
+    /// Stage R0k-c2 fix 1: a reference of a clause frame into an `rc` group
+    /// across a `multi` operation of a handler of a caller makes the program
+    /// pending (the clause of the caller can change the group through
+    /// another handle): a reference that the clause takes (`p08`), a
+    /// parameter whose argument is in the group (`n19`), and a reference of
+    /// the frame of the function (`n18`).
+    #[test]
+    fn a_clause_reference_into_an_rc_group_across_a_row_is_pending() {
+        for name in [
+            "p08_rc_between_param_bad.wf",
+            "n19_rc_param_arg_bad.wf",
+            "n18_rc_handled_frame_bad.wf",
+        ] {
+            let (fallback, pending) = scope_of(&probe("r0kc2c", name));
+            assert_eq!(fallback, None, "{name}");
+            assert!(
+                pending.contains(weft_sema::factgen::handlers::RC_ACROSS_ROW),
+                "{name}: {pending}"
+            );
+        }
+    }
+
+    /// C8: a node of the clause of `Ask` (inside the handled body of the
+    /// local `multi` handler `Pick`) that runs the clause of `Pick` gets a
+    /// `Copy` node with an edge from `Post` of the `handle` of `Pick`. The
+    /// program is in scope.
+    #[test]
+    fn a_node_of_a_clause_inside_a_multi_handled_body_gets_a_reentry_edge_from_post() {
+        let (fallback, pending, f) = facts(&probe("r0kc2b", "b05_c8_pre_ok.wf"), "main");
+        assert_eq!((fallback, pending), (None, None));
+        let posts = nodes(&f, "handle post");
+        let copies = nodes(&f, "perform copy");
+        assert!(copies.iter().any(|c| {
+            f.node(*c).label == "pick"
+                && f.cfg_edge.iter().any(|(a, b)| b == c && posts.contains(a))
+        }));
+    }
+}

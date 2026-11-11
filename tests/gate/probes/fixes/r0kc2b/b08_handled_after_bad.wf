@@ -1,0 +1,25 @@
+// Plan stage R0k-c2 (a probe of the stage: the rest of the handled body runs again).
+// bad twin of b08_handled_after_ok: `run` clears the `rc` object after the handler; the
+// second resume of `choose` runs the rest of the handled body again, which reads a freed cell
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn run(b: &Rc<B>) -> u64 / Choice, mut(B) {
+    let r = &b.v[0]
+    let x = handle Pick { fn pick() {
+        let c = choose()
+        resume(1)
+    } } in {
+        let y = pick()
+        print(r)
+        y
+    }
+    b.v.clear()
+    x
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in { print(run(&b)) }
+}

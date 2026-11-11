@@ -1,0 +1,16 @@
+// Stage R0k-c2 fix 1 (a probe of the review of stage R0k-c2: a reference parameter of a clause across a row).
+// C8: the clause of Ask holds its op arg (a ref into v) across pick; the Pick clause clears v between resumes
+effect Pick { multi fn pick() -> bool }
+effect Ask { multi fn ask(r: &u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(true)
+        v.clear()
+        resume(false) } } in {
+        handle Ask { fn ask(r) {
+            let b = pick()
+            print(r)
+            resume(1) } } in { print(ask(&v[0])) }
+    }
+}
