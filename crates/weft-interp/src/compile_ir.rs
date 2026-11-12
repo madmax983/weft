@@ -405,7 +405,10 @@ impl<'a> BodyCx<'a> {
         }
         for (i, d) in body.locals.iter().enumerate() {
             match d.kind {
-                LocalKind::Return | LocalKind::Param(_) => {}
+                // The environment local of a copy region (plan stage R0k-b2)
+                // has no slot: a field of it is a cell of the closure value of
+                // the region.
+                LocalKind::Return | LocalKind::Param(_) | LocalKind::CopyEnv(_) => {}
                 LocalKind::Cap(_) | LocalKind::Kont(_) | LocalKind::ScopeCap
                     if slots[i].is_some() => {}
                 LocalKind::Cap(_) | LocalKind::Kont(_) | LocalKind::ScopeCap => {
@@ -631,6 +634,16 @@ impl<'a> BodyCx<'a> {
         }
     }
 
+    /// Returns the closure value of the copy region whose environment local
+    /// is local `l` of this body (plan stage R0k-b2), or `None` for another
+    /// local.
+    fn copy_env(&self, l: LocalId) -> Option<Place> {
+        match self.body.local(l)?.kind {
+            LocalKind::CopyEnv(_) => self.p.copy_env_value(self.id, l).cloned(),
+            _ => None,
+        }
+    }
+
     /// Returns the cell of field `k` of the environment that local `s` of
     /// this body is or views, for a view of a nested body.
     fn field_ref(&self, s: LocalId, k: u32) -> S<VarRef> {
@@ -704,7 +717,16 @@ impl<'a> BodyCx<'a> {
                 block.stmts.first().map_or(block.term.origin, |x| x.origin),
             );
             let var = self.cell_ref(value)?;
-            self.emit(Op::PushHenv(var));
+            // The code unit of body `i` is code unit `i` (`compile_ir`).
+            let Some(code) = self
+                .p
+                .closures
+                .get(r.closure.index())
+                .map(|d| d.body.index())
+            else {
+                return bad(format!("a copy region names no closure c{}", r.closure.0));
+            };
+            self.emit(Op::PushHenv { var, code });
         }
         for (i, s) in block.stmts.iter().enumerate() {
             self.at(b, i, s.origin);
@@ -1067,7 +1089,19 @@ impl<'a> BodyCx<'a> {
 
     fn place(&mut self, p: &Place) -> S<()> {
         let mut proj: &[Proj] = &p.proj;
-        if Some(p.local) == self.env {
+        if let Some(v) = self.copy_env(p.local) {
+            // A field of the environment local of a copy region (plan stage
+            // R0k-b2) is the cell of a capture of the closure value.
+            let Some((Proj::Field(k), rest)) = proj.split_first() else {
+                return bad("the environment of a copy region is used as a whole");
+            };
+            if !v.is_local() {
+                return bad("the closure value of a copy region is not a local");
+            }
+            self.place(&v)?;
+            self.emit(Op::EnvCell(k.0));
+            proj = rest;
+        } else if Some(p.local) == self.env {
             // A field of the environment is a captured cell.
             let Some((Proj::Field(k), rest)) = proj.split_first() else {
                 return bad("the environment is used as a whole");

@@ -391,7 +391,23 @@ pub enum Op {
     /// those of a closure (a function item runs with the handlers of the
     /// frame). It takes the handlers of the value, not the value, so it is
     /// not a read of the cell for the oracles.
-    PushHenv(VarRef),
+    ///
+    /// `code` is the code of the closure that the region copies. With the
+    /// fact oracle on, the value must be a closure with that code (plan stage
+    /// R0k-b2): a copy replaces the run by the body of one closure, so the
+    /// facts of the region hold only for a run of that closure.
+    PushHenv {
+        /// The cell of the closure value.
+        var: VarRef,
+        /// The code of the copied closure.
+        code: CodeId,
+    },
+    /// The cell of capture `k` of the closure value at the place on the stack
+    /// (plan stage R0k-b2, the environment local of a copy region): a `Kept`
+    /// capture shares the cell of the variable, a `ByMove` capture has a cell
+    /// of the closure. It takes the cell, not the value, so it is not a read
+    /// of the place for the oracles.
+    EnvCell(u32),
     /// An exit of a copy region: the frame gets back the handlers that it
     /// had at the entry of the region.
     PopHenv,

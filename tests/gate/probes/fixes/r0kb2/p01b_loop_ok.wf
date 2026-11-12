@@ -1,0 +1,22 @@
+// Plan stage R0k-b2 (form 4 with a capture; p01 of the design review of
+// R0k), the clean twin: the closure prints a copy of the value, not the
+// reference. The program prints 0.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn main() {
+    let h = H { f: noop }
+    handle Run { fn run(g) { let old = h.f
+        old()
+        h.f = g
+        resume(()) } } in {
+        let i = 0
+        while i < 2 {
+            let v = Vec.new()
+            v.push(i)
+            let x = v[0]
+            run(|| print(x))
+            i = i + 1
+        }
+    }
+}

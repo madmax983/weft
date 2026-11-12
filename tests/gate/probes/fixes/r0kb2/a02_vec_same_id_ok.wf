@@ -1,0 +1,22 @@
+// Plan stage R0k-b2 (an acceptance probe of the B1 note), the clean twin:
+// the second run comes before the clear of `b`. The program prints 1, then
+// 2.
+effect Run { fn run(g: fn()) }
+fn mk(r: &u64) -> fn() / Run { || run(|| print(r)) }
+fn main() {
+    let a = Vec.new()
+    a.push(1)
+    let b = Vec.new()
+    b.push(2)
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let fs = Vec.new()
+        fs.push(mk(&a[0]))
+        fs.push(mk(&b[0]))
+        let f0 = fs[0]
+        f0()
+        let f1 = fs[1]
+        f1()
+        b.clear()
+    }
+}

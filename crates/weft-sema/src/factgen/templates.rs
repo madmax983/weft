@@ -6911,6 +6911,9 @@ fn task_start(
     // the `fail` clause of a local handler (`clause::runs_clauses`). An
     // operation of another handler of this task is W0314.
     // A clause that the task runs runs on another task (stage R0c).
+    // A task of a clause outside the handled body of a captured capability
+    // runs the closure outside its handler too (W0313, plan stage R0k-b2).
+    transfer::note_task_escapes(&mut em.cx(), body, &out.apps);
     if task_w0314(em, &out.apps, origin, None) {
         w0314_bodies(em, &fns);
     }

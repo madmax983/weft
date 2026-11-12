@@ -1,0 +1,25 @@
+// Plan stage R0k-b2 (form 3, an `Option`): `mk_opt` gives back `Some` of a
+// closure that keeps `h` and gives it to `run` through the row of
+// `mk_opt`. `mk_opt` is called in the handled body of H, whose clause
+// clears `v`. The site takes the payload out with a `match` and runs it in
+// the handled body of H2. The `run` goes to H.
+effect Run { fn run(g: fn()) }
+fn mk_opt(h: fn()) -> Option<fn() / Run> / Run { Some(|| run(h)) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let o = mk_opt(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            match o {
+                Some(c) => c(),
+                None => (),
+            }
+        }
+        print(r)
+    }
+}
+fn main() { outer() }

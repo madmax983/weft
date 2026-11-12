@@ -6,7 +6,9 @@
 //! oracle check the wrong program. This test runs each probe of the stages
 //! R0h, R0k and R0k-a2 with `fn main` on the IR engine two times, the program as the
 //! builder gives it and the program with the copies, and compares the
-//! output and the fault of the two runs. The files in `tests/copies` add
+//! output and the fault of the two runs (the probes of stage R0k-b2 too: a
+//! copy that reads a capture through the environment local of its region).
+//! The files in `tests/copies` add
 //! the forms that a wrong copy of the parameters shows: two parameters of
 //! the same type, named arguments in the other order, `self`, a struct that
 //! holds a reference, and an abort path. The copies of a closure that
@@ -34,6 +36,7 @@ fn probes() -> Vec<PathBuf> {
         fixes.join("r0k2"),
         fixes.join("r0k3"),
         fixes.join("r0kb1"),
+        fixes.join("r0kb2"),
         here.join("tests/copies"),
     ] {
         let Ok(rd) = fs::read_dir(&dir) else {
@@ -76,6 +79,9 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     let mut closures = 0;
     // The probes with a copy region (stage R0k-b1').
     let mut regions = 0;
+    // The probes with a copy region that reads a capture through its
+    // environment local (stage R0k-b2).
+    let mut env_locals = 0;
     for p in probes() {
         let src = fs::read_to_string(&p).unwrap();
         if !src.contains("fn main") {
@@ -94,6 +100,15 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
         if inst.regions > 0 {
             regions += 1;
         }
+        if inst
+            .built
+            .program
+            .regions
+            .iter()
+            .any(|r| r.env_local.is_some())
+        {
+            env_locals += 1;
+        }
         if p.parent().is_some_and(|d| d.ends_with("copies")) {
             local += 1;
         }
@@ -105,6 +120,10 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     assert_eq!(local, 7, "each file in tests/copies must get a copy");
     assert!(closures >= 8, "only {closures} probes have closure copies");
     assert!(regions >= 6, "only {regions} probes have copy regions");
+    assert!(
+        env_locals >= 10,
+        "only {env_locals} probes have a copy region with an environment local"
+    );
 }
 
 /// The copy regions of `fixes/r0k3/h02_made_closure_row` and

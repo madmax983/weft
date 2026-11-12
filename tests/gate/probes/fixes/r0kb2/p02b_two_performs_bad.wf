@@ -1,0 +1,22 @@
+// Plan stage R0k-b2 (form 4 with a capture; p02 of the design review of
+// R0k, written so that the clause runs the value): the clause keeps the
+// value of the first perform, and the second perform runs it after the
+// handled body cleared `v`: W0301 (or the fallback: two performs of the
+// operation give the clause two values, so its run gets no copy).
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { let old = h.f
+        old()
+        h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        run(|| print(r))
+        v.clear()
+        run(|| print(0))
+    }
+}

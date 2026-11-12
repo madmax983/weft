@@ -116,6 +116,11 @@ pub struct RunOptions {
     /// capability (the machine finds the handler of the capability) is off
     /// then. Off by default.
     pub site_henv_in_copies: bool,
+    /// A mutation for the tests of the fact oracle (plan stage R0k-b2): each
+    /// copy region of the program of the fact oracle names another closure
+    /// than the one that it copies, so the check at the entry of the region
+    /// (the run sees the copied closure) fails. Off by default.
+    pub wrong_closure_in_copies: bool,
 }
 
 impl Default for RunOptions {
@@ -133,6 +138,7 @@ impl Default for RunOptions {
             fact_oracle: false,
             ir_trace: false,
             site_henv_in_copies: false,
+            wrong_closure_in_copies: false,
         }
     }
 }
@@ -333,6 +339,17 @@ fn runtime<'a>(
             built = b;
             if opts.site_henv_in_copies {
                 built.program.regions.clear();
+            }
+            if opts.wrong_closure_in_copies {
+                let n = built.program.closures.len();
+                for r in &mut built.program.regions {
+                    if let Some(other) = (0..n)
+                        .map(|i| weft_ir::ClosureId(u32::try_from(i).unwrap_or(u32::MAX)))
+                        .find(|&c| c != r.closure)
+                    {
+                        r.closure = other;
+                    }
+                }
             }
             Some(c)
         } else {

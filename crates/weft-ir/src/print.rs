@@ -160,13 +160,16 @@ impl<'a> Printer<'a> {
             let bs: Vec<String> = r.blocks.iter().map(|b| format!("bb{}", b.0)).collect();
             let _ = writeln!(
                 out,
-                "region r{i}: body b{}, entry bb{}, env e{}, value {}, closure c{}{}, blocks [{}]",
+                "region r{i}: body b{}, entry bb{}, env e{}, value {}, closure c{}{}{}, blocks [{}]",
                 r.body.0,
                 r.entry.0,
                 r.env.0,
                 place(&r.value),
                 r.closure.0,
                 if r.sole { ", sole" } else { "" },
+                r.env_local
+                    .map(|l| format!(", env local _{}", l.0))
+                    .unwrap_or_default(),
                 bs.join(", ")
             );
         }
@@ -233,6 +236,7 @@ impl<'a> Printer<'a> {
             LocalKind::Return => "Return".to_string(),
             LocalKind::Param(i) => format!("Param({i})"),
             LocalKind::Env => "Env".to_string(),
+            LocalKind::CopyEnv(c) => format!("CopyEnv(c{})", c.0),
             LocalKind::User => "User".to_string(),
             LocalKind::Temp(t) => format!("Temp({})", temp_kind(t)),
             LocalKind::Iterator => "Iterator".to_string(),

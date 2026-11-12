@@ -1,0 +1,21 @@
+// Plan stage R0k-b2 (the review of R0k-b2, `from_maker` of 85 with a
+// `main`): the clause of `Run` spawns `f`, a closure that performs through
+// the local handler of `Note`. The clause runs with the handlers of the
+// site of `Run`, outside the handled body of `Note`: the task finds no
+// handler for `note` (W0313, and W0314 for the task).
+effect Note { fn note(x: u64) }
+effect Run { fn run(f: fn()) }
+fn mk() -> fn(fn()) / Run { |g: fn()| run(g) }
+fn from_maker() / async {
+    handle Run {
+        fn run(f) {
+            scope { s => s.spawn(f) }
+            resume(())
+        }
+    } in {
+        let c = mk()
+        handle Note { fn note(x) { print(x)
+            resume(()) } } in c(|| note(2))
+    }
+}
+fn main() / async { from_maker() }

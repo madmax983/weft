@@ -1185,13 +1185,13 @@ fn a_copy_region_that_runs_with_the_handlers_of_the_run_node_fails_a5() {
     }
 }
 
-/// Each probe of `fixes/r0kb1` and `fixes/r0k3` (plan stage R0k-b1') that
-/// the `ir` pipeline accepts runs with no failure of the fact oracle, on the
-/// program with the copy regions.
+/// Each probe of `fixes/r0kb1` and `fixes/r0k3` (plan stage R0k-b1') and of
+/// `fixes/r0kb2` (plan stage R0k-b2) that the `ir` pipeline accepts runs with
+/// no failure of the fact oracle, on the program with the copy regions.
 #[test]
 fn the_probes_of_the_copy_regions_pass_the_fact_oracle() {
     let mut checked = 0;
-    for d in ["r0kb1", "r0k3"] {
+    for d in ["r0kb1", "r0k3", "r0kb2"] {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/gate/probes/fixes")
             .join(d);
@@ -1216,4 +1216,38 @@ fn the_probes_of_the_copy_regions_pass_the_fact_oracle() {
         }
     }
     assert!(checked >= 8, "{checked}");
+}
+
+/// The closure identity of a copy region (plan stage R0k-b2), the mutation.
+/// A copy replaces the run by the body of one closure, so the facts of the
+/// region hold only for a run of that closure: at the entry of the region
+/// the fact oracle checks that the closure value runs the code of the
+/// copied closure. In `e01_callee_capture_ok` and `e04_field_ok` the copy
+/// reads a capture through the environment local of the region. With the
+/// mutation `wrong_closure_in_copies` each region names another closure,
+/// and the check fails.
+#[test]
+fn a_copy_region_that_names_another_closure_fails_the_fact_oracle() {
+    for name in ["e01_callee_capture_ok.wf", "e04_field_ok.wf"] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0kb2")
+            .join(name);
+        let c = check(&fs::read_to_string(&p).unwrap());
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| ir.ok()),
+            "{name}: {:?}",
+            c.diags
+        );
+        let r = run_main(&c, &opts());
+        assert!(r.is_ok(), "{name}: {:?}", r.err().map(|e| e.message));
+        let wrong = RunOptions {
+            wrong_closure_in_copies: true,
+            ..opts()
+        };
+        let m = match run_main(&c, &wrong) {
+            Ok(_) => panic!("{name}: a region that names another closure passes"),
+            Err(e) => e.message,
+        };
+        assert!(m.starts_with("fact oracle (copy)"), "{name}: {m}");
+    }
 }

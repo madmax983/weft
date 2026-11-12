@@ -198,6 +198,21 @@ pub fn owner_local(p: &Program, body: BodyId, l: LocalId) -> Result<(BodyId, Loc
                 })?;
                 l = site;
             }
+            // The environment local of a copy region (plan stage R0k-b2) is a
+            // view of the closure value of the region: the value owns the
+            // cells of the captures.
+            LocalKind::CopyEnv(_) => {
+                l = p
+                    .copy_env_value(body, l)
+                    .filter(|v| v.is_local())
+                    .map(|v| v.local)
+                    .ok_or_else(|| {
+                        AlphaError::BadPlace(format!(
+                            "an environment local of b{} with no copy region",
+                            body.0
+                        ))
+                    })?;
+            }
             _ => return Ok((body, l)),
         }
     }
@@ -247,7 +262,7 @@ pub fn local_text(tys: &TyTable, d: &LocalDecl) -> String {
     match d.kind {
         LocalKind::Return => "the result".to_string(),
         LocalKind::Param(i) => format!("parameter {i}"),
-        LocalKind::Env => "env".to_string(),
+        LocalKind::Env | LocalKind::CopyEnv(_) => "env".to_string(),
         LocalKind::User => "a local".to_string(),
         LocalKind::Temp(k) => format!("{} temporary", temp_text(k)),
         LocalKind::Iterator => "the iterator".to_string(),
@@ -759,6 +774,22 @@ pub fn env_capture(
     Some((c, f.0, cap.mode))
 }
 
+/// The capture of the environment local of a copy region that a place names.
+///
+/// It is the closure and the index `k` (plan stage R0k-b2), if `place` of
+/// body `body` is `e.k` (or a place below it) of a local of kind
+/// [`LocalKind::CopyEnv`].
+pub fn copy_env_capture(p: &Program, body: BodyId, place: &Place) -> Option<(ClosureId, u32)> {
+    let LocalKind::CopyEnv(c) = p.body(body)?.local_kind(place.local)? else {
+        return None;
+    };
+    let Some(Proj::Field(f)) = place.proj.first() else {
+        return None;
+    };
+    p.closures.get(c.index())?.captures.get(f.index())?;
+    Some((c, f.0))
+}
+
 /// The source of a place `place` of body `body` through the captures of
 /// closure bodies.
 ///
@@ -855,6 +886,9 @@ pub fn capture_name(p: &Program, c: ClosureId, k: u32) -> String {
 /// closure body is the capture itself ([`env_capture`]).
 fn base_at(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) -> Option<(At, usize)> {
     if let Some((c, k, _)) = env_capture(p, body, place) {
+        return Some((At::Ty(capture_ty(p, tys, c, k)?), 1));
+    }
+    if let Some((c, k)) = copy_env_capture(p, body, place) {
         return Some((At::Ty(capture_ty(p, tys, c, k)?), 1));
     }
     Some((At::Ty(local_ty(p, body, place.local).ok()?), 0))
@@ -1132,6 +1166,40 @@ pub fn alpha_with(
                 ..Alpha::default()
             },
         };
+        (out, At::Ty(t), 1)
+    } else if let Some((c, k)) = copy_env_capture(p, body, place) {
+        // A capture through the environment local of a copy region (plan
+        // stage R0k-b2): a cell that the closure value of the region holds.
+        // As at a run of a closure that a callee made (`apply::made_sigma`),
+        // the capture is the place of the closure value. The copy only reads
+        // a whole capture (`instantiate`), so no projection comes after it.
+        if place.proj.len() != 1 {
+            return Err(AlphaError::Later(
+                "a place below a capture of the environment of a copy region (stage R0k-b2)",
+            ));
+        }
+        let t = capture_ty(p, tys, c, k).ok_or(AlphaError::Later(
+            "a capture of the environment of a copy region with no type (stage R0k-b2)",
+        ))?;
+        let root = roots.local(p, tys, facts, body, place.local)?;
+        let mut out = Alpha {
+            places: vec![root],
+            ..Alpha::default()
+        };
+        // A `Kept` capture whose variable is a variable of the frame of the
+        // region (through scope bodies, handled bodies and clauses) is that
+        // variable too, as in `apply::made_sigma`: the closure value shares
+        // its cell, so a read of the capture is a read of the variable.
+        if let Some((sb, src)) =
+            crate::analysis::apply::frame_capture_source(p, c, k as usize, body)
+        {
+            let a = alpha_with(p, tys, facts, roots, sb, &src, pointees)?;
+            out.places.extend(a.places);
+            out.ptrs.extend(a.ptrs);
+            out.handles.extend(a.handles);
+            out.places.sort();
+            out.places.dedup();
+        }
         (out, At::Ty(t), 1)
     } else {
         // An upvar local that views the environment of a closure

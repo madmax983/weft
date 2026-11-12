@@ -1043,6 +1043,44 @@ mod ir_ops {
         );
     }
 
+    #[test]
+    fn env_cell_names_a_capture_cell_of_a_closure_value() {
+        // Plan stage R0k-b2: slot 0 is `x`, slot 1 is the closure, which
+        // shares the cell of `x` (`Kept`). `EnvCell(0)` on the place of the
+        // closure value names that cell: a write through it changes `x`, and
+        // a read through it sees a new value of `x`.
+        let code = first_extra_unit();
+        let body = vec![Op::Unit, Op::Return];
+        let mut ops = vec![Op::Int(1), Op::Bind(0), var(0)];
+        ops.extend([
+            Op::MakeClosureIr {
+                code,
+                holds: vec![CapHold::Shared],
+                span: Span::default(),
+            },
+            Op::Bind(1),
+            Op::Int(5),
+            var(1),
+            Op::EnvCell(0),
+            Op::Store,
+            var(0),
+            Op::Read,
+            Op::Print(1),
+            Op::Pop,
+            Op::Int(7),
+            var(0),
+            Op::Store,
+            var(1),
+            Op::EnvCell(0),
+        ]);
+        ops.extend(print_end());
+        let o = run_units(ops, 2, 0, vec![closure_unit(body, 0, 0)]).unwrap();
+        assert_eq!(o.stdout, "5\n7\n");
+        // A value that is not a closure has no capture cell.
+        let ops = vec![Op::Int(1), Op::Bind(0), var(0), Op::EnvCell(0)];
+        assert!(fault(ops, 1, 0).contains("names no capture cell"));
+    }
+
     fn effect(name: &str) -> weft_sema::EffectId {
         let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
         weft_sema::EffectId(

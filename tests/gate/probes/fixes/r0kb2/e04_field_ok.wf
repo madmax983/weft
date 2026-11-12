@@ -1,0 +1,21 @@
+// Plan stage R0k-b2 (form 3, a field), the clean twin: the clause of H runs
+// `g` and does not clear `v`. The program prints 0, then 1.
+effect Run { fn run(g: fn()) }
+struct Bx { f: fn() / Run, n: u64 }
+fn mk_box(h: fn()) -> Bx / Run { Bx { f: || run(h), n: 3 } }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let b = mk_box(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { print(9)
+            resume(()) } } in {
+            let c = b.f
+            c()
+        }
+        print(r)
+    }
+}
+fn main() { outer() }

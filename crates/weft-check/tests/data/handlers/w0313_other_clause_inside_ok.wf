@@ -1,0 +1,17 @@
+// Plan stage R0k-b2: the handler of `Run` is in a callee that the handled
+// body of `Note` calls, so its clause runs `g` inside the handled body of
+// `Note`. The program is correct: no W0313.
+effect Note { fn note(x: u64) }
+effect Run { fn run(f: fn()) }
+fn mk() -> fn(fn()) / Run { |g: fn()| run(g) }
+fn helper(g: fn()) {
+    handle Run { fn run(f) { f()
+        resume(()) } } in {
+        let c = mk()
+        c(g)
+    }
+}
+fn main() {
+    handle Note { fn note(x) { print(x)
+        resume(()) } } in { helper(|| note(2)) }
+}

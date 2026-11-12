@@ -7,7 +7,7 @@
 effect Note { fn note(x: u64) }
 effect Run { fn run(f: fn()) }
 
-fn gives() / Run, Note { run(|| note(1)) }
+fn gives() / Run, Note { run(|| note(1)) }   //~ W0314 old:
 fn gives_log() / Run, log { run(|| log.info("x")) }
 fn gives_quiet() / Run { run(|| print(1)) }
 fn passes_on() / Run, Note { gives() }
@@ -23,7 +23,7 @@ fn callee_gives() / async {
                 scope { s => s.spawn(f) }   //~ W0314
                 resume(())
             }
-        } in gives()   //~ W0314
+        } in gives()   //~ old: W0314
     }
 }
 fn callee_gives_through() / async {
@@ -33,7 +33,7 @@ fn callee_gives_through() / async {
                 scope { s => s.spawn(f) }   //~ W0314
                 resume(())
             }
-        } in passes_on()   //~ W0314
+        } in passes_on()   //~ old: W0314
     }
 }
 fn callee_gives_user_effect() / Note, async {
@@ -42,7 +42,7 @@ fn callee_gives_user_effect() / Note, async {
             scope { s => s.spawn(f) }   //~ W0314
             resume(())
         }
-    } in gives()   //~ W0314
+    } in gives()   //~ old: W0314
 }
 fn callee_gives_local_log() / async {
     handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in {
@@ -51,7 +51,7 @@ fn callee_gives_local_log() / async {
                 scope { s => s.spawn(f) }   //~ W0314
                 resume(())
             }
-        } in gives_log()   //~ W0314
+        } in gives_log()   //~ old: W0314
     }
 }
 // A closure that a callee returns gives its parameter to an operation here.
@@ -63,7 +63,7 @@ fn from_maker() / async {
         }
     } in {
         let c = mk()
-        handle Note { fn note(x) { resume(()) } } in c(|| note(2))   //~ W0313 W0314
+        handle Note { fn note(x) { resume(()) } } in c(|| note(2))   //~ W0313 old: W0313 W0314
     }
 }
 // A closure that a callee returns runs its parameter as a task.

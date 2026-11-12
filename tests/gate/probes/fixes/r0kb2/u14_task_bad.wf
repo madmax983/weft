@@ -1,0 +1,25 @@
+// Plan stage R0k-b2 (an acceptance probe of the B1 note: u04 of the review
+// of R0k-a2 in the form of B1): `c` gets a closure of `mk` with a capture,
+// then a task of a scope gives `c` a second closure of `mk` before the run. The
+// second one keeps `r`, a reference into `v`. The clause of the handler of
+// `main` keeps the value, and `main` runs it after the clear of `v`. A body
+// inside the owner writes `c`, so the run gets no copy.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let c = mk(|| print(0))
+        scope { s => s.spawn(|| { c = mk(|| print(r)) }) }
+        c()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

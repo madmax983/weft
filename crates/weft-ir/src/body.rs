@@ -80,7 +80,10 @@ impl Body {
         v.extend(self.caps.iter().map(|(_, l)| *l));
         v.extend(self.kont.iter().map(|(k, _)| *k));
         for (i, d) in self.locals.iter().enumerate() {
-            if matches!(d.kind, LocalKind::Upvar(_) | LocalKind::Env) {
+            if matches!(
+                d.kind,
+                LocalKind::Upvar(_) | LocalKind::Env | LocalKind::CopyEnv(_)
+            ) {
                 v.push(LocalId(id_of(i)));
             }
         }
@@ -164,6 +167,13 @@ pub enum LocalKind {
     /// has its cell at the entry and has no `Live` or `Dead`: the cell belongs to the
     /// parent. A move of it moves the value of the parent local.
     Upvar(LocalId),
+    /// The environment of the closure of a copy region (plan stage R0k-b2,
+    /// `docs/ir.md` 6.1): a view of the closure value of the region
+    /// ([`crate::CopyRegion::value`]), so `e.k` is the cell of capture `k` of
+    /// that value. Only a body with a copy region has it (V19). It has no
+    /// `Live` or `Dead`, as the environment of a closure body: the closure
+    /// value holds the cells.
+    CopyEnv(ClosureId),
 }
 
 /// Why a temporary exists. Diagnostics use it to name the value.

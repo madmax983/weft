@@ -579,7 +579,7 @@ to V17; the others need the type table.
 | V16 | The cleanup chain of a clause starts with `UnwindKont` of its continuation. A cleanup chain lists `_0` if it has a value, then the live temporaries newest first, then the live locals from the highest index, then the parameters. (`Dead(_0)` with no value comes before the parameters.) | one unwind order for the interpreter, the facts and the effects model |
 | V17 | `Drop(p)` only on a place with a `Deref`, and the next statement is `Assign(p, _)`. | the drop pair of W0601 behind a reference |
 | V18 | Each `Return` has the origin of the expression whose value it returns. | W0204 spans |
-| V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
+| V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. (Plan stage R0k-b2.) The environment local of a region is a local of kind `CopyEnv` of the closure of the region, and the value of the region is a whole local; a `CopyEnv` local that no region of its body names breaks V14, and so does its `Live` or `Dead`; a move below it breaks V14 (`EnvMove`). | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
 
 ---
 ## 5. Lowering rules: typed tree to IR
@@ -2462,6 +2462,69 @@ static capability environment is the environment where the closure is made.
   the run node) fails A5 (`fact_oracle.rs`). The test `copies.rs` runs `fixes/r0k3/h02`
   and `fixes/r0kb1/n06` with and without the copies (the same output), and with no
   regions (another output).
+
+
+As built (plan stage R0k-b2, the environment local of a copy region,
+`instantiate::Inst::env_capture_ok`): a copy region of stage R0k-b1' names each capture
+through a place of the site. It cannot do that for a capture whose source ends before the
+run, or is a local of a callee that made the closure, or a capture of a closure in a field.
+For these captures the copy now reads the cell that the closure value holds.
+
+- The environment local. A copy region can have a local `e` of kind
+  `LocalKind::CopyEnv(c)` (`CopyRegion::env_local`). It is a view of the closure value of
+  the region (`CopyRegion::value`, a whole local): `e.k` is the cell of capture `k` of that
+  value, as `env.k` is in the closure body. It has no `Live` and no `Dead`, as the
+  environment of a closure body: the closure value holds the cells. A copy with such a
+  capture is always a copy region, also in the body of the maker, so its code runs with the
+  handlers of the closure value and the extent and the agreement rules apply.
+- The captures that the copy reads through `e`. The capture is `Kept` (or `ByMove`), its
+  type has no linear value, and the closure body uses it only as a whole copy (`copy env.k`:
+  no write, no move, no borrow, no place below it). For a `Kept` capture the cell does not
+  change after the make: its source is a whole local of the maker (or of a body around
+  it) with at most one write, and no statement and no body inside the owner moves, borrows
+  or writes it in another way (`cell_constant`). Each other capture keeps the forms of stage
+  R0k-b1' (a source through upvar locals, a new borrow of a `ByRef` source, the capability
+  of a `Cap` capture). A `once` closure, a `Kont` capture and a `Cap` capture of a closure
+  that a callee makes stay refused.
+- The forms of the value (`Inst::walk_value`). Form 2: a closure that a callee makes and
+  gives back can have captures now (`ret_closure`: each capture is read through `e`). Form
+  3: the way of the value can go through a part of a struct, a tuple or a variant: a copy
+  of a part (`c = copy b.f`, `c = copy (o as Some).0`) goes on to the part of the base
+  local, and a local with one aggregate value (a struct, a tuple, a variant) goes on to the
+  operand of the part; the result of a callee too. A value in a `Vec`, a `Box` or another
+  heap slot keeps the fallback. Form 4: a clause that runs its parameter can get a copy of
+  a closure with captures. Each local of the way gets one value, and no statement or body
+  moves, borrows or writes it in another way, as in stage R0k-b1'.
+- α and the analysis. A place `e.k` has the places of the closure value
+  (`alpha::copy_env_capture`): the local of `e` is the local of the value
+  (`alpha::owner_local`), as at a run of a closure that a callee made (`apply::made_sigma`).
+  It has no move path. A `Kept` capture whose variable is a variable of the frame of the
+  region (through scope bodies, handled bodies and clauses) also has the places and the
+  value of that variable, as in `made_sigma`. Its value (`transfer::copy_env_value`) has
+  the references of the closure value; its function values are those of the capture of a made closure
+  (`made_held`), the closure that the copy knows for the cell (`CopyRegion::env_fns`: one
+  closure of the same function gives the cell its one value), or an unknown value. A use of
+  `e.k` uses the variable `S` of the closure value, so its loans live up to the use. A
+  closure that the copy makes with a `Kept` capture of `e.k` shares the cell (V13).
+- The interpreter. The IR engine reads `e.k` with `EnvCell(k)` on the place of the value
+  (8.4). The AST engine and the summaries do not change.
+- The fact oracle. At the entry of each copy region the closure value must run the code of
+  the copied closure (`PushHenv`, 8.5): a copy replaces the run by the body of one
+  closure, so its facts hold only for a run of that closure. The mutation
+  `RunOptions::wrong_closure_in_copies` (each region names another closure) fails the check
+  (`fact_oracle.rs`). The cell of a capture whose source has ended has no name in the
+  cell-to-root map, so the oracle does not check its accesses through `e`; the cell of a
+  source that is a live variable of the frame is that variable.
+- The escape check. A clause runs with the handlers of the site of its own handler, so a
+  closure that performs through the capability of a local handler H and runs (a call or a
+  task) in a clause whose `handle` is outside the handled body of H runs outside H: W0313
+  (`clause::Escape::Given`; before stage R0k-b2, only for a clause of H itself).
+- `weak_ok`. A closure of a function that no code can run is not in the structural check:
+  no call of the function is left (each one has a copy), and no function item value names
+  it. The guard of the analysis (`weak_values_stay`) does not refuse a closure whose only
+  runs are copy regions (`CopyRegion::sole`): no run applies its summary. `sole` takes a
+  part of the way (an aggregate, a copy of a part) and a test of the variant of a local of
+  the way as steps.
 
 ### 6.2 Nodes and phases
 
@@ -5920,6 +5983,11 @@ entry of a copy region takes the handler environment of the closure value in a c
 read of the cell for the oracles), and each exit of the region, also on a cleanup chain,
 gives the frame its own handlers back. The frame keeps the saved environments
 (`CodeFrame::saved_henv`), so a copy of the frames for a continuation keeps them too.
+Stage R0k-b2 adds `EnvCell(k)` (6.1, "As built (plan stage R0k-b2)"): the cell of capture
+`k` of the closure value at the place on the stack, for a field of the environment local
+of a copy region. It takes the cell, not the value, so it is not a read of the place for
+the oracles. `PushHenv` names the code of the copied closure: with the fact oracle on, the
+closure value at the entry of the region must run that code (8.5).
 Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles
@@ -6193,6 +6261,15 @@ conformance checks the abort edge (a first form with no such limit failed on 31 
 programs of tier 1: a `Fail` clause at the end of a scope). With the facts before the fix it
 fails on each probe of `fixes/henv` (bad and clean twins); with the facts of the fix it
 passes. Test: `summary_oracle.rs` `a_clause_that_no_node_runs_fails_the_clause_cover`.
+
+**As built (R0k-b2): the closure of a copy region.** A copy region replaces a run of a
+function value by the body of one closure (6.1), so its facts hold only for a run of that
+closure. At the entry of each region (`PushHenv`) the oracle checks that the closure value
+runs the code of the closure of the region; else the run fails with "fact oracle (copy)".
+A copy of stage R0k-a2 in the body of the maker (no region) is not checked: its value is
+the closure that the body makes. Test: `fact_oracle.rs`
+`a_copy_region_that_names_another_closure_fails_the_fact_oracle` (the mutation
+`RunOptions::wrong_closure_in_copies`: each region names another closure).
 
 **As built (F19.3): the task check (ORACLE-GAP of the review of group E).** The oracle
 records each task that a frame starts at a node with one `spawned_at(T, _)` as a task of
