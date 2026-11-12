@@ -146,6 +146,11 @@ pub enum Rule {
     /// V18: a write of `_0` that reaches a `Return` is not inside the origin of the
     /// `Return`.
     ReturnOrigin,
+    /// V19: a copy region (plan stage R0k-b1') is not well formed: a block, the
+    /// value or the environment is missing, an edge from outside goes to a block
+    /// that is not its entry, an edge out of it is not a `Goto`, or two regions
+    /// share a block.
+    BadRegion,
 }
 
 impl Rule {
@@ -170,6 +175,7 @@ impl Rule {
             Self::KontNotFirst | Self::UnwindOrder => 16,
             Self::BadDrop => 17,
             Self::ReturnOrigin => 18,
+            Self::BadRegion => 19,
         }
     }
 
@@ -215,6 +221,7 @@ impl Rule {
             Self::ReturnOrigin => {
                 "a write of `_0` is not inside the origin of the `Return`".to_string()
             }
+            Self::BadRegion => "a copy region is not well formed".to_string(),
         }
     }
 }
@@ -240,6 +247,7 @@ pub fn verify_program(p: &Program, tys: &TyTable) -> Vec<Broken> {
         out.extend(verify_body(p, tys, BodyId(id_of(i))));
     }
     once_run(p, &mut out);
+    regions(p, &mut out);
     let views = env_views(p);
     let made = closure_sites(p);
     for (ci, c) in p.closures.iter().enumerate() {
@@ -251,6 +259,53 @@ pub fn verify_program(p: &Program, tys: &TyTable) -> Vec<Broken> {
     let mut seen = HashSet::new();
     out.retain(|b| seen.insert(b.clone()));
     out
+}
+
+/// V19: each copy region of program `p` (plan stage R0k-b1') is well formed. Its
+/// blocks and its value are in its body, its environment exists, only its entry
+/// has an edge from a block outside it, and each edge out of it is a `Goto`. Two
+/// regions do not share a block.
+fn regions(p: &Program, out: &mut Vec<Broken>) {
+    let mut seen: HashSet<(BodyId, BlockId)> = HashSet::new();
+    for r in &p.regions {
+        let bad = |out: &mut Vec<Broken>, block: Option<BlockId>| {
+            out.push(Broken {
+                body: r.body,
+                block,
+                local: None,
+                rule: Rule::BadRegion,
+            });
+        };
+        let Some(body) = p.body(r.body) else {
+            bad(out, None);
+            continue;
+        };
+        let sorted = r.blocks.windows(2).all(|w| w.first() < w.get(1));
+        if !sorted
+            || r.blocks.binary_search(&r.entry).is_err()
+            || r.blocks.iter().any(|b| body.block(*b).is_none())
+            || body.local(r.value.local).is_none()
+            || p.cap_envs.get(r.env.index()).is_none()
+        {
+            bad(out, None);
+            continue;
+        }
+        let inside = |b: BlockId| r.blocks.binary_search(&b).is_ok();
+        for (i, blk) in body.blocks.iter().enumerate() {
+            let from = bid(i);
+            if inside(from) && !seen.insert((r.body, from)) {
+                bad(out, Some(from));
+            }
+            for to in blk.term.kind.successors() {
+                let edge_in = !inside(from) && inside(to) && to != r.entry;
+                let edge_out =
+                    inside(from) && !inside(to) && !matches!(blk.term.kind, TermKind::Goto(_));
+                if edge_in || edge_out {
+                    bad(out, Some(from));
+                }
+            }
+        }
+    }
 }
 
 /// Checks the rules of one body of program `p`: V1 to V12, V14, V16 to V18. The
@@ -1436,7 +1491,12 @@ impl<'a> Cx<'a> {
                     op,
                     ..
                 } => {
-                    if self.env_binds(self.body.cap_env, *e) && !self.passes_on(*e, *op) {
+                    // In a copy region the environment of the region holds
+                    // (plan stage R0k-b1'): a `Row` perform there goes past the
+                    // function, also in a handled body of the effect.
+                    let region = self.p.region_of(self.id, id).map(|r| r.env);
+                    let env = region.unwrap_or(self.body.cap_env);
+                    if self.env_binds(env, *e) && (region.is_some() || !self.passes_on(*e, *op)) {
                         self.push(Rule::BadCap, Some(id), None);
                     }
                 }

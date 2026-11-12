@@ -1,0 +1,26 @@
+// Plan stage R0k-b1' (the extent rule, as c11 with a closure of the same
+// function): the closure is made in round 0 of the loop, in the handled body
+// of an instance of H, and runs in round 1, in a new instance. The value
+// goes through `c`, a local outside the handled body: no copy (the program
+// keeps the fallback). The `run` goes to the handler of `main`, which clears
+// `v`.
+effect Run { fn run(g: fn()) }
+fn outer() / Run {
+    let c = || print(9)
+    let i = 0
+    while i < 2 {
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            if i == 0 { c = || run(|| print(1)) } else { c() }
+        }
+        i += 1
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in { outer() }
+    print(r)
+}

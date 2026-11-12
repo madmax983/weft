@@ -32,6 +32,8 @@ fn probes() -> Vec<PathBuf> {
         fixes.join("r0h"),
         fixes.join("r0k"),
         fixes.join("r0k2"),
+        fixes.join("r0k3"),
+        fixes.join("r0kb1"),
         here.join("tests/copies"),
     ] {
         let Ok(rd) = fs::read_dir(&dir) else {
@@ -72,6 +74,8 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     let mut local = 0;
     // The probes with a copy of a closure body at a run node (stage R0k-a2).
     let mut closures = 0;
+    // The probes with a copy region (stage R0k-b1').
+    let mut regions = 0;
     for p in probes() {
         let src = fs::read_to_string(&p).unwrap();
         if !src.contains("fn main") {
@@ -87,6 +91,9 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
         if inst.closure_calls > 0 {
             closures += 1;
         }
+        if inst.regions > 0 {
+            regions += 1;
+        }
         if p.parent().is_some_and(|d| d.ends_with("copies")) {
             local += 1;
         }
@@ -97,6 +104,81 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     assert!(copied >= 40, "only {copied} probes have copies");
     assert_eq!(local, 7, "each file in tests/copies must get a copy");
     assert!(closures >= 8, "only {closures} probes have closure copies");
+    assert!(regions >= 6, "only {regions} probes have copy regions");
+}
+
+/// The copy regions of `fixes/r0k3/h02_made_closure_row` and
+/// `fixes/r0kb1/n06_row_value_ok` (plan stage R0k-b1'). In h02 the closure
+/// that `mk` makes performs `run` through the row of `mk`, so its operation
+/// goes to the handler of the call of `mk` (the handler of `main`), not to
+/// the local handler of `outer` where it runs: the program prints 1 with the
+/// copy and without it. In n06 the `reg` of the closure goes past `outer` to
+/// the handler of `main`: the program prints 2. A copy that ran with the
+/// handlers of the run node would print 9 (h02) and 1 (n06): the program with
+/// the copies and no copy regions shows it.
+#[test]
+fn a_copy_region_runs_with_the_handlers_of_the_closure_value() {
+    for (dir, file, out, site_out) in [
+        ("r0k3", "h02_made_closure_row.wf", "1\n", "9\n"),
+        ("r0kb1", "n06_row_value_ok.wf", "2\n", "1\n"),
+    ] {
+        the_region_runs_with_the_handlers_of_the_value(dir, file, out, site_out);
+    }
+}
+
+/// [`a_copy_region_runs_with_the_handlers_of_the_closure_value`] for the
+/// probe `file` of `fixes/dir`: the output `out` with and without the copy,
+/// and `site_out` for the copy with no copy regions.
+fn the_region_runs_with_the_handlers_of_the_value(
+    dir: &str,
+    file: &str,
+    out: &str,
+    site_out: &str,
+) {
+    let opts = RunOptions {
+        oracle: true,
+        workers: 1,
+        max_steps: Some(5_000_000),
+        ..RunOptions::default()
+    };
+    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let p = here
+        .join("../../tests/gate/probes/fixes")
+        .join(dir)
+        .join(file);
+    let src = fs::read_to_string(&p).unwrap();
+    let name = p.display().to_string();
+    let c = check_source(&name, &src, Options::default());
+    let built = weft_sema::irbuild::build(&c.analysis);
+    let inst = weft_sema::factgen::instantiate::instantiate(&built).expect("a copy");
+    assert!(inst.regions > 0, "{name}: no copy region");
+    let a = seen(run_main(&c, &opts));
+    let b = seen(run_main_copied(&c, &opts));
+    assert_eq!(a.0, out, "{name}");
+    assert_eq!(a, b, "{name}: the run of the copy differs");
+    // The machine checks that a perform through a capability finds the
+    // handler of the capability; the copy with no regions breaks that.
+    let opts = RunOptions {
+        site_henv_in_copies: true,
+        ..opts
+    };
+    let mut site = inst.built;
+    site.program.regions.clear();
+    let out = weft_sema::on_large_stack(|| {
+        let code = weft_interp::compile_ir::compile_ir(&c.analysis.program, &site)
+            .unwrap_or_else(|f| panic!("no code for the copy: {f}"));
+        let rt = weft_interp::runtime::Runtime::with_code(
+            &c.analysis.program,
+            c.analysis.sigs.as_slice(),
+            weft_interp::stealable_spans(&c),
+            code,
+        );
+        seen(weft_interp::run_runtime_main(&rt, &opts))
+    });
+    assert_eq!(
+        out.0, site_out,
+        "{name}: the copy with the handlers of the run node"
+    );
 }
 
 /// The copies of stage R0k-c1 (`instantiate_kont`) do not change what a

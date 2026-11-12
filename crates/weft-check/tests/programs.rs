@@ -125,32 +125,60 @@ fn corpus_exercises_every_rule() {
     program.extend(parse_program_named("rule probes", &probes).expect("the probes parse"));
     let mut want: BTreeSet<&str> = bridge::VIOLATION_RELATIONS.into_iter().collect();
     want.insert("stealable");
-    let (mut seen, mut fired) = (BTreeSet::new(), BTreeSet::new());
-    for path in corpus_paths() {
+    let (mut seen, mut fired, mut fired_old) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    // The facts of the default pipeline must fire each rule and derive each
+    // sink. The one exception: the `ir` facts have no `footprint` (a clause
+    // runs at the node of its perform), so a rule with `footprint` in its
+    // body fires only on the old facts. Up to plan stage R0k-b1' a program
+    // out of scope of the `ir` pipeline (`83_kept_values`) gave those facts
+    // with the default options. Such a rule must fire on the old facts.
+    let runs = corpus_paths().into_iter().flat_map(|path| {
         let src = fs::read_to_string(&path).expect("the program is readable");
-        let checked = check_source("corpus.wf", &src, Options::from_markers(&src));
+        let mut old = Options::from_markers(&src);
+        old.facts = weft_sema::FactGen::Old;
+        [(false, Options::from_markers(&src)), (true, old)]
+            .map(|(is_old, o)| (is_old, src.clone(), o))
+    });
+    for (is_old, src, opts) in runs {
+        let checked = check_source("corpus.wf", &src, opts);
         for b in &checked.analysis.bodies {
             let opts = EvalOptions { provenance: false };
             let out = evaluate(&program, bridge::database(&b.facts), opts).expect("the spec runs");
-            for rel in &want {
-                if !out.tuples(rel).is_empty() {
-                    seen.insert(*rel);
+            if !is_old {
+                for rel in &want {
+                    if !out.tuples(rel).is_empty() {
+                        seen.insert(*rel);
+                    }
                 }
             }
             for t in out.tuples("rule_fired") {
                 if let [Value::Int(i)] = t.as_slice() {
-                    fired.insert(*i);
+                    if is_old {
+                        fired_old.insert(*i);
+                    } else {
+                        fired.insert(*i);
+                    }
                 }
             }
         }
     }
     let missing: Vec<&&str> = want.iter().filter(|r| !seen.contains(*r)).collect();
     assert!(missing.is_empty(), "no corpus program derives {missing:?}");
+    let old_only = |r: &weft_datalog::Rule| {
+        r.body
+            .iter()
+            .any(|a| a.to_string().starts_with("footprint("))
+    };
     let missing: Vec<String> = spec
         .rules()
         .iter()
         .enumerate()
-        .filter(|(i, _)| !i64::try_from(*i).is_ok_and(|i| fired.contains(&i)))
+        .filter(|(i, r)| {
+            let Ok(i) = i64::try_from(*i) else {
+                return true;
+            };
+            !(fired.contains(&i) || (old_only(r) && fired_old.contains(&i)))
+        })
         .map(|(_, r)| format!("{}: {r}", r.loc))
         .collect();
     assert!(

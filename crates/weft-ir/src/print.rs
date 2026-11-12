@@ -156,6 +156,20 @@ impl<'a> Printer<'a> {
             }
             out.push('\n');
         }
+        for (i, r) in self.p.regions.iter().enumerate() {
+            let bs: Vec<String> = r.blocks.iter().map(|b| format!("bb{}", b.0)).collect();
+            let _ = writeln!(
+                out,
+                "region r{i}: body b{}, entry bb{}, env e{}, value {}, closure c{}{}, blocks [{}]",
+                r.body.0,
+                r.entry.0,
+                r.env.0,
+                place(&r.value),
+                r.closure.0,
+                if r.sole { ", sole" } else { "" },
+                bs.join(", ")
+            );
+        }
     }
 
     /// Returns the text of body `id`: a header line, the locals and the blocks.

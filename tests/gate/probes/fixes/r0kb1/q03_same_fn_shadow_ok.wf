@@ -1,0 +1,16 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q03 (control), the clean twin: the clause of H does not clear
+// `v`.
+effect Run { fn run(x: u64) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(x) { print(x)
+        resume(()) } } in {
+        let c = || run(1)
+        let r = &v[0]
+        handle Run { fn run(x) { resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

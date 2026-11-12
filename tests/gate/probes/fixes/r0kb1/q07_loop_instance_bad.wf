@@ -1,0 +1,28 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q07: each round of the loop makes a new instance of H. The
+// closure of `mk` is made in round 0 (its maker env holds H of round 0) and
+// runs in round 1, in the handled body of H of round 1. H of round 0 has
+// ended, so the `run` goes to the next handler of the chain (the handler
+// of `main`), which clears `v`. A copy that names the handler H, not its
+// instance, gives the run to H of round 1.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn noop() {}
+fn outer() / Run {
+    let c = mk()
+    let i = 0
+    while i < 2 {
+        handle Run { fn run(x) { resume(()) } } in {
+            if i == 0 { c = mk() } else { c() }
+        }
+        i += 1
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(x) { v.clear()
+        resume(()) } } in { outer() }
+    print(r)
+}

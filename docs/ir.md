@@ -99,7 +99,7 @@ source ──parse──► AST (an ExprId on each expression)
        ──resolve + typeck──► THIR: final types, callees, effect identities, argument
                              order, implicit dereferences, integer types
        ──build──► IR: bodies, blocks, locals, cleanup chains (no places, no rows)
-       ──verify──► V1 to V18
+       ──verify──► V1 to V19
        ──analyze──► for each body: abstract states (places, function values, tasks, init)
                     for each SCC of the call graph: summaries and effect rows
        ──emit──► FnFacts (schema unchanged) ──► checker and spec (unchanged) ──► diagnostics
@@ -329,6 +329,7 @@ pub struct Program {
     pub spawns: Vec<SpawnDecl>,     // index: SpawnId
     pub cap_envs: Vec<CapEnv>,      // index: CapEnvId
     pub tests: Vec<TestDecl>,       // index: TestId
+    pub regions: Vec<CopyRegion>,   // the copy regions of the fact generator (6.1); none from the builder
 }
 /// A test block: its name (the interpreter runs tests by name) and its body.
 pub struct TestDecl { pub name: String, pub body: BodyId }
@@ -578,6 +579,7 @@ to V17; the others need the type table.
 | V16 | The cleanup chain of a clause starts with `UnwindKont` of its continuation. A cleanup chain lists `_0` if it has a value, then the live temporaries newest first, then the live locals from the highest index, then the parameters. (`Dead(_0)` with no value comes before the parameters.) | one unwind order for the interpreter, the facts and the effects model |
 | V17 | `Drop(p)` only on a place with a `Deref`, and the next statement is `Assign(p, _)`. | the drop pair of W0601 behind a reference |
 | V18 | Each `Return` has the origin of the expression whose value it returns. | W0204 spans |
+| V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
 
 ---
 ## 5. Lowering rules: typed tree to IR
@@ -2392,6 +2394,74 @@ copy gets the copy of the closure body (D1a).
   goes to the chain of the clause, which starts with `UnwindKont`: V16 (`KontNotFirst`)
   does not hold for the chains that start in the blocks of a copy, and the machine ends
   them in the same order as before the copy.
+
+As built (plan stage R0k-b1', copy regions, `instantiate::closure_copy`): a closure runs
+with the handlers of the point where it is made, not with the handlers of its run node
+(the interpreter takes the handler environment of the closure value). So a copy of a
+closure body at a run node in another body than the maker is a copy region
+(`weft_ir::CopyRegion`): its code runs with the handlers of the closure value, and its
+static capability environment is the environment where the closure is made.
+
+- The forms (`Inst::walk_value`). The callee of the run is `copy l`, and the value of
+  `l` is one closure on each path: a local with one value (a closure that the body makes,
+  or a copy or a move of another whole local); an upvar local (the local of the parent
+  body); a parameter of a clause that the clause does not write, move or borrow, if one
+  perform through the capability of its handler can run the clause (`Inst::clause_arg`:
+  no other perform of the effect in the handled body, no callee or function value that
+  performs it there through the row, no task, no closure that captures the capability);
+  a local that one call of a function item gives a value, if the callee makes a closure
+  with no capture in its body and gives it back (`ret_closure`). A body inside a body of
+  the way must not write, move or borrow the local (`nested_writes`). The run of R0k-a2
+  (the maker is the body of the run node) is the first form; it is not a region.
+- The environment of the region (`CopyRegion::env`): the capability environment of the
+  closure declaration, or for a closure that a callee makes, the environment of the call
+  of the callee. The copy maps each construct that reads the handler environment through
+  it: a perform through the row that the environment serves goes to the capability of
+  the serving handler (through upvar locals); a perform through the row that it does not
+  bind stays, and goes past the function (V11 reads the environment of the region, so
+  this is valid also in a handled body of the effect: the pass-on form); each call, each
+  closure, each handled body, each clause and each scope body of the copy gets the copied
+  environment with the environment of the region as its root. The facts read these
+  environments: the `Lexical` environment of a call, the capability of a perform, the
+  environment of a body inside the copy.
+- The captures go to the site through upvar locals: a `Kept` capture is its source, a
+  `ByRef` capture a new borrow of its source at the entry, a `Cap` capture the capability
+  of its source. The source must be a cell of a body around the maker, or of the maker if
+  the maker is around the run node and the source does not end or get a new cell between
+  the make and the terminator of the maker that runs the body of the run node. A `ByMove`
+  or `Kont` capture, and a source that ends, need the environment of the value (the local
+  `CopyEnv` of R0k-b1): not built, so the program keeps the fallback.
+- The extent rule (`Inst::extent_ok`). For each effect that the code of the closure can
+  use through its handlers (its operations through the row, the rows of its calls, and
+  `Fail`), each body that opens a capability of the effect on the chain of the environment
+  of the region, and the handled body of each `Cap` capture, is around each body of the
+  way of the value. Then the run node sees the handler instance of the make. A value that
+  leaves the handled body (through a local outside it, or the clause of its own handler)
+  or a new instance of the handler in a loop goes to the next handler of the chain at run
+  time: no copy.
+- The agreement rule (`Inst::agrees`). The facts of a `join`, a `fork`, a `spawn` and a
+  `scope` take the capability environment of the body. If the code of the closure has one
+  of them, the environment of the region and that of the body of the run node must send
+  each effect to the same destination: else no copy.
+- The entry of the region reads the closure value first (`Mention`). The interpreter
+  (8.4) takes the handlers of the value there (`PushHenv`) and gives the frame its own
+  handlers back at each exit (`PopHenv`), on a normal path and on a cleanup chain. A copy
+  at a call inside a region is a part of the region; no region is inside another one, and
+  a closure copy in a region needs a closure that the region makes. A body with a region
+  gets no copy of its own.
+- The weak form (`weak_ok`). A closure whose run got a copy region is not in the
+  structural check: the guard of the analysis (`note_weak_call`, `weak_values_stay`)
+  checks each other run of its summary.
+- `CopyRegion::sole`: no code but the regions reads the value of the closure
+  (`sole_runs`), so the closure body never runs (`Program::never_runs`). Its perform
+  then runs no clause: the resume regions of a clause do not need a node for it
+  (`handlers::Region::starts`).
+- The fact oracle runs the program with the regions. A5 (8.5) checks at each node of a
+  region that a clause that runs is in the facts of the node. The mutation of the tests
+  (`RunOptions::site_henv_in_copies`: no regions, so the copy runs with the handlers of
+  the run node) fails A5 (`fact_oracle.rs`). The test `copies.rs` runs `fixes/r0k3/h02`
+  and `fixes/r0kb1/n06` with and without the copies (the same output), and with no
+  regions (another output).
 
 ### 6.2 Nodes and phases
 
@@ -5845,6 +5915,11 @@ a temporary). Stage I2 adds `MakeClosureIr` (a closure with the modes of the IR)
 Stage I3 adds `PerformCap` (a perform through a capability value).
 Stage I6 adds the unwind-mode ops `UnwindValue`, `UnwindKont` and `UnwindExit`.
 Stage F8d adds `Variant` (the tag check of a variant step, 8.1).
+Stage R0k-b1' adds `PushHenv` and `PopHenv` (6.1, "As built (plan stage R0k-b1')"): the
+entry of a copy region takes the handler environment of the closure value in a cell (not a
+read of the cell for the oracles), and each exit of the region, also on a cleanup chain,
+gives the frame its own handlers back. The frame keeps the saved environments
+(`CodeFrame::saved_henv`), so a copy of the frames for a continuation keeps them too.
 Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles

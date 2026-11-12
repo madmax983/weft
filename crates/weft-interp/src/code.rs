@@ -385,6 +385,16 @@ pub enum Op {
     /// unwinding. The unwinder scans the cells of the frame: a live linear
     /// value there is an error of the chain (an oracle check).
     UnwindExit,
+    /// The entry of a copy region (plan stage R0k-b1', `docs/ir.md` 6.1):
+    /// the function value in a cell. The code of the region runs with the
+    /// handlers of the value: the frame keeps its own handlers and takes
+    /// those of a closure (a function item runs with the handlers of the
+    /// frame). It takes the handlers of the value, not the value, so it is
+    /// not a read of the cell for the oracles.
+    PushHenv(VarRef),
+    /// An exit of a copy region: the frame gets back the handlers that it
+    /// had at the entry of the region.
+    PopHenv,
 }
 
 /// The IR location of an op (`docs/ir.md` 8.1): the body, the block and the

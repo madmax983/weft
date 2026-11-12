@@ -2104,6 +2104,174 @@ mod copies {
             assert!(weft_sema::factgen::components(&a, &inst.built).is_err());
         }
     }
+
+    /// The text of probe `name` of `dir` in `tests/gate/probes`.
+    fn probe(dir: &str, name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(dir)
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The blocks of the copy region `r` of `p` and their body.
+    fn region_blocks<'p>(
+        p: &'p Program,
+        r: &weft_ir::CopyRegion,
+    ) -> (&'p weft_ir::Body, Vec<&'p weft_ir::Block>) {
+        let body = &p.bodies[r.body.index()];
+        let blocks = r.blocks.iter().map(|k| &body.blocks[k.index()]).collect();
+        (body, blocks)
+    }
+
+    /// A copy region (plan stage R0k-b1'): the closure `c` is made in the
+    /// handled body of H and runs in the handled body of H2, an inner
+    /// handler of the same effect. The run gets a copy of the closure body
+    /// in the handled body of H2. Its environment is the one where `c` is
+    /// made, not the one of H2, and its perform goes to the capability of H
+    /// through an upvar local. No other code reads `c`: the region is the
+    /// only run of the closure (`sole`).
+    #[test]
+    fn a_closure_of_a_body_around_the_run_node_gets_a_copy_region() {
+        let (_, b) = built(&probe("fixes/r0kb1", "n01_nested_run_ok.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        assert_eq!(inst.regions, 1);
+        let p = &inst.built.program;
+        let r = p.regions.first().expect("a region");
+        let (body, blocks) = region_blocks(p, r);
+        assert!(matches!(body.kind, BodyKind::Handled(_)));
+        assert_eq!(r.env, p.closures[r.closure.index()].cap_env);
+        assert_ne!(r.env, body.cap_env);
+        let cap = blocks
+            .iter()
+            .find_map(|k| match &k.term.kind {
+                TermKind::Perform {
+                    cap: CapOperand::Local(q),
+                    ..
+                } => Some(q.clone()),
+                _ => None,
+            })
+            .expect("a perform");
+        assert!(matches!(
+            body.local_kind(cap.local),
+            Some(LocalKind::Upvar(_))
+        ));
+        assert!(r.sole);
+        // The entry reads the closure value first: the interpreter takes its
+        // handlers there.
+        let entry = &body.blocks[r.entry.index()];
+        assert!(matches!(
+            entry.stmts.first().map(|x| &x.kind),
+            Some(StmtKind::Mention(q)) if *q == r.value
+        ));
+    }
+
+    /// The pass-on form of a copy region (plan stage R0k-b1',
+    /// `b2_call.reg_closure_param`): the closure is made where no local
+    /// handler handles `Reg` and runs in the handled body of a local `Reg`
+    /// handler. In the region the perform stays a perform through the row:
+    /// it goes past the function, as at run time, although the body binds
+    /// the effect.
+    #[test]
+    fn a_row_perform_of_a_copy_region_goes_past_the_function() {
+        let (_, b) = built(&probe("partb/s3fix/p", "b2_call.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        let p = &inst.built.program;
+        let found = p.regions.iter().any(|r| {
+            let (body, blocks) = region_blocks(p, r);
+            blocks.iter().any(|k| {
+                matches!(&k.term.kind, TermKind::Perform { cap: CapOperand::Row(e), .. }
+                    if p.cap_envs[body.cap_env.index()].adds.iter().any(|(x, _)| x == e))
+            })
+        });
+        assert!(found, "no region with a perform through the row");
+        let broken = weft_ir::verify::verify_program(p, &inst.built.tys);
+        assert!(
+            !broken
+                .iter()
+                .any(|x| x.rule == weft_ir::verify::Rule::BadCap
+                    || x.rule == weft_ir::verify::Rule::BadRegion),
+            "{broken:?}"
+        );
+    }
+
+    /// A copy region in a clause (plan stage R0k-b1'): the handled body of
+    /// `Reg` gives a closure to `reg`, and the clause runs its parameter. The
+    /// one perform that can run the clause gives the closure, so the run in
+    /// the clause gets a copy of the closure body.
+    #[test]
+    fn a_clause_that_runs_its_parameter_gets_a_copy_region() {
+        let (_, b) = built(&probe("fixes/r0kb1", "n03_clause_runs_ok.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        let p = &inst.built.program;
+        assert!(p
+            .regions
+            .iter()
+            .any(|r| matches!(p.bodies[r.body.index()].kind, BodyKind::Clause(..))));
+    }
+
+    /// A copy region of a closure that a callee makes and gives back (plan
+    /// stage R0k-b1', `fixes/r0k3/h02`): the closure of `mk` has no capture,
+    /// so its body can run at the call site. Its environment is the one of
+    /// the call of `mk`, not the one of the local handler where it runs.
+    #[test]
+    fn a_closure_that_a_callee_makes_with_no_capture_gets_a_copy_region() {
+        let (_, b) = built(&probe("fixes/r0k3", "h02_made_closure_row.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        let p = &inst.built.program;
+        let r = p.regions.first().expect("a region");
+        let outer = fn_id(p, "outer");
+        let ob = p.fns[outer.index()].body.expect("a body");
+        let call_env = p.bodies[ob.index()]
+            .blocks
+            .iter()
+            .find_map(|k| match &k.term.kind {
+                TermKind::Call {
+                    caps: weft_ir::CapArgs::Lexical(e),
+                    callee: weft_ir::Callee::Fn(f, _),
+                    ..
+                } if p.fns[f.index()].name == "mk" => Some(*e),
+                _ => None,
+            });
+        assert_eq!(Some(r.env), call_env);
+        assert_ne!(r.env, p.bodies[r.body.index()].cap_env);
+    }
+
+    /// The refusals of a copy region (plan stage R0k-b1'). The extent rule:
+    /// a closure that leaves the handled body of its handler (`n04`, `c11`:
+    /// a new instance of the handler in a loop), a closure that the clause
+    /// of its own handler runs (the clause runs outside the handled body).
+    /// The agreement rule: a closure with a `scope`, run where `Fail` goes to
+    /// another handler (`n05`, `c14`). A closure that a callee makes with a
+    /// capture (`c10`, `h03`: the copy needs the environment of the value).
+    #[test]
+    fn a_copy_region_is_refused_by_the_extent_and_the_agreement_rules() {
+        let own = "effect Reg {\n fn reg(f: fn())\n fn ping()\n }\n\
+            fn main() {\n\
+            handle Reg { fn reg(g) { g()\n resume(()) }\n fn ping() { resume(()) } } in reg(|| ping())\n\
+            }\n";
+        let mut srcs = vec![("own".to_string(), own.to_string())];
+        for name in [
+            "n04_loop_instance_bad.wf",
+            "n05_scope_fail_bad.wf",
+            "c11_c2_loop_instance_bad.wf",
+            "c14_c2_scope_fail_bad.wf",
+            "c10_c2_mk_in_H_run_in_H2_bad.wf",
+        ] {
+            srcs.push((name.to_string(), probe("fixes/r0kb1", name)));
+        }
+        srcs.push((
+            "h03".to_string(),
+            probe("fixes/r0k3", "h03_made_closure_keep_bad.wf"),
+        ));
+        for (name, src) in srcs {
+            let (_, b) = built(&src);
+            assert!(
+                instantiate(&b).is_none_or(|i| i.regions == 0),
+                "{name}: a copy region"
+            );
+        }
+    }
 }
 
 /// The copies of a closure that resumes the continuation of its clause

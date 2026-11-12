@@ -1,0 +1,19 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q05c: as q05b, but `r` gets its reference into `v` after the
+// call of `mk`, so only the run of `c` can run the clause of H1 after it.
+// The failure of the closure goes to H1 (the maker env), not to H2.
+fn mk() -> fn() / fail { || fail("x") }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let r = &w[0]
+    handle Fail { fn fail(m) { v.clear() } } in {
+        let c = mk()
+        r = &v[0]
+        handle Fail { fn fail(m) { print("H2") } } in { c() }
+    }
+    print(r)
+}
+fn main() { outer() }

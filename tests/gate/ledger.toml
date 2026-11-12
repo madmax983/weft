@@ -10968,3 +10968,97 @@ files = [
 codes = ["W0301", "W0312"]
 reason = "stage R0k-c2 fix 1 (a probe of the second review of the fix, C8): the clause of `Ask` gives its parameter `r` (a reference into the vector `v` of `main`) to `tell` of an outer handler, whose clause holds it across `pick` of the local `multi` handler `Pick`; the clause of `Pick` clears `v` between its two resumes. The argument of the parameter of `Tell` is a parameter of `Ask`, which maps again through the run of `Ask`: the `ir` pipeline rejects the program with W0301 at the read in the second copy (line 14). The old pipeline gives W0312 at the perform of `ask` (line 16). Both reject it; ev.sh: the program faults (held)"
 stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/66_cap_paths.wf",
+    "tests/gate/probes/partb/s3fix/p/b2_call.wf",
+]
+codes = ["W0313", "W0314"]
+reason = "stage R0k-b1' (copy regions): the closure `r` of `own_operation_through_closure` (66) and `reg_closure_param` (b2_call) is made where no local handler handles `Reg` and runs in the handled body of a local `Reg` handler. The run gets a copy region: the perform of `reg` goes past the function through the row, with `|| ping()`, a closure that captures the local `Reg` capability. The `ir` pipeline gives W0314 at the perform (line 38 of 66, line 8 of b2_call: the clause of a caller can run the value on another task), as for an in-scope program of the same form (`61_task_paths.wf` line 155); the old pipeline gives W0313 at the `handle`. The other functions of the files keep their W0313. Both pipelines reject the programs; the corpus marks the line (`//~ W0314 old:`, `//~ old: W0313`); ev.sh: both-reject"
+stage = "R0k"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0kb1/q04_mk_escapes_handler_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/q07_loop_instance_ok.wf",
+]
+finding = "R0kB1P-Q04"
+reason = "stage R0k-b1' (probes of the design review of B1', in scope before the stage: `weft-r0kd2` and `weft-r0kc2f2` give the same result): the closure of `mk` leaves the handled body of H in `c` (q04: H ends before the run; q07: a new instance of H in the next round of a loop) and runs in the handled body of another handler. At run time its `run` goes to the next handler of the chain of the environment of the maker (the handler of `main`): no fault. The old pipeline gives W0313 at the `handle` of H (\"the local `c` keeps it\"), a false positive; the `ir` pipeline accepts. The stage does not change the facts of a program in scope, and B1' must not bring this W0313 back (the design review)"
+signed_by = "reviewer R0k-b1' design review (scratchpad `b1prev/notes.md`, section 4): q04_ok and q07_ok are in scope with no error, the old pipeline gives W0313, ev.sh nofault (seeds 1-3, the ir and the ast engines), fact oracle ok; no fault at run time: the chain goes on to the outer handler"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0kb1/q04_mk_escapes_handler_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/q07_loop_instance_bad.wf",
+]
+codes = ["W0301", "W0313"]
+reason = "stage R0k-b1' (probes of the design review of B1', in scope before the stage): the bad twins of q04 and q07. Both pipelines give W0301 at the read of `r` after the clause of `main` clears `v`; the old pipeline also gives W0313 at the `handle` of H (the false positive of the clean twins, entry R0kB1P-Q04). Both reject; ev.sh: held"
+stage = "R0k"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0kb1/c18_c2_field_bad.wf",
+]
+finding = "R0kB1P-FIELD"
+reason = "stage R0k-b1' (a probe of the design review of B1', form 3): `mk_box` is called in the handled body of H and makes a struct whose field holds a closure that gives `h` to `run` through the row of `mk_box`; the site reads the field and runs it in the handled body of H2. The `run` goes to H, whose clause clears `v`: a read of a freed cell. The program keeps the C2 fallback (the way of the value has a field, and the closure has a `Kept` capture of the parameter of the copied maker, which needs the local `CopyEnv` of R0k-b1, not built), and the old pipeline misses the fault, as before the stage. A fix: `CopyEnv` and a field step of the way (`docs/plan/core-ir.md`, \"R0k-b1' as built\")"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "tests/gate/probes/fixes/r0kb1/n06_row_value_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/n06_row_value_ok.wf",
+    "tests/gate/probes/partb/s3fix/p/b2_call.wf",
+    "tests/programs/66_cap_paths.wf",
+]
+reason = "class F19-SIG-PINS (stage F19), for programs that come into scope with the copy regions of stage R0k-b1': the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`), not counting a task that is `opaque` only because it runs code of a caller. The closure of the region gives a function value to an operation of a handler of a caller through the row (`outer` of n06, `reg_closure_param` of b2_call, `own_operation_through_closure` of 66, and `main` of n06 through the summary of `outer`): the old inference pins for that value, the IR does not"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["task_runs", "op_fns", "repeats"]
+files = [
+    "tests/gate/probes/partb/s3fix/p/b2_call.wf",
+    "tests/programs/66_cap_paths.wf",
+    "tests/programs/83_kept_values.wf",
+]
+reason = "stage R0k-b1' (programs that come into scope with the copy regions): `reg_it` gives its function parameter to `reg` through its row. With the copies `weak_ok` holds (a closure whose run got a copy region is not in the structural check; the guard of the analysis checks each other run), so the summary of `reg_it` has the weak form of R0k-a (`WeakRowOps`): the operation gives the value to code of a caller, which can run it as a task and more than once (the parts `op_fns`, `task_runs` and `repeats` of the IR). The old inference has no such parts. Each call of `reg_it` where a local handler serves `Reg` has a copy (R0k-a)"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["named", "ret", "ret_refs"]
+files = [
+    "tests/programs/66_cap_paths.wf",
+    "tests/programs/83_kept_values.wf",
+]
+reason = "stage R0k-b1' (programs that come into scope with the copy regions; the class F19-SIG-NAMED): a function that gives back a closure that performs through a local handler that ends (`in_returned_tuple`, `resumed_value`, `resumed_through_call` of 66; `clause_returns_it`, `returns_out`, `returns_pair` of 83). The IR gives the effect of the closure to the row and the result parts of the function (the value performs it where a caller runs it); the old inference gives no effect. Both pipelines reject each such function with W0313 at the `handle`"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m01767_66_cap_paths.wf",
+    "verify/s5/S5c/mut/progs/m02321_66_cap_paths.wf",
+    "verify/s5/S5c/mut/progs/m02875_66_cap_paths.wf",
+]
+codes = ["W0313", "W0314"]
+reason = "stage R0k-b1' (tier 2, mutants of 66_cap_paths that come into scope with the copy regions): as `tests/programs/66_cap_paths.wf`, the run of `r` in `own_operation_through_closure` gets a copy region, and its `reg` gives `|| ping()` (a closure of the local `Reg` capability) past the function: the `ir` pipeline gives W0314 at the perform (line 38), the old pipeline W0313 at the `handle` (line 39). The other W0313 stay. Both pipelines reject the programs"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00697_83_kept_values.wf",
+    "verify/s5/S5c/mut/progs/m00867_83_kept_values.wf",
+]
+codes = ["W0313"]
+reason = "stage R0k-b1' (tier 2, mutants of 83_kept_values that come into scope with the copy regions): the mutation puts the call `copy_into_held(&j, &ds)` of `copies_into_held` into a closure that no code calls, so the closure of `j` never goes into `keep` and does not leave its handler. The old pipeline still gives W0313 at the `handle` (line 149 or 150), a false positive; the `ir` pipeline gives no error there. The other 16 W0313 of the file stay, so both pipelines reject the programs (no `main`: not runnable)"
+stage = "R0k"

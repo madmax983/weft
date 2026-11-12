@@ -1,0 +1,16 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q01, the clean twin: the clause of `main` does not clear `v`.
+effect Run { fn run(x: u64) }
+fn mk() -> fn() / Run { || run(1) }
+fn outer() / Run {
+    let c = mk()
+    handle Run { fn run(x) { resume(()) } } in { c() }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(x) { print(x)
+        resume(()) } } in { outer() }
+    print(r)
+}

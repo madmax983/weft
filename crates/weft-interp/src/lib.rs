@@ -109,6 +109,13 @@ pub struct RunOptions {
     /// Records the IR location of each step of each frame of the IR engine
     /// ([`RunOutcome::ir_trace`]). Off by default.
     pub ir_trace: bool,
+    /// A mutation for the tests of the fact oracle (plan stage R0k-b1'): the
+    /// program of the fact oracle has no copy regions, so the code of a copy
+    /// of a closure body runs with the handlers of the frame of the run node,
+    /// not with those of the closure value. The check of a perform through a
+    /// capability (the machine finds the handler of the capability) is off
+    /// then. Off by default.
+    pub site_henv_in_copies: bool,
 }
 
 impl Default for RunOptions {
@@ -125,6 +132,7 @@ impl Default for RunOptions {
             engine: Engine::Ir,
             fact_oracle: false,
             ir_trace: false,
+            site_henv_in_copies: false,
         }
     }
 }
@@ -323,6 +331,9 @@ fn runtime<'a>(
         let comps = if opts.fact_oracle {
             let (b, c) = weft_sema::factgen::components_built(analysis, built);
             built = b;
+            if opts.site_henv_in_copies {
+                built.program.regions.clear();
+            }
             Some(c)
         } else {
             None

@@ -1,0 +1,21 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c10 (a C2 form, a copy target): `mk_cap` is called in the
+// handled body of H, so the `run` of its closure goes to H (the maker env),
+// whose clause clears `v`. The closure runs in the handled body of H2,
+// which serves `run` with a function value (the C2 fallback today). A copy
+// with the handlers of the run node gives the `run` to H2: no clear, a hole.
+effect Run { fn run(g: fn()) }
+fn mk_cap(h: fn()) -> fn() / Run { || run(h) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let c = mk_cap(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

@@ -1,0 +1,27 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c11 (a C2 form): as q07, with a function value in `run`. The
+// closure of `mk_cap` is made in round 0 of the loop (its maker env holds H
+// of round 0) and runs in round 1. H of round 0 has ended, so the `run`
+// goes to the handler of `main`, which clears `v`. A copy that names the
+// handler H (not its instance) gives the run to H of round 1.
+effect Run { fn run(g: fn()) }
+fn mk_cap(h: fn()) -> fn() / Run { || run(h) }
+fn outer() / Run {
+    let c = mk_cap(|| print(0))
+    let i = 0
+    while i < 2 {
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            if i == 0 { c = mk_cap(|| print(1)) } else { c() }
+        }
+        i += 1
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in { outer() }
+    print(r)
+}

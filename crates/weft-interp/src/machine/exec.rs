@@ -707,8 +707,13 @@ impl super::Machine<'_, '_> {
                     return Err(self.fault("internal: a perform has no capability of a handler"));
                 };
                 let henv = self.fr()?.henv.clone();
+                // The code of a copy region runs with the handlers of its
+                // closure value (plan stage R0k-b1'), so the check holds there
+                // too. The mutation of the tests of the fact oracle
+                // (`RunOptions::site_henv_in_copies`) breaks it on purpose.
                 debug_assert!(
-                    self.finds_handler_of_cap(effect, *op, id, &henv),
+                    self.opts.site_henv_in_copies
+                        || self.finds_handler_of_cap(effect, *op, id, &henv),
                     "the machine does not find the handler of the capability"
                 );
                 return self.perform(effect, *op, args, &henv);
@@ -1005,6 +1010,25 @@ impl super::Machine<'_, '_> {
             Op::UnwindValue { var, path } => return self.unwind_value(*var, path),
             Op::UnwindKont(s) => return self.unwind_kont(*s),
             Op::UnwindExit => return self.unwind_exit(),
+            Op::PushHenv(var) => {
+                let cell = self.cell_of(*var)?;
+                let made = match self.heap.slot(cell).map(|s| &s.val) {
+                    Ok(Value::Closure(c)) => Some(c.henv.clone()),
+                    _ => None,
+                };
+                let fr = self.fr()?;
+                let h = made.unwrap_or_else(|| fr.henv.clone());
+                let old = std::mem::replace(&mut fr.henv, h);
+                let next = fr.saved_henv.take();
+                fr.saved_henv = Some(Rc::new(super::SavedHenv { henv: old, next }));
+            }
+            Op::PopHenv => {
+                let fr = self.fr()?;
+                if let Some(saved) = fr.saved_henv.take() {
+                    fr.henv.clone_from(&saved.henv);
+                    fr.saved_henv.clone_from(&saved.next);
+                }
+            }
         }
         Ok(Flow::Continue)
     }

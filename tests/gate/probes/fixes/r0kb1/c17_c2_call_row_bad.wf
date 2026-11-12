@@ -1,0 +1,21 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c17 (a C2 form, a call in the closure): the closure of
+// `mk_cap` calls `go`, which gives `h` to `run` through its row. The call
+// passes the env of the closure (the maker env: H, whose clause clears
+// `v`), not the env of the run node (H2).
+effect Run { fn run(g: fn()) }
+fn go(h: fn()) / Run { run(h) }
+fn mk_cap(h: fn()) -> fn() / Run { || go(h) }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let c = mk_cap(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

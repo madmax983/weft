@@ -1,0 +1,36 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review c14 (a C2 form, a task in the closure): the closure of
+// `mk_cap` opens a scope whose task fails. The end of the scope fails
+// through the handler env of the scope: the env of the closure frame (the
+// maker env of `mk_cap`, H1), not the env of the run node (H2). The clause
+// of H1 clears `v`, so the read of `r` reads a freed cell.
+effect Run { fn run(g: fn()) }
+fn work() / fail { fail("t") }
+fn sc() / async, fail {
+    scope { s =>
+        s.spawn(|| work())
+        ()
+    }
+}
+fn mk_cap(h: fn()) -> fn() { || { run(h)
+    sc() } }
+fn outer() / Run, io, async {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let r = &w[0]
+    handle Fail { fn fail(m) { v.clear() } } in {
+        let c = mk_cap(|| print(0))
+        r = &v[0]
+        handle Fail { fn fail(m) { print("H2") } } in {
+            handle Run { fn run(g) { g()
+                resume(()) } } in { c() }
+        }
+    }
+    print(r)
+}
+fn main() / io, async {
+    handle Run { fn run(g) { g()
+        resume(()) } } in { outer() }
+}

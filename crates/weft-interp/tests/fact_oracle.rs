@@ -1143,3 +1143,77 @@ fn the_probes_of_the_reentry_of_a_clause_pass_the_fact_oracle() {
     }
     assert!(checked > 0, "{checked}");
 }
+
+/// The text of the probe `name` of `fixes/r0kb1` (plan stage R0k-b1').
+fn r0kb1(name: &str) -> String {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0kb1")
+        .join(name);
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// A5 of a copy region (plan stage R0k-b1'), the mutation. In
+/// `n01_nested_run_ok` the closure `c` is made in the handled body of H and
+/// runs in the handled body of H2, an inner handler of the same effect. In
+/// `n06_row_value_ok` the closure `r` is made where no local handler handles
+/// `Reg` and runs in the handled body of a local `Reg` handler. The copy of
+/// the closure body runs with the handlers of the closure value, as in the
+/// program. With the mutation `site_henv_in_copies` the copy runs with the
+/// handlers of the run node: the operation goes to the inner handler, whose
+/// clause runs from a node whose facts name the capability of H (n01), or
+/// send the effect past the function (n06). A5 fails there.
+#[test]
+fn a_copy_region_that_runs_with_the_handlers_of_the_run_node_fails_a5() {
+    for name in ["n01_nested_run_ok.wf", "n06_row_value_ok.wf"] {
+        let c = check(&r0kb1(name));
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| ir.ok()),
+            "{name}: {:?}",
+            c.diags
+        );
+        let r = run_main(&c, &opts());
+        assert!(r.is_ok(), "{name}: {:?}", r.err().map(|e| e.message));
+        let site = RunOptions {
+            site_henv_in_copies: true,
+            ..opts()
+        };
+        let m = match run_main(&c, &site) {
+            Ok(_) => panic!("{name}: the copy with the handlers of the run node passes"),
+            Err(e) => e.message,
+        };
+        assert!(m.starts_with("clause oracle (A5)"), "{name}: {m}");
+    }
+}
+
+/// Each probe of `fixes/r0kb1` and `fixes/r0k3` (plan stage R0k-b1') that
+/// the `ir` pipeline accepts runs with no failure of the fact oracle, on the
+/// program with the copy regions.
+#[test]
+fn the_probes_of_the_copy_regions_pass_the_fact_oracle() {
+    let mut checked = 0;
+    for d in ["r0kb1", "r0k3"] {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes")
+            .join(d);
+        for p in programs(&dir) {
+            let src = fs::read_to_string(&p).unwrap();
+            let c = check(&src);
+            if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+                continue;
+            }
+            let r = run_main(&c, &opts());
+            let m = r
+                .as_ref()
+                .err()
+                .map(|e| e.message.clone())
+                .unwrap_or_default();
+            assert!(
+                failure(&r).is_none() && !m.starts_with("clause oracle"),
+                "{}: {m}",
+                p.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 8, "{checked}");
+}

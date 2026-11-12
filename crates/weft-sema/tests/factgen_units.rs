@@ -3216,9 +3216,19 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
         if ir.ir_scope.as_ref().is_some_and(|s| s.pending.is_some()) {
             continue;
         }
+        // The fact oracle takes the program that the `ir` pipeline checks:
+        // with the copies of the fact generator, if it needs them (stages
+        // R0k-a and R0k-b1': `66_cap_paths`, `83_kept_values`).
         let built = irbuild::build(&old);
-        let comps = weft_sema::factgen::components(&old, &built)
-            .unwrap_or_else(|u| panic!("{}: {u}", f.display()));
+        let comps = match weft_sema::factgen::components_built(&old, built).1 {
+            // A capability that leaves its handler: W0313 rejects the
+            // program, and the fact oracle checks nothing there (as for a
+            // construct that the facts do not model).
+            Err(u) if u.reason == "a capability that leaves its handler (stage F17)" => {
+                continue;
+            }
+            c => c.unwrap_or_else(|u| panic!("{}: {u}", f.display())),
+        };
         for c in &comps {
             checked += 1;
             let want = &ir.bodies[c.index].facts;

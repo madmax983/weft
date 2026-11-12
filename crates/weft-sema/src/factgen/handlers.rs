@@ -3758,6 +3758,11 @@ impl Region<'_> {
                 out.push((x.node, mapped || x.given.is_some()));
                 continue;
             }
+            // The body of a closure whose only runs are copy regions never
+            // runs (plan stage R0k-b1'): its perform runs no clause.
+            if self.p.never_runs(x.at) {
+                continue;
+            }
             match clause::enclosing_clause(self.p, x.at) {
                 // A perform in a closure body that a node of the handled
                 // body runs: that node is a run of the clause too (a call

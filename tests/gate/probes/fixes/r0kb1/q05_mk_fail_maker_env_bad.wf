@@ -1,0 +1,18 @@
+// Plan stage R0k-b1' (an acceptance probe of the design review of B1').
+// B1' review q05: the closure of `mk` performs `fail` through the row of
+// `mk`. `mk` is called in the handled body of H1 (a `Fail` handler with no
+// resume). The closure runs in the handled body of H2, but the failure goes
+// to H1 (the maker env): H1 aborts its handled body while `l` is live, so
+// `l` is never unlocked.
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk() -> fn() / fail { || fail("x") }
+fn outer() {
+    handle Fail { fn fail(m) { print("H1") } } in {
+        let c = mk()
+        let l = Lk { id: 1 }
+        handle Fail { fn fail(m) { print("H2") } } in { c() }
+        unlock(l)
+    }
+}
+fn main() { outer() }
