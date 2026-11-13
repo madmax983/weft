@@ -1,0 +1,24 @@
+// Plan stage R0k-b2 (form 4 with a capture; p01 of the design review of
+// R0k, written so that the clause runs the value): the perform is in a
+// loop, and the clause runs the value of the previous perform, which reads
+// a local of the last pass: W0301 (or the fallback: the clause gets a value
+// on each pass, so its run gets no copy).
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn main() {
+    let h = H { f: noop }
+    handle Run { fn run(g) { let old = h.f
+        old()
+        h.f = g
+        resume(()) } } in {
+        let i = 0
+        while i < 2 {
+            let v = Vec.new()
+            v.push(i)
+            let r = &v[0]
+            run(|| print(r))
+            i = i + 1
+        }
+    }
+}

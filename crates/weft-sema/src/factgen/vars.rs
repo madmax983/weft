@@ -528,7 +528,10 @@ impl Vars {
                 continue;
             };
             for (li, d) in b.locals.iter().enumerate() {
-                if matches!(d.kind, LocalKind::Upvar(_) | LocalKind::Env) {
+                if matches!(
+                    d.kind,
+                    LocalKind::Upvar(_) | LocalKind::Env | LocalKind::CopyEnv(_)
+                ) {
                     continue;
                 }
                 let l = LocalId(u32::try_from(li).unwrap_or(u32::MAX));

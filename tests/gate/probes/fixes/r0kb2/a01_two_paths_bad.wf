@@ -1,0 +1,22 @@
+// Plan stage R0k-b2 (an acceptance probe of the B1 note): `mk` gives back
+// one of two closures on two paths. The run node does not know which one
+// it runs, so it gets no copy, and the program keeps the fallback. The
+// closure that runs gives `h` to `run` through the row of `mk`, so the
+// `run` goes to H, whose clause clears `v`.
+effect Run { fn run(g: fn()) }
+fn mk(h: fn(), b: bool) -> fn() / Run {
+    if b { || run(h) } else { || print(1) }
+}
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let c = mk(|| print(0), true)
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in { c() }
+        print(r)
+    }
+}
+fn main() { outer() }

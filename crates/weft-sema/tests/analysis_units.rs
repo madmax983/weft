@@ -1955,16 +1955,14 @@ mod copies {
     }
 
     /// The refusals of the static closure copy: the local can hold one of two
-    /// closures, the closure moves a capture into its value (`ByMove`), the
-    /// local gets its closure from a block. Each one keeps the call of the
-    /// closure value.
+    /// closures, the closure moves a capture into its value (`ByMove`, a
+    /// `once` closure). Each one keeps the call of the closure value. (A local
+    /// that gets its closure from a block, `a06_ends`, gets a copy region from
+    /// stage R0k-b2 on: the copy reads the capture whose source ends through
+    /// the environment local of the region, `copy_env`.)
     #[test]
     fn a_closure_copy_is_refused_for_two_closures_a_move_and_another_value() {
-        for name in [
-            "a04_two_closures_bad.wf",
-            "a05_by_value_bad.wf",
-            "a06_ends_bad.wf",
-        ] {
+        for name in ["a04_two_closures_bad.wf", "a05_by_value_bad.wf"] {
             let (_, b) = built(&r0k2(name));
             assert!(
                 instantiate(&b).is_none_or(|i| i.closure_calls == 0),
@@ -1973,11 +1971,13 @@ mod copies {
         }
     }
 
-    /// The refusal of a source that ends between the closure and the run: a
-    /// `Dead` of the source of the `Kept` capture before the run (built by
-    /// hand: the source language gives no such program) keeps the call.
+    /// A source that ends between the closure and the run: a `Dead` of the
+    /// source of the `Kept` capture before the run (built by hand: the source
+    /// language gives no such program). The copy cannot name the source
+    /// there, so (from stage R0k-b2 on) it is a copy region that reads the
+    /// capture through its environment local, a cell of the closure value.
     #[test]
-    fn a_closure_copy_is_refused_for_a_source_that_ends_before_the_run() {
+    fn a_source_that_ends_before_the_run_is_read_through_the_environment_local() {
         let (_, mut b) = built(&r0k2("a01_kept_bad.wf"));
         assert!(instantiate(&b).is_some_and(|i| i.closure_calls == 1));
         let p = &mut b.program;
@@ -2016,7 +2016,15 @@ mod copies {
                 origin: weft_ir::Origin::default(),
             },
         );
-        assert!(instantiate(&b).is_none_or(|i| i.closure_calls == 0));
+        let inst = instantiate(&b).expect("a copy");
+        assert_eq!(inst.closure_calls, 1);
+        let p = &inst.built.program;
+        let r = p.regions.first().expect("a copy region");
+        let e = r.env_local.expect("an environment local");
+        assert_eq!(
+            p.bodies[r.body.index()].local_kind(e),
+            Some(LocalKind::CopyEnv(r.closure))
+        );
     }
 
     /// Stage R0k-a2, a generic callee: each call gets a copy under its own type
@@ -2242,8 +2250,11 @@ mod copies {
     /// a new instance of the handler in a loop), a closure that the clause
     /// of its own handler runs (the clause runs outside the handled body).
     /// The agreement rule: a closure with a `scope`, run where `Fail` goes to
-    /// another handler (`n05`, `c14`). A closure that a callee makes with a
-    /// capture (`c10`, `h03`: the copy needs the environment of the value).
+    /// another handler (`n05`). (A closure that a callee makes with a
+    /// capture, `c10`, `c14` and `h03`, gets a region from stage R0k-b2 on:
+    /// the copy reads the capture through the environment local of the
+    /// region. The `scope` of `c14` is in a callee of the closure, whose call
+    /// gets the environment of the region.)
     #[test]
     fn a_copy_region_is_refused_by_the_extent_and_the_agreement_rules() {
         let own = "effect Reg {\n fn reg(f: fn())\n fn ping()\n }\n\
@@ -2255,20 +2266,196 @@ mod copies {
             "n04_loop_instance_bad.wf",
             "n05_scope_fail_bad.wf",
             "c11_c2_loop_instance_bad.wf",
-            "c14_c2_scope_fail_bad.wf",
-            "c10_c2_mk_in_H_run_in_H2_bad.wf",
         ] {
             srcs.push((name.to_string(), probe("fixes/r0kb1", name)));
         }
-        srcs.push((
-            "h03".to_string(),
-            probe("fixes/r0k3", "h03_made_closure_keep_bad.wf"),
-        ));
         for (name, src) in srcs {
             let (_, b) = built(&src);
             assert!(
                 instantiate(&b).is_none_or(|i| i.regions == 0),
                 "{name}: a copy region"
+            );
+        }
+    }
+}
+
+/// The environment local of a copy region (plan stage R0k-b2,
+/// `instantiate::Inst::env_capture_ok`): a copy reads a capture that it cannot
+/// name through a place of the site as a cell of the closure value.
+mod copy_env {
+    use weft_ir::{LocalKind, Operand, Program, Proj, TermKind};
+    use weft_sema::factgen::instantiate::instantiate;
+    use weft_sema::irbuild::Built;
+
+    /// The IR of `src`.
+    fn built(src: &str) -> Built {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        weft_sema::irbuild::build(&a)
+    }
+
+    /// The text of probe `name` of `tests/gate/probes/dir`.
+    fn probe(dir: &str, name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(dir)
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The region of `p` with an environment local, and each operand of a
+    /// terminator of the region that is a field of that local.
+    fn env_region(p: &Program) -> (&weft_ir::CopyRegion, Vec<Operand>) {
+        let r = p
+            .regions
+            .iter()
+            .find(|r| r.env_local.is_some())
+            .expect("a region with an environment local");
+        let e = r.env_local.expect("an environment local");
+        let body = &p.bodies[r.body.index()];
+        assert_eq!(body.local_kind(e), Some(LocalKind::CopyEnv(r.closure)));
+        let mut ops = Vec::new();
+        for k in &r.blocks {
+            match &body.blocks[k.index()].term.kind {
+                TermKind::Perform { args, .. } | TermKind::Call { args, .. } => {
+                    for a in args {
+                        if a.place().is_some_and(|q| q.local == e) {
+                            ops.push(a.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (r, ops)
+    }
+
+    /// Asserts that `p` breaks no rule of the verifier but V16, the order of
+    /// a cleanup chain, which does not hold across a copy (`instantiate`).
+    fn verifies(b: &Built) {
+        let broken = weft_ir::verify::verify_program(&b.program, &b.tys);
+        assert!(
+            broken
+                .iter()
+                .all(|x| x.rule == weft_ir::verify::Rule::UnwindOrder),
+            "{broken:?}"
+        );
+    }
+
+    /// Form 2 with a capture: the closure of `mk` keeps its parameter `h`.
+    /// The frame of `mk` ends before the run, so the copy at the run reads
+    /// `h` as `copy e.0`, a cell of the closure value. The region has the
+    /// environment of the call of `mk`.
+    #[test]
+    fn a_capture_of_a_closure_that_a_callee_makes_is_a_cell_of_the_value() {
+        for (dir, name) in [
+            ("fixes/r0kb2", "e01_callee_capture_bad.wf"),
+            ("fixes/r0kb1", "c10_c2_mk_in_H_run_in_H2_bad.wf"),
+            ("fixes/r0k3", "h03_made_closure_keep_bad.wf"),
+        ] {
+            let inst = instantiate(&built(&probe(dir, name))).expect("a copy");
+            let p = &inst.built.program;
+            let (r, ops) = env_region(p);
+            assert!(
+                ops.iter().any(|o| matches!(o, Operand::Copy(q)
+                    if q.proj == vec![Proj::Field(weft_ir::FieldIdx(0))])),
+                "{name}: {ops:?}"
+            );
+            // The entry reads the closure value first.
+            let body = &p.bodies[r.body.index()];
+            assert!(matches!(
+                body.blocks[r.entry.index()].stmts.first().map(|x| &x.kind),
+                Some(weft_ir::StmtKind::Mention(q)) if *q == r.value
+            ));
+            verifies(&inst.built);
+        }
+    }
+
+    /// A source that ends before the run (`e03`): the closure keeps `x`, a
+    /// local of a block that ends before the run. The cell stays alive
+    /// through the closure value, so the copy reads it through the
+    /// environment local. The copy is a region in the body of its maker.
+    #[test]
+    fn a_capture_whose_source_ends_before_the_run_is_a_cell_of_the_value() {
+        let inst =
+            instantiate(&built(&probe("fixes/r0kb2", "e03_source_ends_bad.wf"))).expect("a copy");
+        let p = &inst.built.program;
+        let (r, _) = env_region(p);
+        assert_eq!(p.closures[r.closure.index()].maker, r.body);
+        verifies(&inst.built);
+    }
+
+    /// Form 3: a closure in a field of a struct (`e04`, `c18`) and in the
+    /// payload of an `Option` (`e05`) that a callee gives back. The site
+    /// reads the part into a local and runs it: the run gets a region.
+    #[test]
+    fn a_closure_in_a_field_or_a_variant_gets_a_copy_region() {
+        for (dir, name) in [
+            ("fixes/r0kb2", "e04_field_bad.wf"),
+            ("fixes/r0kb2", "e05_option_bad.wf"),
+            ("fixes/r0kb1", "c18_c2_field_bad.wf"),
+        ] {
+            let inst = instantiate(&built(&probe(dir, name))).expect("a copy");
+            let (r, _) = env_region(&inst.built.program);
+            assert!(r.sole, "{name}: the region is not the only run");
+            verifies(&inst.built);
+        }
+    }
+
+    /// The refusals: a closure that a callee gives back on one of two paths
+    /// (`a01`), a closure in a `Vec` (`a02`), a field that a callee can write
+    /// through a borrow (`a03`), a local that a scope body, a clause or a
+    /// task writes (`u12` to `u14`), a `once` closure (`o01`), and a closure
+    /// that writes its capture. Each run keeps the summary of the closure.
+    #[test]
+    fn a_capture_cell_that_can_change_or_an_unknown_closure_gets_no_copy() {
+        let writes = "effect Get { fn get() -> fn() }
+            fn main() {
+            let v = Vec.new()
+            v.push(1)
+            handle Get { fn get() { resume(|| v.clear()) } } in {
+            let r = &v[0]
+            let k = { let x = 7
+            || { let g = get()
+            g()
+            x = x + 1
+            print(x) } }
+            k()
+            print(r)
+            }
+            }
+";
+        let mut srcs = vec![("writes".to_string(), writes.to_string())];
+        for name in [
+            "a01_two_paths_bad.wf",
+            "a02_vec_same_id_bad.wf",
+            "a03_put_fns_bad.wf",
+            "u12_scope_body_bad.wf",
+            "u13_clause_bad.wf",
+            "u14_task_bad.wf",
+            "o01_once_two_runs_bad.wf",
+        ] {
+            srcs.push((name.to_string(), probe("fixes/r0kb2", name)));
+        }
+        for (name, src) in srcs {
+            let b = built(&src);
+            assert!(
+                instantiate(&b).is_none_or(|i| i
+                    .built
+                    .program
+                    .regions
+                    .iter()
+                    .all(|r| r.env_local.is_none())),
+                "{name}: a copy with an environment local"
             );
         }
     }

@@ -1,0 +1,16 @@
+// Plan stage R0k-b2 (form 4 with a capture; p03 of the design review of
+// R0k, written so that the clause runs the value): the clause resumes,
+// then runs `g`. `g` keeps `r`, a reference into `v`, a local of the
+// handled body, which has ended at that time: W0301. The run in the clause
+// gets a copy of the closure body; the copy reads `r` through the
+// environment local of the region.
+effect Run { fn run(g: fn()) }
+fn main() {
+    handle Run { fn run(g) { resume(())
+        g() } } in {
+        let v = Vec.new()
+        v.push(1)
+        let r = &v[0]
+        run(|| print(r))
+    }
+}

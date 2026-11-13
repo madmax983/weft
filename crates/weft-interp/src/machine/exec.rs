@@ -1010,17 +1010,37 @@ impl super::Machine<'_, '_> {
             Op::UnwindValue { var, path } => return self.unwind_value(*var, path),
             Op::UnwindKont(s) => return self.unwind_kont(*s),
             Op::UnwindExit => return self.unwind_exit(),
-            Op::PushHenv(var) => {
+            Op::PushHenv { var, code } => {
                 let cell = self.cell_of(*var)?;
-                let made = match self.heap.slot(cell).map(|s| &s.val) {
-                    Ok(Value::Closure(c)) => Some(c.henv.clone()),
-                    _ => None,
+                let (made, ran) = match self.heap.slot(cell).map(|s| &s.val) {
+                    Ok(Value::Closure(c)) => (Some(c.henv.clone()), Some(c.code)),
+                    _ => (None, None),
                 };
+                // The facts of a copy region hold only for a run of the
+                // copied closure (plan stage R0k-b2): the copy replaces the run
+                // by the body of that closure.
+                if self.facts.is_some() && ran != Some(*code) {
+                    return Err(self.fault(format!(
+                        "fact oracle (copy): the closure value of a copy region runs the code {}, not the code {code} of the copied closure",
+                        ran.map_or_else(|| "of no closure".to_string(), |c| c.to_string())
+                    )));
+                }
                 let fr = self.fr()?;
                 let h = made.unwrap_or_else(|| fr.henv.clone());
                 let old = std::mem::replace(&mut fr.henv, h);
                 let next = fr.saved_henv.take();
                 fr.saved_henv = Some(Rc::new(super::SavedHenv { henv: old, next }));
+            }
+            Op::EnvCell(k) => {
+                let (p, _) = self.pop_loc()?;
+                let cell = match self.hget(&p)? {
+                    Value::Closure(c) => c.cells.get(*k as usize).copied(),
+                    _ => None,
+                };
+                let Some(cell) = cell else {
+                    return Err(self.fault("internal: a copy environment names no capture cell"));
+                };
+                self.push(Value::Loc(Place::root(cell), false))?;
             }
             Op::PopHenv => {
                 let fr = self.fr()?;

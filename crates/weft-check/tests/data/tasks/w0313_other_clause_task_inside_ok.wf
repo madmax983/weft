@@ -1,0 +1,15 @@
+// Plan stage R0k-b2: the clause of `Run` is in the handled body of `Fail`
+// and spawns `f`, which fails through that handler. The task runs inside
+// the handled body of `Fail`. The program is correct: no W0313.
+effect Run { fn run(f: fn()) }
+fn mk() -> fn(fn()) / Run { |g: fn()| run(g) }
+fn main() / async {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Run { fn run(f) { scope { s => s.spawn(f) }
+            resume(()) } } in {
+            let c = mk()
+            c(|| fail("x"))
+        }
+    }
+    print("end")
+}

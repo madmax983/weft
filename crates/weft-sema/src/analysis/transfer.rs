@@ -88,6 +88,15 @@ pub fn move_path(
             return Ok(None);
         }
     }
+    // A capture through the environment local of a copy region (plan stage
+    // R0k-b2) is a cell that the closure value holds, not a part of the
+    // value: no move path.
+    if matches!(
+        p.body(body).and_then(|b| b.local_kind(place.local)),
+        Some(weft_ir::LocalKind::CopyEnv(_))
+    ) {
+        return Ok(None);
+    }
     let k = key(p, body, place.local)?;
     let mut path = Vec::new();
     for pr in &place.proj {
@@ -389,10 +398,27 @@ pub fn place_value(
     if let Some((k, path)) = move_path(cx.p, body, place)? {
         return Ok(st.value(k, &path));
     }
+    if let Some(v) = copy_env_value(cx, body, st, place)? {
+        return Ok(v);
+    }
     // A `Kept` capture of an instantiated closure is the variable of the
     // maker: its value in the state (the closure body runs with the values
     // of the maker, `docs/ir.md` 6.5).
-    if let Some((_, _, weft_ir::CaptureMode::Kept)) = alpha::env_capture(cx.p, body, place) {
+    if let Some((c, k, weft_ir::CaptureMode::Kept)) = alpha::env_capture(cx.p, body, place) {
+        // A capture of a capture through the environment local of a copy
+        // region (plan stage R0k-b2): the value of that capture.
+        if place.proj.len() == 1 && cx.roots.is_instantiated(alpha::unit_root(cx.p, body)) {
+            let src = cx.p.closures.get(c.index()).and_then(|d| {
+                d.captures
+                    .get(k as usize)
+                    .map(|x| (d.maker, x.source.clone()))
+            });
+            if let Some((maker, src)) = src {
+                if let Some(v) = copy_env_value(cx, maker, st, &src)? {
+                    return Ok(v);
+                }
+            }
+        }
         if cx.roots.is_instantiated(alpha::unit_root(cx.p, body)) && !place.has_deref() {
             let a = alpha(cx, body, st, place)?;
             let paths: Option<Vec<(Key, Vec<PathStep>)>> = a
@@ -506,6 +532,76 @@ pub fn place_value(
         }
     }
     Ok(Tree::leaf(v))
+}
+
+/// The value of capture `e.k` through the environment local `e` of a copy
+/// region (plan stage R0k-b2), or `None` for another place.
+///
+/// The cell belongs to the closure value of the region, as at a run of a
+/// closure that a callee made (`apply::made_sigma`): the references of the
+/// capture are the references of the value. Its function values are those of
+/// the capture ([`made_held`]: the value of a made closure holds the values of
+/// its `Kept` captures), or [`FnVal::Unknown`]: never the closure itself.
+///
+/// # Errors
+///
+/// The errors of α.
+fn copy_env_value(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    place: &Place,
+) -> Result<Option<Tree>, AlphaError> {
+    let Some((c, k)) = alpha::copy_env_capture(cx.p, body, place) else {
+        return Ok(None);
+    };
+    if place.proj.len() != 1 {
+        return Err(AlphaError::Later(
+            "a place below a capture of the environment of a copy region (stage R0k-b2)",
+        ));
+    }
+    let value = cx
+        .p
+        .copy_env_value(body, place.local)
+        .cloned()
+        .ok_or_else(|| AlphaError::BadPlace("an environment local with no region".to_string()))?;
+    let whole = place_value(cx, body, st, &value)?.flat();
+    let t = place_ty(cx, body, place)?;
+    let props = ir_props(cx.tys, t);
+    let fns_ty = crate::props::ir_has_fns(cx.tys, t);
+    let mut v = AbsVal::of_type(props.linear);
+    if fns_ty {
+        // The closure that the cell holds, if the copy knows it: one closure
+        // of the function gives the cell its one value.
+        let known =
+            cx.p.regions
+                .iter()
+                .find(|r| r.body == body && r.env_local == Some(place.local))
+                .and_then(|r| r.env_fns.iter().find(|(x, _)| *x == k).map(|(_, f)| *f));
+        if whole.fns.contains(&FnVal::Made(c)) {
+            v.fns = made_held(cx.p, c, k, &whole.fns);
+        } else if let Some(f) = known {
+            v.fns.insert(FnVal::Closure(f));
+        } else {
+            v.fns.insert(FnVal::Unknown);
+        }
+    }
+    if props.holds_refs || fns_ty {
+        v.refs = whole.refs;
+    }
+    // A `Kept` capture whose variable is a variable of the frame of the
+    // region: the value of the variable too (`apply::made_sigma`).
+    // While the state has the value of the variable, its function values are
+    // those of the capture.
+    if let Some((sb, src)) = super::apply::frame_capture_source(cx.p, c, k as usize, body) {
+        let known = st.tree(key(cx.p, sb, src.local)?).is_some();
+        let sv = place_value(cx, sb, st, &src)?.flat();
+        if known && fns_ty {
+            v.fns.clone_from(&sv.fns);
+        }
+        v.join(&sv);
+    }
+    Ok(Some(Tree::leaf(v)))
 }
 
 /// The value of operand `op` of body `body` in state `st`. The move of a
@@ -1782,6 +1878,94 @@ fn note_multi_apps(
     Ok(())
 }
 
+/// True if body `body` is in a clause (also through the makers of closures),
+/// before the handled body of handler `h` on the way up, whose `handle` is
+/// outside the handled body of `h`: the clause runs
+/// with the handlers of the site of its own handler, so a closure that
+/// performs through the capability of `h` runs outside `h` there (W0313;
+/// plan stage R0k-b2, the review probes `q01` and `q03`: 85 `from_maker`).
+fn clause_outside(p: &Program, body: BodyId, h: weft_ir::HandlerId) -> bool {
+    let Some(hb) = p.handlers.get(h.index()).map(|d| d.handled) else {
+        return false;
+    };
+    // From `body` up (a closure goes to its maker): the handled body of `h`
+    // first means that the node runs in it; a clause first runs with the
+    // handlers of the site of its handler, which has `h` only if the clause is
+    // inside the handled body of `h`.
+    let mut at = Some(body);
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = at else { return false };
+        if x == hb {
+            return false;
+        }
+        let Some(d) = p.body(x) else { return false };
+        if matches!(d.kind, weft_ir::BodyKind::Clause(..)) {
+            return !lexically_inside(p, x, hb);
+        }
+        at = match d.kind {
+            weft_ir::BodyKind::Closure(c) => p.closures.get(c.index()).map(|cd| cd.maker),
+            _ => d.parent,
+        };
+    }
+    false
+}
+
+/// The escapes (W0313, `clause::Escape::Given`) of the closures of the summaries
+/// `apps` that a task starts in body `body` (plan stage R0k-b2): an operation
+/// through a captured capability of a local handler `h`, where `body` is in a
+/// clause outside the handled body of `h` ([`clause_outside`]).
+pub(crate) fn note_task_escapes(cx: &mut Cx<'_>, body: BodyId, apps: &[Applied]) {
+    for a in apps {
+        for pf in &a.summary.performs {
+            let super::summary::CapIface::Cap(k) = pf.cap else {
+                continue;
+            };
+            let caps = a
+                .sigma
+                .captures
+                .get(k as usize)
+                .cloned()
+                .unwrap_or_default();
+            for q in caps {
+                let h = match cx.roots.role(cx.facts.place(q).root) {
+                    Some(crate::factgen::alpha::Role::Local(key)) => {
+                        match cx.p.body(key.0).map(|x| x.kind) {
+                            Some(weft_ir::BodyKind::Handled(h)) => Some(h),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(h) = h.filter(|&h| clause_outside(cx.p, body, h)) {
+                    let e = (h, super::clause::Escape::Given);
+                    if !cx
+                        .hx
+                        .escapes
+                        .iter()
+                        .any(|x| super::clause::Escape::same_report(x, &e))
+                    {
+                        cx.hx.escapes.push(e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// True if body `x` is body `a` or a body inside it (through the parent
+/// chain).
+fn lexically_inside(p: &Program, x: BodyId, a: BodyId) -> bool {
+    let mut at = Some(x);
+    for _ in 0..=p.bodies.len() {
+        match at {
+            Some(y) if y == a => return true,
+            Some(y) => at = p.body(y).and_then(|b| b.parent),
+            None => return false,
+        }
+    }
+    false
+}
+
 /// Checks the performs through a captured capability of the summaries that
 /// a run node applies (plan stage F16): the capability names a local
 /// handler whose clauses the node runs (`clause::call_handlers`). A
@@ -1856,13 +2040,10 @@ fn check_cap_apps(
                 };
                 // A clause of the handler itself runs the closure: the clause
                 // runs outside its handler (V046). The perform gave the
-                // closure to code that can keep it (W0313).
-                let own_clause = super::clause::enclosing_clause(cx.p, body).and_then(|c| {
-                    cx.p.handlers
-                        .iter()
-                        .position(|d| d.clauses.iter().any(|(_, x)| *x == c))
-                });
-                if let Some(h) = h.filter(|h| own_clause == Some(h.index())) {
+                // closure to code that can keep it (W0313). A clause of
+                // another handler whose `handle` is outside the handled body
+                // runs outside the handler too ([`clause_outside`]).
+                if let Some(h) = h.filter(|&h| clause_outside(cx.p, body, h)) {
                     cx.hx.escapes.push((h, super::clause::Escape::Given));
                     continue;
                 }
@@ -2968,6 +3149,13 @@ fn weak_values_stay(
         for g in reach_fns(cx, body, st, o)? {
             let k = match g {
                 FnVal::Item(f, _) => WeakKey::Fn(f),
+                // A closure whose only runs are copy regions (plan stage
+                // R0k-b2, `CopyRegion::sole`): no run applies its summary.
+                FnVal::Closure(c) | FnVal::Made(c)
+                    if cx.p.regions.iter().any(|r| r.sole && r.closure == c) =>
+                {
+                    continue
+                }
                 FnVal::Closure(c) | FnVal::Made(c) => WeakKey::Closure(c),
                 _ => continue,
             };

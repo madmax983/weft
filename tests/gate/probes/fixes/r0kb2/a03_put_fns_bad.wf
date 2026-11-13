@@ -1,0 +1,28 @@
+// Plan stage R0k-b2 (an acceptance probe of the B1 note): the site reads a
+// closure out of a field, but `put_fns` writes the field before the read.
+// The closure that `put_fns` puts there gives a value to `run`, and it is
+// made in the handled body of H, so the `run` goes to H, whose clause
+// clears `v`. A copy of the closure of `mk_box` would print 1 and give
+// nothing to `run`. A borrow of the local of the way keeps the fallback.
+effect Run { fn run(g: fn()) }
+struct Bx { f: fn() / Run }
+fn mk_box() -> Bx { Bx { f: || print(1) } }
+fn noop() {}
+fn put_fns(b: &Bx, f: fn() / Run) / mut(b) { b.f = f }
+fn outer() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let b = mk_box()
+        put_fns(&b, || run(noop))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            let c = b.f
+            c()
+        }
+        print(r)
+    }
+}
+fn main() { outer() }

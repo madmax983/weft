@@ -632,6 +632,8 @@ fn region(p: &Program, entry: u32, blocks: &[u32]) -> CopyRegion {
         value: Place::local(LocalId(0)),
         closure: ClosureId(0),
         sole: false,
+        env_local: None,
+        env_fns: Vec::new(),
     }
 }
 
@@ -642,6 +644,33 @@ fn v19_a_region_with_no_environment() {
     r.env = CapEnvId(999);
     p.regions.push(r);
     only(&p, &t.table, br(Rule::BadRegion, 0, None, None));
+}
+
+#[test]
+fn v19_a_region_whose_environment_local_is_no_copy_environment() {
+    let (mut p, t) = m3();
+    // Plan stage R0k-b2: the environment local of a region is a local of
+    // kind `CopyEnv` of the closure of the region.
+    let mut r = region(&p, 0, &[0]);
+    r.env_local = Some(LocalId(0));
+    p.regions.push(r);
+    only(&p, &t.table, br(Rule::BadRegion, 0, None, None));
+}
+
+#[test]
+fn v14_a_copy_environment_local_that_no_region_names() {
+    let (mut p, t) = m3();
+    // Plan stage R0k-b2: a local of kind `CopyEnv` is the environment local
+    // of a region of its body.
+    let first = p.bodies[0].locals[0].clone();
+    let l = LocalId(u32::try_from(p.bodies[0].locals.len()).expect("an id"));
+    p.bodies[0].locals.push(weft_ir::LocalDecl {
+        kind: LocalKind::CopyEnv(ClosureId(0)),
+        name: None,
+        in_place: false,
+        ..first
+    });
+    only(&p, &t.table, br(Rule::BadUpvar, 0, None, Some(l.0)));
 }
 
 #[test]

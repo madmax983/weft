@@ -1,0 +1,21 @@
+// Plan stage R0k-b2 (form 2 with a capture that holds a reference): the
+// closure of `mk` keeps `h`, a closure that reads `r`, a reference into `v`.
+// The clause of the handler of `main` keeps the value that `run` gives,
+// and `main` runs it after `outer` ends: a read of a freed cell. The copy
+// gives the references of the closure value to `run`.
+effect Run { fn run(g: fn()) }
+fn noop() {}
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn outer() / Run {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let c = mk(|| print(r))
+    handle Run { fn run(g) { resume(()) } } in { c() }
+}
+fn main() {
+    let keep = noop
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in { outer() }
+    keep()
+}

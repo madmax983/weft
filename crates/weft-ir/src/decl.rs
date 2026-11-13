@@ -58,6 +58,17 @@ pub struct CopyRegion {
     /// The copy regions of the closure are its only runs: no other code
     /// reads the value of the closure, so its own body never runs.
     pub sole: bool,
+    /// The environment local of the region (plan stage R0k-b2), a local of
+    /// [`CopyRegion::body`] of kind [`LocalKind::CopyEnv`](crate::LocalKind::CopyEnv):
+    /// the code of the region reads a capture through it, as a cell of the
+    /// closure value. `None` if the region names each capture through a place
+    /// of the body.
+    pub env_local: Option<crate::LocalId>,
+    /// For a capture `k` that the region reads through [`CopyRegion::env_local`]:
+    /// the closure that the cell holds, if one closure of the same function
+    /// gives the cell its one value (plan stage R0k-b2). The facts take the
+    /// function values of the capture from it.
+    pub env_fns: Vec<(u32, ClosureId)>,
 }
 
 impl Program {
@@ -227,6 +238,15 @@ impl Program {
         self.regions
             .iter()
             .find(|r| r.body == body && r.blocks.binary_search(&b).is_ok())
+    }
+
+    /// Returns the closure value whose environment local `l` of body `body` is
+    /// ([`CopyRegion::env_local`], plan stage R0k-b2): the value of its region.
+    pub fn copy_env_value(&self, body: BodyId, l: crate::LocalId) -> Option<&Place> {
+        self.regions
+            .iter()
+            .find(|r| r.body == body && r.env_local == Some(l))
+            .map(|r| &r.value)
     }
 
     /// Returns the static capability environment of the code of block `b` of body

@@ -286,6 +286,9 @@ fn regions(p: &Program, out: &mut Vec<Broken>) {
             || r.blocks.iter().any(|b| body.block(*b).is_none())
             || body.local(r.value.local).is_none()
             || p.cap_envs.get(r.env.index()).is_none()
+            || r.env_local.is_some_and(|l| {
+                body.local_kind(l) != Some(LocalKind::CopyEnv(r.closure)) || !r.value.is_local()
+            })
         {
             bad(out, None);
             continue;
@@ -834,7 +837,10 @@ impl<'a> Cx<'a> {
     /// Returns true for a local whose cell belongs to another frame: an upvar local
     /// or the environment of a closure. It has no `Live` and no `Dead`.
     fn foreign(&self, l: LocalId) -> bool {
-        matches!(self.kind(l), Some(LocalKind::Upvar(_) | LocalKind::Env))
+        matches!(
+            self.kind(l),
+            Some(LocalKind::Upvar(_) | LocalKind::Env | LocalKind::CopyEnv(_))
+        )
     }
 
     /// Returns true for a promoted temporary (`docs/ir.md` 5.10): each `Live`
@@ -1122,6 +1128,9 @@ impl<'a> Cx<'a> {
             LocalKind::Env | LocalKind::Upvar(_) => {
                 env_of(self.p, self.id, l).map_or(Pt::Ty(d.ty), Pt::Env)
             }
+            // The environment local of a copy region (plan stage R0k-b2) has
+            // the place type of the environment of its closure.
+            LocalKind::CopyEnv(c) => Pt::Env(c),
             _ => Pt::Ty(d.ty),
         }
     }
@@ -1580,18 +1589,24 @@ impl<'a> Cx<'a> {
     /// V14: upvar locals and the environment of a closure.
     fn upvars(&mut self) {
         for (i, d) in self.body.locals.iter().enumerate() {
-            let ok = match d.kind {
-                LocalKind::Upvar(src) => {
-                    self.body.kind.has_upvars()
-                        && self
-                            .body
-                            .parent
-                            .and_then(|pb| self.p.body(pb))
-                            .is_some_and(|pb| src.index() < pb.locals.len())
-                }
-                LocalKind::Env => matches!(self.body.kind, BodyKind::Closure(_)),
-                _ => continue,
-            };
+            let ok =
+                match d.kind {
+                    LocalKind::Upvar(src) => {
+                        self.body.kind.has_upvars()
+                            && self
+                                .body
+                                .parent
+                                .and_then(|pb| self.p.body(pb))
+                                .is_some_and(|pb| src.index() < pb.locals.len())
+                    }
+                    LocalKind::Env => matches!(self.body.kind, BodyKind::Closure(_)),
+                    // The environment local of a copy region (plan stage R0k-b2):
+                    // a region of this body names it, for the same closure.
+                    LocalKind::CopyEnv(c) => self.p.regions.iter().any(|r| {
+                        r.body == self.id && r.env_local == Some(lid(i)) && r.closure == c
+                    }),
+                    _ => continue,
+                };
             if !ok {
                 self.push(Rule::BadUpvar, None, Some(lid(i)));
             }
@@ -1614,6 +1629,11 @@ impl<'a> Cx<'a> {
                     let once = self.p.closures.get(c.index()).is_some_and(|x| x.once);
                     not_once.insert(lid(i), !once);
                 }
+            }
+            // The environment local of a copy region (plan stage R0k-b2): a
+            // move below it is never valid. The copy only reads its captures.
+            if matches!(d.kind, LocalKind::CopyEnv(_)) {
+                not_once.insert(lid(i), true);
             }
         }
         if !not_once.values().any(|&x| x) {
@@ -2144,6 +2164,14 @@ fn source_copy(p: &Program, tys: &TyTable, c: &crate::ClosureDecl, k: usize) -> 
 fn kept_cell(p: &Program, maker: BodyId, src: &Place) -> bool {
     if src.is_local() {
         return true;
+    }
+    // A capture of the environment local of a copy region (plan stage R0k-b2)
+    // shares the cell of the closure value.
+    if matches!(
+        p.body(maker).and_then(|b| b.local_kind(src.local)),
+        Some(LocalKind::CopyEnv(_))
+    ) {
+        return matches!(src.proj.as_slice(), [Proj::Field(_)]);
     }
     env_of(p, maker, src.local).is_some()
         && matches!(

@@ -10783,15 +10783,6 @@ reason = "stage R0k-a2 fix (probes of the review of R0k-a2): the local `k` gets 
 stage = "R0k"
 
 [[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0k3/h03_made_closure_keep_bad.wf",
-]
-finding = "R0k3-HENV"
-reason = "stage R0k-b1 design check (m3): the closure that `mk_cap` makes performs `Run` through the handler environment of the call of `mk_cap`, and the clause of `main` keeps the function value, which reads a local of `outer` after `outer` ends. The `ir` pipeline keeps the old pipeline (C2), and the old pipeline misses the fault. A copy of the closure body at the run node (R0k-b1 as written) would change the handler of the perform; the direction B1' (an explicit handler environment in the closure value) must reject it"
-stage = "R0k"
-
-[[entry]]
 class = "changed"
 files = [
     "tests/gate/probes/fixes/r0kc2/m1_outside_ref_cleared.wf",
@@ -11001,15 +10992,6 @@ reason = "stage R0k-b1' (probes of the design review of B1', in scope before the
 stage = "R0k"
 
 [[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0kb1/c18_c2_field_bad.wf",
-]
-finding = "R0kB1P-FIELD"
-reason = "stage R0k-b1' (a probe of the design review of B1', form 3): `mk_box` is called in the handled body of H and makes a struct whose field holds a closure that gives `h` to `run` through the row of `mk_box`; the site reads the field and runs it in the handled body of H2. The `run` goes to H, whose clause clears `v`: a read of a freed cell. The program keeps the C2 fallback (the way of the value has a field, and the closure has a `Kept` capture of the parameter of the copied maker, which needs the local `CopyEnv` of R0k-b1, not built), and the old pipeline misses the fault, as before the stage. A fix: `CopyEnv` and a field step of the way (`docs/plan/core-ir.md`, \"R0k-b1' as built\")"
-stage = "R0k"
-
-[[entry]]
 class = "sig"
 parts = ["pins"]
 files = [
@@ -11061,4 +11043,80 @@ files = [
 ]
 codes = ["W0313"]
 reason = "stage R0k-b1' (tier 2, mutants of 83_kept_values that come into scope with the copy regions): the mutation puts the call `copy_into_held(&j, &ds)` of `copies_into_held` into a closure that no code calls, so the closure of `j` never goes into `keep` and does not leave its handler. The old pipeline still gives W0313 at the `handle` (line 149 or 150), a false positive; the `ir` pipeline gives no error there. The other 16 W0313 of the file stay, so both pipelines reject the programs (no `main`: not runnable)"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/85_op_args.wf",
+    "tests/gate/probes/fixes/r0kb2/q03_85_from_maker_bad.wf",
+    "r3/quality/fuzzcorp/85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m00123_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m00659_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m00838_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m01962_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m02138_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m02563_85_op_args.wf",
+]
+codes = ["W0313", "W0314"]
+reason = "stage R0k-b2: 85 (and its copy in the fuzz corpus, six mutants of tier 2 and the review probe `q03`, `from_maker` with a `main`: ev.sh both-reject or held) comes into scope (the closures of `mk` and `gives` are in no structural check of `weak_ok`: each call of their function has a copy). Both pipelines reject. The `ir` pipeline gives W0314 at the spawn of each clause (as the old one), and at the closure `|| note(1)` of `gives` (line 10, the code of the copies of `gives` at the calls of lines 26, 36, 45 and 54), not at those calls. At line 66 it gives W0313 and no W0314 (the old pipeline gives both): the clause of `Run` spawns the closure `|| note(2)`, which performs through the local handler of `Note`, and the clause runs with the handlers of the site of `Run`, outside the handled body of `Note` (a true error: the review probe `q03` faults with \"no handler for `Note.note` on this task\"; the escape check of stage R0k-b2). The corpus marks it (`//~ W0314 old:`, `//~ old: W0314`, `//~ W0313 old: W0313 W0314`)"
+stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0kb1/c13_c2_fail_maker_env_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c14_c2_scope_fail_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c15_c2_timeout_bad.wf",
+]
+codes = ["W0301"]
+reason = "stage R0k-b2 (probes of the design review of B1', in scope with the environment local of a copy region): the closure of `mk_cap` gives `h` to `run` and fails, and its failure goes to H1, whose clause clears `v`. Both pipelines give W0301 at the read of `r` (line 26, 31, 27); the `ir` pipeline gives two errors there, one for the call of `mk_cap` (the footprint of the handler of its copy) and one for the `Fail` clause. Both reject; ev.sh: held"
+stage = "R0k"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0kb2/a02_vec_same_id_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/e04b_field_read_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/u12_scope_body_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/u13_clause_bad.wf",
+]
+finding = "R0kB2-STAYS"
+reason = "stage R0k-b2 (acceptance probes of the B1 note): the run of the closure gets no copy, and the program keeps the C2 fallback; the old pipeline misses each fault. a02: the closure is in a `Vec` (a heap slot is not on the way of the value). e04b: the site reads another field of the struct of the way, so the region is not the only run of the closure, and its perform needs the rest of the handled body (F17). u12, u13: a scope body or a clause gives the local of the way a second closure before the run (`nested_writes`). The probe run of B1 (`run_values`) and a heap step of the way are pending (`docs/plan/core-ir.md`, \"R0k-b2 as built\")"
+stage = "R0k"
+
+[[entry]]
+class = "sig"
+parts = ["op_fns", "op_effects", "pins", "raises", "named", "task_effects", "ret", "ret_refs", "task_runs", "repeats", "reaches", "reach_repeats", "tasks"]
+files = [
+    "tests/gate/probes/fixes/r0kb2/q01b_85_before_resume_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/q03_85_from_maker_bad.wf",
+    "tests/gate/probes/fixes/r0k3/h03_made_closure_keep_bad.wf",
+    "tests/gate/probes/fixes/r0k3/h03_made_closure_keep_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/c10_c2_mk_in_H_run_in_H2_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c10_c2_mk_in_H_run_in_H2_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/c13_c2_fail_maker_env_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c13_c2_fail_maker_env_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/c14_c2_scope_fail_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c14_c2_scope_fail_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/c15_c2_timeout_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c15_c2_timeout_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/c17_c2_call_row_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c17_c2_call_row_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/c18_c2_field_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c18_c2_field_ok.wf",
+    "tests/gate/probes/fixes/r0kb1/c19_c2_clause_runs_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/c19_c2_clause_runs_ok.wf",
+    "tests/gate/probes/fixes/r0kb2/e01_callee_capture_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/e01_callee_capture_ok.wf",
+    "tests/gate/probes/fixes/r0kb2/e02_kept_ref_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/e02_kept_ref_ok.wf",
+    "tests/gate/probes/fixes/r0kb2/e04_field_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/e04_field_ok.wf",
+    "tests/gate/probes/fixes/r0kb2/e04b_field_read_ok.wf",
+    "tests/gate/probes/fixes/r0kb2/e05_option_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/e05_option_ok.wf",
+    "tests/programs/85_op_args.wf",
+]
+reason = "stage R0k-b2 (programs that come into scope with the environment local of a copy region, and 85 with `weak_ok`): a function that gives back a closure (`mk`, `mk_cap`, `mk_box`, `mk_opt`, `mk_spawner`) or that gives a function value to an operation through its row (`go`, `gives`, `passes_on`, `gives_log`). With the copies `weak_ok` holds, so the summary has the weak form of R0k-a (`WeakRowOps`): the operation gives the value to code of a caller, which can run it, also as a task. The parts `op_fns` and `op_effects` of the old inference are in the part `runs` of that summary, and `task_effects` and `pins` are those of the task of the code of a caller (the classes F19-SIG-PINS and R0f). `raises` and `named` of a maker (c14, c15, `mk_spawner` of 85): the closure fails, opens a scope or a timeout at its run, through the handler environment of the call of the maker, so the `ir` summary gives these effects to the closure value (part `ret`), not to the maker, which does not fail (the class F19-SIG-NAMED). `callee_gives_runtime_log` of 85 has the copy of `gives_log`: its clause runs the value on a task of a scope that ends before the clause resumes, so no task of the function is left (part `tasks` and `task_effects`). The parts `ret`, `ret_refs`, `task_runs`, `repeats`, `reaches`, `reach_repeats` and `tasks` are those of entry F13 for the function values of a body"
 stage = "R0k"

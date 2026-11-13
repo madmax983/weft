@@ -515,6 +515,17 @@ fn a_capability_that_leaves_its_handler_is_w0313() {
     check("w0313_run_known.wf");
 }
 
+/// Plan stage R0k-b2 (`transfer::clause_outside`, `check_cap_apps`): a
+/// clause of another handler runs a closure that performs through a local
+/// handler. The clause runs with the handlers of its own site, so a clause
+/// outside the handled body of the local handler is W0313. A clause inside
+/// that handled body is correct. (`ir_tasks.rs` has the form with a task.)
+#[test]
+fn a_capability_that_a_clause_outside_its_handler_runs_is_w0313() {
+    check("w0313_other_clause_call.wf");
+    check("w0313_other_clause_inside_ok.wf");
+}
+
 /// V046 (plan stage F17): a closure goes to an operation of its own
 /// handler. The clause runs it outside the handler, so the handled body gave
 /// it to code that can keep it.

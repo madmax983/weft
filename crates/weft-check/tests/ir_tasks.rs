@@ -298,3 +298,14 @@ fn a_task_of_a_callee_conflicts_with_a_clause_of_a_caller() {
 fn a_fork_that_a_closure_body_starts_checks_its_branches() {
     check("fork_in_closure.wf");
 }
+
+/// Plan stage R0k-b2 (`transfer::clause_outside`, `note_task_escapes`): a
+/// clause of another handler spawns a closure that performs through a local
+/// handler. The task runs with the handlers of the site of the clause, so a
+/// clause outside the handled body of the local handler is W0313 (and W0314
+/// for the task). A clause inside that handled body is correct.
+#[test]
+fn a_task_of_a_clause_outside_the_handler_of_its_capability_is_w0313() {
+    check("w0313_other_clause_task.wf");
+    check("w0313_other_clause_task_inside_ok.wf");
+}

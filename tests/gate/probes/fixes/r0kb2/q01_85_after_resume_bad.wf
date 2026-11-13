@@ -1,0 +1,20 @@
+// Plan stage R0k-b2 (the review of R0k-b2, a variant of line 66 of 85):
+// the clause of `Run` runs `f` after its `resume`. `f` performs through
+// the local handler of `Note`, and the clause runs outside the handled
+// body of `Note`: `note` has no handler (W0313).
+effect Note { fn note(x: u64) }
+effect Run { fn run(f: fn()) }
+fn mk() -> fn(fn()) / Run { |g: fn()| run(g) }
+fn from_maker() {
+    handle Run {
+        fn run(f) {
+            resume(())
+            f()
+        }
+    } in {
+        let c = mk()
+        handle Note { fn note(x) { print(x)
+            resume(()) } } in c(|| note(2))
+    }
+}
+fn main() { from_maker() }

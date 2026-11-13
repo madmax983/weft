@@ -711,7 +711,7 @@ fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
 /// or in a body whose frame `body` runs in through scope bodies, handled
 /// bodies and clauses ([`crate::factgen::alpha::unit_root`]). The states of
 /// `body` have the values of the locals of those bodies.
-fn frame_capture_source(
+pub(crate) fn frame_capture_source(
     p: &weft_ir::Program,
     c: weft_ir::ClosureId,
     k: usize,
