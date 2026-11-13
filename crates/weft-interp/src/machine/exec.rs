@@ -264,7 +264,7 @@ impl super::Machine<'_, '_> {
                     }
                 }
                 let events = self.heap.take_facts_log();
-                fo.wait_events(cur, 0, &events);
+                fo.wait_events(cur, (0, None), &events);
                 if wait != 0 {
                     if let Err(m) = fo.wait_end(wait) {
                         return Err(self.fault(m));
@@ -279,7 +279,11 @@ impl super::Machine<'_, '_> {
             let flow = self.exec(op)?;
             if let Some(fo) = self.facts.as_mut() {
                 let events = self.heap.take_facts_log();
-                fo.wait_events(cur, 0, &events);
+                // The body of the op: a copied frame (no `uid`) of a clause of a
+                // handler of the facts of a waiting frame can make the access (A4,
+                // plan stage R0z Z2, fix 2).
+                let body = code.locs.get(pc).map(|l| l.body);
+                fo.wait_events(cur, (0, body), &events);
             }
             return Ok(flow);
         }
@@ -318,7 +322,7 @@ impl super::Machine<'_, '_> {
         // A4: the accesses since the last op (an unwind, the end of a
         // `handle`), then the end of a wait of this frame at its `resume`.
         let events = self.heap.take_facts_log();
-        fo.wait_events(self.cur, 0, &events);
+        fo.wait_events(self.cur, (0, None), &events);
         fo.wait_end(uid)?;
         let changed = fo.step(uid, loc.block, loc.stmt, self.cur)?;
         let Some(Frame::Code(cf)) = self.tasks.get(self.cur).and_then(|t| t.frames.last()) else {
@@ -356,7 +360,7 @@ impl super::Machine<'_, '_> {
             return Ok(());
         };
         let events = self.heap.take_facts_log();
-        fo.wait_events(self.cur, uid, &events);
+        fo.wait_events(self.cur, (uid, None), &events);
         if matches!(op, Op::Return) {
             fo.leave(uid);
             return Ok(());

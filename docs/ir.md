@@ -4140,7 +4140,8 @@ of the stage in `docs/plan/core-ir.md`):
   variable points only into places of the copied frames must be bound again at a `Copy`
   node, and at a later copy a reference into a shared cell that an access since the
   operation ended must not be.
-- Open, older than the stage (the re-entry of a function body has them too). A precision
+- Open, older than the stage (the re-entry of a function body has them too; closed in
+  plan stage R0z Z2, below, but for the clause form of the precision loss). A precision
   loss: a reference through an `Rc` handle of a copied frame is invalid at the re-entry
   after the end of the handle in the previous run (a false W0301). A gap: the variable
   "the copy of the frame" of a call (D-MULTI-MID) points only into the places below the
@@ -4185,7 +4186,8 @@ frame; the finding of the review of R0k-c2):
   between two `resume`s, and its facts do not see the reference. The error of the `ir`
   pipeline is final; with no error the old pipeline checks the program. A variable of the
   frame of the function has the same gap (older than the stage, as above,
-  `n18_rc_handled_frame_bad`): it stays open.
+  `n18_rc_handled_frame_bad`): it stays open. (Plan stage R0z Z2 removes this rule: the
+  facts of the caller see the change, below.)
 - The fact oracle (A4 of re-entries). At a later copy, a reference of a clause frame
   into a shared cell whose target an access since the operation freed or moved, or whose
   `Vec` buffer the access wrote as a whole (an unstable step), must have a variable that
@@ -4194,6 +4196,142 @@ frame; the finding of the review of R0k-c2):
   the target only must not bind it again. In the frame of a function the change can come from a clause of a caller
   between two `resume`s: the facts of the caller check it (D-MULTI-MID), so there the
   rule of R0k-c2 stays.
+
+As built (plan stage R0z Z2 and its fixes 1 and 2: the `rc` groups of a copied frame
+across a row; `handlers::copy_node`, `note_row_refs`, `copy_group_vars`, `rc_shadows`;
+the summary part `row_refs`):
+
+- The summary part `row_refs` (`summary::RowRefs`, fixes 1 and 2). The `rc` groups that
+  a reference of a frame of the body holds across a node that waits at a `multi`
+  operation of a handler of a caller (`frames::row_multi`, or a row that the analysis
+  finds), each one with the first step of the place below the group root (`RowStep`;
+  `None` for the whole group): the group places in the references of the values of the
+  locals and of the heap slots in the state before the node (`handlers::note_row_refs`),
+  and the part of a callee that is a function item. The flag `twice` (fix 2): a run of
+  the body can wait at such a node more than once (a node in a body that is not the body
+  of the function, a path from the node to such a node again on the IR blocks, or a
+  callee with the flag). A run node of a function value or an intrinsic, a group that is
+  not a definition, a callee with no part, and the start of the fixpoint
+  (`RowRefs::Unset`) give `Any`. The part grows in the fixpoint (`Inferred::join`).
+- The copy of the frame of a call, for the groups (`copy_group_vars`). The groups of a
+  call are the part `row_refs` of the summary of a callee that is a function item, if it
+  names them; else each group that the `Main` node reads, changes, lends or frees
+  (`call_groups`). Two variables stand for them, each one with a shadow root (kind
+  `Arg`, the name of the group) for each group, a place below the first step of each
+  place of the part (fix 2: a change of another field of the object does not reach it),
+  and only these changes on it:
+  - "the copy of the frame that `f` runs": a new value where the copy of the frame is new
+    (`Ret`, and the `Return` nodes for a handler of a caller), a use at `Copy`; each
+    change of the group at a node of the function. Only where no later copy can follow
+    a change of a clause after its last `resume` (`post_filter`, the invariant below), a
+    `Post` node of the handler `h` gives only the changes of the part of a clause after
+    its first `resume` that can reach a later `resume` (`before_a_resume`). Else a later
+    copy can follow such a change: the callee waits at the row again inside the
+    `resume` of the outer run of the clause (`fixes/r0z2/z21` to `z24`, `z26`), an outer
+    `multi` handler copies the frames (`z19`, `z20`, `z25`), or the code of the caller
+    after the call waits at the handler again (`z31` to `z40`, fix 3);
+  - "the frame that `f` runs while it waits": no new value, a use at each `Ret` node of
+    the call; only the changes of the parts of the clauses before their first `resume`
+    at the `Main` node of the call (the clause changes the object, then resumes the frame
+    that holds the reference into it).
+
+  So a change of such a group by a clause of a handler of the function (before the first
+  `resume`, or between two `resume`s, or after the last `resume` where a later copy can
+  follow), or by the code after the call, is W0301 at the call
+  (`fixes/r0kc2c/p08_rc_between_param_bad`, `n18`, `n19`, `fixes/r0z2/z01`, `z02`, `z05`
+  to `z10`, `z15`, `z16`, `z19` to `z26`, `z28`). A group that the callee frame does not
+  hold a reference into across the operation, or another field of it, gives no error
+  (`z11` to `z14`, `z17`, `z18`, `z27`, `z29`, `z30`).
+- The invariant of the filter (fix 3). A change after the last `resume` of a run `I` of a
+  clause of `h` reaches no copy of the callee frame only if, while that frame lives, no
+  other run of a clause of `h` or of a handler around `h` can start after the change and
+  then resume a copy of the frame. A run of a clause starts only at a perform of its
+  effect. So `handlers::post_filter` gives `h` only if each of these holds, and else no
+  filter:
+  1. the callee is a function item whose part `row_refs` names the groups with no
+     `twice`, whose summary performs only the effect of `h` and effects that no handler
+     of the program handles, runs no function value and starts no task, and the call
+     waits at no row of a caller: the frame itself starts no other run;
+  2. `h` is the only handler whose clause the call runs, and it can resume more than
+     once;
+  3. the call is in the handled body of `h` (the same body), each terminator that a path
+     from the call reaches in that body is safe (`safe_term`: a jump, a branch, the end
+     of the body, an `assert`, or a call of a function item whose summary performs only
+     effects that no handler of the program handles, runs no function value, starts no
+     task and is not `multi`), and no such path reaches the call again (a loop): the
+     code of the caller after the call starts no run;
+  4. each terminator of each clause of `h` is safe or a `resume`: a run of a clause of
+     `h` starts no run of a handler around `h` that could copy it, and the frame, again.
+
+  After the end of the handled body of `h` the frame has returned, so a perform there
+  gives no copy of it, and a run of a clause of `h` that starts before the call resumes
+  a continuation that has no frame of the call yet. The handle of `h` must be in the
+  function that makes the call (condition 3); else no filter.
+- Group identity. A group is the type of its objects (`Roots::group`); the fields of the
+  group are apart (fix 2). A change of another object of the same type counts (`r0z2rev/p/f03_clause_other_obj_ok`: a false W0301).
+  The facts cannot tell the two objects apart: the one-function form
+  (`f05_same_fn_other_obj_ok`) is W0301 in both pipelines.
+- The pending rule `RC_ACROSS_ROW` of stage R0k-c2 fix 1 goes: an argument of a clause
+  in an `rc` group is an argument as the others, and a variable of a copied frame that
+  points into an `rc` group keeps its state as in stage R0k-c2.
+- A reference through a copied `Rc` handle. A local of a copied frame whose value points
+  only into the copied frames and into `rc` groups, with at least one place of the copied
+  frames (a reference through an `Rc` handle of the frame), is valid in the copy: the copy
+  holds its own copy of the handle (`copy_frames`), so the end or a new value of the
+  handle in the previous run does not end the object. So the `Copy` node binds its
+  variables again (`rebound_at`, `empty_at`; `Handlers::rc_splits`). Each such variable
+  `V` gets a shadow variable ("the `rc` object behind `V`", `rc_shadow_name`): it points
+  into the group places of `V`, gets a new value where `V` gets one but not at these
+  `Copy` nodes, has `writes_via` where `V` has it, and its uses are the uses of `V` that
+  these `Copy` nodes reach before a new value of `V`. So the shadow variable is invalid
+  only where `V` was invalid before the stage, and only for a change of the group: the
+  split removes the errors of the end of a copied handle (and of a change of a place of
+  the copied frames), and adds none. A change of the group by the code of a caller (before
+  the first `resume`, between two `resume`s, or after the call) is in the facts of the
+  caller (above): the part `row_refs` of the summary of the function has the group.
+- Open: the clause form. For a reference through a handle that a clause makes before the
+  row (`rc_clause_ok`, `fixes/r0kc2c/p04_struct_rc_field_ok`), the node that runs the
+  clause carries the changes of the whole part of the clause before its first `resume`
+  (`copy_part`): the `push` that fills the object before the row reaches the `Copy` node
+  of the row through the edge from the `Return`. The shadow variable keeps that change
+  (a false W0301, as before the stage). A fix needs the changes of the clause after the
+  row apart from the changes before it at the node that runs the clause.
+- Open: a plain operation (not `multi`). A clause of a caller that changes an `rc` object
+  before its one `resume`, while a callee holds a reference into the object across the
+  operation (`r0z/z2/t/once1.wf`, `r0z2rev/p/m04_own_once_bad`), is a hole of both
+  pipelines that is older than the stage: the call of a plain operation has no copy of
+  the frame.
+- The fact oracle. A4 of the copies of frames (`wait_end`) names the target of a
+  reference of the callee frame in the facts of the caller; a variable that points into
+  a shadow root of the group of a target (the same name) points there. The `Copy` node
+  of the call uses a variable that points there (`root_rc_fo`: an A4 failure on a clean
+  program before the stage). Fix 1: for an access to an `rc` object that a frame of the
+  facts of the caller made (`Wait::hits`), a variable that points there must be invalid
+  at a `Copy` node of the call or at a `Ret` node after it (`copy_invalid`). A4 of
+  re-entries accepts a variable that the `Copy` node binds again if its shadow variable
+  of the group part points into a place and the node does not bind it again; in a clause
+  frame the shadow variable can be the invalid one. The mutation tests (`weft-interp`
+  `fact_oracle.rs`): with no group places in the copy of the frame, A4 fails on
+  `fixes/r0z2/z01` and `z02`; with no places for the variable of the frame that waits,
+  A4 fails on `z06_own_clear_first_bad`; with no places for the shadow variables, A4
+  fails on `z03_root_handle_bad` and `fixes/r0kc2c/p04_struct_rc_field_bad`. A4 of copies
+  does not name a handle that comes from an operation (`z05`) or a reference of a handled
+  body of the callee (`n18`), and the strict rule does not see an access that a callee of
+  the clause makes (`z07`). Fix 2: an access of an op of a copied frame (no `uid`) counts
+  for the unit of the IR body of the op (`wait_events` gets the body), so a clause of an
+  inner handler in a copy of the frames of an outer `multi` handler is code of the facts
+  of the caller; with the filter of fix 1 at each `Post` node, A4 fails on `z20` and `z21`
+  (the mutation test `a_change_of_a_clause_after_its_last_resume_before_another_copy_fails_a4`).
+- Fix 3, A4: with the filter of fix 1 at each `Post` node, A4 fails on `z31` and `z32`
+  (the code of the caller after the call), as on `z20`, `z21`. A4 cannot run on `z36`
+  (`r0z2rev3/p/e18`: an outer `multi` handler that the caller performs after the call):
+  A5 fails before, with the facts as the generator gives them (below).
+- Open (older than the stage): A5 (the clause oracle) fails on `z19`, `z36` (and on
+  `r0z/z2f3/held/z19_outer_multi_after_last_ok`, `z36_outer_pick_after_call_ok`, clean
+  programs that the stage accepts and `main` rejected): the `resume` node of the clause of the inner handler `Choice` has no
+  `performs_at` with the capability of the outer local handler `Pick`, whose clause runs
+  while the clause of `Choice` waits at its `resume`. The clean twins are not probes of
+  tier 1.
 
 As built (plan stage F17 part 0, the findings of the independent review of group D;
 `factgen/handlers.rs` `Region`): the region of the continuation of a `resume` is the

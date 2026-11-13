@@ -1,0 +1,22 @@
+// Plan stage R0z Z2, fix 1 (a probe of the review of the stage: f11_body_after_bad).
+// bad twin of f11_body_after_ok: `run` holds a reference into the log across
+// the row. The handled body clears the log after the call; the second copy
+// reads a freed cell.
+struct Log { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn run(l: &Rc<Log>) -> u64 / Choice {
+    let r = &l.v[0]
+    let c = choose()
+    print(r)
+    1
+}
+fn main() {
+    let l = Rc.new(Log { v: Vec.new() })
+    l.v.push(3)
+    handle Choice { fn choose() { resume(true)
+        resume(false) } } in {
+        let x = run(&l)
+        l.v.clear()
+    }
+    print(l.v.len())
+}

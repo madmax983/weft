@@ -544,6 +544,10 @@ pub struct Inferred {
     /// The body can give a place of its own frame to an operation of a
     /// caller (`Summary::gives_frame`, plan stage F15).
     pub gives_frame: bool,
+    /// The `rc` groups that the frames of the body hold a reference into
+    /// across a `multi` operation of a handler of a caller
+    /// (`Summary::row_refs`, plan stage R0z Z2, fix 1).
+    pub row_refs: super::summary::RowRefs,
     /// The body changes a place of a caller (`Summary::caller_muts`, stage
     /// R0h).
     pub caller_muts: bool,
@@ -733,6 +737,7 @@ impl Inferred {
             self.gives_frame = true;
             grew = true;
         }
+        grew |= self.row_refs.join(&o.row_refs);
         if o.caller_muts && !self.caller_muts {
             self.caller_muts = true;
             grew = true;
@@ -1124,6 +1129,7 @@ pub fn build(
     }
     put_parts(&mut s, inf);
     s.gives_frame = inf.gives_frame;
+    s.row_refs.clone_from(&inf.row_refs);
     s.caller_muts = inf.caller_muts;
     s.unknown_runs = inf.unknown_runs;
     s.pins = inf.pins;

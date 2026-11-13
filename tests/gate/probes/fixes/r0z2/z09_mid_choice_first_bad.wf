@@ -1,0 +1,23 @@
+// Plan stage R0z Z2, fix 1 (a probe of the review of the stage: d05_mid_choice_first_bad).
+// bad: `mid` handles the row `choose` with a clause that clears the object
+// before its first resume. `run` owns a handle and holds a reference through
+// it across the row. Each copy reads a freed cell.
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn run(b: Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let c = choose()
+    print(r)
+    1
+}
+fn mid(b: &Rc<B>) -> u64 / mut(B) {
+    let b2 = b.clone()
+    handle Choice { fn choose() { b2.v.clear()
+        resume(true)
+        resume(false) } } in { run(b.clone()) }
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    print(mid(&b))
+}

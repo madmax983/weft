@@ -1,0 +1,22 @@
+// Plan stage R0z Z2, fix 3 (a probe of the third review of the stage: e17_fn_handler_after_bad).
+// bad: the handler is in a function (not main); its body performs choose after the call.
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn run(b: Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let c = choose()
+    print(r)
+    1
+}
+fn top(b: Rc<B>) {
+    let b2 = b.clone()
+    handle Choice { fn choose() { resume(true)
+        resume(false)
+        b2.v.clear() } } in { print(run(b.clone()))
+        print(choose()) }
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    top(b)
+}

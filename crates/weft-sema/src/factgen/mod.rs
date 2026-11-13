@@ -681,6 +681,10 @@ pub struct Emitted {
     /// The type parameters of the values that a `fork` branch of a generic
     /// entry body captures (part `forks`).
     pub forks: std::collections::BTreeSet<u32>,
+    /// The `rc` groups that the frames of the component hold a reference
+    /// into across a `multi` operation of a handler of a caller (part
+    /// `row_refs`, plan stage R0z Z2, fix 1).
+    pub row_refs: crate::analysis::summary::RowRefs,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -1214,7 +1218,12 @@ pub fn emit_parts(
         }
     }
     let handler_caps = hx.ids.iter().map(|(&h, &(_, c))| (h, c)).collect();
+    let row_refs = match &hx.row_refs {
+        crate::analysis::summary::RowRefs::Unset => crate::analysis::summary::RowRefs::none(),
+        x => x.clone(),
+    };
     Ok(Emitted {
+        row_refs,
         drops: found.drops,
         holds: found.holds,
         forks: found.forks,
@@ -3640,6 +3649,14 @@ fn emit_block(
             templates::detach(em, n, &st, block, task, after)?;
         }
         _ => templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?,
+    }
+    // The part `row_refs` of the summary (plan stage R0z Z2, fix 1): the
+    // groups that the frames hold a reference into at a node that waits at
+    // a `multi` operation of a handler of a caller.
+    if frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind)
+        || em.hx.dyn_rows.contains(&(bid, block))
+    {
+        handlers::note_row_refs(em, &st, &blk.term.kind, (bid, block));
     }
     if let (Some(c), Some(_)) = (copy, &rerun) {
         // The copied frames: up to the local handler, or up to the `Return`

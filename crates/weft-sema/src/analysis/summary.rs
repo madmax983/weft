@@ -25,7 +25,7 @@
 //! The parts that only a handler or a task gives (`tasks`, `frees`) stay
 //! empty; later stages fill them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::Step;
 use weft_ir::{AdtId, ClosureId, FnId, TyId};
@@ -357,6 +357,130 @@ pub struct Store {
     pub flows: Vec<Flow>,
 }
 
+/// The `rc` groups that a reference of a frame of the body holds across a
+/// node that waits at a `multi` operation of a handler of a caller.
+///
+/// This is the part `row_refs` (plan stage R0z Z2, fix 1). A later `resume` of the caller
+/// runs a copy of the frames again, and the copies share the objects of
+/// these groups: a caller that changes such an object between the operation
+/// and a copy must see it (`crate::factgen::handlers::copy_node`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum RowRefs {
+    /// No run of the body gave the part yet (the start of the fixpoint). A
+    /// caller reads it as [`RowRefs::Any`].
+    #[default]
+    Unset,
+    /// The groups, by their definitions, each with the first steps of the
+    /// places below the group root that the references point into (`None`:
+    /// the whole group; fix 2). `twice` says that a run of the body can wait
+    /// at such a node more than once (two nodes on a path, a node in a loop,
+    /// a callee that can): a clause of the caller can then change the object
+    /// after its last `resume` and before a later copy of an outer run of
+    /// the clause.
+    Groups {
+        /// The groups and the first steps.
+        groups: RowGroups,
+        /// The body can wait at such a node more than once in one run.
+        twice: bool,
+    },
+    /// Each group can be one (a group that is not a definition, a run of a
+    /// function value, a callee with no part).
+    Any,
+}
+
+/// The groups of [`RowRefs::Groups`], each with the first steps of its
+/// places.
+pub type RowGroups = BTreeMap<weft_ir::AdtId, BTreeSet<Option<RowStep>>>;
+
+/// The first step of a place below the root of an `rc` group, with its
+/// text (part `row_refs`, plan stage R0z Z2, fix 2).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RowStep {
+    /// The step.
+    pub step: Step,
+    /// The text of the step.
+    pub text: String,
+}
+
+impl RowRefs {
+    /// The groups and the flag `twice`, if the part names them.
+    pub const fn known(&self) -> Option<(&RowGroups, bool)> {
+        match self {
+            Self::Groups { groups, twice } => Some((groups, *twice)),
+            Self::Unset | Self::Any => None,
+        }
+    }
+
+    /// An empty part: no group, no second wait.
+    pub const fn none() -> Self {
+        Self::Groups {
+            groups: BTreeMap::new(),
+            twice: false,
+        }
+    }
+
+    /// Adds the groups of `o`. Returns true if the part grows.
+    pub fn join(&mut self, o: &Self) -> bool {
+        match (&mut *self, o) {
+            (_, Self::Unset) | (Self::Any, _) => false,
+            (Self::Unset, x) => {
+                *self = x.clone();
+                true
+            }
+            (Self::Groups { .. }, Self::Any) => {
+                *self = Self::Any;
+                true
+            }
+            (
+                Self::Groups {
+                    groups: a,
+                    twice: ta,
+                },
+                Self::Groups {
+                    groups: b,
+                    twice: tb,
+                },
+            ) => {
+                let mut grew = false;
+                for (g, steps) in b {
+                    let e = a.entry(*g).or_default();
+                    for x in steps {
+                        grew |= e.insert(x.clone());
+                    }
+                }
+                if *tb && !*ta {
+                    *ta = true;
+                    grew = true;
+                }
+                grew
+            }
+        }
+    }
+
+    /// Adds group `a` with the first step `step`.
+    pub fn add(&mut self, a: weft_ir::AdtId, step: Option<RowStep>) {
+        let mut groups = BTreeMap::new();
+        groups.insert(a, std::iter::once(step).collect());
+        let _ = self.join(&Self::Groups {
+            groups,
+            twice: false,
+        });
+    }
+
+    /// Notes that the body can wait at such a node more than once.
+    pub fn twice(&mut self) {
+        let _ = self.join(&Self::Groups {
+            groups: BTreeMap::new(),
+            twice: true,
+        });
+    }
+
+    /// Makes the part [`RowRefs::Any`].
+    pub fn any(&mut self) {
+        *self = Self::Any;
+    }
+}
+
 /// The parts of a summary (`docs/ir.md` 6.7).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
@@ -470,6 +594,9 @@ pub struct Summary {
     /// (plan stage F15): a local clause that a call runs can get a
     /// reference into the callee frame (`clause::given`).
     pub gives_frame: bool,
+    /// The `rc` groups that the frames of the body hold a reference into
+    /// across a `multi` operation of a handler of a caller ([`RowRefs`]).
+    pub row_refs: RowRefs,
     /// The body changes a place of a caller that it names through a
     /// reference of the result of an operation of a caller (stage R0h): a
     /// call whose local clause gives the callee a reference changes the

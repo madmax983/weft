@@ -187,6 +187,7 @@ fn stated(
     out.put_fns.clone_from(&body.put_fns);
     out.lends.clone_from(&body.lends);
     out.gives_frame = body.gives_frame;
+    out.row_refs.clone_from(&body.row_refs);
     out.caller_muts = body.caller_muts;
     out.unknown_runs = body.unknown_runs;
     out.pins = body.pins;
@@ -238,6 +239,7 @@ fn summary_of(
             }
             sig::put_parts(&mut sum, inf);
             sum.gives_frame = inf.gives_frame;
+            sum.row_refs.clone_from(&inf.row_refs);
             sum.caller_muts = inf.caller_muts;
             sum.unknown_runs = inf.unknown_runs;
             sum.pins = inf.pins;
@@ -548,6 +550,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                         body.drops.clone_from(&e.drops);
                         body.holds.clone_from(&e.holds);
                         body.forks.clone_from(&e.forks);
+                        body.row_refs.clone_from(&e.row_refs);
                         add_steps(&mut steps, &facts);
                         let new = if sig.declared {
                             stated(sig, decl, tys, &body)
