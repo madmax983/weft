@@ -1,0 +1,10 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule E (OuterMany): the callee runs two different values, each one time.
+// The first one spawns `f` one time. `f` moves a captured value.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn both(h1: fn(), h2: fn()) { h1(); h2() }
+fn once_spawn(f: fn()) / async { both(|| scope { s => s.spawn(f); () }, || print(5)) }
+fn main() / async {
+    let v = [1]
+    once_spawn(|| take(v))
+}

@@ -1,0 +1,19 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule A (structural): the task makes a closure that performs `Ask`, but the
+// task never runs it. The analysis of `main` stops (a closure gives a
+// function value to an operation through the row).
+effect Ask { fn ask() -> u64 }
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    handle Ask { fn ask() { resume(1) } } in {
+        scope { s => s.spawn(|| { let f = || ask(); print(2) }) }
+    }
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let c = mk(|| print(v[0]))
+        c()
+    }
+}

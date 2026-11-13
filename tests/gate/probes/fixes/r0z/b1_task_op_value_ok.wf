@@ -1,0 +1,7 @@
+// Plan stage R0z, rule B (the clean twin): the body runs the value of the
+// operation on its own task, and the task runs a closure of the body.
+effect Get { fn get() -> fn() }
+fn run_it() / Get, async { let g = get(); g(); scope { s => s.spawn(|| print(2)) } }
+fn main() / async {
+    handle Get { fn get() { resume(|| print(1)) } } in { run_it() }
+}

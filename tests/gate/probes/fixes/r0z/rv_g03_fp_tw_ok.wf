@@ -1,0 +1,18 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule G: tw plus an unrelated body that stops.
+fn twice(m: fn() -> fn()) { let g = m(); let h = m(); g(); h() }
+fn main() {
+    stopper()
+    twice(|| || print(1))
+}
+effect RunG { fn rung(g: fn()) }
+fn mkg(h: fn()) -> fn() / RunG { || rung(h) }
+fn stopper() {
+    let v = Vec.new()
+    v.push(1)
+    handle RunG { fn rung(g) { g()
+        resume(()) } } in {
+        let c = mkg(|| print(v[0]))
+        c()
+    }
+}

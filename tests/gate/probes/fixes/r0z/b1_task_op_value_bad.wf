@@ -1,0 +1,11 @@
+// Plan stage R0z, rule B: a task that runs the value of an operation of a
+// user effect runs code of a caller. That code can perform through a handler
+// on the stack of this task (W0314 at the spawn): here through `Note`.
+effect Note { fn note(x: u64) }
+effect Get { fn get() -> fn() }
+fn spawn_it() / Get, async { let g = get(); scope { s => s.spawn(g) } }
+fn main() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Get { fn get() { resume(|| note(1)) } } in { spawn_it() }
+    }
+}

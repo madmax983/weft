@@ -1,0 +1,25 @@
+// Plan stage R0z, rule D (not through a local outside the handled body): each
+// turn of the loop has a new instance of `Run`. The handled body writes a
+// closure that performs through `Run` into `c`, a local outside it (W0313 at
+// the `handle`). The next turn runs it under the next instance, which
+// clears `v` before it runs `g`.
+effect Run { fn run(g: fn()) }
+fn outer() / Run {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let c = || print(9)
+    let i = 0
+    while i < 2 {
+        handle Run { fn run(g) { v.clear()
+            g()
+            resume(()) } } in {
+            if i == 0 { c = || run(|| print(r)) } else { c() }
+        }
+        i += 1
+    }
+}
+fn main() {
+    handle Run { fn run(g) { g()
+        resume(()) } } in { outer() }
+}

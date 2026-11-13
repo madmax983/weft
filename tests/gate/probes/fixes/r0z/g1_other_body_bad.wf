@@ -1,0 +1,22 @@
+// Plan stage R0z, rule G: the analysis of `mk` stops (a closure gives a
+// function value to an operation through the row). `stale` does not reach
+// `mk`, so its facts hold, and its error is final (W0301 at the read).
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn stale() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v.clear()
+    print(r)
+}
+fn main() {
+    stale()
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let c = mk(|| print(v[0]))
+        c()
+    }
+}

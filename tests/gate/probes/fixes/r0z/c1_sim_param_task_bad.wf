@@ -1,0 +1,12 @@
+// Plan stage R0z, rule C: a callee spawns its parameter inside `sim.run`, so
+// the value runs as a task of another stack. The value holds the capability
+// of a local handler of `main` (W0314 at the call).
+effect Note { fn note(x: u64) }
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in param_in_sim(|| note(1))
+}

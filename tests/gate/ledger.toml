@@ -11120,3 +11120,103 @@ files = [
 ]
 reason = "stage R0k-b2 (programs that come into scope with the environment local of a copy region, and 85 with `weak_ok`): a function that gives back a closure (`mk`, `mk_cap`, `mk_box`, `mk_opt`, `mk_spawner`) or that gives a function value to an operation through its row (`go`, `gives`, `passes_on`, `gives_log`). With the copies `weak_ok` holds, so the summary has the weak form of R0k-a (`WeakRowOps`): the operation gives the value to code of a caller, which can run it, also as a task. The parts `op_fns` and `op_effects` of the old inference are in the part `runs` of that summary, and `task_effects` and `pins` are those of the task of the code of a caller (the classes F19-SIG-PINS and R0f). `raises` and `named` of a maker (c14, c15, `mk_spawner` of 85): the closure fails, opens a scope or a timeout at its run, through the handler environment of the call of the maker, so the `ir` summary gives these effects to the closure value (part `ret`), not to the maker, which does not fail (the class F19-SIG-NAMED). `callee_gives_runtime_log` of 85 has the copy of `gives_log`: its clause runs the value on a task of a scope that ends before the clause resumes, so no task of the function is left (part `tasks` and `task_effects`). The parts `ret`, `ret_refs`, `task_runs`, `repeats`, `reaches`, `reach_repeats` and `tasks` are those of entry F13 for the function values of a body"
 stage = "R0k"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0k2/u09_fork.wf",
+]
+codes = ["W0403"]
+reason = "stage R0z (Z1, rule A, the structural form): the analysis of `main` stops (C2), and the fork branch holds the capability of the local handler of `Run`. Both pipelines give W0314 at the fork (line 15); the old pipeline also gives W0403 there. The facts of `main` are not whole, so the `ir` pipeline gives only the error of the rule. Both reject; ev.sh: held"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0kb1/c11_c2_loop_instance_bad.wf",
+    "tests/gate/probes/fixes/r0kb1/n04_loop_instance_bad.wf",
+    "tests/gate/probes/fixes/r0z/d2_local_keep_bad.wf",
+]
+codes = ["W0301", "W0312"]
+reason = "stage R0z (Z1, rule D, a local outside the handled body): a new instance of `Run` in each turn of a loop, and the handled body writes a closure that performs through `Run` into a local outside it. Both pipelines give W0313 at the `handle`. The old pipeline also gives W0301 (and W0312 for d2) at the reads after the clause clears the `Vec`; the facts of the body whose analysis stops are not whole, so the `ir` pipeline gives only the error of the rule. Both reject; ev.sh: held (c11, n04), both-reject (d2: no fault of the oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/partb/S3/p/sim1.wf",
+]
+codes = ["W0314", "W0702"]
+reason = "stage R0z (Z1, rules C and G): the analysis of `param_in_sim_caller` stops (F18); the other bodies do not reach it. Both pipelines give W0314 at lines 6, 13, 28 and 45. The `ir` pipeline also gives W0314 at line 20 (rule C: the value that `sim.run` spawns holds the capability of `Note`; the old pipeline gives W0702 at line 46 for the same task). The `ir` pipeline does not give W0702 at line 46: the body of `main` reaches the failed body, so it has the facts of its declaration only. Both reject; no `main` body"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/partb/p/a2_escapes.wf",
+]
+codes = ["W0301"]
+reason = "stage R0z (Z1, rule G): the analysis of `effect_get_own` stops (C2); the other bodies do not reach it. Both pipelines give W0313 at the nine `handle`s; the old pipeline also gives W0301 at line 29, in the body that stops. Both reject; no `main` body"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_e_job.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_e_mk_job.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_e_struct.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_variants.wf",
+]
+codes = ["W0313", "W0314"]
+reason = "stage R0z (Z1, rule G): the analysis of `mk_cap`, `mk_struct` and `mk_job` stops (C2). The body of the probe that does not reach them gives W0314 at line 9 (a task performs through a handler of this task: the clause spawns its argument). The old pipeline gives W0313 at lines 15 and 26 and W0314 at lines 13, 17, 29, 36 and 41, in the bodies that stop or reach them. Both reject; ev.sh: held"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "tasks", "task_runs", "pins", "repeats", "reaches", "raises", "task_effects", "op_effects"]
+files = [
+    "tests/gate/probes/fixes/r0e/a13_sim_param_task.wf",
+    "tests/gate/probes/fixes/r0e/a13b_callee_param_task.wf",
+    "tests/gate/probes/fixes/r0e/a13c_callee_bg_param.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b2_h10.wf",
+    "tests/gate/probes/fixes/r0e/rv1_b2_h18.wf",
+    "tests/gate/probes/fixes/r0h/d3f_task.wf",
+    "tests/gate/probes/fixes/r0j/j07_run_bad.wf",
+    "tests/gate/probes/fixes/r0z/b1_task_op_value_bad.wf",
+    "tests/gate/probes/fixes/r0z/c1_sim_param_task_bad.wf",
+    "tests/gate/probes/fixes/r0z/e1_nested_once_bad.wf",
+    "tests/gate/probes/fixes/r0z/f1_scope_resumes_bad.wf",
+    "tests/gate/probes/fixes/r0z/rv_e02_param_other_bad.wf",
+    "tests/gate/probes/fixes/r0z/rv_e06_two_values_bad.wf",
+    "tests/gate/probes/fixes/r0z/rv_e09_outer_two_bad.wf",
+    "tests/gate/probes/fixes/r0z/rv2_n06_collide_e_bad.wf",
+    "tests/gate/probes/fixes/r0z/rv2_n07_nocollide_e_bad.wf",
+    "tests/gate/probes/verify/partb/S3/p/sim1.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_e_job.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_e_mk_job.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_e_struct.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2b_variants.wf",
+]
+reason = "stage R0z (Z1: programs that come into scope because a rule of Z1 rejects them). The bodies with a construct with no full facts keep the weak form of that construct in their summary, as the programs that came into scope with an error at R0e fix 2 and R0j: a value of a callee that runs a parameter as a task (`param_in_sim`, `param_in`, `twice`, `one`, `two`, `both`, `once_spawn`: NESTED_TASK_RUN, a plain run of the parameter, so the parts `tasks`, `task_runs`, `passthrough`, `pins` and `repeats` of the old inference are not there), a task that runs code of a caller (`spawn_it`: TASK_CODE, parts `reaches` and `pins`), a callee of `sim.run` (`nested_closure_in_sim`: the part `task_effects` of the root handlers), a clause that gives its argument to an operation through its row (`gives_job`: the part `op_effects` is in the part `runs`, entry F13), and a scope body of a clause that resumes (`main` of f1: no `raises` from the second `resume`). A function whose body stops, or that reaches such a body, has no signature from its body (rule G: `IrFacts::no_ir`), so sigdiff does not compare it. The probes `rv2_n06` and `rv2_n07` of the review of Z1 (round 2) are in scope without Z1 (main gives the same result): `two` has the same weak form of NESTED_TASK_RUN"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/S5c/mut/progs/m00982_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m01268_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m01766_85_op_args.wf",
+    "verify/s5/S5c/mut/progs/m02309_85_op_args.wf",
+]
+codes = ["W0313", "W0314"]
+reason = "stage R0z (Z1, rule G; tier 2, mutants of 85 with no `main` body): the analysis of `mk` stops (C2). The bodies that do not reach `mk` give W0314 at line 10 (the old pipeline gives it too in 85, `//~ W0314 old:`), at the line of a task that runs a closure of an operation, and the W0501 or W0314 of the mutated line. The old pipeline also gives W0313 at the `handle` of `Note` and W0314 at the calls of the bodies that reach `mk`; those bodies have the facts of their declaration only. Both reject"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z/rv_g01_fp_a01_bad.wf",
+]
+codes = ["W0312", "W0405"]
+reason = "stage R0z (Z1, rule G; a probe of the review of Z1): the analysis of `mkg` stops (C2), and `f` does not reach it. The `ir` pipeline gives W0405 at the perform of `reg` in `f` (line 9: the clause of a handler of a caller can keep the closure and run it while `x` changes; the in-scope `ir` result of the form a01); the old pipeline gives W0312 at the `handle` of `Reg` in `main` (line 15). The old pipeline rejects the program, so the safety net keeps the rejection. Both reject; ev.sh: held"
+stage = "R0z"

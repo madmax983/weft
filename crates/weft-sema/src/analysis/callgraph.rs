@@ -66,6 +66,14 @@ pub struct Inference {
     /// The rounds of the fixpoint: the number of runs of the fact generator
     /// on a body.
     pub rounds: usize,
+    /// The errors of the rules of plan stage R0z (Z1) that the analysis of
+    /// a body that the fact generator does not support found before it
+    /// stopped (`super::clause::note_error`), by the index of the body.
+    pub later: HashMap<usize, Vec<Diagnostic>>,
+    /// The errors of the rules of Z1 that the analysis of a body that the
+    /// fact generator supports found in its last round, by the index of the
+    /// body: apart from the diagnostics of the body.
+    pub z1: HashMap<usize, Vec<Diagnostic>>,
 }
 
 /// One function whose summary comes from its body: a node of the graph.
@@ -327,6 +335,7 @@ fn callees_in(i: usize, nodes: &[Node], inside: &BTreeSet<usize>) -> Vec<usize> 
 /// to their fixpoint (see the module). `limit`, if given, is the most
 /// growths of one row: a test can make the guard W0706 fire.
 pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
+    super::transfer::clear_nested_once();
     let mut out = Inference::default();
     let tys = &built.tys;
     let prog = &a.program;
@@ -489,10 +498,13 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                 };
                 out.rounds += 1;
                 let mut facts = factgen::seed(bd);
+                let _ = super::clause::take_errors();
                 let run = factgen::emit_parts(a, built, &out.sums, n.index, n.body, &mut facts);
+                let errors = super::clause::take_errors();
                 match run {
                     Ok(e) => {
                         let diags = e.diags;
+                        out.z1.insert(n.index, errors);
                         // A caller can apply the summary of a closure that
                         // the function gives back (stage F12).
                         for (c, s) in &e.closures {
@@ -570,6 +582,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                         out.sums
                             .insert(n.f, sig::from_declaration(prog, n.sema, decl, tys));
                         out.facts.insert(n.index, Err(u));
+                        out.later.insert(n.index, errors);
                     }
                 }
             }

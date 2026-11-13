@@ -3630,6 +3630,156 @@ fn task_unsafe(cx: &mut Cx<'_>, fv: &FnVal) -> bool {
     sum.is_none_or(|s| !s.muts.is_empty() || !s.lends.is_empty() || !s.puts.is_empty())
 }
 
+thread_local! {
+    /// The levels of the runs around the run of now that can run more than
+    /// once ([`OuterMany`], rule E of plan stage R0z).
+    static OUTER_MANY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The parameters of functions whose value a value of a callee runs as
+    /// a task more than once (rule E of plan stage R0z): the function and
+    /// the index of the parameter.
+    static NESTED_ONCE: std::cell::RefCell<BTreeSet<(weft_ir::FnId, u32)>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+/// Clears the parameters of rule E of plan stage R0z (`nested_once`). The
+/// fixpoint of the summaries calls it at its start.
+pub fn clear_nested_once() {
+    NESTED_ONCE.with(|n| n.borrow_mut().clear());
+}
+
+/// One more level of runs around the run of now that can run more than once
+/// while the value is live, if `many` ([`OUTER_MANY`]).
+struct OuterMany {
+    on: bool,
+}
+
+impl OuterMany {
+    fn enter(many: bool) -> Self {
+        if many {
+            OUTER_MANY.with(|c| c.set(c.get().saturating_add(1)));
+        }
+        Self { on: many }
+    }
+}
+
+impl Drop for OuterMany {
+    fn drop(&mut self) {
+        if self.on {
+            OUTER_MANY.with(|c| c.set(c.get().saturating_sub(1)));
+        }
+    }
+}
+
+/// The text of W0502 of rule E of plan stage R0z: the text of the old
+/// pipeline.
+const ONCE_TWICE: &str = "a `once` closure is called twice";
+
+/// The note of W0502 of rule E of plan stage R0z.
+const ONCE_NOTE: &str = "the closure moves a captured value, so it can run only once";
+
+/// Rule E of plan stage R0z (Z1), at the pending note of
+/// [`NESTED_TASK_RUN`] of run node `r` (a value of a callee runs the values
+/// `fns` as a task, and it can run them more than once): W0502 at the node
+/// for a `once` value of `fns`. A value of a parameter of the function of
+/// the node goes to [`NESTED_ONCE`]: a caller that gives a `once` value
+/// there gets W0502 at its call ([`once_to_nested`]).
+fn nested_once(cx: &Cx<'_>, r: Run0<'_>, fns: &BTreeSet<FnVal>) {
+    let at = node_span(cx, r);
+    for f in fns {
+        match f {
+            FnVal::Closure(_) | FnVal::Made(_) if once_value(cx.p, f) => {
+                if let Some(at) = at {
+                    super::clause::note_error(
+                        crate::factgen::checks::error_at(
+                            weft_syntax::diag::Code::W0502,
+                            at,
+                            ONCE_TWICE,
+                        )
+                        .note(ONCE_NOTE),
+                    );
+                }
+            }
+            FnVal::Param(i) if alpha::unit_closure(cx.p, r.body).is_none() => {
+                if let Some(g) = fn_of_body(cx.p, r.body) {
+                    NESTED_ONCE.with(|n| n.borrow_mut().insert((g, *i)));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Rule E of plan stage R0z (Z1), at run node `r` of depth 0 that gives the
+/// values `fns` to parameter `param` of its callee: W0502 at the node if a
+/// value is `once` and the callee is a function of [`NESTED_ONCE`] for that
+/// parameter.
+fn once_to_nested(cx: &Cx<'_>, r: Run0<'_>, param: u32, fns: &BTreeSet<FnVal>) {
+    let callee =
+        cx.p.body(r.body)
+            .and_then(|b| b.blocks.get(r.block.index()))
+            .and_then(|blk| match &blk.term.kind {
+                TermKind::Call {
+                    callee: weft_ir::Callee::Fn(f, _),
+                    ..
+                } => Some(*f),
+                _ => None,
+            });
+    let Some(f) = callee else {
+        return;
+    };
+    if !NESTED_ONCE.with(|n| n.borrow().contains(&(f, param))) {
+        return;
+    }
+    if !fns.iter().any(|g| once_value(cx.p, g)) {
+        return;
+    }
+    if let Some(at) = node_span(cx, r) {
+        super::clause::note_error(
+            crate::factgen::checks::error_at(weft_syntax::diag::Code::W0502, at, ONCE_TWICE)
+                .note(ONCE_NOTE),
+        );
+    }
+}
+
+/// The span of run node `r`: the origin of the terminator of its block.
+fn node_span(cx: &Cx<'_>, r: Run0<'_>) -> Option<weft_ir::Span> {
+    cx.p.body(r.body)
+        .and_then(|b| b.blocks.get(r.block.index()))
+        .map(|blk| blk.term.origin.span)
+}
+
+/// Rule C of plan stage R0z (Z1): W0314 at the run node `r` if the function
+/// value `fv`, which the callee runs as a task of another stack, holds a
+/// continuation or the capability of a local handler that is not a `Fail`
+/// handler (a `Cap` or a `Kont` capture). The text is that of the old
+/// pipeline.
+fn task_run_w0314(cx: &Cx<'_>, r: Run0<'_>, fv: &FnVal) {
+    let (FnVal::Closure(c) | FnVal::Made(c)) = fv else {
+        return;
+    };
+    let Some(d) = cx.p.closures.get(c.index()) else {
+        return;
+    };
+    let holds = d
+        .captures
+        .iter()
+        .enumerate()
+        .any(|(k, cap)| match cap.mode {
+            weft_ir::CaptureMode::Kont => true,
+            weft_ir::CaptureMode::Cap => {
+                crate::factgen::checks::cap_capture_handler(cx.p, cx.tys, *c, k).is_some()
+            }
+            _ => false,
+        });
+    if let (true, Some(at)) = (holds, node_span(cx, r)) {
+        super::clause::note_error(crate::factgen::checks::error_at(
+            weft_syntax::diag::Code::W0314,
+            at,
+            "a task cannot perform through a handler of this task: the handler runs on another task",
+        ));
+    }
+}
+
 /// True if the function value `fv` of the body reads a place when it runs:
 /// a closure with a capture or with a read in its summary, an item with a
 /// read in its summary (stage R0f fix). A value of the interface is the
@@ -3999,6 +4149,9 @@ fn apply_runs(
             open.insert(key);
             continue;
         };
+        if depth == 0 && !run.capture {
+            once_to_nested(cx, r, run.param, &fns);
+        }
         // A value that the callee only gives to code of a caller (the worst
         // way: a task, `TaskHow::foreign`), where the run node knows each
         // value of that code and no one of them runs the argument as a task,
@@ -4041,6 +4194,12 @@ fn apply_runs(
         // program is in scope only if the `ir` pipeline rejects it
         // (`Scope::pending`, the rule of stage R0g).
         if task && depth > 0 && fns.iter().any(|f| !matches!(f, FnVal::Unknown) || busy) {
+            // Each value of this run runs more than once only if the run
+            // does (`run_many`), or a run around it does: two runs of two
+            // values (`two`) run each value once.
+            if run_many || OUTER_MANY.with(std::cell::Cell::get) > 0 {
+                nested_once(cx, r, &fns);
+            }
             super::clause::note_pending(crate::factgen::Unsupported {
                 group: crate::irbuild::scope::Group::C,
                 reason: NESTED_TASK_RUN.to_string(),
@@ -4115,12 +4274,17 @@ fn apply_runs(
             // caller does not have the places of the other tasks of the
             // callee.
             if task && run.how.foreign && !run.how.no_body && !run.via_only && task_unsafe(cx, g) {
+                // Rule C of plan stage R0z: a value that holds a
+                // continuation or the capability of a local handler runs
+                // as a task of another stack.
+                task_run_w0314(cx, r, g);
                 return Err(AlphaError::Later(TASK_RUN));
             }
             let start = apps.out.len();
             let fresh = !apps.modes.contains(&(g.clone(), Some(places.clone())));
             let from = apps.reached.len();
-            apply_value(
+            let outer = OuterMany::enter(run_many);
+            let applied = apply_value(
                 cx,
                 r,
                 g,
@@ -4129,7 +4293,9 @@ fn apply_runs(
                 None,
                 depth + 1,
                 apps,
-            )?;
+            );
+            drop(outer);
+            applied?;
             if fresh {
                 let got: BTreeSet<FnVal> = apps
                     .reached

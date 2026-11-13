@@ -1,0 +1,10 @@
+// Plan stage R0z, rule D (the clean twin): the closure that goes to the
+// operation of `Get` does not perform through `Get`.
+effect Get { fn get(f: fn()) -> fn() }
+fn keep() -> fn() {
+    handle Get { fn get(g) { g } } in get(|| print(2))
+}
+fn main() {
+    let f = keep()
+    f()
+}

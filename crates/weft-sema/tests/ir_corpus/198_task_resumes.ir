@@ -1,0 +1,385 @@
+fn f0 in_task() -> (): b0
+fn f1 in_fork() -> () / Par: b5
+fn f2 in_sim() -> () / Clock: b10
+fn f3 main() -> () / Clock, Par: b14
+fn f4 run(u64, u64, fn() -> ()) -> () / () [sim.run]: extern
+closure c0: body b4, maker b3, cap_env e0, captures [Kont _4], once
+closure c1: body b8, maker b7, cap_env e0, captures [Kont _1], once
+closure c2: body b9, maker b7, cap_env e0, captures []
+closure c3: body b13, maker b12, cap_env e0, captures [Kont _1], once
+handler h0 main.Ask: handled b1, site b0, clauses [ask: b2]
+handler h1 main.Ask: handled b6, site b5, clauses [ask: b7]
+handler h2 main.Ask: handled b11, site b10, clauses [ask: b12]
+scope s0: body b3, site b2
+spawn sp0: scope s0
+spawn sp1: fork
+spawn sp2: fork
+cap_env e0
+cap_env e1: parent e0, main.Ask _1
+cap_env e2: parent e0, main.Ask _1
+cap_env e3: parent e0, main.Ask _1
+
+body b0: fn in_task; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: u64 (User `n`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = const 0u64
+    Live(_2)
+    _2 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b1: handled h0; parent b0; cap_env e1; unwind_exit bb4
+  _0: () (Return)
+  _1: Cap<main.Ask> (Cap(main.Ask) `Ask`)
+  _2: u64 (Temp(Operand))
+  _3: u64 (Upvar(_1) `n`)
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).ask() -> [bb1, unwind: bb2]
+  bb1:
+    Live(_4)
+    _4 = Add<u64>(copy _3, move _2)
+    _3 = move _4
+    Dead(_4)
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: clause h0 ask; parent b0; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: resume(u64) -> () (Kont(once) `resume`)
+  bb0:
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: scope s0; parent b2; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: () (TaskResult(sp0))
+  _3: fn() -> () (Temp(Operand))
+  _4: resume(u64) -> () (Upvar(_1) `resume`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0(move _4)
+    spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    _0 = const ()
+    scope_wait _1, orphans [_2] -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b4: closure c0; parent b3; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = resume _1.0(const 1u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b5: fn in_fork; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: u64 (User `r`)
+  bb0:
+    Live(_1)
+    _1 = handle h1 -> [bb1, unwind: bb2]
+  bb1:
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b6: handled h1; parent b5; cap_env e2; unwind_exit bb4
+  _0: u64 (Return)
+  _1: Cap<main.Ask> (Cap(main.Ask) `Ask`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).ask() -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Add<u64>(move _2, const 1u64)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b7: clause h1 ask; parent b5; cap_env e0; unwind_exit bb7
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  _2: (u64, u64) (Temp(Scrutinee))
+  _3: fn() -> u64 (Temp(Operand))
+  _4: fn() -> u64 (Temp(Operand))
+  _5: u64 (User `a`)
+  _6: u64 (User `b`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c1(move _1)
+    Live(_4)
+    _4 = closure c2()
+    _2 = fork [sp1: move _3, sp2: move _4] -> [bb1, unwind: bb2]
+  bb1:
+    Live(_5)
+    _5 = copy _2.0
+    Live(_6)
+    _6 = copy _2.1
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    _0 = Add<u64>(copy _5, copy _6)
+    Dead(_6)
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b8: closure c1; parent b7; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = resume _1.0(const 1u64) -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b9: closure c2; parent b7; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = const 2u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn in_sim; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: u64 (User `r`)
+  bb0:
+    Live(_1)
+    _1 = handle h2 -> [bb1, unwind: bb2]
+  bb1:
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b11: handled h2; parent b10; cap_env e3; unwind_exit bb4
+  _0: u64 (Return)
+  _1: Cap<main.Ask> (Cap(main.Ask) `Ask`)
+  _2: u64 (User `a`)
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).ask() -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Add<u64>(copy _2, const 1u64)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b12: clause h2 ask; parent b10; cap_env e0; unwind_exit bb6
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  _2: () (Temp(Discarded))
+  _3: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c3(move _1)
+    _2 = call run(const 1u64, const 4u64, move _3) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    _0 = const 0u64
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b13: closure c3; parent b12; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (User `v`)
+  _3: String (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = resume _1.0(const 1u64) -> [bb1, unwind: bb2]
+  bb1:
+    Live(_3)
+    _3 = Concat(const "in sim ", copy _2)
+    Print(copy _3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_3)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b14: fn main; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = call in_task() / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Dead(_1)
+    Live(_2)
+    _2 = call in_fork() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    _0 = call in_sim() / e0 -> [bb3, unwind: bb6]
+  bb3:
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb5 (cleanup):
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit

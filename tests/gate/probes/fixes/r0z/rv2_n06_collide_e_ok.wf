@@ -1,0 +1,16 @@
+// Plan stage R0z: a probe of the review of Z1 (round 2).
+// Clean twin of n06: `two` runs each value once.
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap1(f: fn()) -> fn() { || f() }
+fn later(h: fn()) { h() }
+fn once(g: fn()) { g() }
+fn two(g: fn(), k: fn()) / async {
+    once(g)
+    later(|| scope { s => s.spawn(k); () })
+}
+fn main() / async {
+    let b = Buf { items: Vec.new() }
+    let c = Buf { items: Vec.new() }
+    two(wrap1(|| eat(b)), wrap1(|| eat(c)))
+}

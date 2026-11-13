@@ -1,0 +1,11 @@
+// Plan stage R0z, rule F: a scope body of the clause resumes the `once`
+// continuation two times on one path (W0501 at the second `resume`).
+effect Ask { fn ask() -> u64 }
+fn main() / io {
+    handle Ask { fn ask() {
+        scope { s => resume(1); resume(1) }
+    } } in {
+        let x = ask()
+        print("got {x}")
+    }
+}

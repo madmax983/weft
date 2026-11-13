@@ -1,0 +1,21 @@
+// Plan stage R0z, rule D (the clean twin): the closure that performs through
+// `Run` stays in a local of the handled body.
+effect Run { fn run(g: fn()) }
+fn outer() / Run {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let i = 0
+    while i < 2 {
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            let c = || run(|| print(r))
+            c()
+        }
+        i += 1
+    }
+}
+fn main() {
+    handle Run { fn run(g) { g()
+        resume(()) } } in { outer() }
+}

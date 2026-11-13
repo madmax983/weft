@@ -1,0 +1,21 @@
+// Plan stage R0z: a probe of the review of Z1 (round 2).
+// Net, key collision: at the call of `two` in `main`, the IR gives W0502 for
+// `g` (`twice` runs it two times; the old pipeline misses it through
+// `wrap1`), and rule E gives W0502 with the same code, span and text for `k`
+// (a nested task run spawns it two times). Both errors have one key, so the
+// net takes the error of the IR for an error of Z1 and drops it.
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap1(f: fn()) -> fn() { || f() }
+fn later(h: fn()) { h() }
+fn twice(g: fn()) { g()
+    g() }
+fn two(g: fn(), k: fn()) / async {
+    twice(g)
+    later(|| scope { s => s.spawn(k); s.spawn(k); () })
+}
+fn main() / async {
+    let b = Buf { items: Vec.new() }
+    let c = Buf { items: Vec.new() }
+    two(wrap1(|| eat(b)), wrap1(|| eat(c)))
+}

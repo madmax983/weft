@@ -1,0 +1,16 @@
+// Plan stage R0z: a probe of the review of Z1 (round 2).
+// Control for n06: `k` is not `once` (no rule E error), so the IR error stays.
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap1(f: fn()) -> fn() { || f() }
+fn later(h: fn()) { h() }
+fn twice(g: fn()) { g()
+    g() }
+fn two(g: fn(), k: fn()) / async {
+    twice(g)
+    later(|| scope { s => s.spawn(k); s.spawn(k); () })
+}
+fn main() / async {
+    let b = Buf { items: Vec.new() }
+    two(wrap1(|| eat(b)), || print(1))
+}

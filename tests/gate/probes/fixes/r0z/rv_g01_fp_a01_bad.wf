@@ -1,0 +1,29 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule G (bad twin of g01): the clause of `Reg` keeps the closure and runs
+// it after `f` returns and `x` is gone.
+effect Reg { fn reg(f: fn()) }
+struct K { f: fn() }
+fn f(k: &K) / Reg {
+    let x = Vec.new()
+    x.push(1)
+    reg(|| print(x[0]))
+}
+fn main() {
+    stopper()
+    let k = K { f: || print(0) }
+    handle Reg { fn reg(g) { k.f = g
+        resume(()) } } in f(&k)
+    let h = k.f
+    h()
+}
+effect RunG { fn rung(g: fn()) }
+fn mkg(h: fn()) -> fn() / RunG { || rung(h) }
+fn stopper() {
+    let v = Vec.new()
+    v.push(1)
+    handle RunG { fn rung(g) { g()
+        resume(()) } } in {
+        let c = mkg(|| print(v[0]))
+        c()
+    }
+}

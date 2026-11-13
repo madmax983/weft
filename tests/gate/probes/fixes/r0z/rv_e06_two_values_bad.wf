@@ -1,0 +1,9 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule E (bad twin): the closure spawns `f` two times.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn later(h: fn()) { h() }
+fn both(f: fn(), g: fn()) / async { later(|| scope { s => s.spawn(f); s.spawn(f); s.spawn(g); () }) }
+fn main() / async {
+    let v = [1]
+    both(|| take(v), || print(2))
+}

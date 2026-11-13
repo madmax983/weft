@@ -203,6 +203,7 @@ pub fn check(base: &Path, entry: &Entry, groups: Groups) -> Outcome {
             diags: ir.analysis.diags,
             sigs: ir.analysis.sigs,
             no_ir,
+            z1: Vec::new(),
         });
     }
     let Some(ir) = a.ir_facts.as_ref() else {

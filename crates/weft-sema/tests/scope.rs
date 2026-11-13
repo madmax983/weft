@@ -309,11 +309,17 @@ fn the_both_mode_gives_both_fact_sets() {
     assert!(ir.bodies.iter().all(|b| b.facts.nodes.is_empty()));
     assert!(!ir.diags.iter().any(|d| d.code == Code::W0313));
     assert!(ir.diags.iter().any(|d| d.code == Code::W0101));
-    // With a program that the fact generator does not support, the ir side
-    // is the old side.
+    // With a program that the fact generator does not support, the scope
+    // has the fallback. From plan stage R0z (rule G) it is pending too, and
+    // the ir side holds the facts and the errors that do not need the body
+    // that stops: here the W0101 of `typo`, so the check rejects the
+    // program with the ir side (`weft_check::check_analysis`).
     let stub = analyze(KONT, opts(FactGen::Both, Groups::ALL));
-    assert!(stub.ir_facts.is_none());
-    assert!(stub.ir_scope.and_then(|s| s.fallback).is_some());
+    let ir = stub.ir_facts.as_ref().expect("the ir facts of rule G");
+    assert!(ir.diags.iter().any(|d| d.code == Code::W0101));
+    let scope = stub.ir_scope.expect("a scope");
+    assert!(scope.fallback.is_some());
+    assert!(scope.pending.is_some());
     // The ir view of the both mode is the analysis of the ir mode.
     let view = both.clone().ir_view();
     let ir_mode = analyze_empty(ESCAPE, FactGen::Ir);
