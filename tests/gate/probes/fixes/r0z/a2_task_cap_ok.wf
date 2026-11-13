@@ -1,0 +1,20 @@
+// Plan stage R0z, rule A (the clean twin of the structural form): the
+// analysis of `main` stops as in a2_task_cap_bad, but the spawned closure does
+// not hold a capability of a local handler. The program keeps the fallback.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let k = || run(|| print(r))
+        scope { s => s.spawn(|| print(1)) }
+        k()
+    }
+    let x = h.f
+    x()
+}

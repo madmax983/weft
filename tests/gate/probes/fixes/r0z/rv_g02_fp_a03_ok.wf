@@ -1,0 +1,27 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule G: a03 plus an unrelated body that stops.
+fn outer() / io, async {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let r = &w[0]
+    handle Fail { fn fail(m) { v.clear() } } in {
+        r = &v[0]
+        print(scope { s => let t = s.spawn(|| 3)
+ t.join() })
+    }
+    print(r)
+}
+fn main() / io, async { outer(); stopper() }
+effect RunG { fn rung(g: fn()) }
+fn mkg(h: fn()) -> fn() / RunG { || rung(h) }
+fn stopper() {
+    let v = Vec.new()
+    v.push(1)
+    handle RunG { fn rung(g) { g()
+        resume(()) } } in {
+        let c = mkg(|| print(v[0]))
+        c()
+    }
+}

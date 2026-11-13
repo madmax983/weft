@@ -1,0 +1,11 @@
+// Plan stage R0z, rule D (an operation of its own handler): a closure that
+// performs through `Get` goes to an operation of `Get`. The clause runs
+// outside its own handler and can keep its parameter (W0313 at the `handle`).
+effect Get { fn get(f: fn()) -> fn() }
+fn leak() -> fn() {
+    handle Get { fn get(g) { g } } in get(|| { let x = get(|| print(2)) })
+}
+fn main() {
+    let f = leak()
+    f()
+}

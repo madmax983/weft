@@ -1,0 +1,9 @@
+// Plan stage R0z, rule E: a closure that a callee runs spawns `f` two times.
+// `f` moves a captured value, so it can run only once (W0502 at the call).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn later(h: fn()) { h() }
+fn twice(f: fn()) / async { later(|| scope { s => s.spawn(f); s.spawn(f); () }) }
+fn main() / async {
+    let v = [1]
+    twice(|| take(v))
+}

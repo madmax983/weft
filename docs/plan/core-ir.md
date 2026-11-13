@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S, Z1 M (rules A to G: tier 1 34 rows, tier 2 37), Z2 M, Z3 M, Z5 M, Z7 M, Z6 L, Z4 L + S, Z8 M, Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M, Z3 M, Z5 M, Z7 M, Z6 L, Z4 L + S, Z8 M, Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -4400,7 +4400,9 @@ scratchpad: `r0z/`):
   files. `ereview/ev.sh` gave the codes of the old pipeline and the verdict of a run of
   each row (`r0z/ev-all.tsv`). 25 rows of tier 2 are the same files as rows of tier 1, with
   the same reason, codes and verdict. The note names the first body that fails, so each
-  count of a reason is a lower bound (stage Z0).
+  count of a reason is a lower bound (stage Z0; the full sets of the reasons are in "Z0
+  and Z1 as built" below: the first reasons do not change, and 27 rows have more than
+  one reason).
 
 The classes of the rows:
 
@@ -4548,7 +4550,8 @@ The cheap path for the rejected rows (stage Z1):
   F18 and chain rows) can get one. Stage Z0 measures it on the 57 clean rows before Z1
   turns the rule on.
 - The count. Z1 closes 34 of the 49 rejected rows of tier 1 and 37 of the 44 of tier 2.
-  The other rejected rows (tier 1 15, tier 2 7) have a clean twin of the same form: a rule
+  As built (Z0 and Z1, below): 33 of tier 1 (`q01_85_after_resume_bad` stays open) and 37
+  of tier 2. The other rejected rows (tier 1 15, tier 2 7) have a clean twin of the same form: a rule
   that rejects them rejects the twin too. They close with the precision stage of their
   form: the D1a refusals c03 to c09 (6; tier 2 `m3a/p5750`, `p7154`: Z4), a01, a03, a04
   (Z6), a05, o01, g26 (Z3), i9, s9 (Z9a, both tiers), c16_bad (Z9c; tier 2 `g3b/p18574`,
@@ -4589,8 +4592,8 @@ come before the stages with clean rows only; then the gain for each size):
 
 | # | Stage | Scope | Tier 1 rows (fallbacks after) | Tier 2 rows (after) | Size | Tests and probes | Risk |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Z0 the census tool | A mode that lists each reason of a program (each failing body and each pending construct, not only the first), and the errors of rule G and rule D1 with no other change; run it on the 165 rows and on both tiers | 0 (105) | 0 (60) | S | none (a report); the counts of this plan become exact | low |
-| 2 | Z1 conservative rejections | Rules A to G | 34 rejected (71) | 37 rejected (23) | M | `tests/programs` with `//~ W0314` for a `resume` in a task and a clean case in `sim.run`; probes `fixes/r0z/` for each rule, a bad case and a clean twin; the tests of `scope.rs` for j05 change | hidden second reasons; D1 and G against the old rule (Z0 measures) |
+| 1 | Z0 the census tool (done) | A mode that lists each reason of a program (each failing body and each pending construct, not only the first), and the errors of rule G and rule D1 with no other change; run it on the 165 rows and on both tiers | 0 (105) | 0 (60) | S | none (a report); the counts of this plan become exact | low |
+| 2 | Z1 conservative rejections (done: 33 rejected (72) in tier 1, 37 rejected (23) in tier 2) | Rules A to G | 34 rejected (71) | 37 rejected (23) | M | `tests/programs` with `//~ W0314` for a `resume` in a task and a clean case in `sim.run`; probes `fixes/r0z/` for each rule, a bad case and a clean twin; the tests of `scope.rs` for j05 change | hidden second reasons; D1 and G against the old rule (Z0 measures) |
 | 3 | Z2 rc across the row | as in the table above | 8 (63) | 0 (23) | M | the twins `b03` to `b10`, `n18`, `n19`, `p08`; `root_rc_ok`, `root_rc_between`, `root_rc_fo`; a mutation test of A4 | A4 of the fact oracle |
 | 4 | Z3 small steps of the way | as above | 13 (50) | 0 (23) | M | the twins a02, a05, o01, u12, u13, e04b, n03, g26; `analysis_units` `copy_env::`, `copies::` | the refusals of R0k-b2 change; `R0kB2-STAYS` goes |
 | 5 | Z5 D1b | as above | 4 (46) | 0 (23) | M | k04, rv_p12, c2_task; a `multi` twin | the ledger entry `R0h-STAYS` goes |
@@ -4671,6 +4674,242 @@ What I am least sure of:
   `p18574`, `p25005`, `p148` and the D1 rows `p5750`, `p7154` have old codes and no
   fault, so the precision stages can make them `lost-clean` (signed entries).
 - The sizes of Z4, Z6 and Z9c: each one is a design with no prototype.
+
+Z0 and Z1 as built (all the reasons of a fallback, and the conservative rejections;
+`docs/ir.md` 6.9, "As built (plan stage R0z, Z1)"; the list of each row:
+`docs/plan/r0z-census.md`; the scratchpad: `r0z/z0/`, `r0z/z1/`):
+
+- Z0, the tool. `weft check --reasons` (`factgen::reasons`) writes a note for each
+  reason: each body that the builder does not lower, the groups that are off, each body
+  with no IR and no error; else each body whose analysis stops (`factgen::emit_each`: the
+  fact generator goes on after it, and the body gets the worst case of its declaration
+  for its callers), each construct with no full facts (`pending:`), and the same with the
+  copies of the callees (`with the copies of the callees:`) if the first reason asks for
+  them. `emit` is `emit_each` that stops at the first body, so no program changes.
+- Z0, the full reason sets (the 165 rows; `r0z/z0/reasons-a3.tsv`). 27 rows have more
+  than one reason. The rows with each reason (also a second reason; `r` / `c` / `o` is
+  rejected / clean / oldmiss):
+
+  | Reason | Tier 1 (r / c / o) | Tier 2 (r / c / o) |
+  | --- | --- | --- |
+  | C2 | 22 / 9 / 10 | 14 / 0 / 0 |
+  | D1 | 14 / 12 / 2 | 28 / 4 / 0 |
+  | RC | 0 / 5 / 3 | 0 / 0 / 0 |
+  | D3 | 3 / 3 / 0 | 1 / 1 / 0 |
+  | F18 | 5 / 1 / 0 | 1 / 0 / 0 |
+  | E2 | 2 / 3 / 0 | 3 / 2 / 0 |
+  | NESTED | 7 / 4 / 0 | 3 / 2 / 0 |
+  | VT | 5 / 3 / 0 | 5 / 1 / 0 |
+  | E4 | 0 / 1 / 0 | 0 / 0 / 0 |
+  | TC | 6 / 2 / 2 | 9 / 0 / 0 |
+  | esc | 1 / 1 / 0 | 0 / 1 / 0 |
+  | A | 1 / 2 / 1 | 1 / 0 / 0 |
+  | D5 | 0 / 1 / 1 | 1 / 1 / 0 |
+  | chain | 0 / 0 / 0 | 0 / 4 / 0 |
+
+  The first reasons do not change (the table of the census above). The second reasons
+  that a later stage must close too: TC in the D1b rows (`c2_task`, `k04_c2_race_ok`,
+  `rv_p12` and its twin: Z5 must also give the task of code of a caller its facts),
+  NESTED in the F18 rows (`a13`, `a13b`, `a13c`, `j07_run_bad`, `j07_run_ok`, `sim1`:
+  Z9c), D5 in `rv_p04` and its twin (Z7), TC in `d3f_task`, and three bodies with C2 in
+  the `e2b` rows.
+- Z0, the measurement of rules D and G. With rule G and then with each rule on, no row of
+  the 57 clean rows (41 tier 1, 16 tier 2) and no row of the 15 oldmiss rows leaves the
+  fallback: each one keeps the note and no error (`r0z/z0/reasons-g.tsv`, `reasons-a3.tsv`,
+  and the census below). Rule G alone closes 6 rows of tier 1 (`sim1`, `a2_escapes`, the
+  four `e2b`) and 13 of tier 2.
+- Z1, the rules (each one notes its error at a construct with no full facts; fix 2: a
+  note changes only a program that goes to the old pipeline without Z1, see below;
+  the texts are those of the old pipeline):
+  - A (W0314, built): `templates::task_w0314` counts a closure with a `Kont` capture as a
+    capability of the handler of its clause (the values that a task runs, a task of a
+    scope of a maker, the task of a callee at a run node; not code of a caller that runs a
+    value in the worst way, `TaskSlot::foreign`: the W0502 line 48 of `122_cont_escape`
+    stays as before), and the spawn follows the values of the captures of the closure in
+    the state (`task_holds_kont`). The structural form (`checks::task_konts`) runs on the
+    bodies of rule G with no facts (the bodies that stop and the bodies that reach them):
+    a closure on the static way of the body, with a `Kont` capture or a `Cap` capture of a
+    handler that is not a `Fail` handler (also in a captured closure or an aggregate).
+    Fix 1: a `Cap` capture of the closure of the task counts only if its code uses it
+    (`checks::cap_used`).
+    Rows: tier 1 13 (the 8 task resumes; u04, u08, u09, u14_bad, u14_ok), tier 2 20.
+  - B (W0314, built): a task that runs the result of a perform of an operation of a user
+    effect through the row (`checks::op_result`, also through an upvar of a scope body).
+    The plan said "if a local handler is on the stack of this task"; the old rule
+    (`TaskMark::Unknown`) has no such condition, and the value of an operation is code of
+    the clause of a handler that is on the stack of this task, so the rule needs none.
+    Rows: tier 1 2 (`j05_code_old`, `d3f_task`).
+  - C (W0314, built): at the `Later(TASK_RUN)` of `transfer::apply_runs`, a value with a
+    `Kont` capture or a `Cap` capture of a handler that is not a `Fail` handler
+    (`task_run_w0314`, an error of `clause::note_error`). The body stops there; rule G
+    keeps the error if no callee of the body reaches a body that stops. `j07_run_ok`
+    (only a change of a place) keeps the fallback. Rows: tier 1 5 (a13, a13b, a13c,
+    j07_run_bad, sim1), tier 2 1 (sim1).
+  - D (W0313, narrowed): the D1 form of the plan (a value with the capability of a local
+    handler at the `Later(OP_KEPT)`) is not built: a value with a `Cap` capture is
+    `task_unsafe`, so it never gives `OP_KEPT`, and a probe shows that a clause of an inner
+    handler that runs such a value at once is clean for the old pipeline (scratchpad
+    `r0z/t/d1.wf`, `d2.wf`). The built forms are structural, on the bodies of rule G with
+    no facts: a closure with a `Cap` capture of H that a perform of an operation of H gets
+    (`checks::own_op_escapes`: a4); a write of a local outside the handled body of H, from
+    a body inside it with no closure body between, of a closure with a `Cap` capture of H,
+    of the result of a call of a function whose result is a closure that performs an
+    effect that H serves at the call, or of the parameter of the clause of another
+    handler whose operation gets such a closure, where the local has one write inside the
+    handled body (`checks::local_escapes`: c11, n04, v1c). `q01_85_after_resume_bad`
+    stays open: the closure of `Note` goes to the clause of `Run` through a call of a
+    function value. Rule G closed the four `e2b` rows instead. Rows: tier 1 6 (c11 and n04,
+    bad and ok; a4; v1c), tier 2 2 (a4, v1c).
+  - E (W0502, built): at the pending note of `NESTED_TASK_RUN`, if the nested run can
+    happen more than once (`run.many`, or a run around it that can happen more than
+    once: `OuterMany`; fix 1: two runs of two values run each value once), a `once`
+    value gets W0502 at the run node, and a parameter of
+    the function there goes to `NESTED_ONCE`: a caller that gives a `once` value to it
+    gets W0502 at its call (`once_to_nested`). Rows: tier 1 2 (`rv1_b2_h10`, `h18`).
+  - F (W0501, built): two `resume`s of a `once` continuation on a path of a body that is
+    not the clause body (`checks::twice_resumed`). Rows: tier 2 1 (`m3b/p21376`).
+  - G (built): `factgen::rule_g`. A body that reaches a body that stops (a call, a
+    function item as a value, an `on abort` function) gets the facts of its declaration
+    and the worst case of its declaration as its signature (`IrFacts::no_ir`: sigdiff
+    does not compare it). The errors: the facts of the other bodies and their fact
+    generation, `typeck` and the item checks, the builder, rules A, C, D and F. The scope
+    has `fallback` and `pending` until the check, which clears the fallback for an error
+    (`weft_check::check_pending`), so a test of the scope in `weft-sema` sees the
+    fallback as before. Rows: tier 1 5 (a2_escapes, the four `e2b`; sim1 needs it with C), tier 2
+    13.
+- Tests and probes. `tests/gate/probes/fixes/r0z/` (a bad twin and a clean twin for each
+  rule: a1, a2, b1, c1, d1, d2, d3, e1, f1, g1), `crates/weft-check/tests/ir_conservative.rs`
+  (one test for each rule, a test that a body that reaches the body that stops gives no
+  error, a test of `factgen::reasons`, and a test of the review probes of fixes 1 and
+  2), `crates/weft-check/tests/ir_z1_inert.rs` (fix 2: programs in scope with notes of
+  Z1 get the same diagnostics with Z1 on and off), and
+  `tests/programs/198_task_resumes.wf` (`//~ W0314` at a spawn and a fork that resume,
+  and a clean `resume` in `sim.run`). No marker of the corpus changes (fix 2 takes back
+  the changes of 122 and 84 of the first build). One test expectation changes: `scope.rs` `the_both_mode_gives_both_fact_sets` said that a
+  program with a body that stops has no `ir` facts; with rule G it has them, the scope
+  is pending, and the W0101 of `typo` rejects the program (the test now checks that).
+  No test is relaxed.
+- The census (with fix 2: `r0z/z1f2/census/p-t1.tsv`, `p-t2.tsv`). Tier 1 (5410 files
+  with the 37 new probes): 85 fallbacks, the 72 rows of the 105 that stay and the 13 clean
+  twins of the new probes that keep the fallback (c1, d3, e1, f1, g1 ok, the seven
+  `rv_*_ok` and `rv2_n06_collide_e_ok`). Tier 2 (57393): 23 fallbacks. Each row that leaves the fallback is a row of the census that the old
+  pipeline rejects (33 in tier 1, 37 in tier 2); no row enters the fallback.
+- ev.sh (with fix 2: `r0z/z1f2/ev/ev-old.tsv`, `ev-new.tsv`: 2512 rows, the 165 rows,
+  `fixes/*` and the review probes `b1prev/p`, `r0kb1rev/p`, `r0kb2rev/p`, `r0kb2rev2/p`,
+  `r0zrev/p`, `r0zrev2/p`) with `weft-r0kb2f1` and with `weft-z1f2`: the same 13 HOLE rows with both
+  binaries (each one older than this stage: `f8/receiver_bounds`, `f13b/e17`,
+  `f13c/w09`, AST-only or an oldmiss), the same 13 FP-IR rows (the 11 of before and the
+  review probes `e08_two_locals_ok` and `g14_ctrl_ok`, in scope before), the same 12
+  fact-oracle rows. 127 rows change: 63 `held` to `held` and 64 `nofault` to
+  `both-reject` (each one a fallback that the old pipeline rejects; the ir pipeline now
+  rejects them; also the review probes
+  `b1prev/p/c11` and `r0kb1rev/p/h01_if_two_makers`, bad and ok, old W0313). Each `_ok`
+  probe of `r0zrev/p` is `nofault` or `both-reject` (`a05`, `a06`, `d07` are `held` with
+  both binaries: they fault), and each `_bad` probe is `held` or `both-reject`; each
+  `_ok` probe of `r0zrev2/p` has the verdict of main, and `n06_collide_e_bad` is
+  rejected in scope (W0502 at line 19), as in main.
+- Gates (with fix 2, release binaries `r0z/z1f2/bin/weft-z1f2`, `weft-gate-z1f2`): tier 1
+  0 blockers (5410; 4056 same, 23 open, 336 fixed, 1 new-fp, 0 lost-fault, 156
+  lost-clean, 148 moved, 690 changed; 5271 programs in scope); tier 2 (3 workers) 0
+  blockers with the ledger entry of the four mutants of 85 (57393; 39873 same, 6 open, 92
+  fixed, 12 new-fp, 0 lost-fault, 3480 lost-clean, 1860 moved, 12070 changed; 54702
+  programs in scope, 54667 before). Against main, the only rows of either tier that
+  change are rows of the census that leave the fallback, and the new probes: no program
+  that is in scope without Z1 changes (fix 2); fact oracle tier 1 0 failures (8 faults,
+  the same as before; 22 timeouts; 1481 pass); sigdiff tier 1 0 rows with no entry (one `sig` entry for the
+  programs that come into scope). The interpreter does not change, so the oracle caches
+  only get the rows of the new files. The code diffs against
+  `weft-r0kb2f1` (`r0z/z1f2/cmp.sh`, sets `s00`, `s01`, `s02`, `s04`, `s06`, `s07`,
+  `s08`, `s10`): 26 files. They are the rows that leave the fallback (some at another
+  column: the `ir` pipeline names the spawn, not its closure) and review probes that both
+  binaries reject: `c16/att4/n22_val_call_cap` and its twin (W0502 for W0503, W0502 and W0301),
+  `r0ka2rev/p/u09_fork`, `p2/v09_fork_branch` (a part of the codes of
+  the old pipeline), `r0ka2rev/p/s12_by_value_source_dead` (W0313 for W0502),
+  `r0karev/p/c10_task_in_callee` (the column) and `r67/v/j04_tuple_generic` (the old
+  pipeline gives W0503; rule G gives W0601, W0602 and W0314 of the bodies that do not
+  reach the body that stops).
+- Ledger: `changed` u09 (W0403 of the old pipeline at the fork), c11_bad, n04_bad and
+  d2_bad (the W0301 and W0312 of the old pipeline after the clause clears the `Vec`), sim1
+  (W0702 of the old pipeline in `main`, which reaches the body that stops), a2_escapes
+  (W0301 in the body that stops), the four `e2b` (the W0313 and W0314 of the bodies that
+  stop), the review probe `rv_g01_fp_a01_bad` (W0405 of `f` for the W0312 of the old pipeline); one `sig`
+  entry.
+- Fix 1 (the review of Z1, round 1: three blockers, new false positives, no HOLE; probes
+  scratchpad `r0zrev/p/`):
+  - B1, rule E: the guard took `two` (two keys: two different values) as "more than
+    once", and `OuterMany` took it too (`e06_two_values_ok`, `e02_param_other_ok`,
+    `e09_outer_two_ok`: W0502 on a clean program). Now only `run.many` of the run, or a
+    run around it with `run.many`, counts; a value that two keys reach is not counted (a
+    missed W0502, not a false one).
+  - B2, rule A: the structural form counted each `Cap` capture of the closure of the
+    task, also one that only an inner closure that the task never runs needs
+    (`a01_cap_unused_ok`). Now `checks::cap_used` asks for a use in the code of the task:
+    a perform through it, a call of a function whose stated row has the effect where the
+    handler serves it, or a closure with the capture (or the result of a call whose
+    function type has the effect in its row: `c = mk(..)` of u14) that the code reads or
+    writes into a local outside. A closure that a capture holds counts as before (the
+    old rule `held`). The `Kont` arm stays structural, as the old rule.
+  - B3, rule G: an error of a body that does not reach the body that stops has the
+    normal precision of the `ir` pipeline, so an `ir` false positive that is in scope
+    today became final in a program that main accepted through the fallback
+    (`g01_fp_a01_ok` W0405, `g02_fp_a03_ok` W0301, `g03_fp_tw_ok` 2xW0301). The safety
+    net: an error of a rule of Z1 (rules A to F, and each error of rule G,
+    `Pending::rule_g`) closes a fallback only if the old pipeline rejects the program
+    too (`weft_check::check_pending`; fix 2 below replaces the keys of fix 1 with a list
+    of the errors, `IrFacts::z1`).
+    Else the errors go and the program keeps the fallback. It applies to each rule of Z1.
+    A program that was in scope before Z1 has an error that is not of Z1 (the check of
+    the facts), so it does not change. Each row that Z1 closes is a row that the old
+    pipeline rejects, so each one stays closed.
+  - The review probes go to `fixes/r0z/rv_*` (e06, e02, e09, a01 with their bad twins;
+    g01, g02 with their bad twins; g03), and `ir_conservative.rs` checks them.
+  - The rows that Z1 closes do not change (tier 1 33, tier 2 37): each one is a row that
+    the old pipeline rejects. `g23_spawn_struct` (a review probe of R0k-a2) gets the codes
+    of main again (the narrowed rule A).
+- Fix 2 (the review of Z1, round 2: one blocker; probes scratchpad `r0zrev2/p/`). The net
+  of fix 1 found an error of Z1 by its key (code, unit, span, text). In
+  `n06_collide_e_bad` the check gives a true W0502 at the call of `two` (main has the
+  program in scope and rejects it), and rule E gives W0502 with the same key; the old
+  pipeline misses the program, so the net dropped both errors, and the program went back
+  to the fallback and faults. The same risk was in rules B, C (the text of the plain
+  W0314) and F (the text of the W0501 of the check). Also rules A and B changed programs
+  in scope before (the W0314 of 122, 84, `or9_v2`, `i3c`, `j05_code_bad`, and the
+  tier-2 rows `m3a/p1267` and others). The fix keeps two rules (`docs/ir.md` 6.9):
+  - 1. The rules of Z1 change only a program that goes to the old pipeline without
+    them. No rule changes the analysis or a diagnostic of a body
+    (`templates::task_w0314` and `task_start` keep their results and
+    `w0314_bodies`; `clause::note_error` errors go apart:
+    `callgraph::Inference::z1`, `factgen::EachOut::body_z1`, `IrFacts::z1`; rule F is
+    in `IrFacts::z1`). `weft_check::check_pending` checks the `ir` facts and the copies
+    with `IrFacts::diags` only, and returns that result for a program that is in scope
+    without Z1; it reads `IrFacts::z1` only on the branch that sends the program to the
+    old pipeline, and for a program of rule G.
+  - 2. An error of Z1 is an item of `IrFacts::z1`, not a key: an error of the check with
+    the same key is a diagnostic of the check, and the net never drops it
+    (`check_pending`, `add_z1`, `z1_rejects`).
+  - The test hook `clause::set_z1` turns Z1 off; `ir_z1_inert.rs` checks six programs in
+    scope with notes of Z1 (`rv2_n06`, 122, 84, `or9_v2`, `i3c`, `j05_code_bad`): the
+    same diagnostics and scope with Z1 on and off. The probes `rv2_n06` (bad and ok) and
+    `rv2_n07` go to `fixes/r0z`.
+  - The rows that Z1 closes do not change (tier 1 33, tier 2 37). The marker changes of
+    122 and 84 and the ledger entry of `or9_v2` of the first build go.
+  - Open: the net drops a true error of rule E in a program that the old pipeline misses
+    (`r0zrev2/p/n01_collide_e_bad`, `n04_e_only_wrap_bad`). Main accepts them through the
+    fallback too, so it is no regression; they are oldmiss rows that Z1 could close with
+    a rule that does not need the net.
+- What I am least sure of: the structural forms of rules A and D read the static way of a
+  body (the one write of a local) with no analysis, so a program where another path
+  writes the local through a callee or a heap slot is out of their reach (no error, not a
+  false error). Rule D (`local_escapes`) asks for one write inside the handled body; the
+  old pipeline is flow-sensitive there, and a program that writes the local again after
+  the handled body but before a run can differ (the old pipeline gives W0313 too: the
+  closure leaves at the end of the handled body). Rule E keys `NESTED_ONCE` by the
+  function and the parameter for one fixpoint; inside a recursive component a caller can
+  run before the callee notes it (a missed W0502, not a false one). Rule G gives a body
+  that reaches a body that stops no error at all, so its errors wait for the stage of the
+  failed body. The safety net of fix 1 reads the old pipeline: when R3 removes it, each
+  row that a rule of Z1 closes must have its full facts first (the precision stages), or
+  the net must become a stated rule of the language.
 
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):

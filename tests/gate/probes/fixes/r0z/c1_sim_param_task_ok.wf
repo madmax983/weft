@@ -1,0 +1,11 @@
+// Plan stage R0z, rule C (the clean twin): the value that the callee spawns
+// inside `sim.run` holds no capability.
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn main() {
+    let f = || print(1)
+    param_in_sim(f)
+}

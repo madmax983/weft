@@ -1,0 +1,10 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule E: the closure spawns two different values, each one time. `f` moves a
+// captured value; it runs once.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn later(h: fn()) { h() }
+fn both(f: fn(), g: fn()) / async { later(|| scope { s => s.spawn(f); s.spawn(g); () }) }
+fn main() / async {
+    let v = [1]
+    both(|| take(v), || print(2))
+}

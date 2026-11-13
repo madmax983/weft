@@ -1,0 +1,24 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule G: a pre-existing IR false positive (a01) plus an unrelated body that stops.
+effect Reg { fn reg(f: fn()) }
+fn f() / Reg {
+    let x = Vec.new()
+    x.push(1)
+    reg(|| print(x[0]))
+}
+fn main() {
+    stopper()
+    handle Reg { fn reg(g) { g()
+        resume(()) } } in f()
+}
+effect RunG { fn rung(g: fn()) }
+fn mkg(h: fn()) -> fn() / RunG { || rung(h) }
+fn stopper() {
+    let v = Vec.new()
+    v.push(1)
+    handle RunG { fn rung(g) { g()
+        resume(()) } } in {
+        let c = mkg(|| print(v[0]))
+        c()
+    }
+}

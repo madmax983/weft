@@ -1778,6 +1778,75 @@ pub fn take_pending() -> Vec<crate::factgen::Unsupported> {
     UNMODELED.with(|p| std::mem::take(&mut *p.borrow_mut()))
 }
 
+thread_local! {
+    /// The errors of the rules of plan stage R0z (Z1) that the analysis of
+    /// the body of the fact generator now finds ([`note_error`]).
+    static ERRORS: std::cell::RefCell<Vec<weft_syntax::diag::Diagnostic>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Notes an error of a rule of plan stage R0z (Z1).
+///
+/// It is an error of the language that the analysis finds at a construct
+/// with no full facts (a `Later`, or a construct of [`note_pending`]). It
+/// never goes into the diagnostics of a body: the fixpoint of the summaries
+/// keeps it apart, by body (`super::callgraph::Inference::z1` for a body
+/// that the fact generator supports, `Inference::later` for a body that it
+/// does not support), and `factgen::IrFacts::z1` holds it. The check uses
+/// it only for a program that the `ir` pipeline sends to the old pipeline
+/// without the rules of Z1 (`weft_check::check_analysis`). With Z1 off
+/// ([`set_z1`]) it notes nothing.
+pub fn note_error(d: weft_syntax::diag::Diagnostic) {
+    if !z1_on() {
+        return;
+    }
+    ERRORS.with(|e| {
+        let mut e = e.borrow_mut();
+        if !e.contains(&d) {
+            e.push(d);
+        }
+    });
+}
+
+/// The errors of [`note_error`] since the last call, which clears them.
+pub fn take_errors() -> Vec<weft_syntax::diag::Diagnostic> {
+    ERRORS.with(|e| std::mem::take(&mut *e.borrow_mut()))
+}
+
+/// The rules of plan stage R0z (Z1) are off ([`set_z1`]).
+static Z1_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True if the rules of plan stage R0z (Z1) are on (the default).
+pub fn z1_on() -> bool {
+    !Z1_OFF.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Turns the rules of plan stage R0z (Z1) on or off for the process. A test
+/// hook: with Z1 off, the pipeline is the pipeline before Z1, so a test can
+/// show that the rules change no program that is in scope.
+#[doc(hidden)]
+pub fn set_z1(on: bool) {
+    Z1_OFF.store(!on, std::sync::atomic::Ordering::Relaxed);
+}
+
+thread_local! {
+    /// The errors of the rules of Z1 of the bodies that the last emit
+    /// supports ([`take_z1_sink`]).
+    static Z1_SINK: std::cell::RefCell<Vec<weft_syntax::diag::Diagnostic>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Adds errors of the rules of Z1 of a body that the emit supports
+/// (`factgen::emit_each`).
+pub fn sink_z1(ds: Vec<weft_syntax::diag::Diagnostic>) {
+    Z1_SINK.with(|z| z.borrow_mut().extend(ds));
+}
+
+/// The errors of [`sink_z1`] since the last call, which clears them.
+pub fn take_z1_sink() -> Vec<weft_syntax::diag::Diagnostic> {
+    Z1_SINK.with(|z| std::mem::take(&mut *z.borrow_mut()))
+}
+
 /// Notes the state `st` on the abort edge of terminator `t` of body `body`.
 ///
 /// It goes to each handler whose handled body runs now and that the abort

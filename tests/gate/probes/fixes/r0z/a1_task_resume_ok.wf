@@ -1,0 +1,12 @@
+// Plan stage R0z, rule A (the clean twin): the clause spawns a task that does
+// not hold the continuation, and the clause resumes on its own task.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let n = 0
+    handle Ask { fn ask() { scope { s => s.spawn(|| print(7)) }
+        resume(1) } } in {
+        n += ask()
+        print(n)
+    }
+    print(n)
+}

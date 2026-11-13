@@ -1,0 +1,44 @@
+// Plan stage R0z, rule A: a task cannot resume a continuation of this task.
+// The rest of the handled body would run on another task (W0314 at the
+// spawn and at the fork). `sim.run` runs its block on this task, so a
+// `resume` in it is no task resume.
+effect Ask { fn ask() -> u64 }
+
+fn in_task() {
+    let n = 0
+    handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); () } } } in {   //~ W0314
+        n += ask()
+    }
+    print(n)
+}
+
+fn in_fork() / par {
+    let r = handle Ask {
+        fn ask() {
+            let (a, b) = fork(|| resume(1), || 2)   //~ W0314
+            a + b
+        }
+    } in {
+        ask() + 1
+    }
+    print(r)
+}
+
+fn in_sim() / clock {
+    let r = handle Ask {
+        fn ask() {
+            sim.run(seed: 1) { let v = resume(1); print("in sim {v}") }
+            0
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}
+
+fn main() / par, clock {
+    in_task()
+    in_fork()
+    in_sim()
+}

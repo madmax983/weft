@@ -1,0 +1,7 @@
+// Plan stage R0z, rule E (the clean twin): the closure that the callee spawns
+// two times does not move a captured value.
+fn later(h: fn()) { h() }
+fn twice(f: fn()) / async { later(|| scope { s => s.spawn(f); s.spawn(f); () }) }
+fn main() / async {
+    twice(|| print(1))
+}

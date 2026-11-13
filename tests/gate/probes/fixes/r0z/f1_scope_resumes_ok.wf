@@ -1,0 +1,11 @@
+// Plan stage R0z, rule F (the clean twin): the scope body of the clause
+// resumes the continuation one time.
+effect Ask { fn ask() -> u64 }
+fn main() / io {
+    handle Ask { fn ask() {
+        scope { s => resume(1) }
+    } } in {
+        let x = ask()
+        print("got {x}")
+    }
+}

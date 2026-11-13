@@ -17,6 +17,32 @@ the counts.
 - The note names the reason of the first body that fails. A program can have more
   reasons. Stage Z0 lists all of them.
 
+## Z0 and Z1 (as built)
+
+- Z0: `weft check --reasons` lists each reason of a row: each body whose analysis stops
+  (the fact generator goes on after it), each construct with no full facts (`pending`),
+  and the same with the copies of the callees (`cp:`). The note of the census names only
+  the first one. 27 of the 165 rows have more than one reason (scratchpad
+  `r0z/z0/reasons-a3.tsv`). The second reasons that a later stage must close too:
+  - D1 and TC (a task that runs code of a caller): `c2_task`, `k04_c2_race_ok`, `rv_p12`
+    and its twin (Z5);
+  - F18 and NESTED: `a13`, `a13b`, `a13c`, `j07_run_bad`, `j07_run_ok`, `sim1` (Z9c);
+  - C2 and D5: `rv_p04` and its twin (Z7);
+  - D3 and TC: `d3f_task`;
+  - three bodies with C2 and TC (with the copies VT): the four `e2b` rows;
+  - C2, D1 and TC: the four tier-2 mutants of 85;
+  - five bodies that stop and five pending reasons: `r3/quality/big/all.wf`.
+- Z1 closed 33 rows of tier 1 and 37 rows of tier 2 (the column Stage says
+  "(closed)"). Each one is a row that the old pipeline rejects; no clean row and no
+  oldmiss row changed. Rule G closed the four `e2b` rows (the plan named rule D: the
+  error is the W0314 of a body that does not reach the bodies that stop). `q01` stays
+  open: the closure of `Note` goes to the clause of `Run` through a call of a function
+  value (`c(|| note(2))`), and no structural form of rule D follows that value. Of the
+  25 tier-2 rows that are tier-1 files, 16 closed, as in tier 1. Fixes 1 and 2 (the
+  reviews of Z1) do not change these rows: the errors of Z1 close a fallback only if the
+  old pipeline rejects the program, and each closed row is such a row. No program that
+  is in scope without Z1 changes.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -49,40 +75,40 @@ the counts.
 
 | # | Path | Reason | Form | Old pipeline | Run | Class | Refusal probe | Stage |
 |---|---|---|---|---|---|---|---|---|
-| 1 | `fixes/r0k2/u04_task_reassigns.wf` | C2 | a scope task gives `k` a closure with a capability of a local handler | W0314 | fault | rejected | yes | Z1-A |
-| 2 | `fixes/r0k2/u08_task_join.wf` | C2 | a joined task gives `k` a closure with a capability of a local handler | W0314 | fault | rejected | yes | Z1-A |
-| 3 | `fixes/r0k2/u09_fork.wf` | C2 | a fork branch gives `k` a closure with a capability of a local handler | W0314, W0403 | fault | rejected | yes | Z1-A |
-| 4 | `fixes/r0kb2/u14_task_bad.wf` | C2 | a second write by a task; the task holds a capability of a local handler | W0314 | fault | rejected | yes | Z1-A |
-| 5 | `fixes/r0kb2/u14_task_ok.wf` | C2 | a second write by a task (old W0314 on both twins) | W0314 | no fault | rejected | yes | Z1-A |
-| 6 | `r2/oracle/min/or_resume_in_task.wf` | D1 | task resume: `resume` in a spawn closure | 2xW0314 | fault | rejected | no | Z1-A |
-| 7 | `r2/oracle/probes/i3_resume_task.wf` | D1 | task resume: `resume` in a spawn closure | W0314 | fault | rejected | no | Z1-A |
-| 8 | `r2/oracle/probes/i3b_resume_task.wf` | D1 | task resume: `resume` in a spawn closure | W0314 | fault | rejected | no | Z1-A |
-| 9 | `r2/oracle/repro/OR9_resume_in_task.wf` | D1 | task resume: `resume` in a spawn closure | 2xW0314 | fault | rejected | no | Z1-A |
-| 10 | `verify/s5/R2c/p/c2.wf` | D1 | task resume: through a field, a callee in the task, a named closure, a fork branch (no `main` body) | 4xW0314 | no fault | rejected | no | Z1-A |
-| 11 | `verify/s5/R2c: .../p/rr3_v15_spawn_nested_closure.wf` | D1 | task resume: a task runs a closure that runs the resuming closure | W0314 | no fault | rejected | no | Z1-A |
-| 12 | `verify/s5/R2c: .../p/rr3_v16_spawn_via_callee.wf` | D1 | task resume: a callee runs the resuming closure as a task | W0314 | no fault | rejected | no | Z1-A |
-| 13 | `verify/s5/R2c: .../p/rr3_v17_fork.wf` | D1 | task resume: a fork branch resumes | W0314 | no fault | rejected | no | Z1-A |
-| 14 | `fixes/r0h/d3f_task.wf` | D3>TC | the callee runs the closure of the clause on a task (the copy brings in a task that runs code of a caller) | W0314 | no fault | rejected | no | Z1-B |
-| 15 | `fixes/r0j/j05_code_old.wf` | TC | a task runs a value of an operation (code of a caller) | W0314 | no fault | rejected | yes | Z1-B |
-| 16 | `fixes/r0e/a13_sim_param_task.wf` | F18 | a parameter spawned inside `sim.run`; the value holds the capability of a local handler | W0314 | fault | rejected | no | Z1-C |
-| 17 | `fixes/r0e/a13b_callee_param_task.wf` | F18 | a parameter spawned in a closure that a callee runs; the value holds a capability | W0314 | fault | rejected | no | Z1-C |
-| 18 | `fixes/r0e/a13c_callee_bg_param.wf` | F18 | as a13b, through a second callee | W0314 | fault | rejected | no | Z1-C |
-| 19 | `fixes/r0j/j07_run_bad.wf` | F18 | as a13 (a task of `sim.run` performs through a handler of the spawning task) | W0314 | fault | rejected | yes | Z1-C |
-| 20 | `verify/partb/S3/p/sim1.wf` | F18 | `sim.run` and tasks with capability values, no `main` | 4xW0314, 2xW0702 | no `main` | rejected | no | Z1-C |
-| 21 | `fixes/r0kb1/c11_c2_loop_instance_bad.wf` | C2 | extent rule: a new handler instance in a loop; the value goes through a local outside the handled body | W0301, W0313 | fault | rejected | yes | Z1-D |
-| 22 | `fixes/r0kb1/c11_c2_loop_instance_ok.wf` | C2 | extent rule (clean twin; the old W0313 is the language rule "not through a local outside it") | W0313 | no fault | rejected | yes | Z1-D |
-| 23 | `fixes/r0kb1/n04_loop_instance_bad.wf` | C2 | extent rule: as c11, a closure of the same function | W0301, W0313 | fault | rejected | yes | Z1-D |
-| 24 | `fixes/r0kb1/n04_loop_instance_ok.wf` | C2 | extent rule (clean twin; old W0313) | W0313 | no fault | rejected | yes | Z1-D |
-| 25 | `fixes/r0kb2/q01_85_after_resume_bad.wf` | C2>esc | the clause of `Run` runs a capability closure of `Note` after its `resume` (outside `Note`) | W0313 | fault | rejected | no | Z1-D |
-| 26 | `verify/partb/p/a4_get_own.wf` | C2 | a closure that performs through `Get` goes to an operation of `Get` itself | W0313 | fault | rejected | no | Z1-D |
-| 27 | `verify/s5/S5a/x/p/e2b_e_job.wf` | C2>VT | forms 2 to 4 with a clause that spawns its argument (capability of `Note` to `Run`, `RunJ`) | 2xW0313, 5xW0314 | fault | rejected | no | Z1-D |
-| 28 | `verify/s5/S5a/x/p/e2b_e_mk_job.wf` | C2>VT | as e2b_e_job | 2xW0313, 5xW0314 | fault | rejected | no | Z1-D |
-| 29 | `verify/s5/S5a/x/p/e2b_e_struct.wf` | C2>VT | as e2b_e_job | 2xW0313, 5xW0314 | fault | rejected | no | Z1-D |
-| 30 | `verify/s5/S5a/x/p/e2b_variants.wf` | C2>VT | as e2b_e_job | 2xW0313, 5xW0314 | fault | rejected | no | Z1-D |
-| 31 | `verify/s5/diff/p/v1c_stored.wf` | C2 | form 3: a closure in a field run by `run_it`; the clause keeps the value in a local outside | W0313 | fault | rejected | no | Z1-D |
-| 32 | `fixes/r0e/rv1_b2_h10.wf` | NESTED | a closure that a callee runs spawns a `once` value two times | W0502 | fault | rejected | yes | Z1-E |
-| 33 | `fixes/r0e/rv1_b2_h18.wf` | NESTED | a callee runs the closure that spawns a `once` value two times | W0502 | fault | rejected | yes | Z1-E |
-| 34 | `verify/partb/p/a2_escapes.wf` | C2 | a capability closure as the value of a handled body (via `id`, `wrap`, `pair`, `pop`, ...), no `main` | W0301, 9xW0313 | no `main` | rejected | no | Z1-G |
+| 1 | `fixes/r0k2/u04_task_reassigns.wf` | C2 | a scope task gives `k` a closure with a capability of a local handler | W0314 | fault | rejected | yes | Z1-A (closed) |
+| 2 | `fixes/r0k2/u08_task_join.wf` | C2 | a joined task gives `k` a closure with a capability of a local handler | W0314 | fault | rejected | yes | Z1-A (closed) |
+| 3 | `fixes/r0k2/u09_fork.wf` | C2 | a fork branch gives `k` a closure with a capability of a local handler | W0314, W0403 | fault | rejected | yes | Z1-A (closed) |
+| 4 | `fixes/r0kb2/u14_task_bad.wf` | C2 | a second write by a task; the task holds a capability of a local handler | W0314 | fault | rejected | yes | Z1-A (closed) |
+| 5 | `fixes/r0kb2/u14_task_ok.wf` | C2 | a second write by a task (old W0314 on both twins) | W0314 | no fault | rejected | yes | Z1-A (closed) |
+| 6 | `r2/oracle/min/or_resume_in_task.wf` | D1 | task resume: `resume` in a spawn closure | 2xW0314 | fault | rejected | no | Z1-A (closed) |
+| 7 | `r2/oracle/probes/i3_resume_task.wf` | D1 | task resume: `resume` in a spawn closure | W0314 | fault | rejected | no | Z1-A (closed) |
+| 8 | `r2/oracle/probes/i3b_resume_task.wf` | D1 | task resume: `resume` in a spawn closure | W0314 | fault | rejected | no | Z1-A (closed) |
+| 9 | `r2/oracle/repro/OR9_resume_in_task.wf` | D1 | task resume: `resume` in a spawn closure | 2xW0314 | fault | rejected | no | Z1-A (closed) |
+| 10 | `verify/s5/R2c/p/c2.wf` | D1 | task resume: through a field, a callee in the task, a named closure, a fork branch (no `main` body) | 4xW0314 | no fault | rejected | no | Z1-A (closed) |
+| 11 | `verify/s5/R2c: .../p/rr3_v15_spawn_nested_closure.wf` | D1 | task resume: a task runs a closure that runs the resuming closure | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 12 | `verify/s5/R2c: .../p/rr3_v16_spawn_via_callee.wf` | D1 | task resume: a callee runs the resuming closure as a task | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 13 | `verify/s5/R2c: .../p/rr3_v17_fork.wf` | D1 | task resume: a fork branch resumes | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 14 | `fixes/r0h/d3f_task.wf` | D3>TC | the callee runs the closure of the clause on a task (the copy brings in a task that runs code of a caller) | W0314 | no fault | rejected | no | Z1-B (closed) |
+| 15 | `fixes/r0j/j05_code_old.wf` | TC | a task runs a value of an operation (code of a caller) | W0314 | no fault | rejected | yes | Z1-B (closed) |
+| 16 | `fixes/r0e/a13_sim_param_task.wf` | F18 | a parameter spawned inside `sim.run`; the value holds the capability of a local handler | W0314 | fault | rejected | no | Z1-C (closed) |
+| 17 | `fixes/r0e/a13b_callee_param_task.wf` | F18 | a parameter spawned in a closure that a callee runs; the value holds a capability | W0314 | fault | rejected | no | Z1-C (closed) |
+| 18 | `fixes/r0e/a13c_callee_bg_param.wf` | F18 | as a13b, through a second callee | W0314 | fault | rejected | no | Z1-C (closed) |
+| 19 | `fixes/r0j/j07_run_bad.wf` | F18 | as a13 (a task of `sim.run` performs through a handler of the spawning task) | W0314 | fault | rejected | yes | Z1-C (closed) |
+| 20 | `verify/partb/S3/p/sim1.wf` | F18 | `sim.run` and tasks with capability values, no `main` | 4xW0314, 2xW0702 | no `main` | rejected | no | Z1-C (closed) |
+| 21 | `fixes/r0kb1/c11_c2_loop_instance_bad.wf` | C2 | extent rule: a new handler instance in a loop; the value goes through a local outside the handled body | W0301, W0313 | fault | rejected | yes | Z1-D (closed) |
+| 22 | `fixes/r0kb1/c11_c2_loop_instance_ok.wf` | C2 | extent rule (clean twin; the old W0313 is the language rule "not through a local outside it") | W0313 | no fault | rejected | yes | Z1-D (closed) |
+| 23 | `fixes/r0kb1/n04_loop_instance_bad.wf` | C2 | extent rule: as c11, a closure of the same function | W0301, W0313 | fault | rejected | yes | Z1-D (closed) |
+| 24 | `fixes/r0kb1/n04_loop_instance_ok.wf` | C2 | extent rule (clean twin; old W0313) | W0313 | no fault | rejected | yes | Z1-D (closed) |
+| 25 | `fixes/r0kb2/q01_85_after_resume_bad.wf` | C2>esc | the clause of `Run` runs a capability closure of `Note` after its `resume` (outside `Note`) | W0313 | fault | rejected | no | Z8 (open: Z1-D has no form for a value through a call of a function value) |
+| 26 | `verify/partb/p/a4_get_own.wf` | C2 | a closure that performs through `Get` goes to an operation of `Get` itself | W0313 | fault | rejected | no | Z1-D (closed) |
+| 27 | `verify/s5/S5a/x/p/e2b_e_job.wf` | C2>VT | forms 2 to 4 with a clause that spawns its argument (capability of `Note` to `Run`, `RunJ`) | 2xW0313, 5xW0314 | fault | rejected | no | Z1-G (closed; planned Z1-D) |
+| 28 | `verify/s5/S5a/x/p/e2b_e_mk_job.wf` | C2>VT | as e2b_e_job | 2xW0313, 5xW0314 | fault | rejected | no | Z1-G (closed; planned Z1-D) |
+| 29 | `verify/s5/S5a/x/p/e2b_e_struct.wf` | C2>VT | as e2b_e_job | 2xW0313, 5xW0314 | fault | rejected | no | Z1-G (closed; planned Z1-D) |
+| 30 | `verify/s5/S5a/x/p/e2b_variants.wf` | C2>VT | as e2b_e_job | 2xW0313, 5xW0314 | fault | rejected | no | Z1-G (closed; planned Z1-D) |
+| 31 | `verify/s5/diff/p/v1c_stored.wf` | C2 | form 3: a closure in a field run by `run_it`; the clause keeps the value in a local outside | W0313 | fault | rejected | no | Z1-D (closed) |
+| 32 | `fixes/r0e/rv1_b2_h10.wf` | NESTED | a closure that a callee runs spawns a `once` value two times | W0502 | fault | rejected | yes | Z1-E (closed) |
+| 33 | `fixes/r0e/rv1_b2_h18.wf` | NESTED | a callee runs the closure that spawns a `once` value two times | W0502 | fault | rejected | yes | Z1-E (closed) |
+| 34 | `verify/partb/p/a2_escapes.wf` | C2 | a capability closure as the value of a handled body (via `id`, `wrap`, `pair`, `pop`, ...), no `main` | W0301, 9xW0313 | no `main` | rejected | no | Z1-G (closed) |
 | 35 | `fixes/r0kc2b/b03_rc_between_ok.wf` | RC | rc-across-multi: an `rc` object shared between the copies | clean | no fault | clean | no | Z2 |
 | 36 | `fixes/r0kc2b/b07_abort_in_copy_ok.wf` | RC | rc-across-multi: an abort in a copy | clean | no fault | clean | no | Z2 |
 | 37 | `fixes/r0kc2b/b08_handled_after_ok.wf` | RC | rc-across-multi: the rest of the handled body runs again | clean | no fault | clean | no | Z2 |
@@ -189,27 +215,27 @@ The other 35 rows of tier 2:
 
 | # | Path | Reason | Form | Old pipeline | Run | Class | Refusal probe | Stage |
 |---|---|---|---|---|---|---|---|---|
-| 1 | `r3/oracle/runs/m3a/p1414.wf` | D1 | task resume: `fork(|| resume(()), ..)` | W0314 | no fault | rejected | no | Z1-A |
-| 2 | `r3/oracle/runs/m3a/p316.wf` | D1 | task resume: `s.spawn(|| resume(1))` | W0314 | no fault | rejected | no | Z1-A |
-| 3 | `r3/oracle/runs/m3a/p4859.wf` | D1 | task resume: `fork(|| resume(()), ..)` | W0314 | no fault | rejected | no | Z1-A |
-| 4 | `r3/oracle/runs/m3a/p5452.wf` | D1 | task resume: `s.spawn(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A |
-| 5 | `r3/oracle/runs/m3a/p5483.wf` | D1 | task resume: `spawn_m(|| resume(()))` (a callee spawns its parameter) | W0314 | no fault | rejected | no | Z1-A |
-| 6 | `r3/oracle/runs/m3a/p6530.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0301, W0314 | no fault | rejected | no | Z1-A |
-| 7 | `r3/oracle/runs/m3a/p7888.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A |
-| 8 | `r3/oracle/runs/m3b/p21941.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A |
-| 9 | `r3/oracle/runs/m3b/p22442.wf` | D1 | task resume: `spawn_m(|| print(k))` holds the resuming closure | W0301, W0314 | no fault | rejected | no | Z1-A |
-| 10 | `r3/oracle/runs/m3b/p25672.wf` | D1 | task resume: `s.spawn(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A |
-| 11 | `r3/oracle/runs/m3b/p26278.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A |
-| 12 | `r3/oracle/runs/m3b/p27232.wf` | D1 | task resume: `s.spawn(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A |
-| 13 | `r3/oracle/runs/m3b/p21376.wf` | D1 | D1b: two `resume`s of a `once` continuation in a scope body | W0501 | no fault | rejected | no | Z1-F |
-| 14 | `r3/oracle/runs/m3a/p6152.wf` | C2 | a body with a `typeck` error (W0102) and a C2 body | W0102, W0401, W0405, 4xW0503 | no fault | rejected | no | Z1-G |
-| 15 | `r3/oracle/runs/m3b/p26666.wf` | C2 | errors (W0314, W0403, W0405) in bodies that do not call the C2 body | W0314, W0403, 3xW0405 | no fault | rejected | no | Z1-G |
-| 16 | `r3/quality/big/all.wf` | C2>E2 | a concatenation of the corpus: W01xx errors of `typeck` | 50 codes (W01xx to W1004) | no fault | rejected | no | Z1-G |
-| 17 | `r3/quality/big/all_2.wf` | C2>E2 | as all.wf (two copies) | 50 codes (W01xx to W1004) | timeout | rejected | no | Z1-G |
-| 18 | `verify/s5/S5c/mut/progs/m00982_85_op_args.wf` | C2>D1 | a mutant of 85, no `main`: errors in other bodies (W0313, W0314) | W0313, 10xW0314, W0501 | no `main` | rejected | no | Z1-G |
-| 19 | `verify/s5/S5c/mut/progs/m01268_85_op_args.wf` | C2>D1 | as m00982 | W0313, 11xW0314 | no `main` | rejected | no | Z1-G |
-| 20 | `verify/s5/S5c/mut/progs/m01766_85_op_args.wf` | C2>D1 | as m00982 | W0313, 12xW0314 | no `main` | rejected | no | Z1-G |
-| 21 | `verify/s5/S5c/mut/progs/m02309_85_op_args.wf` | C2>D1 | as m00982 | W0313, 9xW0314 | no `main` | rejected | no | Z1-G |
+| 1 | `r3/oracle/runs/m3a/p1414.wf` | D1 | task resume: `fork(|| resume(()), ..)` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 2 | `r3/oracle/runs/m3a/p316.wf` | D1 | task resume: `s.spawn(|| resume(1))` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 3 | `r3/oracle/runs/m3a/p4859.wf` | D1 | task resume: `fork(|| resume(()), ..)` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 4 | `r3/oracle/runs/m3a/p5452.wf` | D1 | task resume: `s.spawn(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 5 | `r3/oracle/runs/m3a/p5483.wf` | D1 | task resume: `spawn_m(|| resume(()))` (a callee spawns its parameter) | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 6 | `r3/oracle/runs/m3a/p6530.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0301, W0314 | no fault | rejected | no | Z1-A (closed) |
+| 7 | `r3/oracle/runs/m3a/p7888.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 8 | `r3/oracle/runs/m3b/p21941.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 9 | `r3/oracle/runs/m3b/p22442.wf` | D1 | task resume: `spawn_m(|| print(k))` holds the resuming closure | W0301, W0314 | no fault | rejected | no | Z1-A (closed) |
+| 10 | `r3/oracle/runs/m3b/p25672.wf` | D1 | task resume: `s.spawn(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 11 | `r3/oracle/runs/m3b/p26278.wf` | D1 | task resume: `spawn_m(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 12 | `r3/oracle/runs/m3b/p27232.wf` | D1 | task resume: `s.spawn(|| resume(()))` | W0314 | no fault | rejected | no | Z1-A (closed) |
+| 13 | `r3/oracle/runs/m3b/p21376.wf` | D1 | D1b: two `resume`s of a `once` continuation in a scope body | W0501 | no fault | rejected | no | Z1-F (closed) |
+| 14 | `r3/oracle/runs/m3a/p6152.wf` | C2 | a body with a `typeck` error (W0102) and a C2 body | W0102, W0401, W0405, 4xW0503 | no fault | rejected | no | Z1-G (closed) |
+| 15 | `r3/oracle/runs/m3b/p26666.wf` | C2 | errors (W0314, W0403, W0405) in bodies that do not call the C2 body | W0314, W0403, 3xW0405 | no fault | rejected | no | Z1-G (closed) |
+| 16 | `r3/quality/big/all.wf` | C2>E2 | a concatenation of the corpus: W01xx errors of `typeck` | 50 codes (W01xx to W1004) | no fault | rejected | no | Z1-G (closed) |
+| 17 | `r3/quality/big/all_2.wf` | C2>E2 | as all.wf (two copies) | 50 codes (W01xx to W1004) | timeout | rejected | no | Z1-G (closed) |
+| 18 | `verify/s5/S5c/mut/progs/m00982_85_op_args.wf` | C2>D1 | a mutant of 85, no `main`: errors in other bodies (W0313, W0314) | W0313, 10xW0314, W0501 | no `main` | rejected | no | Z1-G (closed) |
+| 19 | `verify/s5/S5c/mut/progs/m01268_85_op_args.wf` | C2>D1 | as m00982 | W0313, 11xW0314 | no `main` | rejected | no | Z1-G (closed) |
+| 20 | `verify/s5/S5c/mut/progs/m01766_85_op_args.wf` | C2>D1 | as m00982 | W0313, 12xW0314 | no `main` | rejected | no | Z1-G (closed) |
+| 21 | `verify/s5/S5c/mut/progs/m02309_85_op_args.wf` | C2>D1 | as m00982 | W0313, 9xW0314 | no `main` | rejected | no | Z1-G (closed) |
 | 22 | `r2/oracle/runs/m1/p1669.wf` | D5 | a `multi` clause runs its parameter: a row that only the analysis finds | clean | no fault | clean | no | Z7 |
 | 23 | `r3/oracle/runs/m3a/p5750.wf` | D1 | D1a refusal: a call (`print(r)`) between the make and the run | W0301 | no fault | rejected | no | Z4 |
 | 24 | `r3/oracle/runs/m3a/p7154.wf` | D1 | D1a refusal: a call (`Box.new`) between, a `resume` in a nested handled body | W0301 | no fault | rejected | no | Z4 |

@@ -130,6 +130,42 @@ pub type Emit = fn(&Input<'_>, &mut [FnFacts]) -> Result<(), Unsupported>;
 /// Returns [`Unsupported`] for the first body with a construct that the
 /// fact generator does not support yet.
 pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported> {
+    match emit_each(input, facts, true).failed.into_iter().next() {
+        Some((_, u)) => Err(u),
+        None => Ok(()),
+    }
+}
+
+/// What [`emit_each`] gives next to the facts.
+#[derive(Clone, Debug, Default)]
+pub struct EachOut {
+    /// Each body that the fact generator does not support, by its index in
+    /// [`Analysis::bodies`], with the reason. The order is the order of the
+    /// bodies.
+    pub failed: Vec<(usize, Unsupported)>,
+    /// The diagnostics of the fact generation of each body that it
+    /// supports, by the index of the body (the W0204 store check).
+    pub body_diags: Vec<(usize, Vec<Diagnostic>)>,
+    /// The errors of the rules of plan stage R0z (Z1) that the analysis of
+    /// a body of [`EachOut::failed`] found before it stopped, by the index
+    /// of the body.
+    pub later: Vec<(usize, Vec<Diagnostic>)>,
+    /// The errors of the rules of Z1 of each body that the fact generator
+    /// supports, by the index of the body. They are not in the diagnostics:
+    /// [`IrFacts::z1`] holds them.
+    pub body_z1: Vec<(usize, Vec<Diagnostic>)>,
+}
+
+/// The fact generator [`emit`], with a choice to go on after a body that it
+/// does not support.
+///
+/// It does not stop at the first body that
+/// it does not support if `first` is false (plan stage R0z, Z0 and rule G).
+/// A body that it does not support gets the worst case of its declaration
+/// for its callers (stage R0b), so the facts of a body that does not reach
+/// it hold. With `first`, it stops at the first such body, as [`emit`].
+pub fn emit_each(input: &Input<'_>, facts: &mut [FnFacts], first: bool) -> EachOut {
+    let mut out = EachOut::default();
     let _ = crate::analysis::clause::take_pending_escapes();
     let mut inf = crate::analysis::callgraph::infer(input.analysis, input.built, None);
     for (i, e) in input.built.entries.iter().enumerate() {
@@ -142,11 +178,42 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
         let ds = match inf.facts.remove(&i) {
             Some(Ok((done, ds))) => {
                 *f = done;
+                let z1 = inf.z1.remove(&i).unwrap_or_default();
+                crate::analysis::clause::sink_z1(z1.clone());
+                out.body_z1.push((i, z1));
                 ds
             }
-            Some(Err(u)) => return Err(u),
-            None => emit_body(input.analysis, input.built, &inf.sums, i, entry, f)?,
+            Some(Err(u)) => {
+                out.failed.push((i, u));
+                out.later
+                    .push((i, inf.later.remove(&i).unwrap_or_default()));
+                if first {
+                    return out;
+                }
+                continue;
+            }
+            None => {
+                let _ = crate::analysis::clause::take_errors();
+                let r = emit_body(input.analysis, input.built, &inf.sums, i, entry, f);
+                let errors = crate::analysis::clause::take_errors();
+                match r {
+                    Ok(ds) => {
+                        crate::analysis::clause::sink_z1(errors.clone());
+                        out.body_z1.push((i, errors));
+                        ds
+                    }
+                    Err(u) => {
+                        out.failed.push((i, u));
+                        out.later.push((i, errors));
+                        if first {
+                            return out;
+                        }
+                        continue;
+                    }
+                }
+            }
         };
+        out.body_diags.push((i, ds.clone()));
         input.diags.borrow_mut().extend(ds);
     }
     // A closure that runs outside the handler of its capability (stage
@@ -190,7 +257,7 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
         diags.extend(w0701(input.analysis, *f, e));
     }
     input.effects.borrow_mut().extend(inf.effects);
-    Ok(())
+    out
 }
 
 /// W0701 (`docs/ir.md` 6.8): a public function with no stated row whose
@@ -4039,7 +4106,10 @@ pub struct Scope {
     /// The groups that the program uses: the union of [`Scope::bodies`].
     pub used: Groups,
     /// Why the old pipeline checks the program, or `None` if the program is
-    /// in scope.
+    /// in scope. A program with a body that the fact generator does not
+    /// support can have [`Scope::pending`] too (rule G of plan stage R0z):
+    /// then the check clears the fallback if the `ir` pipeline finds an
+    /// error.
     pub fallback: Option<String>,
     /// A program with a construct that the facts do not model (stage R0g):
     /// the `ir` pipeline checks it only if it rejects it. Else the old
@@ -4066,12 +4136,18 @@ pub struct Pending {
     /// copies find no error (so no program that is in scope changes): then
     /// the `ir` pipeline checks the program with them.
     pub copy: Option<Box<IrFacts>>,
+    /// The program has a body whose analysis stops (rule G of plan stage
+    /// R0z, [`Scope::fallback`] is set too): each error of the `ir` facts is
+    /// an error of a rule of Z1, so it closes the fallback only if the old
+    /// pipeline rejects the program too.
+    pub rule_g: bool,
 }
 
 impl PartialEq for Pending {
     fn eq(&self, other: &Self) -> bool {
         self.reason == other.reason
             && self.ir_view == other.ir_view
+            && self.rule_g == other.rule_g
             && self.copy.is_some() == other.copy.is_some()
     }
 }
@@ -4101,10 +4177,20 @@ pub struct IrFacts {
     /// declaration; the other functions keep their declaration. No row comes
     /// from the old inference (plan stage R0i).
     pub sigs: Vec<crate::FnSig>,
-    /// The functions whose body has no IR. Their signature in
-    /// [`IrFacts::sigs`] is the worst case of their declaration, so
-    /// `weft-gate sigdiff` does not compare it.
+    /// The functions whose body has no IR, and with rule G of plan stage
+    /// R0z the functions whose body stops or reaches such a body. Their
+    /// signature in [`IrFacts::sigs`] is the worst case of their
+    /// declaration, so `weft-gate sigdiff` does not compare it.
     pub no_ir: Vec<crate::FnId>,
+    /// The errors of the rules of plan stage R0z (Z1), apart from
+    /// [`IrFacts::diags`] (each one has its own place here, so an error of
+    /// the check with the same code, span and text stays an error of the
+    /// check). The check uses them only for a program that the `ir`
+    /// pipeline sends to the old pipeline without them, and only if the old
+    /// pipeline rejects the program too (`weft_check::check_analysis`). For
+    /// a program of rule G ([`Pending::rule_g`]) [`IrFacts::diags`] is a part
+    /// of Z1 too.
+    pub z1: Vec<Diagnostic>,
 }
 
 /// The text of a list of groups that are off: `group A`, or
@@ -4141,6 +4227,7 @@ pub(crate) fn run(
     kept: Vec<Diagnostic>,
     no_runtime: bool,
 ) -> (Scope, Option<IrFacts>) {
+    let _ = crate::analysis::clause::take_z1_sink();
     let built = irbuild::build(a);
     let bodies = scope::groups(&built);
     let used = bodies.iter().fold(Groups::NONE, |g, b| g.union(*b));
@@ -4216,13 +4303,13 @@ pub(crate) fn run(
             .then(|| instantiate::instantiate(&built))
             .flatten();
         let Some(inst) = inst else {
-            s.fallback = Some(u.to_string());
-            return (s, None);
+            return rule_g(a, &built, s, u.to_string(), kept, no_runtime);
         };
         facts = a.decls.iter().map(seed).collect();
         emitted = std::cell::RefCell::new(Vec::new());
         effects = std::cell::RefCell::new(Vec::new());
         on_abort = std::cell::RefCell::new(None);
+        let _ = crate::analysis::clause::take_z1_sink();
         let second = {
             let input = Input {
                 analysis: a,
@@ -4240,16 +4327,15 @@ pub(crate) fn run(
         };
         if let Err(u2) = second {
             let _ = crate::analysis::clause::take_pending();
-            s.fallback = Some(u2.to_string());
-            return (s, None);
+            return rule_g(a, &built, s, u2.to_string(), kept, no_runtime);
         }
         // A copy that brings in a construct with no full facts (stage R0g,
         // `Scope::pending`): the weak form of that construct can reject a
         // clean program (`rv_p04_c2_multi_ok`, D5). The copy does not apply,
         // and the program keeps its fallback.
         if let Some(p2) = crate::analysis::clause::take_pending().first() {
-            s.fallback = Some(format!("{u} (with the copies of the callees: {p2})"));
-            return (s, None);
+            let why = format!("{u} (with the copies of the callees: {p2})");
+            return rule_g(a, &built, s, why, kept, no_runtime);
         }
         built = inst.built;
     }
@@ -4257,6 +4343,8 @@ pub(crate) fn run(
     // R0g). A `resume` of a captured continuation can get a copy of the
     // closure body at its run (stage R0k-c1): the check takes those facts if
     // the facts without the copies find no error.
+    // The errors of the rules of Z1 of the emit of these facts.
+    let z1 = crate::analysis::clause::take_z1_sink();
     let pend = crate::analysis::clause::take_pending();
     if let Some(u) = pend.first() {
         let kont = pend
@@ -4271,17 +4359,384 @@ pub(crate) fn run(
             reason: u.to_string(),
             ir_view: false,
             copy,
+            rule_g: false,
         });
     }
     let out = finish(
         a,
         &built,
         facts,
-        kept,
+        (kept, z1),
         (emitted, effects, on_abort),
         no_runtime,
     );
     (s, Some(out))
+}
+
+/// Rule G of plan stage R0z (Z1): the errors that do not need a body that
+/// the fact generator does not support.
+///
+/// The fact generator runs on each body of `built` ([`emit_each`]). A body
+/// that it does not support gets the worst case of its declaration for its
+/// callers (stage R0b). A body that reaches such a body (through a call, a
+/// function item as a value, or an `on abort` function) can get an error of
+/// that worst case, so it gets the facts of its declaration only. The other
+/// bodies get their facts. These errors are the errors of the `ir`
+/// pipeline:
+///
+/// - the errors of the facts of the other bodies, and of their fact
+///   generation;
+/// - the errors of `typeck` and of the item checks (`kept`), and of the
+///   builder;
+/// - the errors that the analysis of a body that it does not support found
+///   before it stopped (rule C, `crate::analysis::clause::note_error`), if no
+///   callee of that body reaches such a body;
+/// - the structural checks of rules A and D on the bodies that reach such a
+///   body ([`checks::task_konts`], [`checks::own_op_escapes`],
+///   [`checks::local_escapes`]), and of rule F ([`checks::twice_resumed`]).
+///
+/// The program keeps the fallback `why` ([`Scope::fallback`]), and it gets
+/// [`Scope::pending`] with the same reason and [`Pending::rule_g`]. Without
+/// Z1 the program is a fallback, so each error here is an error of Z1: the
+/// errors of the rules of A to F go to [`IrFacts::z1`], and the others to
+/// [`IrFacts::diags`]. The check rejects the program with them only if the
+/// old pipeline rejects it too; then it clears the fallback
+/// (`weft_check::check_analysis`). Else the old pipeline checks the program.
+/// With Z1 off ([`crate::analysis::clause::set_z1`]) the program gets the
+/// fallback at once.
+fn rule_g(
+    a: &Analysis,
+    built: &Built,
+    mut s: Scope,
+    why: String,
+    kept: Vec<Diagnostic>,
+    no_runtime: bool,
+) -> (Scope, Option<IrFacts>) {
+    // With Z1 off the program keeps the fallback, as before Z1.
+    if !crate::analysis::clause::z1_on() {
+        s.fallback = Some(why);
+        return (s, None);
+    }
+    let _ = crate::analysis::clause::take_pending();
+    let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
+    let emitted = std::cell::RefCell::new(Vec::new());
+    let effects = std::cell::RefCell::new(Vec::new());
+    let on_abort = std::cell::RefCell::new(None);
+    let each = {
+        let input = Input {
+            analysis: a,
+            built,
+            scope: &s,
+            diags: &emitted,
+            effects: &effects,
+            no_runtime,
+            on_abort: &on_abort,
+        };
+        emit_each(&input, &mut facts, false)
+    };
+    let _ = crate::analysis::clause::take_pending();
+    let _ = crate::analysis::clause::take_pending_escapes();
+    let failed: std::collections::BTreeSet<usize> = each.failed.iter().map(|(i, _)| *i).collect();
+    let (reach, callees) = reaching(a, built, &failed);
+    for (i, f) in facts.iter_mut().enumerate() {
+        if reach.contains(&i) {
+            if let Some(d) = a.decls.get(i) {
+                *f = seed(d);
+            }
+        }
+    }
+    let mut diags: Vec<Diagnostic> = kept;
+    diags.extend(built.diags.iter().cloned());
+    let comps: Vec<weft_ir::BodyId> = reach
+        .iter()
+        .filter_map(|&i| match built.entries.get(i).map(|e| &e.outcome) {
+            Some(Outcome::Built(b)) => Some(component(built, *b)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    // The errors of the rules of A to F: apart from the diagnostics.
+    let mut z1: Vec<Diagnostic> = checks::task_konts(&built.program, &built.tys, &comps);
+    z1.extend(checks::own_op_escapes(&built.program, &built.tys, &comps));
+    z1.extend(checks::local_escapes(&built.program, &built.tys, &comps));
+    z1.extend(checks::twice_resumed(&built.program));
+    for (i, ds) in each.body_diags {
+        if !reach.contains(&i) {
+            diags.extend(ds);
+        }
+    }
+    for (i, ds) in each.body_z1 {
+        if !reach.contains(&i) {
+            z1.extend(ds);
+        }
+    }
+    // The errors that the analysis of a body that it does not support found
+    // before it stopped: they hold if no callee of the body reaches such a
+    // body (so no summary of the worst case gave them).
+    for (i, ds) in each.later {
+        let clean = callees
+            .get(i)
+            .is_none_or(|c| c.iter().all(|j| !reach.contains(j)));
+        if clean {
+            z1.extend(ds);
+        }
+    }
+    let _ = crate::analysis::clause::take_z1_sink();
+    let effects: Vec<(crate::FnId, crate::program::EffectSig)> = effects
+        .into_inner()
+        .into_iter()
+        .filter(|(f, _)| {
+            a.decls
+                .iter()
+                .position(|d| d.func == Some(*f))
+                .is_none_or(|i| !reach.contains(&i))
+        })
+        .collect();
+    let cells = (
+        std::cell::RefCell::new(Vec::new()),
+        std::cell::RefCell::new(effects),
+        std::cell::RefCell::new(Some(Vec::new())),
+    );
+    let mut out = finish(a, built, facts, (Vec::new(), Vec::new()), cells, no_runtime);
+    out.diags = diags;
+    out.z1 = z1;
+    // A function whose body stops, or reaches such a body, has no signature
+    // from its body: the worst case of its declaration, and `weft-gate
+    // sigdiff` does not compare it ([`IrFacts::no_ir`]).
+    for &i in &reach {
+        let Some(f) = a.decls.get(i).and_then(|d| d.func) else {
+            continue;
+        };
+        if let Some(sig) = out.sigs.get_mut(f.index()) {
+            worst_case(a, built, f, sig);
+        }
+        if !out.no_ir.contains(&f) {
+            out.no_ir.push(f);
+        }
+    }
+    s.fallback = Some(why.clone());
+    s.pending = Some(Pending {
+        reason: why,
+        ir_view: false,
+        copy: None,
+        rule_g: true,
+    });
+    (s, Some(out))
+}
+
+/// The bodies that reach a body of `failed` (indices of
+/// [`Analysis::bodies`]), with the bodies of `failed`: a body reaches a body
+/// if a body of its component calls it, names its function as a value, or
+/// runs it as an `on abort` function, also through other bodies. The second
+/// result is the bodies that each body names so (its callees).
+fn reaching(
+    a: &Analysis,
+    built: &Built,
+    failed: &std::collections::BTreeSet<usize>,
+) -> (
+    std::collections::BTreeSet<usize>,
+    Vec<std::collections::BTreeSet<usize>>,
+) {
+    use weft_ir::{Callee, Const, Operand, StmtKind, TermKind, UnwindAction};
+    let index_of: std::collections::HashMap<weft_ir::FnId, usize> = built
+        .fns
+        .iter()
+        .filter_map(|(sema, f)| {
+            a.decls
+                .iter()
+                .position(|d| d.func == Some(*sema))
+                .map(|i| (*f, i))
+        })
+        .collect();
+    let mut callees: Vec<std::collections::BTreeSet<usize>> =
+        vec![std::collections::BTreeSet::new(); built.entries.len()];
+    for (i, e) in built.entries.iter().enumerate() {
+        let Outcome::Built(entry) = e.outcome else {
+            continue;
+        };
+        let Some(set) = callees.get_mut(i) else {
+            continue;
+        };
+        let note = |set: &mut std::collections::BTreeSet<usize>, op: &Operand| {
+            if let Operand::Const(Const::Fn(g, _)) = op {
+                if let Some(&j) = index_of.get(g) {
+                    set.insert(j);
+                }
+            }
+        };
+        for b in component(built, entry) {
+            let Some(body) = built.program.bodies.get(b.index()) else {
+                continue;
+            };
+            for blk in &body.blocks {
+                for st in &blk.stmts {
+                    match &st.kind {
+                        StmtKind::UnwindValue(_, UnwindAction::OnAbort(g)) => {
+                            if let Some(&j) = index_of.get(g) {
+                                set.insert(j);
+                            }
+                        }
+                        StmtKind::Assign(_, rv) => {
+                            for op in crate::analysis::transfer::rvalue_operands(rv) {
+                                note(set, op);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let TermKind::Call { callee, args, .. } = &blk.term.kind {
+                    match callee {
+                        Callee::Fn(g, _) => {
+                            if let Some(&j) = index_of.get(g) {
+                                set.insert(j);
+                            }
+                        }
+                        Callee::Value(op) => note(set, op),
+                    }
+                    for op in args {
+                        note(set, op);
+                    }
+                }
+                // The operands of the other terminators (a spawn, a fork, a
+                // perform, a resume) can name a function item as a value.
+                for op in term_operands(&blk.term.kind) {
+                    note(set, op);
+                }
+            }
+        }
+    }
+    let mut reach = failed.clone();
+    loop {
+        let more: Vec<usize> = callees
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| !reach.contains(i) && c.iter().any(|j| reach.contains(j)))
+            .map(|(i, _)| i)
+            .collect();
+        if more.is_empty() {
+            return (reach, callees);
+        }
+        reach.extend(more);
+    }
+}
+
+/// The operands of a terminator that is not a call.
+pub(crate) fn term_operands(t: &weft_ir::TermKind) -> Vec<&weft_ir::Operand> {
+    use weft_ir::TermKind;
+    match t {
+        TermKind::Spawn { task, .. } => vec![task],
+        TermKind::Fork { branches, .. } => branches.iter().collect(),
+        TermKind::Perform { args, .. } => args.iter().collect(),
+        TermKind::Resume { arg, .. } => vec![arg],
+        _ => Vec::new(),
+    }
+}
+
+/// Each reason of the fallback of a program, not only the first (plan stage
+/// R0z, Z0: `weft check --reasons`). The groups `on` are on.
+///
+/// The list has: each body that the builder does not lower, the groups that
+/// are off, each body with no IR and no error; else each body that the fact
+/// generator does not support (the fact generator goes on after it, as
+/// [`emit_each`] does), each construct with no full facts (stage R0g), and
+/// the same for the copies of the callees (stage R0k-a) if the first reason
+/// asks for them.
+pub fn reasons(a: &Analysis, on: Groups, no_runtime: bool) -> Vec<String> {
+    let built = irbuild::build(a);
+    let mut out = Vec::new();
+    let name = |i: usize| a.decls.get(i).map_or_else(String::new, |d| d.name.clone());
+    for e in &built.entries {
+        if let Outcome::Unsupported(u) = &e.outcome {
+            out.push(format!(
+                "the builder does not lower `{}`: {}",
+                e.name,
+                u.construct.name()
+            ));
+        }
+    }
+    let bodies = scope::groups(&built);
+    let used = bodies.iter().fold(Groups::NONE, |g, b| g.union(*b));
+    let off = used.minus(on);
+    if !off.is_empty() {
+        out.push(off_text(off));
+    }
+    for e in &built.entries {
+        if let (Outcome::NoIr(n), false) = (&e.outcome, e.reported) {
+            out.push(format!(
+                "`{}` has no IR ({}), and the program reports no error for it",
+                e.name,
+                n.reason()
+            ));
+        }
+    }
+    if !out.is_empty() {
+        return out;
+    }
+    let s = Scope {
+        bodies,
+        used,
+        fallback: None,
+        pending: None,
+    };
+    let each = |b: &Built, weak: bool| {
+        let _ = crate::analysis::clause::take_pending();
+        let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
+        let (d, e, o) = (
+            std::cell::RefCell::new(Vec::new()),
+            std::cell::RefCell::new(Vec::new()),
+            std::cell::RefCell::new(None),
+        );
+        let input = Input {
+            analysis: a,
+            built: b,
+            scope: &s,
+            diags: &d,
+            effects: &e,
+            no_runtime,
+            on_abort: &o,
+        };
+        let _weak = weak.then(crate::analysis::transfer::WeakRowOps::enter);
+        let r = emit_each(&input, &mut facts, false);
+        let mut pend: Vec<String> = crate::analysis::clause::take_pending()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        pend.sort();
+        pend.dedup();
+        (r.failed, pend)
+    };
+    let (failed, pend) = each(&built, false);
+    for (i, u) in &failed {
+        out.push(format!("`{}`: {u}", name(*i)));
+    }
+    for u in &pend {
+        out.push(format!("pending: {u}"));
+    }
+    if let Some((_, u)) = failed.first() {
+        if instantiate::wanted(u) {
+            match instantiate::instantiate(&built) {
+                None => out.push("with the copies of the callees: no copy".to_string()),
+                Some(inst) => {
+                    let (f2, p2) = each(&inst.built, inst.weak_ok);
+                    for (i, u) in &f2 {
+                        out.push(format!(
+                            "with the copies of the callees: `{}`: {u}",
+                            name(*i)
+                        ));
+                    }
+                    for u in &p2 {
+                        out.push(format!("with the copies of the callees: pending: {u}"));
+                    }
+                    if f2.is_empty() && p2.is_empty() {
+                        out.push("with the copies of the callees: no reason".to_string());
+                    }
+                }
+            }
+        }
+    }
+    let _ = crate::analysis::clause::take_z1_sink();
+    let _ = crate::analysis::clause::take_pending();
+    out
 }
 
 /// The facts of the program `built` with the copies of stage R0k-c1
@@ -4328,11 +4783,14 @@ fn kont_view(
     if second.is_err() || !left.is_empty() {
         return None;
     }
+    // The copies give the program full facts: the check uses no error of Z1
+    // there (the program is in scope without Z1).
+    let z1 = crate::analysis::clause::take_z1_sink();
     let out = finish(
         a,
         &inst.built,
         facts,
-        kept,
+        (kept, z1),
         (emitted, effects, on_abort),
         no_runtime,
     );
@@ -4354,7 +4812,7 @@ fn finish(
     a: &Analysis,
     built: &Built,
     mut facts: Vec<FnFacts>,
-    kept: Vec<Diagnostic>,
+    (kept, mut z1): (Vec<Diagnostic>, Vec<Diagnostic>),
     (emitted, effects, on_abort): EmitCells,
     no_runtime: bool,
 ) -> IrFacts {
@@ -4410,11 +4868,15 @@ fn finish(
     }
     diags.extend(built.diags.iter().cloned());
     diags.extend(emitted.into_inner());
+    if crate::analysis::clause::z1_on() {
+        z1.extend(checks::twice_resumed(&built.program));
+    }
     IrFacts {
         bodies,
         diags,
         sigs,
         no_ir,
+        z1,
     }
 }
 
@@ -4551,35 +5013,9 @@ pub fn ir_sigs(
         .filter_map(|(b, _)| b.func)
         .collect();
     for &f in &no_ir {
-        let (Some(sig), Some(decl)) = (
-            sigs.get_mut(f.index()),
-            built
-                .fns
-                .get(&f)
-                .and_then(|g| built.program.fns.get(g.index())),
-        ) else {
-            continue;
-        };
-        let Ok(sum) = crate::analysis::sig::from_declaration(prog, f, decl, &built.tys) else {
-            continue;
-        };
-        let worst = crate::analysis::sig::to_effect_sig(prog, &sum);
-        sig.effects = if sig.declared {
-            crate::program::EffectSig {
-                muts: sig.effects.muts.clone(),
-                named: sig.effects.named.clone(),
-                passthrough: sig.effects.passthrough.clone(),
-                raises: worst.raises,
-                multi: worst.multi,
-                drops: worst.drops,
-                holds: worst.holds,
-                pins: worst.pins,
-                task_effects: worst.task_effects,
-                ..crate::program::EffectSig::default()
-            }
-        } else {
-            worst
-        };
+        if let Some(sig) = sigs.get_mut(f.index()) {
+            worst_case(a, built, f, sig);
+        }
     }
     for (f, e) in effects {
         if let Some(sig) = sigs.get_mut(f.index()) {
@@ -4587,4 +5023,38 @@ pub fn ir_sigs(
         }
     }
     (sigs, no_ir)
+}
+
+/// Gives the signature `sig` of function `f` the row of the worst case of
+/// its declaration ([`ir_sigs`]); a stated row stays, with the other parts
+/// of the worst case.
+fn worst_case(a: &Analysis, built: &Built, f: crate::FnId, sig: &mut crate::FnSig) {
+    let prog = &a.program;
+    let Some(decl) = built
+        .fns
+        .get(&f)
+        .and_then(|g| built.program.fns.get(g.index()))
+    else {
+        return;
+    };
+    let Ok(sum) = crate::analysis::sig::from_declaration(prog, f, decl, &built.tys) else {
+        return;
+    };
+    let worst = crate::analysis::sig::to_effect_sig(prog, &sum);
+    sig.effects = if sig.declared {
+        crate::program::EffectSig {
+            muts: sig.effects.muts.clone(),
+            named: sig.effects.named.clone(),
+            passthrough: sig.effects.passthrough.clone(),
+            raises: worst.raises,
+            multi: worst.multi,
+            drops: worst.drops,
+            holds: worst.holds,
+            pins: worst.pins,
+            task_effects: worst.task_effects,
+            ..crate::program::EffectSig::default()
+        }
+    } else {
+        worst
+    };
 }

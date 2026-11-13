@@ -1,0 +1,9 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule E: the callee spawns `f` two times, and the `once` value goes to `f`.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn later(h: fn()) { h() }
+fn two(f: fn(), g: fn()) / async { later(|| scope { s => s.spawn(g); s.spawn(f); s.spawn(f); () }) }
+fn main() / async {
+    let v = [1]
+    two(|| take(v), || print(2))
+}

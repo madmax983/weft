@@ -69,46 +69,102 @@ pub fn check_analysis(mut analysis: Analysis, files: &[SourceFile]) -> Checked {
 /// R0k-c1 (`weft_sema::factgen::Pending::copy`), they check it, and it is in
 /// scope. Else the facts can miss an error, so the old pipeline checks the
 /// program: the scope gets the reason of the fallback.
+///
+/// The rules of plan stage R0z (Z1) keep two rules here:
+///
+/// 1. They change only a program that goes to the old pipeline without them.
+///    The checks of the `ir` facts and of the copies use the diagnostics of
+///    the facts only ([`weft_sema::factgen::IrFacts::diags`]), so a program
+///    that is in scope without Z1 gets the result that it gets without Z1.
+///    A program of rule G (`Pending::rule_g`) goes to the old pipeline
+///    without Z1: each error of its `ir` view is an error of Z1.
+/// 2. An error of Z1 is an error of its own list
+///    ([`weft_sema::factgen::IrFacts::z1`]), never a diagnostic of the check
+///    with the same code, span and text. For such a program, the errors of
+///    Z1 (and, for rule G, the errors of its view) reject it only if the old
+///    pipeline rejects it too ([`z1_rejects`]).
 fn check_pending(
     mut analysis: Analysis,
     files: &[SourceFile],
     p: weft_sema::factgen::Pending,
 ) -> Checked {
+    let z1_on = weft_sema::analysis::clause::z1_on();
     if let Some(facts) = analysis.ir_facts.take() {
+        let z1 = if z1_on { facts.z1 } else { Vec::new() };
         let mut view = analysis.clone();
         view.bodies = facts.bodies;
         view.diags = facts.diags;
         view.sigs = facts.sigs;
-        let ir = check_bodies(view, files);
-        if !ir.ok() {
-            if p.ir_view {
-                return ir;
+        if p.rule_g {
+            // Without Z1 the program goes to the old pipeline.
+            let mut ir = check_bodies(view, files);
+            add_z1(&mut ir, z1);
+            if !ir.ok() && z1_on && z1_rejects(&analysis, files) {
+                for s in [&mut ir.analysis.ir_scope, &mut analysis.ir_scope]
+                    .into_iter()
+                    .flatten()
+                {
+                    s.fallback = None;
+                }
+                return with_old(ir, analysis, files, p.ir_view);
             }
-            let mut c = check_bodies(analysis, files);
-            c.ir = Some(Box::new(ir));
-            return c;
-        }
-        // The facts without the copies find no error: the facts of the
-        // program with the copies of stage R0k-c1, if they cover each
-        // construct, check the program (`Pending::copy`).
-        if let Some(copy) = p.copy {
-            let mut view = analysis.clone();
-            view.bodies = copy.bodies;
-            view.diags = copy.diags;
-            view.sigs = copy.sigs;
-            let ir = check_bodies(view, files);
-            if p.ir_view {
-                return ir;
+        } else {
+            let mut ir = check_bodies(view, files);
+            if !ir.ok() {
+                return with_old(ir, analysis, files, p.ir_view);
             }
-            let mut c = check_bodies(analysis, files);
-            c.ir = Some(Box::new(ir));
-            return c;
+            // The facts without the copies find no error: the facts of the
+            // program with the copies of stage R0k-c1, if they cover each
+            // construct, check the program (`Pending::copy`). The program is
+            // in scope without Z1.
+            if let Some(copy) = p.copy {
+                let mut view = analysis.clone();
+                view.bodies = copy.bodies;
+                view.diags = copy.diags;
+                view.sigs = copy.sigs;
+                let ir = check_bodies(view, files);
+                return with_old(ir, analysis, files, p.ir_view);
+            }
+            // Without Z1 the program goes to the old pipeline here.
+            if z1.iter().any(|d| d.severity == Severity::Error) && z1_rejects(&analysis, files) {
+                add_z1(&mut ir, z1);
+                return with_old(ir, analysis, files, p.ir_view);
+            }
         }
     }
     if let Some(s) = analysis.ir_scope.as_mut() {
         s.fallback = Some(p.reason);
     }
     check_bodies(analysis, files)
+}
+
+/// The result of the check `ir` of the `ir` pipeline: alone (`ir_view`),
+/// or as [`Checked::ir`] next to the check of the old facts of `analysis`.
+fn with_old(ir: Checked, analysis: Analysis, files: &[SourceFile], ir_view: bool) -> Checked {
+    if ir_view {
+        return ir;
+    }
+    let mut c = check_bodies(analysis, files);
+    c.ir = Some(Box::new(ir));
+    c
+}
+
+/// Adds the errors of the rules of Z1 `z1` to the check `ir`, in the order
+/// of the diagnostics.
+fn add_z1(ir: &mut Checked, z1: Vec<Diagnostic>) {
+    if z1.is_empty() {
+        return;
+    }
+    ir.diags.extend(z1);
+    ir.diags
+        .sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
+    dedup_diags(&mut ir.diags);
+}
+
+/// The safety net of plan stage R0z (Z1): true if the check of the old facts
+/// of `analysis` finds an error. An error of Z1 closes a fallback only then.
+fn z1_rejects(analysis: &Analysis, files: &[SourceFile]) -> bool {
+    !check_bodies(analysis.clone(), files).ok()
 }
 
 /// Runs the production checker on every body of `analysis`, with no `ir`

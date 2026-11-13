@@ -20,7 +20,7 @@ pub const USAGE: &str = "\
 usage: weft <command> [options] PATH
 
 commands:
-  check   [PROFILE] [FACTS] [--json] [--explain] PATH            check a file or a package
+  check   [PROFILE] [FACTS] [--json] [--explain] [--reasons] PATH check a file or a package
   run     [PROFILE] [FACTS] [RUN] PATH                           check, then run `fn main`
   test    [PROFILE] [FACTS] [RUN] PATH                           check, then run the test blocks
   facts   [PROFILE] [FACTS] PATH [FUNCTION]                      print the facts in Datalog syntax
@@ -46,6 +46,9 @@ pipeline gives, `facts` also prints the facts of the ir pipeline, and `agree`
 compares both. FACTS can also have --groups=LETTERS (for example --groups=A):
 the construct groups that are on (A to F, in order). Each group (A to F) is
 on by default.
+`check --reasons` writes a note for each reason why the ir pipeline does not
+check the program in full: each body that it does not support and each
+construct with no full facts, not only the first one.
 
 RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--fact-oracle]
 [--ir-trace] [--engine=ast|ir].
@@ -91,6 +94,7 @@ struct Flags {
     profile: Profile,
     json: bool,
     explain: bool,
+    reasons: bool,
     unchecked: bool,
     oracle: bool,
     fact_oracle: bool,
@@ -112,7 +116,7 @@ const PROFILE: [&str; 4] = ["--lib", "--bin", "--no-runtime", "--runtime"];
 /// Returns the options that a command takes, or `None` for an unknown command.
 fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match cmd {
-        "check" => &["--json", "--explain", "--facts", "--groups"],
+        "check" => &["--json", "--explain", "--reasons", "--facts", "--groups"],
         "run" | "test" => &[
             "--seed",
             "--workers",
@@ -217,6 +221,7 @@ fn flags(args: &[String]) -> Result<Flags> {
             "--runtime" => f.profile.no_runtime = Some(false),
             "--json" => f.json = true,
             "--explain" => f.explain = true,
+            "--reasons" => f.reasons = true,
             "--unchecked" => f.unchecked = true,
             "--oracle" => f.oracle = true,
             "--fact-oracle" => f.fact_oracle = true,
@@ -421,6 +426,28 @@ fn check_flags(f: &Flags) -> Result<(Package, Checked, String)> {
     Ok((pkg, c, note))
 }
 
+/// The notes of `weft check --reasons` (plan stage R0z, Z0): each reason
+/// why the `ir` pipeline does not check the program in full, not only the
+/// first one ([`weft_sema::factgen::reasons`]). A program with no reason
+/// gets the note "no reason".
+fn reasons_notes(f: &Flags, pkg: &Package) -> String {
+    let opts = weft_sema::Options {
+        facts: FactGen::Old,
+        ir_groups: f.groups,
+        ..pkg.options(f.profile)
+    };
+    let a = weft_sema::analyze(&pkg.units, opts);
+    let list = weft_sema::factgen::reasons(&a, f.groups, opts.no_runtime);
+    let mut out = String::new();
+    if list.is_empty() {
+        out.push_str("note: --reasons: no reason\n");
+    }
+    for r in list {
+        let _ = writeln!(out, "note: --reasons: {r}");
+    }
+    out
+}
+
 /// The notes of `--facts=both` for a program in scope: each diagnostic that
 /// only one pipeline gives.
 fn both_notes(pkg: &Package, c: &Checked) -> String {
@@ -522,7 +549,10 @@ fn diag_json_in(file: Option<&weft_syntax::SourceFile>, d: &Diagnostic) -> Strin
 fn check(f: &Flags) -> Result<Output> {
     let path = Path::new(path_arg(f)?);
     let (pkg, c, note) = check_flags(f)?;
-    let stderr = note + &both_notes(&pkg, &c);
+    let mut stderr = note + &both_notes(&pkg, &c);
+    if f.reasons {
+        stderr.push_str(&reasons_notes(f, &pkg));
+    }
     let mut text = String::new();
     for d in &c.diags {
         if f.json {

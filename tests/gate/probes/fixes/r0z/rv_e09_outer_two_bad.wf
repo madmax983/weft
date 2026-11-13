@@ -1,0 +1,9 @@
+// Plan stage R0z: a probe of the review of Z1 (round 1).
+// Rule E (OuterMany, bad twin): the callee runs the first value two times.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn both(h1: fn(), h2: fn()) { h1(); h1(); h2() }
+fn once_spawn(f: fn()) / async { both(|| scope { s => s.spawn(f); () }, || print(5)) }
+fn main() / async {
+    let v = [1]
+    once_spawn(|| take(v))
+}

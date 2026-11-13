@@ -5396,6 +5396,80 @@ stage R0g)"): the analysis checks it at each end of a clause and at each `resume
 the clause (`clause::check_kont_escape`). A program with a `resume` in a closure is in
 scope only if the `ir` pipeline rejects it (`Scope::pending`).
 
+As built (plan stage R0z, Z1: the conservative rejections; `factgen::rule_g`,
+`factgen::checks`, `analysis::clause::note_error`): seven rules give an error at a
+construct with no full facts or in a body whose analysis stops (a `Later`). Each error
+is a rule of the language that the old lowering applies too, with its text. The errors
+of the rules are apart from the diagnostics of the facts (`IrFacts::z1`), and they are
+used only for a program that goes to the old pipeline without them (below). No rule
+adds a relation.
+
+- A (W0314): a task that holds a continuation. In `templates::task_w0314` (the captures
+  of a task, the values of a field that it runs, the tasks of a callee at a run node) a
+  closure with a `Kont` capture is a capability of the handler of its clause; the spawn
+  also follows the values of the captures of the closure in the state
+  (`templates::task_holds_kont`). Code of a caller that runs a value in the worst way
+  (`TaskHow::foreign`) is no task that holds it. The structural form
+  (`checks::task_konts`) runs on the bodies of rule G that have no facts: a spawn or a
+  fork branch whose closure, on the static way of the body (the one value of a local,
+  also in a captured closure or an aggregate), has a `Kont` capture, or a `Cap` capture
+  of a handler that is not a `Fail` handler. For the closure of the task itself a `Cap`
+  capture counts only if its code uses it (`checks::cap_used`: a perform through it, a
+  call of a function whose stated row has the effect, or a closure with the capture,
+  or the result of a call whose function type has the effect in its row, that the
+  code reads or writes into a local outside it), as the old pipeline reads the
+  operations of the summary of the task.
+- B (W0314): a task that runs the result of a perform of an operation of a user effect
+  through the row (`checks::op_result`): code of a caller, which can perform through each
+  handler on the stack of this task (`TASK_CODE`).
+- C (W0314): at the `Later(TASK_RUN)` of `transfer::apply_runs`, a value with a `Kont`
+  capture or a `Cap` capture of a handler that is not a `Fail` handler
+  (`transfer::task_run_w0314`). The analysis of the body stops there; rule G keeps the
+  error if no callee of the body reaches a body that stops.
+- D (W0313): the structural forms of "a clause runs outside its own handler" and "not
+  through a local outside it" on the bodies of rule G that have no facts. A closure with
+  a `Cap` capture of H that a perform of an operation of H gets
+  (`checks::own_op_escapes`). A write of a local outside the handled body of H, in a body
+  inside it with no closure body between them, of a closure with a `Cap` capture of H, of
+  the result of a call whose result is a closure that performs an effect that H serves at
+  the call, or of the parameter of a clause whose operation gets such a closure; the local
+  has one write inside the handled body (`checks::local_escapes`).
+- E (W0502): at the pending note of `NESTED_TASK_RUN`, a run that can happen more than
+  once (the run itself, `run.many`, or a run around it that can happen more than once:
+  `transfer::OuterMany`; two runs of two values run each value once) of a `once` value; a parameter of the function there goes to
+  `NESTED_ONCE`, and a caller that gives a `once` value to it gets W0502 at its call.
+- F (W0501): two `resume`s of a `once` continuation on a path of a body that is not the
+  clause body (a scope body, a handled body, a closure; `checks::twice_resumed`).
+- G: if a body stops with a `Later`, the fact generator goes on (`factgen::emit_each`):
+  that body gets the worst case of its declaration for its callers (R0b), and each body
+  that does not reach it (through a call, a function item as a value or an `on abort`
+  function) keeps its facts. A body that reaches it gets the facts of its declaration
+  only. The errors of the facts of the other bodies, of `typeck` and of the item checks,
+  of the builder, and of the rules above, reject the program (`Scope::fallback` and
+  `Scope::pending` both hold until the check, which clears the fallback for an error).
+
+The two rules of the check (the reviews of Z1; `weft_check::check_pending`):
+
+1. The rules of Z1 change only a program that goes to the old pipeline without them. No
+   rule changes the analysis or a diagnostic of a body: each error of a rule goes to
+   `clause::note_error`, the fixpoint keeps it apart (`callgraph::Inference::z1`,
+   `Inference::later`), and `IrFacts::z1` holds it next to `IrFacts::diags`. The check of
+   the `ir` facts and of the copies reads `IrFacts::diags` only, so a program that is in
+   scope without Z1 (an error of that check, or the copies) gets the result that it gets
+   without Z1. A program of rule G (`Pending::rule_g`) goes to the old pipeline without
+   Z1, so each error of its view is an error of Z1.
+2. An error of Z1 is an item of its own list, never a diagnostic of the check with the
+   same code, span and text. For a program of rule 1, the errors of Z1 (with rule G, also
+   the errors of the view) reject the program only if the old pipeline rejects it too
+   (the safety net, `z1_rejects`); else the program keeps its fallback.
+
+`clause::set_z1` turns Z1 off for a test: `ir_z1_inert.rs` shows that programs in scope
+with notes of Z1 get the same diagnostics with Z1 on and off.
+
+`weft check --reasons` (Z0, `factgen::reasons`) lists each reason of a fallback: each
+body that stops (the fact generator goes on as for rule G), each construct with no full
+facts, and the same with the copies of the callees.
+
 The `error` of the spec for a returned reference into a by-value parameter that the
 signature states has the W0204 of the signature check: the diagnosis gives a fold
 diagnostic (`diagnose::FOLD`), and the driver moves its fact keys into that W0204

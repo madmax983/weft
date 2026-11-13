@@ -3806,7 +3806,7 @@ fn maker_task_runs(
             .and_then(|b| b.blocks.get(em.at.0.index()))
             .map(|blk| blk.term.origin.span);
     if let Some(origin) = origin {
-        task_w0314(em, std::slice::from_ref(app), origin, None);
+        task_w0314(em, std::slice::from_ref(app), origin, (None, false));
     }
 }
 
@@ -4266,7 +4266,7 @@ fn call_tasks(
             }
         }
         let mine = &slot.mine;
-        let bad = task_w0314(em, mine, origin, Some(callee));
+        let bad = task_w0314(em, mine, origin, (Some(callee), slot.foreign));
         let marks = (
             em.facts.mutates_at.len(),
             em.facts.lends_mut.len(),
@@ -6807,12 +6807,15 @@ fn task_effects_at(
 /// with no runtime, each effect: W0314. `Fail` goes to the task that joins
 /// the task. Another effect of the row goes to
 /// a handler of a caller: part `task_effects` of the body (the caller
-/// checks it at its call). Returns true if it reports W0314.
+/// checks it at its call). A task that holds a continuation gets an error of
+/// rule A of plan stage R0z, apart from the diagnostics of the body, but not
+/// for code of a caller that runs the value in the worst way (`foreign`).
+/// Returns true if it reports W0314.
 fn task_w0314(
     em: &mut Em<'_>,
     apps: &[transfer::Applied],
     origin: weft_ir::Span,
-    callee: Option<&str>,
+    (callee, foreign): (Option<&str>, bool),
 ) -> bool {
     use crate::analysis::summary::CapIface;
     let env = em.p.body(em.body).map(|b| b.cap_env);
@@ -6825,6 +6828,15 @@ fn task_w0314(
         })
     };
     let mut bad = false;
+    // Rule A of plan stage R0z: a continuation that the task holds is a
+    // capability of the handler of its clause, on the stack of this task.
+    // Code of a caller that runs a value in the worst way (`foreign`) is no
+    // task of this program that holds it.
+    let kont = !foreign
+        && apps
+            .iter()
+            .filter_map(|a| a.closure)
+            .any(|c| super::checks::closure_konts(em.p, c));
     for app in apps {
         let item = app.kind == crate::analysis::apply::RunKind::Item;
         let row = app
@@ -6850,6 +6862,11 @@ fn task_w0314(
             }
         }
     }
+    // The error of rule A goes apart from the diagnostics of the body, and
+    // the result does not change: the analysis is the analysis before Z1.
+    if kont {
+        z1_w0314(origin, KONT_TASK);
+    }
     if bad {
         let msg = match callee {
             Some(name) => format!(
@@ -6860,6 +6877,57 @@ fn task_w0314(
         em.w0314.push((origin, msg));
     }
     bad
+}
+
+/// W0314 of a rule of plan stage R0z (rules A and B) at `origin` with the
+/// text `msg`: an error of Z1, apart from the diagnostics of the body
+/// (`crate::analysis::clause::note_error`).
+fn z1_w0314(origin: weft_ir::Span, msg: &str) {
+    crate::analysis::clause::note_error(super::checks::error_at(
+        weft_syntax::diag::Code::W0314,
+        origin,
+        msg,
+    ));
+}
+
+/// The text of W0314 for a task that holds a continuation (rule A of plan
+/// stage R0z): the text of the old pipeline.
+pub const KONT_TASK: &str = "a task cannot resume a continuation of this task: the rest of the handled body would run on another task";
+
+/// Rule A of plan stage R0z: true if a closure of `fns`, or a closure that a
+/// capture of one holds in state `st` (also through other closures),
+/// captures a continuation.
+fn task_holds_kont(em: &Em<'_>, st: &State, fns: &std::collections::BTreeSet<FnVal>) -> bool {
+    let mut work: Vec<weft_ir::ClosureId> = fns
+        .iter()
+        .filter_map(|f| match f {
+            FnVal::Closure(c) | FnVal::Made(c) => Some(*c),
+            _ => None,
+        })
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(c) = work.pop() {
+        if !seen.insert(c) {
+            continue;
+        }
+        if super::checks::closure_konts(em.p, c) {
+            return true;
+        }
+        let Some(d) = em.p.closures.get(c.index()) else {
+            continue;
+        };
+        for cap in &d.captures {
+            let Ok(Some((k, path))) = transfer::move_path(em.p, d.maker, &cap.source) else {
+                continue;
+            };
+            for f in st.value(k, &path).flat().fns {
+                if let FnVal::Closure(x) | FnVal::Made(x) = f {
+                    work.push(x);
+                }
+            }
+        }
+    }
+    false
 }
 
 /// The bodies of the closures `fns` of a task that W0314 rejects go into
@@ -6914,7 +6982,10 @@ fn task_start(
     // A task of a clause outside the handled body of a captured capability
     // runs the closure outside its handler too (W0313, plan stage R0k-b2).
     transfer::note_task_escapes(&mut em.cx(), body, &out.apps);
-    if task_w0314(em, &out.apps, origin, None) {
+    if task_holds_kont(em, st, &fns) {
+        z1_w0314(origin, KONT_TASK);
+    }
+    if task_w0314(em, &out.apps, origin, (None, false)) {
         w0314_bodies(em, &fns);
     }
     // A late run (a value that the task body runs through a capture)
@@ -6960,6 +7031,15 @@ fn task_start(
     // caller as a plain run.
     if !known || out.apps.iter().any(|a| a.code && a.run.is_none()) {
         pending(crate::irbuild::scope::Group::E, TASK_CODE);
+        // Rule B of plan stage R0z: a task that runs the value of an
+        // operation of a user effect runs code of a caller, which can
+        // perform through each handler on the stack of this task.
+        if super::checks::op_result(em.p, em.tys, body, task) {
+            z1_w0314(
+                origin,
+                "a task cannot perform through a handler of this task: the handler runs on another task",
+            );
+        }
     }
     let caller_code = out.apps.iter().any(|a| a.code);
     operand_moves(em, n, st, task, false, true)?;
