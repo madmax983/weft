@@ -392,15 +392,19 @@ pub enum Op {
     /// frame). It takes the handlers of the value, not the value, so it is
     /// not a read of the cell for the oracles.
     ///
-    /// `code` is the code of the closure that the region copies. With the
-    /// fact oracle on, the value must be a closure with that code (plan stage
-    /// R0k-b2): a copy replaces the run by the body of one closure, so the
-    /// facts of the region hold only for a run of that closure.
+    /// `code` is the code of the closure that the region copies, and `also`
+    /// the code of each other closure that the value can be (plan stage R0z
+    /// Z3: copies of the same closure). With the fact oracle on, the value
+    /// must be a closure with one of them (plan stage R0k-b2): a copy
+    /// replaces the run by the body of one closure, so the facts of the
+    /// region hold only for a run of those closures.
     PushHenv {
         /// The cell of the closure value.
         var: VarRef,
         /// The code of the copied closure.
         code: CodeId,
+        /// The code of the other closures that the value can be.
+        also: Vec<CodeId>,
     },
     /// The cell of capture `k` of the closure value at the place on the stack
     /// (plan stage R0k-b2, the environment local of a copy region): a `Kept`

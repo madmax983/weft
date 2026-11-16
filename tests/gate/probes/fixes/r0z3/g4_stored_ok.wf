@@ -1,0 +1,18 @@
+// Plan stage R0z Z3, part g: the clean twin of g4. The program prints 4,
+// then 1.
+effect Run { fn run(g: fn()) }
+struct W { f: fn(fn()) / Run }
+fn wrap(f: fn(fn()) / Run) -> W { W { f: f } }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let k = |g: fn()| run(g)
+        let w = wrap(k)
+        let f = w.f
+        f(|| print(4))
+    }
+    print(r)
+}

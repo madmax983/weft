@@ -53,6 +53,32 @@ the counts.
   in `main`: the copy of the frame of the call points into the group of the object).
   Tier 2 has no RC row. No other row of the census changes.
 
+## Z3 (as built)
+
+- Z3 closed 11 rows of tier 1 (rows 43 to 46 and 49 to 55; 64 to 53 fallbacks of the
+  census rows; tier 1 77 to 74 fallbacks of 5502 files with the 31 new files, of which 8
+  keep the fallback: refusal probes). Each bad twin is rejected in scope: `a05_bad`,
+  `g26` and `e04b_bad` W0301; `o01_bad` W0502; `u12_bad`, `u13_bad` W0301 at the read of
+  `h.f` (the three oldmiss rows of the stage). Each clean twin is in scope with no error.
+- Rows 47 and 48 (`a02`, a value in a `Vec`) stay: part b is not built. With a design of
+  part b, the clean twin `a02_vec_same_id_ok` gets a false W0301 of the parameter of a
+  clause that runs at two nodes; main has the same false W0301 for that form with no
+  `Vec` (`docs/plan/core-ir.md`, "Z3 as built"). The open-old entry `R0kB2-STAYS` goes;
+  `R0z3-HEAP-SLOT` names `a02_vec_same_id_bad`.
+- Tier 2 has no row of the stage.
+- Fix 1 (the review of Z3): a `once` closure outside the handled body of a local
+  `multi` handler is spared by its resume (`spared_at`). The first build gave a false
+  W0503 for it on the review probe `e10_ok_twoRun` (main falls back and accepts it); main
+  gives the same false W0503 on the forms in scope (`e08`, `e14`). No row of the census
+  changes; the 7 new files of the fix are in scope (74 fallbacks of 5509 files).
+- Fix 3 (the review of Z3, round 3): a write of the local of the way in a clause is a
+  value of the way only in the form of `u13`. Rows 54 and 55 (`u13`) stay closed.
+  Tier 1: 85 fallbacks of 5520 files (the 4 new refusal probes `w1`, `w2` keep the fallback); no other row changes.
+- Fix 2 (the review of Z3, round 2): a region with two closures is refused if its clause
+  can run at more than one node (the join of issue #79, in the one-local form), and the
+  value of a capture joins only the closures that the state can have. The rows 52 to 55
+  (`u12`, `u13`, one run) stay closed. Tier 1: 81 fallbacks of 5516 files (main 77 of 5471): the 11 census rows stay closed; of the files of the stage, the probes `a3` and `a5` (two runs of the local) and the refusal probes `n1`, `n2` keep the fallback.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -127,19 +153,19 @@ the counts.
 | 40 | `fixes/r0kc2c/n18_rc_handled_frame_bad.wf` | RC | rc-across-multi: the handled body of `run` holds a reference into the `rc` across `pick` | clean | fault | oldmiss | no | Z2 (closed) |
 | 41 | `fixes/r0kc2c/n19_rc_param_arg_bad.wf` | RC | rc-across-multi: a reference into the `rc` as the argument of `pick` | clean | fault | oldmiss | no | Z2 (closed) |
 | 42 | `fixes/r0kc2c/p08_rc_between_param_bad.wf` | RC | rc-across-multi: a reference into the `rc` through a parameter of `run` | clean | fault | oldmiss | no | Z2 (closed) |
-| 43 | `fixes/r0k2/a05_by_value_bad.wf` | D3 | a `ByMove` capture (static copy refused) | W0301 | fault | rejected | yes | Z3 |
-| 44 | `fixes/r0k2/a05_by_value_ok.wf` | D3 | a `ByMove` capture (clean twin) | clean | no fault | clean | yes | Z3 |
-| 45 | `fixes/r0k2/g26_weak_run_in_callee_bad.wf` | C2 | weak guard order: the weak value goes to `apply`, which the analysis runs before the maker | W0301, W0403, W0405 | fault | rejected | yes | Z3 |
-| 46 | `fixes/r0kb1/n03_clause_runs_ok.wf` | A | form 4 (a clause runs its parameter): the copy region exists, but copies apply only to C2 and D3 | clean | no fault | clean | yes | Z3 |
-| 47 | `fixes/r0kb2/a02_vec_same_id_bad.wf` | C2 | heap slot: one closure id two times in a `Vec`, other captures | clean | fault | oldmiss | yes | Z3 |
-| 48 | `fixes/r0kb2/a02_vec_same_id_ok.wf` | C2 | heap slot (clean twin) | clean | no fault | clean | yes | Z3 |
-| 49 | `fixes/r0kb2/e04b_field_read_bad.wf` | C2>A | form 3 with a read of another part: no `sole`, so the copy needs the rest of the handled body | clean | fault | oldmiss | yes | Z3 |
-| 50 | `fixes/r0kb2/o01_once_two_runs_bad.wf` | C2 | once: a copy of a `once` closure is refused; two runs | W0502 | fault | rejected | yes | Z3 |
-| 51 | `fixes/r0kb2/o01_once_two_runs_ok.wf` | C2 | once: one run (clean twin) | clean | no fault | clean | yes | Z3 |
-| 52 | `fixes/r0kb2/u12_scope_body_bad.wf` | C2 | a second write of the local of the way by a scope body (the same closure id) | clean | fault | oldmiss | yes | Z3 |
-| 53 | `fixes/r0kb2/u12_scope_body_ok.wf` | C2 | a second write by a scope body (clean twin) | clean | no fault | clean | yes | Z3 |
-| 54 | `fixes/r0kb2/u13_clause_bad.wf` | C2 | a second write of the local of the way by a clause (the same closure id) | clean | fault | oldmiss | yes | Z3 |
-| 55 | `fixes/r0kb2/u13_clause_ok.wf` | C2 | a second write by a clause (clean twin) | clean | no fault | clean | yes | Z3 |
+| 43 | `fixes/r0k2/a05_by_value_bad.wf` | D3 | a `ByMove` capture (static copy refused) | W0301 | fault | rejected | yes | Z3 (closed) |
+| 44 | `fixes/r0k2/a05_by_value_ok.wf` | D3 | a `ByMove` capture (clean twin) | clean | no fault | clean | yes | Z3 (closed) |
+| 45 | `fixes/r0k2/g26_weak_run_in_callee_bad.wf` | C2 | weak guard order: the weak value goes to `apply`, which the analysis runs before the maker | W0301, W0403, W0405 | fault | rejected | yes | Z3 (closed) |
+| 46 | `fixes/r0kb1/n03_clause_runs_ok.wf` | A | form 4 (a clause runs its parameter): the copy region exists, but copies apply only to C2 and D3 | clean | no fault | clean | yes | Z3 (closed) |
+| 47 | `fixes/r0kb2/a02_vec_same_id_bad.wf` | C2 | heap slot: one closure id two times in a `Vec`, other captures | clean | fault | oldmiss | yes | Z3 (open: part b not built; the clean twin gets a false W0301 of a clause that runs at two nodes, issue #79) |
+| 48 | `fixes/r0kb2/a02_vec_same_id_ok.wf` | C2 | heap slot (clean twin) | clean | no fault | clean | yes | Z3 (open: part b not built; the clean twin gets a false W0301 of a clause that runs at two nodes, issue #79) |
+| 49 | `fixes/r0kb2/e04b_field_read_bad.wf` | C2>A | form 3 with a read of another part: no `sole`, so the copy needs the rest of the handled body | clean | fault | oldmiss | yes | Z3 (closed) |
+| 50 | `fixes/r0kb2/o01_once_two_runs_bad.wf` | C2 | once: a copy of a `once` closure is refused; two runs | W0502 | fault | rejected | yes | Z3 (closed) |
+| 51 | `fixes/r0kb2/o01_once_two_runs_ok.wf` | C2 | once: one run (clean twin) | clean | no fault | clean | yes | Z3 (closed) |
+| 52 | `fixes/r0kb2/u12_scope_body_bad.wf` | C2 | a second write of the local of the way by a scope body (the same closure id) | clean | fault | oldmiss | yes | Z3 (closed) |
+| 53 | `fixes/r0kb2/u12_scope_body_ok.wf` | C2 | a second write by a scope body (clean twin) | clean | no fault | clean | yes | Z3 (closed) |
+| 54 | `fixes/r0kb2/u13_clause_bad.wf` | C2 | a second write of the local of the way by a clause (the same closure id) | clean | fault | oldmiss | yes | Z3 (closed) |
+| 55 | `fixes/r0kb2/u13_clause_ok.wf` | C2 | a second write by a clause (clean twin) | clean | no fault | clean | yes | Z3 (closed) |
 | 56 | `fixes/r0h/c2_task.wf` | D1 | D1b: the clause spawns the value, then resumes in the scope body; the rest of the handled body writes what the task reads | clean | fault | oldmiss | no | Z5 |
 | 57 | `fixes/r0k/k04_c2_race_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 |
 | 58 | `fixes/r0k/rv_p12_c2_task_after_perform.wf` | D1 | D1b: as c2_task; the callee spawns a writer after the perform | clean | fault | oldmiss | no | Z5 |

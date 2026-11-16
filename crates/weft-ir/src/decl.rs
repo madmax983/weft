@@ -69,6 +69,20 @@ pub struct CopyRegion {
     /// gives the cell its one value (plan stage R0k-b2). The facts take the
     /// function values of the capture from it.
     pub env_fns: Vec<(u32, ClosureId)>,
+    /// The other closures that the value can be (plan stage R0z Z3): copies
+    /// of the same closure, with the same code, the same captures and the
+    /// same `Cap` sources. The region reads each other capture through
+    /// [`CopyRegion::env_local`], so its code is the code of a run of each of
+    /// them. Empty if the value is always [`CopyRegion::closure`].
+    pub also: Vec<ClosureId>,
+}
+
+impl CopyRegion {
+    /// Each closure that the value of the region can be:
+    /// [`CopyRegion::closure`], then [`CopyRegion::also`].
+    pub fn closures(&self) -> impl Iterator<Item = ClosureId> + '_ {
+        std::iter::once(self.closure).chain(self.also.iter().copied())
+    }
 }
 
 impl Program {
@@ -247,6 +261,17 @@ impl Program {
             .iter()
             .find(|r| r.body == body && r.env_local == Some(l))
             .map(|r| &r.value)
+    }
+
+    /// Returns each closure that the value of the region of environment local
+    /// `l` of body `body` can be ([`CopyRegion::closures`], plan stage R0z
+    /// Z3). Empty if `l` is no environment local.
+    pub fn copy_env_closures(&self, body: BodyId, l: crate::LocalId) -> Vec<ClosureId> {
+        self.regions
+            .iter()
+            .find(|r| r.body == body && r.env_local == Some(l))
+            .map(|r| r.closures().collect())
+            .unwrap_or_default()
     }
 
     /// Returns the static capability environment of the code of block `b` of body

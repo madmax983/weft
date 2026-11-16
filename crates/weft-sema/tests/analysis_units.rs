@@ -1954,21 +1954,60 @@ mod copies {
         }
     }
 
-    /// The refusals of the static closure copy: the local can hold one of two
-    /// closures, the closure moves a capture into its value (`ByMove`, a
-    /// `once` closure). Each one keeps the call of the closure value. (A local
-    /// that gets its closure from a block, `a06_ends`, gets a copy region from
-    /// stage R0k-b2 on: the copy reads the capture whose source ends through
-    /// the environment local of the region, `copy_env`.)
+    /// The refusal of the static closure copy: the local can hold one of two
+    /// closures. It keeps the call of the closure value. (A local that gets
+    /// its closure from a block, `a06_ends`, gets a copy region from stage
+    /// R0k-b2 on: the copy reads the capture whose source ends through the
+    /// environment local of the region, `copy_env`. A `once` closure with a
+    /// `ByMove` capture, `a05_by_value`, gets one from plan stage R0z Z3 on:
+    /// `a_once_closure_gets_a_copy_that_moves_its_value`.)
     #[test]
-    fn a_closure_copy_is_refused_for_two_closures_a_move_and_another_value() {
-        for name in ["a04_two_closures_bad.wf", "a05_by_value_bad.wf"] {
-            let (_, b) = built(&r0k2(name));
-            assert!(
-                instantiate(&b).is_none_or(|i| i.closure_calls == 0),
-                "{name}: a copy"
-            );
-        }
+    fn a_closure_copy_is_refused_for_two_closures() {
+        let (_, b) = built(&r0k2("a04_two_closures_bad.wf"));
+        assert!(instantiate(&b).is_none_or(|i| i.closure_calls == 0));
+    }
+
+    /// A `once` closure (plan stage R0z Z3, parts d and e): the run moves the
+    /// value, so the copy moves it into a new local first, and the region
+    /// reads the `ByMove` capture through its environment local. The block of
+    /// the run ends with the move and a jump to the region, and each exit of
+    /// the region ends the new local.
+    #[test]
+    fn a_once_closure_gets_a_copy_that_moves_its_value() {
+        let (a, b) = built(&r0k2("a05_by_value_bad.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        let p = &inst.built.program;
+        let r = p.regions.first().expect("a region");
+        assert!(r.env_local.is_some());
+        let body = &p.bodies[r.body.index()];
+        let t = r.value.local;
+        assert!(matches!(body.local_kind(t), Some(LocalKind::Temp(_))));
+        let moved = body.blocks.iter().any(|blk| {
+            blk.stmts.iter().any(|st| {
+                matches!(&st.kind, StmtKind::Assign(q, Rvalue::Use(weft_ir::Operand::Move(_)))
+                    if q.local == t && q.proj.is_empty())
+            }) && matches!(blk.term.kind, TermKind::Goto(k) if k == r.entry)
+        });
+        assert!(moved, "the move of the value before the region");
+        let ends = r
+            .blocks
+            .iter()
+            .filter(|k| {
+                body.blocks[k.index()]
+                    .stmts
+                    .iter()
+                    .any(|st| st.kind == StmtKind::Dead(t))
+            })
+            .count();
+        assert!(ends >= 2, "a normal exit and a cleanup exit");
+        assert!(weft_ir::verify::verify_program(p, &inst.built.tys)
+            .iter()
+            .all(|x| x.rule == weft_ir::verify::Rule::UnwindOrder
+                || x.rule == weft_ir::verify::Rule::KontNotFirst));
+        let _weak = inst
+            .weak_ok
+            .then(weft_sema::analysis::transfer::WeakRowOps::enter);
+        assert!(weft_sema::factgen::components(&a, &inst.built).is_ok());
     }
 
     /// A source that ends between the closure and the run: a `Dead` of the
@@ -2095,11 +2134,13 @@ mod copies {
 
     /// The order of the weak guard (the review of R0k-a2): the analysis runs
     /// `apply` before `main`, the maker of the closure with the weak form,
-    /// and the guard still refuses the call of `apply` that gives it the
-    /// closure where the local handler serves the operation, also with the
-    /// copies (`apply` gets no copy).
+    /// and the guard refuses the call of `apply` that gives it the closure
+    /// where the local handler serves the operation. From plan stage R0z Z3
+    /// (part g) the call gets a copy of `apply`: the run of the closure is in
+    /// `main`, where it gets a copy of its body, and the program has full
+    /// facts.
     #[test]
-    fn the_weak_guard_refuses_a_value_given_to_a_body_analyzed_before_its_maker() {
+    fn a_weak_value_given_to_a_callee_gets_a_copy_of_the_callee() {
         let (a, b) = built(&r0k2("g26_weak_run_in_callee_bad.wf"));
         let weak = weft_sema::analysis::transfer::WeakRowOps::enter();
         let Err(u) = weft_sema::factgen::components(&a, &b) else {
@@ -2107,10 +2148,12 @@ mod copies {
         };
         assert_eq!(u.reason, weft_sema::analysis::transfer::OP_KEPT);
         drop(weak);
-        if let Some(inst) = instantiate(&b) {
-            let _weak = weft_sema::analysis::transfer::WeakRowOps::enter();
-            assert!(weft_sema::factgen::components(&a, &inst.built).is_err());
-        }
+        let inst = instantiate(&b).expect("a copy of `apply`");
+        assert_eq!((inst.calls, inst.closure_calls), (1, 1));
+        let _weak = inst
+            .weak_ok
+            .then(weft_sema::analysis::transfer::WeakRowOps::enter);
+        assert!(weft_sema::factgen::components(&a, &inst.built).is_ok());
     }
 
     /// The text of probe `name` of `dir` in `tests/gate/probes`.
@@ -2435,14 +2478,14 @@ mod copy_env {
             }
 ";
         let mut srcs = vec![("writes".to_string(), writes.to_string())];
+        // From plan stage R0z Z3, `u12` and `u13` (a second write with a copy
+        // of the same closure) and `o01` (a `once` closure) get a copy:
+        // `a_second_write_with_a_copy_of_the_same_closure_gets_a_region`.
         for name in [
             "a01_two_paths_bad.wf",
             "a02_vec_same_id_bad.wf",
             "a03_put_fns_bad.wf",
-            "u12_scope_body_bad.wf",
-            "u13_clause_bad.wf",
             "u14_task_bad.wf",
-            "o01_once_two_runs_bad.wf",
         ] {
             srcs.push((name.to_string(), probe("fixes/r0kb2", name)));
         }
@@ -2458,6 +2501,185 @@ mod copy_env {
                 "{name}: a copy with an environment local"
             );
         }
+    }
+}
+
+/// Plan stage R0z Z3: the small steps of the way of a closure value.
+mod r0z3 {
+    use weft_ir::{LocalKind, Program};
+    use weft_sema::factgen::instantiate::instantiate;
+    use weft_sema::irbuild::Built;
+
+    /// The analysis of `src` and its IR.
+    fn built(src: &str) -> (weft_sema::Analysis, Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The text of probe `name` of `dir` in `tests/gate/probes`.
+    fn probe(dir: &str, name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(dir)
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The facts of the program with the copies of `b`, with the weak form if
+    /// the copies allow it.
+    fn full(a: &weft_sema::Analysis, b: &Built) -> (Program, bool) {
+        let inst = instantiate(b).expect("a copy");
+        let _weak = inst
+            .weak_ok
+            .then(weft_sema::analysis::transfer::WeakRowOps::enter);
+        let ok = weft_sema::factgen::components(a, &inst.built).is_ok();
+        (inst.built.program, ok)
+    }
+
+    /// Part a: a scope body (`u12`) or a clause (`u13`) gives the local of
+    /// the way a second closure of `mk`. After the copies of `mk` at its
+    /// calls the two values are copies of one closure, so the run gets a copy
+    /// region that names both and reads each capture but `Cap` through its
+    /// environment local. The program has full facts.
+    #[test]
+    fn a_second_write_with_a_copy_of_the_same_closure_gets_a_region() {
+        for name in ["u12_scope_body_bad.wf", "u13_clause_bad.wf"] {
+            let (a, b) = built(&probe("fixes/r0kb2", name));
+            let (p, ok) = full(&a, &b);
+            let r = p
+                .regions
+                .iter()
+                .find(|r| !r.also.is_empty())
+                .unwrap_or_else(|| panic!("{name}: no region with two closures"));
+            assert!(r.env_local.is_some() && !r.sole, "{name}");
+            let d = &p.closures[r.closure.index()];
+            for c in &r.also {
+                assert_eq!(p.closures[c.index()].captures.len(), d.captures.len());
+            }
+            assert!(ok, "{name}: no full facts");
+        }
+    }
+
+    /// Part a, the refusals: the second value is a closure of another
+    /// function (`a1`), or a task writes the local through the environment of
+    /// its closure (`a4`). No region names two closures.
+    #[test]
+    fn a_second_write_of_another_closure_or_by_a_task_gets_no_region() {
+        for name in ["a1_other_maker_bad.wf", "a4_task_writes_bad.wf"] {
+            let (_, b) = built(&probe("fixes/r0z3", name));
+            assert!(
+                instantiate(&b).is_none_or(|i| i
+                    .built
+                    .program
+                    .regions
+                    .iter()
+                    .all(|r| r.also.is_empty())),
+                "{name}"
+            );
+        }
+    }
+
+    /// Fix 2 of the review of Z3: the local of the way gets two closures of
+    /// `mk`, and each one runs (`n1`, `n2`), so the clause of `Run` runs at two
+    /// nodes and its facts would join the two values: no region names two
+    /// closures. With one run (`p1`) the region names both.
+    #[test]
+    fn a_region_with_two_closures_is_refused_if_its_clause_runs_at_two_nodes() {
+        for name in ["n1_two_runs_keep_ok.wf", "n2_two_runs_field_ok.wf"] {
+            let (_, b) = built(&probe("fixes/r0z3", name));
+            assert!(
+                instantiate(&b).is_none_or(|i| i
+                    .built
+                    .program
+                    .regions
+                    .iter()
+                    .all(|r| r.also.is_empty())),
+                "{name}"
+            );
+        }
+        let (a, b) = built(&probe("fixes/r0z3", "p1_first_value_gone_ok.wf"));
+        let (p, ok) = full(&a, &b);
+        assert!(p.regions.iter().any(|r| !r.also.is_empty()));
+        assert!(ok);
+    }
+
+    /// Fix 3 of the review of Z3: a clause gives the local of the way its
+    /// second closure, but a callee performs the operation (`w1`), or the
+    /// clause writes after its `resume` (`w2`): no region names two closures.
+    /// The form of `u13` (one direct perform before the run, the write before
+    /// the `resume`) keeps its region
+    /// (`a_second_write_with_a_copy_of_the_same_closure_gets_a_region`).
+    #[test]
+    fn a_clause_write_of_another_form_than_u13_gets_no_region() {
+        for name in ["w1_clause_callee_ok.wf", "w2_after_resume_ok.wf"] {
+            let (_, b) = built(&probe("fixes/r0z3", name));
+            assert!(
+                instantiate(&b).is_none_or(|i| i
+                    .built
+                    .program
+                    .regions
+                    .iter()
+                    .all(|r| r.also.is_empty())),
+                "{name}"
+            );
+        }
+    }
+
+    /// Part d: the two runs of the `once` closure of `o01` each get a copy
+    /// region whose value is a new local; the second move of the closure value
+    /// is the W0502 of the facts.
+    #[test]
+    fn each_run_of_a_once_closure_gets_a_region_on_a_new_local() {
+        let (a, b) = built(&probe("fixes/r0kb2", "o01_once_two_runs_bad.wf"));
+        let (p, ok) = full(&a, &b);
+        assert_eq!(p.regions.len(), 2);
+        for r in &p.regions {
+            assert!(matches!(
+                p.bodies[r.body.index()].local_kind(r.value.local),
+                Some(LocalKind::Temp(_))
+            ));
+        }
+        assert!(ok);
+    }
+
+    /// Part c: the site reads `b.n`, a part with no function type, so the
+    /// region of `e04b` is the only run of the closure (`sole`), and the
+    /// program has full facts. A read of a part with a function type (`c1`)
+    /// is a use that can run the closure: no `sole`.
+    #[test]
+    fn a_read_of_a_part_with_no_function_type_keeps_the_region_sole() {
+        let (a, b) = built(&probe("fixes/r0kb2", "e04b_field_read_bad.wf"));
+        let (p, ok) = full(&a, &b);
+        assert!(p.regions.iter().any(|r| r.sole));
+        assert!(ok);
+        let (_, b) = built(&probe("fixes/r0z3", "c1_fn_field_read_bad.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        assert!(inst.built.program.regions.iter().all(|r| !r.sole));
+    }
+
+    /// Part f: `n03_clause_runs_ok` has only the pending reason of a perform
+    /// whose rest of the handled body the facts do not find. With the copies
+    /// the clause runs a copy of the closure body, and the facts are full.
+    #[test]
+    fn a_program_whose_only_reason_is_rest_not_found_gets_the_copies() {
+        let (a, b) = built(&probe("fixes/r0kb1", "n03_clause_runs_ok.wf"));
+        let Err(u) = weft_sema::factgen::components(&a, &b) else {
+            panic!("no pending reason");
+        };
+        assert_eq!(u.reason, weft_sema::factgen::handlers::REST_NOT_FOUND);
+        let (_, ok) = full(&a, &b);
+        assert!(ok);
     }
 }
 

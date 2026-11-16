@@ -11064,15 +11064,10 @@ stage = "R0k"
 
 [[entry]]
 class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0kb2/a02_vec_same_id_bad.wf",
-    "tests/gate/probes/fixes/r0kb2/e04b_field_read_bad.wf",
-    "tests/gate/probes/fixes/r0kb2/u12_scope_body_bad.wf",
-    "tests/gate/probes/fixes/r0kb2/u13_clause_bad.wf",
-]
-finding = "R0kB2-STAYS"
-reason = "stage R0k-b2 (acceptance probes of the B1 note): the run of the closure gets no copy, and the program keeps the C2 fallback; the old pipeline misses each fault. a02: the closure is in a `Vec` (a heap slot is not on the way of the value). e04b: the site reads another field of the struct of the way, so the region is not the only run of the closure, and its perform needs the rest of the handled body (F17). u12, u13: a scope body or a clause gives the local of the way a second closure before the run (`nested_writes`). The probe run of B1 (`run_values`) and a heap step of the way are pending (`docs/plan/core-ir.md`, \"R0k-b2 as built\")"
-stage = "R0k"
+files = ["tests/gate/probes/fixes/r0kb2/a02_vec_same_id_bad.wf"]
+finding = "R0z3-HEAP-SLOT"
+reason = "plan stage R0z Z3 (part b, not built): the run of the closure gets no copy, and the program keeps the C2 fallback; the old pipeline misses the fault. The closure is in a `Vec` (a heap slot is not on the way of the value). A design of part b (each value that goes into the `Vec` is a copy of the same closure) gives the copies, but the clean twin `a02_vec_same_id_ok` then gets a false W0301: the parameter of the clause that runs at two nodes joins the values of both runs (the program with two locals, `r0z/z3/t/clause_join_fp.wf`, has that false W0301 with main too; issue #79). The R0k-b2 entry `R0kB2-STAYS` goes: e04b, u12 and u13 are rejected in scope (`docs/plan/core-ir.md`, \"Z3 as built\")"
+stage = "R0z"
 
 [[entry]]
 class = "sig"
@@ -11208,4 +11203,98 @@ files = [
 ]
 codes = ["W0312", "W0405"]
 reason = "stage R0z (Z1, rule G; a probe of the review of Z1): the analysis of `mkg` stops (C2), and `f` does not reach it. The `ir` pipeline gives W0405 at the perform of `reg` in `f` (line 9: the clause of a handler of a caller can keep the closure and run it while `x` changes; the in-scope `ir` result of the form a01); the old pipeline gives W0312 at the `handle` of `Reg` in `main` (line 15). The old pipeline rejects the program, so the safety net keeps the rejection. Both reject; ev.sh: held"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/200_copy_steps.wf"]
+codes = ["W0301", "W0403", "W0405"]
+reason = "plan stage R0z Z3: the corpus file of the small steps of the way. The `ir` pipeline checks it with the copies (a second write of the local of the way, a read of a part with no function type, a `once` closure, a `ByMove` capture, a weak value given to a callee) and gives W0301 at each fault; the old pipeline misses the faults of `second_write` and `field_test` (`old:` markers) and gives W0405 and W0403 at the call of `apply` (no task there). Rejected in both"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0k2/g26_weak_run_in_callee_bad.wf",
+    "tests/gate/probes/fixes/r0z3/g2_two_levels_bad.wf",
+    "tests/gate/probes/fixes/r0z3/g4_stored_bad.wf",
+]
+codes = ["W0403", "W0405"]
+reason = "plan stage R0z Z3 (part g): a closure with the weak form goes to a callee (`apply`, `apply2`, `wrap`). The call gets a copy of the callee, so the run of the closure is in the site and gets a copy of its body: the `ir` pipeline gives W0301 at the read of `r` (the clause runs the value that clears `v`). The old pipeline gives W0301 there too, and W0405 and W0403 at the call (it sees a task where there is none). Rejected in both; ev.sh: held"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0z3/d4_once_holds_once_bad.wf"]
+codes = ["W0302", "W0502"]
+reason = "plan stage R0z Z3 (part d): `g` holds the `once` closure `f` and runs it two times. The `ir` pipeline gives W0302 (`f` used after it was moved) at the second run in the body of `g`; the old pipeline gives W0502 at the same line. Rejected in both; ev.sh: held"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/r0z3/a1_other_maker_bad.wf"]
+finding = "R0z3-OTHER-MAKER"
+reason = "plan stage R0z Z3 (part a, an adversarial probe): the local of the way gets a closure of `mk` and a closure of `mk2`. They are not copies of one closure, so the run gets no copy, and the program keeps the C2 fallback; the old pipeline misses the fault. This is the form of two values at the run node (stage Z6, the dispatch copies)"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["op_fns", "pins", "raises", "ret", "ret_refs", "task_runs", "repeats", "reaches", "reach_repeats"]
+files = [
+    "tests/gate/probes/fixes/r0k2/g26_weak_run_in_callee_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/e04b_field_read_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/u12_scope_body_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/u12_scope_body_ok.wf",
+    "tests/gate/probes/fixes/r0kb2/u13_clause_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/u13_clause_ok.wf",
+    "tests/gate/probes/fixes/r0z3/a3_loop_writes_bad.wf",
+    "tests/gate/probes/fixes/r0z3/a3_loop_writes_ok.wf",
+    "tests/gate/probes/fixes/r0z3/a5_second_run_bad.wf",
+    "tests/gate/probes/fixes/r0z3/a5_second_run_ok.wf",
+    "tests/gate/probes/fixes/r0z3/c2_test_field_bad.wf",
+    "tests/gate/probes/fixes/r0z3/p1_first_value_gone_bad.wf",
+    "tests/gate/probes/fixes/r0z3/p1_first_value_gone_ok.wf",
+    "tests/gate/probes/fixes/r0z3/p2_loop_one_run_bad.wf",
+    "tests/gate/probes/fixes/r0z3/p2_loop_one_run_ok.wf",
+    "tests/gate/probes/fixes/r0z3/c2_test_field_ok.wf",
+    "tests/gate/probes/fixes/r0z3/g2_two_levels_bad.wf",
+    "tests/gate/probes/fixes/r0z3/g4_stored_bad.wf",
+    "tests/programs/200_copy_steps.wf",
+]
+reason = "plan stage R0z Z3 (programs that come into scope with the copies of the small steps of the way): a function that gives back a closure that gives a function value to an operation through its row (`mk`, `mk_box`), and the site that runs the copies (`main`, `second_write`, `weak_to_callee`). With the copies `weak_ok` holds, so the summary of the maker has the weak form of R0k-a (`WeakRowOps`), as in the R0k-b2 entry: the parts `op_fns`, `ret`, `ret_refs`, `task_runs` and `repeats` are those of that summary and of entry F13 for the function values of a body. The site: `raises` of the old inference is the failure of the scope of `async` (the `ir` summary gives it to the scope, as F19-SIG-NAMED), and `reaches`, `reach_repeats` and `pins` are those of the copies of the callee and of the closure body at the run (the closure performs through a captured capability, so the code of the clause is not code of a caller)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/201_once_spared.wf"]
+codes = ["W0502"]
+reason = "plan stage R0z Z3, fix 1: the corpus file of a value that is not `many` outside the handled body of a local `multi` handler (`spared_at`). Both pipelines give W0503 at `m` in `once_in_multi` and W0502 at the second run in `once_run_after_m`; the old pipeline also gives W0502 at the run of `c` in `once_in_multi` (`old:` marker), where the `ir` pipeline gives the W0503 only. Rejected in both"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0z3/m3_once_inside_multi_bad.wf"]
+codes = ["W0502"]
+reason = "plan stage R0z Z3, fix 1: the `once` closure is a local of the handled body of the `multi` handler and is live across `m`. Both pipelines give W0503 at `m`; the old pipeline also gives W0502 at the run. Rejected in both; ev.sh: held"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0z3/a3_loop_writes_bad.wf",
+    "tests/gate/probes/fixes/r0z3/a5_second_run_bad.wf",
+    "tests/gate/probes/fixes/r0z3/n1_two_runs_keep_bad.wf",
+]
+finding = "R0z3-CLAUSE-JOIN"
+reason = "plan stage R0z Z3, fix 2 (the review of Z3, round 2): the local of the way gets two closures of `mk`, and each one runs and gives its value to `run`. The clause runs at two nodes, and its facts join the values of its parameter over them (issue #79), so the clean twin would get a false W0301 (`n1`; `a3` and `a5` have two runs of the local too): the run gets no copy region (`Inst::one_clause_node`), and the program keeps the C2 fallback; the old pipeline misses the fault, as with main"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0z3/w1_clause_callee_bad.wf",
+    "tests/gate/probes/fixes/r0z3/w2_after_resume_bad.wf",
+]
+finding = "R0z3-CLAUSE-WRITE"
+reason = "plan stage R0z Z3, fix 3 (the review of Z3, round 3): a clause gives the local of the way its second closure, but a callee performs the operation (`w1`), or the clause writes after its `resume` (`w2`). The facts give the local a weak update at the node that runs the clause, so the clean twins would get a false W0301 (main gives it on the same forms in scope, `r0z3rev3/ha2`, `ha3`, `wa2`, `wa3`): the run gets no copy region (`Inst::clause_write_ok`), and the program keeps the C2 fallback; the old pipeline misses the fault, as with main"
 stage = "R0z"

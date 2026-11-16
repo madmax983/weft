@@ -348,6 +348,7 @@ fn runtime<'a>(
                         .find(|&c| c != r.closure)
                     {
                         r.closure = other;
+                        r.also.clear();
                     }
                 }
             }

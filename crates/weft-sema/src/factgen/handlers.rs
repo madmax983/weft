@@ -3216,8 +3216,17 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
         uses: Vec::new(),
     };
     // The `Main` nodes of the `Resume`s (their aborts are of the handled
-    // body), and the variables that `spared_at` can matter for: a linear
-    // or `!Move` value (W0602, W0503).
+    // body), and the variables that `spared_at` can matter for: a linear or
+    // `!Move` value (W0602, W0503), and a function value (plan stage R0z Z3,
+    // fix 1). A `multi` resume does not copy a `once` closure outside the
+    // handled body, and each run of it moves it, so a second run of the rest
+    // of the handled body moves a moved value (W0502). The flag `once` of a
+    // function value comes later than this pass (`not_many`), so each
+    // function value is a candidate, and `prune` keeps the rows of the
+    // variables that a rule reads. A continuation, or a value that holds a
+    // `once` value in another way (an `Rc` handle), is no candidate: the
+    // facts of a second run of the rest do not see a second `resume` or a
+    // second run through a handle, so W0503 stays for it.
     let resumes: HashSet<NodeId> = t
         .table
         .iter()
@@ -3236,7 +3245,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
         .filter_map(|k| t.vars.get(k).map(|v| (key_body(k), v)))
         .filter(|&(_, v)| {
             let info = facts.var(v);
-            info.linear || info.immovable
+            info.linear || info.immovable || info.callable
         })
         .collect();
     // A run node in a clause gets the facts of the clauses that it runs

@@ -1,0 +1,53 @@
+// Plan stage R0z Z3, fix 1: a value that is not `many` and a local `multi`
+// handler. A `multi` resume copies only the values of the handled body, so a
+// `once` closure outside it is spared (`spared_at`), as a linear value is.
+effect M { multi fn m() -> bool }
+linear struct Token { id: u64 }
+fn spend(t: Token) { let Token(i) = t }
+fn eat(w: Vec<u64>) { print(w.len()) }
+
+// The closure runs after the handled body.
+fn once_after_multi() {
+    let w = Vec.new()
+    let c = || eat(w)
+    handle M { fn m() { resume(true)
+        resume(false) } } in {
+        let b = m()
+        print(1)
+    }
+    c()
+}
+
+// A linear value in the same position.
+fn linear_after_multi() {
+    let t = Token { id: 1 }
+    handle M { fn m() { resume(true)
+        resume(false) } } in {
+        let b = m()
+    }
+    spend(t)
+}
+
+// The closure is a local of the handled body and is live across `m`: the
+// resume copies it.
+fn once_in_multi() {
+    let w = Vec.new()
+    handle M { fn m() { resume(true)
+        resume(false) } } in {
+        let c = || eat(w)
+        let b = m()   //~ W0503
+        c()   //~ old: W0502
+    }
+}
+
+// The closure is outside the handled body, and the handled body runs it
+// after `m`: the rest runs two times, so the second run moves a moved value.
+fn once_run_after_m() {
+    let w = Vec.new()
+    let c = || eat(w)
+    handle M { fn m() { resume(true)
+        resume(false) } } in {
+        let b = m()
+        c()   //~ W0502
+    }
+}

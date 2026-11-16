@@ -1,0 +1,14 @@
+// Plan stage R0z Z3, fix 1: the bad twin of m2. The run of the `once`
+// closure `c` is in the handled body of M, after `m`: the rest of the handled
+// body runs two times, and the second run moves a moved value (W0502).
+effect M { multi fn m() -> bool }
+fn eat(w: Vec<u64>) { print(w.len()) }
+fn main() {
+    let w = Vec.new()
+    let c = || eat(w)
+    handle M { fn m() { resume(true)
+        resume(false) } } in {
+        let b = m()
+        c()
+    }
+}

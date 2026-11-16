@@ -1,0 +1,29 @@
+// Plan stage R0z Z3, part a: `c` gets a closure of `mk` before a loop and a
+// new one in each turn of the loop; each value is a copy of the same
+// closure. The run in the loop reads the captures of the actual value. The
+// value of the second turn keeps `r`, and the clause of `main` runs it
+// after the clear of `v`: W0301.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let c = mk(|| print(0))
+        let i = 0
+        while i < 2 {
+            c()
+            c = mk(|| print(r))
+            i = i + 1
+        }
+        c()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

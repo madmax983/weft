@@ -1,0 +1,25 @@
+// Plan stage R0z Z3, fix 2 (the review of Z3, round 2: q08): the local `c` gets two
+// closures of `mk`, and each one runs and gives its value to `run`, whose clause keeps
+// it. The clause runs at two nodes, so its facts join the two values (issue #79): the
+// run gets no copy region, and the program keeps the fallback. The program prints 2.
+effect Run { fn run(g: fn()) }
+fn noop() {}
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn main() {
+    let a = Vec.new()
+    a.push(1)
+    let b = Vec.new()
+    b.push(2)
+    let keep = || print(0)
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in {
+        let r = &a[0]
+        let q = &b[0]
+        let c = mk(|| print(r))
+        c()
+        c = mk(|| print(q))
+        c()
+    }
+    a.clear()
+    keep()
+}

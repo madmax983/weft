@@ -2814,7 +2814,11 @@ pub fn components_built(
             Err(_) => (built, first),
         };
     }
-    let Some(inst) = instantiate::wanted(u)
+    // A program whose only pending reason is a perform whose rest of the
+    // handled body the facts do not find: the copies of plan stage R0z Z3,
+    // part f, as `run` makes them (`rest_view`).
+    let rest = u.reason == handlers::REST_NOT_FOUND;
+    let Some(inst) = (instantiate::wanted(u) || rest)
         .then(|| instantiate::instantiate(&built))
         .flatten()
     else {
@@ -4367,8 +4371,14 @@ pub(crate) fn run(
         let kont = pend
             .iter()
             .all(|x| x.reason == crate::analysis::clause::KONT_CAPTURED);
+        // A perform whose rest of the handled body the facts do not find
+        // (F17): the copies of the closure bodies at their runs can put the
+        // perform at a node of the handled body (plan stage R0z Z3, part f).
+        let rest = pend.iter().all(|x| x.reason == handlers::REST_NOT_FOUND);
         let copy = if kont {
             kont_view(a, &built, &s, no_runtime, kept.clone())
+        } else if rest {
+            rest_view(a, &built, &s, no_runtime, kept.clone())
         } else {
             None
         };
@@ -4729,8 +4739,14 @@ pub fn reasons(a: &Analysis, on: Groups, no_runtime: bool) -> Vec<String> {
     for u in &pend {
         out.push(format!("pending: {u}"));
     }
-    if let Some((_, u)) = failed.first() {
-        if instantiate::wanted(u) {
+    // The copies of plan stage R0z Z3, part f: a program whose only reason
+    // is a perform whose rest of the handled body the facts do not find.
+    let rest = failed.is_empty()
+        && !pend.is_empty()
+        && pend.iter().all(|x| x.ends_with(handlers::REST_NOT_FOUND));
+    let first = failed.first().map(|(_, u)| instantiate::wanted(u));
+    if first == Some(true) || rest {
+        {
             match instantiate::instantiate(&built) {
                 None => out.push("with the copies of the callees: no copy".to_string()),
                 Some(inst) => {
@@ -4798,6 +4814,61 @@ fn kont_view(
     };
     let left = crate::analysis::clause::take_pending();
     if second.is_err() || !left.is_empty() {
+        return None;
+    }
+    // The copies give the program full facts: the check uses no error of Z1
+    // there (the program is in scope without Z1).
+    let z1 = crate::analysis::clause::take_z1_sink();
+    let out = finish(
+        a,
+        &inst.built,
+        facts,
+        (kept, z1),
+        (emitted, effects, on_abort),
+        no_runtime,
+    );
+    let _ = crate::analysis::clause::take_pending();
+    Some(Box::new(out))
+}
+
+/// The facts of the program `built` with the copies of stage R0k-a
+/// (`instantiate::instantiate`), if they have no construct with no full
+/// facts ([`Pending::copy`]): plan stage R0z Z3, part f. The program has
+/// only the pending reason [`handlers::REST_NOT_FOUND`]: a closure body runs
+/// at a node that is not in the handled body of its perform (a clause that
+/// runs its parameter). A copy region of the closure body at that run puts
+/// the perform there.
+fn rest_view(
+    a: &Analysis,
+    built: &Built,
+    s: &Scope,
+    no_runtime: bool,
+    kept: Vec<Diagnostic>,
+) -> Option<Box<IrFacts>> {
+    let inst = instantiate::instantiate(built)?;
+    let _ = crate::analysis::clause::take_pending();
+    let _weak = inst
+        .weak_ok
+        .then(crate::analysis::transfer::WeakRowOps::enter);
+    let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
+    let emitted = std::cell::RefCell::new(Vec::new());
+    let effects = std::cell::RefCell::new(Vec::new());
+    let on_abort = std::cell::RefCell::new(None);
+    let second = {
+        let input = Input {
+            analysis: a,
+            built: &inst.built,
+            scope: s,
+            diags: &emitted,
+            effects: &effects,
+            no_runtime,
+            on_abort: &on_abort,
+        };
+        emit(&input, &mut facts)
+    };
+    let left = crate::analysis::clause::take_pending();
+    if second.is_err() || !left.is_empty() {
+        let _ = crate::analysis::clause::take_z1_sink();
         return None;
     }
     // The copies give the program full facts: the check uses no error of Z1

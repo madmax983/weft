@@ -289,6 +289,18 @@ fn regions(p: &Program, out: &mut Vec<Broken>) {
             || r.env_local.is_some_and(|l| {
                 body.local_kind(l) != Some(LocalKind::CopyEnv(r.closure)) || !r.value.is_local()
             })
+            // The other closures of the value (plan stage R0z Z3) have the
+            // captures of the closure, and the region reads them through
+            // its environment local.
+            || (!r.also.is_empty() && r.env_local.is_none())
+            || r.also.iter().any(|c| {
+                let (Some(a), Some(d)) = (p.closures.get(c.index()), p.closures.get(r.closure.index()))
+                else {
+                    return true;
+                };
+                a.captures.len() != d.captures.len()
+                    || a.captures.iter().zip(&d.captures).any(|(x, y)| x.mode != y.mode)
+            })
         {
             bad(out, None);
             continue;
@@ -1631,9 +1643,12 @@ impl<'a> Cx<'a> {
                 }
             }
             // The environment local of a copy region (plan stage R0k-b2): a
-            // move below it is never valid. The copy only reads its captures.
-            if matches!(d.kind, LocalKind::CopyEnv(_)) {
-                not_once.insert(lid(i), true);
+            // move below it is valid only for a `once` closure (plan stage
+            // R0z Z3: the copy moves the value of the closure first). Else the
+            // copy only reads its captures.
+            if let LocalKind::CopyEnv(c) = d.kind {
+                let once = self.p.closures.get(c.index()).is_some_and(|x| x.once);
+                not_once.insert(lid(i), !once);
             }
         }
         if !not_once.values().any(|&x| x) {

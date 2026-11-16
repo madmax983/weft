@@ -1,0 +1,16 @@
+// Plan stage R0z Z3, fix 1 (the review of Z3: e08, e14): a `once` closure
+// `c` outside the handled body of a local `multi` handler M runs after the
+// handled body. The `multi` resume does not copy it (`spared_at`): no W0503.
+// The program prints 1, then 0.
+effect M { multi fn m() -> bool }
+fn eat(w: Vec<u64>) { print(w.len()) }
+fn main() {
+    let w = Vec.new()
+    let c = || eat(w)
+    handle M { fn m() { resume(true)
+        resume(false) } } in {
+        let b = m()
+        print(1)
+    }
+    c()
+}
