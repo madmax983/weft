@@ -10941,17 +10941,6 @@ reason = "stage R0k-c2 fix 1 (a probe of the review of R0k-c2, C8): the clause o
 stage = "R0k"
 
 [[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0kc2c/n18_rc_handled_frame_bad.wf",
-    "tests/gate/probes/fixes/r0kc2c/n19_rc_param_arg_bad.wf",
-    "tests/gate/probes/fixes/r0kc2c/p08_rc_between_param_bad.wf",
-]
-finding = "R0k2C-RC-BETWEEN"
-reason = "stage R0k-c2 fix 1 (probes of the reviews of R0k-c2 and of the fix; the gap `root_rc_between` of the R0k-c2 build, older than the stage: `docs/ir.md` 6.5, \"Open, older than the stage\"): a copied frame holds a reference into the `rc` object of `main` across the row `choose`, and the clause of `main` clears the `Vec` of the object through another handle `b2` between its two resumes. In `p08` the clause of `Pick` takes the reference through the parameter `b` of `run`; in `n19` the parameter of the clause gets it as its argument; in `n18` the handled body of `run` holds it. The facts of `main` do not see the reference (the variable \"the copy of the frame\" of the call points only into the places below `&b`), and the facts of `run` do not see the change. From the fix each program is pending (`RC_ACROSS_ROW`, `handlers::reentry_args`): the `ir` pipeline finds no error, so the old pipeline checks it, and the old pipeline misses the fault. A fix: the copy of the frame of a call also points into the `rc` groups that the references of the call reach"
-stage = "R0k"
-
-[[entry]]
 class = "changed"
 files = [
     "tests/gate/probes/fixes/r0kc2c/m04_c8_forward_bad.wf",

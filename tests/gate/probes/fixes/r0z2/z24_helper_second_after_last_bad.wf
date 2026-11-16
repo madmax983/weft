@@ -1,0 +1,22 @@
+// Plan stage R0z Z2, fix 2 (a probe of the second review of the stage: c04_helper_second_after_last_bad).
+// bad: `run` performs `choose`, then a helper performs it again; `run` holds a
+// reference across both. The clause clears after its last resume: the inner
+// instance clears while the outer one still has a resume to run.
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn again() -> bool / Choice { choose() }
+fn run(b: Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let c = choose()
+    let d = again()
+    print(r)
+    1
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice { fn choose() { resume(true)
+        resume(false)
+        b2.v.clear() } } in { print(run(b.clone())) }
+}

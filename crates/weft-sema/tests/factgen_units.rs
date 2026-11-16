@@ -2727,6 +2727,54 @@ fn summary_named(a: &Analysis, b: &Built, name: &str) -> weft_sema::analysis::Su
         .clone()
 }
 
+/// The source of probe `name` of `tests/gate/probes/fixes/r0z2`.
+fn r0z2(name: &str) -> String {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0z2")
+        .join(name);
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// Plan stage R0z Z2, fix 1: the part `row_refs` of a summary names the
+/// `rc` groups that a frame of the body holds a reference into across a
+/// `multi` operation of a handler of a caller, each one with the first
+/// step of its place, and if the body can wait there more than once. `run` of
+/// `z11_no_hold_before_bad` holds `r = &b.v[0]` across `choose` (the group
+/// `B`); `run` of `z11_no_hold_before_ok` only reads the object before the
+/// row; `mid` of `z09_mid_choice_first_bad` handles the row itself, so its
+/// frame does not wait at a row of a caller.
+#[test]
+fn the_part_row_refs_names_the_groups_that_a_frame_holds_across_a_row() {
+    use weft_sema::analysis::summary::RowRefs;
+    let (a, b) = built(&r0z2("z11_no_hold_before_bad.wf"));
+    let s = summary_named(&a, &b, "run");
+    // One group, below its field `v` (fix 2), and one wait.
+    let Some((g, twice)) = s.row_refs.known() else {
+        panic!("{:?}", s.row_refs)
+    };
+    assert_eq!(g.len(), 1, "{g:?}");
+    assert!(!twice);
+    assert!(g.values().all(|steps| steps.len() == 1
+        && steps
+            .iter()
+            .all(|x| x.as_ref().is_some_and(|x| x.text == ".v"))));
+    let (a, b) = built(&r0z2("z11_no_hold_before_ok.wf"));
+    let s = summary_named(&a, &b, "run");
+    assert_eq!(s.row_refs, RowRefs::none());
+    let (a, b) = built(&r0z2("z09_mid_choice_first_bad.wf"));
+    let s = summary_named(&a, &b, "mid");
+    assert_eq!(s.row_refs, RowRefs::none());
+    // Fix 2: `run` of `z21_nested_after_last_own_bad` waits at `choose` two
+    // times.
+    let (a, b) = built(&r0z2("z21_nested_after_last_own_bad.wf"));
+    let s = summary_named(&a, &b, "run");
+    assert!(
+        s.row_refs.known().is_some_and(|(_, twice)| twice),
+        "{:?}",
+        s.row_refs
+    );
+}
+
 /// The nodes that an edge from `n` reaches.
 fn succs(f: &FnFacts, n: NodeId) -> Vec<NodeId> {
     f.cfg_edge

@@ -1031,34 +1031,40 @@ fn a_copy_node_that_does_not_bind_an_owned_reference_again_fails_a4() {
 /// takes a reference into it across `choose`: the oracle fails at the second
 /// copy, before the read of the freed cell. With the facts as the generator
 /// gives them (the `ir` pipeline rejects the program: W0301), the run
-/// reaches the read and the memory oracle finds it. (`m7_rc_shared`, the
-/// first probe of this test, is pending from stage R0k-c2 fix 1: the fact
-/// oracle does not run on it.)
+/// reaches the read and the memory oracle finds it. `m7_rc_shared` (the
+/// first probe of this test; pending from stage R0k-c2 fix 1 to plan stage
+/// R0z Z2) has the same result.
 #[test]
 fn a_copy_node_that_binds_a_shared_reference_again_fails_a4() {
-    let c = check(&r0kc2c("p27_op_arg_main_bad.wf"));
-    assert!(c.ir.as_ref().is_some_and(|ir| !ir.ok()), "{:?}", c.diags);
-    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
-        Ok(_) => panic!("the fault does not show"),
-        Err(e) => e.message,
-    };
-    assert!(m.contains("freed cell") && !m.contains("A4"), "{m}");
-    let m = match run_main_with_facts(&c, &opts(), |f| {
-        let copies = copy_nodes(f);
-        let vars: Vec<weft_facts::VarId> = f.points_into.iter().map(|(v, _)| *v).collect();
-        for &n in &copies {
-            for &v in &vars {
-                f.rebound_at.push((v, n));
+    for src in [r0kc2c("p27_op_arg_main_bad.wf"), r0kc2("m7_rc_shared.wf")] {
+        let c = check(&src);
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| !ir.ok()),
+            "{src}: {:?}",
+            c.diags
+        );
+        let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+            Ok(_) => panic!("{src}: the fault does not show"),
+            Err(e) => e.message,
+        };
+        assert!(m.contains("freed cell") && !m.contains("A4"), "{src}: {m}");
+        let m = match run_main_with_facts(&c, &opts(), |f| {
+            let copies = copy_nodes(f);
+            let vars: Vec<weft_facts::VarId> = f.points_into.iter().map(|(v, _)| *v).collect();
+            for &n in &copies {
+                for &v in &vars {
+                    f.rebound_at.push((v, n));
+                }
             }
-        }
-    }) {
-        Ok(_) => panic!("the broken facts pass"),
-        Err(e) => e.message,
-    };
-    assert!(
-        m.starts_with("summary oracle (A4)") && m.contains("binds it again"),
-        "{m}"
-    );
+        }) {
+            Ok(_) => panic!("{src}: the broken facts pass"),
+            Err(e) => e.message,
+        };
+        assert!(
+            m.starts_with("summary oracle (A4)") && m.contains("binds it again"),
+            "{src}: {m}"
+        );
+    }
 }
 
 /// The source of probe `name` of `tests/gate/probes/fixes/r0kc2c`.
@@ -1118,6 +1124,269 @@ fn a_clause_parameter_that_stays_valid_at_the_copy_after_a_free_fails_a4() {
             "{name}: {m}"
         );
     }
+}
+
+/// The source of probe `name` of `tests/gate/probes/fixes/r0z2` (plan
+/// stage R0z Z2).
+fn r0z2(name: &str) -> String {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0z2")
+        .join(name);
+    fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// The variables of `f` whose name starts with `start`.
+fn vars_named(f: &FnFacts, start: &str) -> Vec<weft_facts::VarId> {
+    f.vars
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.name.starts_with(start))
+        .map(|(i, _)| weft_facts::VarId(u32::try_from(i).unwrap()))
+        .collect()
+}
+
+/// Removes the places in the `rc` groups of the variables `name` (plan
+/// stage R0z Z2, fix 1: they point into the places of a shadow root of
+/// each group, a root of kind `Arg` with the name of the group).
+fn no_group_places(f: &mut FnFacts, name: &str) {
+    let vs = vars_named(f, name);
+    let groups: Vec<String> = f
+        .roots
+        .iter()
+        .filter(|r| r.kind == weft_facts::RootKind::Group)
+        .map(|r| r.name.clone())
+        .collect();
+    let shadow: Vec<bool> = f
+        .places
+        .iter()
+        .map(|p| {
+            let r = &f.roots[p.root.index()];
+            (r.kind == weft_facts::RootKind::Arg && groups.contains(&r.name))
+                || r.kind == weft_facts::RootKind::Group
+        })
+        .collect();
+    f.points_into
+        .retain(|(v, q)| !(vs.contains(v) && shadow.get(q.index()).copied().unwrap_or(false)));
+}
+
+/// Removes the places in an `rc` group of the variables "the copy of the
+/// frame" of the calls (plan stage R0z Z2): the facts before the stage.
+fn no_copy_groups(f: &mut FnFacts) {
+    no_group_places(f, "copy of the frame that");
+}
+
+/// Removes the places of the variables "the frame that `f` runs while it
+/// waits" (plan stage R0z Z2, fix 1): the facts of the first build of the
+/// stage.
+fn no_wait_groups(f: &mut FnFacts) {
+    no_group_places(f, "frame that `");
+}
+
+/// Removes the places of the shadow variables of the `rc` group parts
+/// (`handlers::rc_shadow_name`, plan stage R0z Z2).
+fn no_rc_shadows(f: &mut FnFacts) {
+    let w = vars_named(f, weft_sema::factgen::handlers::RC_SHADOW);
+    f.points_into.retain(|(v, _)| !w.contains(v));
+}
+
+/// A4 of the copies of frames (plan stage R0z Z2), the first mutation:
+/// facts in which the variable "the copy of the frame" of a call does not
+/// point into the `rc` groups that the call reaches (the facts before the
+/// stage). In each probe a copied frame holds a reference into the `rc`
+/// object of `main` across the row `choose`, and the clause of `main` clears
+/// the object through another handle between its two resumes. With these
+/// facts the `Copy` node of the call uses no variable that points into the
+/// object: the oracle fails when the copy goes on, before the read of the
+/// freed cell. With the facts as the generator gives them (the `ir`
+/// pipeline rejects the program: W0301 in `main`), the run reaches the read
+/// and the memory oracle finds it. A4 of copies names the target of a
+/// reference of the frame of the callee in the facts of `main` through the
+/// arguments of the call. It does not check a handle that comes from an
+/// operation (`z05_op_handle_bad`) or a reference of a handled body of the
+/// callee (`fixes/r0kc2c/n18_rc_handled_frame_bad`).
+#[test]
+fn a_copy_of_a_frame_with_no_place_in_the_rc_groups_of_the_call_fails_a4() {
+    for src in [
+        r0z2("z01_root_between_bad.wf"),
+        r0z2("z02_root_moved_bad.wf"),
+    ] {
+        let c = check(&src);
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| !ir.ok()),
+            "{src}: {:?}",
+            c.diags
+        );
+        let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+            Ok(_) => panic!("{src}: the fault does not show"),
+            Err(e) => e.message,
+        };
+        assert!(m.contains("freed cell") && !m.contains("A4"), "{src}: {m}");
+        let m = match run_main_with_facts(&c, &opts(), no_copy_groups) {
+            Ok(_) => panic!("{src}: the broken facts pass"),
+            Err(e) => e.message,
+        };
+        assert!(
+            m.starts_with("summary oracle (A4)")
+                && m.contains("uses no variable that points there"),
+            "{src}: {m}"
+        );
+    }
+}
+
+/// A4 of copies (plan stage R0z Z2, fix 1), the third mutation: facts with
+/// no places for the variable "the frame that `run` runs while it waits".
+/// In `z06_own_clear_first_bad` `run` owns a handle and holds a reference
+/// through it across the row `choose`; the clause of `main` clears the
+/// object before its first resume. With these facts no variable of `main`
+/// that points into the object is invalid at the `Copy` node of the call or
+/// at the `Ret` node after it: the oracle fails when the frame goes on,
+/// before the read of the freed cell. With the facts as the generator gives
+/// them (W0301 at the call in `main`), the run reaches the read.
+#[test]
+fn a_frame_that_waits_over_a_change_of_its_group_needs_an_invalid_variable() {
+    let c = check(&r0z2("z06_own_clear_first_bad.wf"));
+    assert!(c.ir.as_ref().is_some_and(|ir| !ir.ok()), "{:?}", c.diags);
+    let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+        Ok(_) => panic!("the fault does not show"),
+        Err(e) => e.message,
+    };
+    assert!(m.contains("freed cell") && !m.contains("A4"), "{m}");
+    let m = match run_main_with_facts(&c, &opts(), no_wait_groups) {
+        Ok(_) => panic!("the broken facts pass"),
+        Err(e) => e.message,
+    };
+    assert!(
+        m.starts_with("summary oracle (A4)")
+            && m.contains("no variable that points there is invalid"),
+        "{m}"
+    );
+}
+
+/// Removes the changes of the shadow roots of the `rc` groups at the
+/// `Post` nodes of the handlers (the shadow roots of the variables "the
+/// copy of the frame": a root of kind `Arg` with the name of a group).
+fn no_post_group_changes(f: &mut FnFacts) {
+    let groups: Vec<String> = f
+        .roots
+        .iter()
+        .filter(|r| r.kind == weft_facts::RootKind::Group)
+        .map(|r| r.name.clone())
+        .collect();
+    let shadow: Vec<bool> = f
+        .places
+        .iter()
+        .map(|p| {
+            let r = &f.roots[p.root.index()];
+            r.kind == weft_facts::RootKind::Arg && groups.contains(&r.name)
+        })
+        .collect();
+    let post: Vec<bool> = f.nodes.iter().map(|n| n.kind == "handle post").collect();
+    let keep = |n: weft_facts::NodeId, q: weft_facts::PlaceId| {
+        !(post.get(n.index()).copied().unwrap_or(false)
+            && shadow.get(q.index()).copied().unwrap_or(false))
+    };
+    f.mutates_at.retain(|&(n, q)| keep(n, q));
+    f.lends_mut.retain(|&(n, q)| keep(n, q));
+    f.releases_at.retain(|&(n, q)| keep(n, q));
+}
+
+/// A4 of copies (plan stage R0z Z2, fix 2), the fourth mutation: facts in
+/// which no change at a `Post` node reaches the variable "the copy of the
+/// frame" (the filter of fix 1 at each `Post` node). In
+/// `z20_outer_multi_plain_inner_bad` the clause of the inner handler
+/// `Choice` (a plain operation) clears the object after its `resume`, and
+/// then the outer `multi` handler `Pick` resumes a copy of the frame of
+/// `run` again, which reads the reference. In `z21_nested_after_last_own_bad` `run` waits at
+/// `choose` two times, so the clause of the inner run clears the object
+/// before the second `resume` of the outer run. In `z31_body_perform_after_bad`
+/// and `z32_body_two_calls_bad` (fix 3) the handled body performs `choose`
+/// again after the call (or calls `run` again): that run of the clause clears
+/// the object after its last `resume`, and then the first run of the clause
+/// resumes a copy of the frame of `run` again. With these facts no variable
+/// of `main` that points into the object is invalid at the `Copy` node: the
+/// oracle fails when the copy goes on, before the read of the freed cell.
+#[test]
+fn a_change_of_a_clause_after_its_last_resume_before_another_copy_fails_a4() {
+    for name in [
+        "z20_outer_multi_plain_inner_bad.wf",
+        "z21_nested_after_last_own_bad.wf",
+        "z31_body_perform_after_bad.wf",
+        "z32_body_two_calls_bad.wf",
+    ] {
+        let c = check(&r0z2(name));
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| !ir.ok()),
+            "{name}: {:?}",
+            c.diags
+        );
+        let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+            Ok(_) => panic!("{name}: the fault does not show"),
+            Err(e) => e.message,
+        };
+        assert!(m.contains("freed cell") && !m.contains("A4"), "{name}: {m}");
+        let m = match run_main_with_facts(&c, &opts(), no_post_group_changes) {
+            Ok(_) => panic!("{name}: the broken facts pass"),
+            Err(e) => e.message,
+        };
+        assert!(m.starts_with("summary oracle (A4)"), "{name}: {m}");
+    }
+}
+
+/// A4 of re-entries (plan stage R0z Z2), the second mutation: facts in
+/// which the shadow variable of the group part of a reference through a
+/// copied `Rc` handle points into no place. The `Copy` node binds the
+/// reference again (the copy holds its own copy of the handle), so with
+/// these facts no variable keeps the state of the shared object. In
+/// `z03_root_handle_bad` (the frame of a function) and in
+/// `fixes/r0kc2c/p04_struct_rc_field_bad` (a clause frame) the first run
+/// clears the object after the row: the oracle fails at the later copy,
+/// before the read of the freed cell.
+#[test]
+fn a_reference_through_a_copied_handle_with_no_shadow_of_its_group_fails_a4() {
+    for src in [
+        r0z2("z03_root_handle_bad.wf"),
+        r0kc2c("p04_struct_rc_field_bad.wf"),
+    ] {
+        let c = check(&src);
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| !ir.ok()),
+            "{src}: {:?}",
+            c.diags
+        );
+        let m = match run_main_with_facts(&c, &opts(), |_| {}) {
+            Ok(_) => panic!("{src}: the fault does not show"),
+            Err(e) => e.message,
+        };
+        assert!(m.contains("freed cell") && !m.contains("A4"), "{src}: {m}");
+        let m = match run_main_with_facts(&c, &opts(), no_rc_shadows) {
+            Ok(_) => panic!("{src}: the broken facts pass"),
+            Err(e) => e.message,
+        };
+        assert!(
+            m.starts_with("summary oracle (A4)") && m.contains("binds it again"),
+            "{src}: {m}"
+        );
+    }
+}
+
+/// Each probe of plan stage R0z Z2 (`fixes/r0z2`) that the `ir` pipeline
+/// accepts runs with no failure of the fact oracle (`z04_copy_writes_ok`:
+/// an A4 failure before the stage).
+#[test]
+fn the_probes_of_the_rc_groups_of_a_copied_frame_pass_the_fact_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z2");
+    let mut n = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+        n += 1;
+    }
+    assert!(n >= 5, "{n}");
 }
 
 /// Each probe of stage R0k-c2 (`fixes/r0kc2`, `fixes/r0kc2b`, `fixes/r0kc2c`) that the `ir`

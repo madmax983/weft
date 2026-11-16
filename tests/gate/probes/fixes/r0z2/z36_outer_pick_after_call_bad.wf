@@ -1,0 +1,23 @@
+// Plan stage R0z Z2, fix 3 (a probe of the third review of the stage: e18_outer_pick_after_call_bad).
+// bad: run waits at Choice once. The Choice body performs pick of an outer multi
+// handler after the call. A copy of Pick runs the Choice clause again after its last resume.
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn run(b: Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let c = choose()
+    print(r)
+    1
+}
+effect Pick { multi fn pick() -> bool }
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Pick { fn pick() { resume(true)
+        resume(false) } } in {
+    handle Choice { fn choose() { resume(true)
+        resume(false)
+        b2.v.clear() } } in { print(run(b.clone()))
+        print(pick()) } }
+}

@@ -317,8 +317,10 @@ struct Wait {
     /// Each reference that a local of the frame holds, with the local.
     refs: Vec<(Target, LocalId)>,
     /// The references whose target an access of the code above reached,
-    /// with the kind of the access.
-    hits: Vec<(usize, &'static str)>,
+    /// with the kind of the access, and true if a frame of the unit of the
+    /// component `comp` made it (plan stage R0z Z2, fix 1: the facts of
+    /// `comp` see that access).
+    hits: Vec<(usize, &'static str, bool)>,
     /// For a frame in a `multi` continuation that a caller frame of the
     /// continuation runs (A4 of copies, plan stage F17.1): the fact places
     /// of each reference in the terms of that caller frame, and `nodes` are
@@ -937,6 +939,35 @@ impl Comp {
     /// True if fact place `q` is at or below place `m`, or below the base of
     /// the outermost wildcard step of `m` (a wildcard place, or a place below
     /// one).
+    /// True if place `q` and place `m` overlap ([`Self::below`]), or if `m`
+    /// is a place of a shadow root of the `rc` group of `q` (plan stage R0z
+    /// Z2, fix 1: a root of kind `Arg` with the name of the group).
+    fn overlaps(&self, q: PlaceId, m: PlaceId) -> bool {
+        if self.below(q, m) || self.below(m, q) {
+            return true;
+        }
+        let (rq, rm) = (self.facts.place(q).root, self.facts.place(m).root);
+        match (
+            self.facts.roots.get(rq.index()),
+            self.facts.roots.get(rm.index()),
+        ) {
+            (Some(a), Some(b)) => {
+                a.kind == weft_facts::RootKind::Group
+                    && b.kind == weft_facts::RootKind::Arg
+                    && a.name == b.name
+            }
+            _ => false,
+        }
+    }
+
+    /// True if the root of place `q` is an `rc` group.
+    fn in_group(&self, q: PlaceId) -> bool {
+        self.facts
+            .roots
+            .get(self.facts.place(q).root.index())
+            .is_some_and(|r| r.kind == weft_facts::RootKind::Group)
+    }
+
     fn below(&self, q: PlaceId, m: PlaceId) -> bool {
         let (pq, pm) = (self.facts.place(q), self.facts.place(m));
         if pq.root != pm.root {
@@ -2161,7 +2192,30 @@ impl FactOracle {
             let Some(&(_, what)) = r.hits.iter().find(|(j, _)| *j == i) else {
                 continue;
             };
-            if let Some(v) = vars.iter().find(|v| rebound.contains(v)) {
+            // A variable that the `Copy` node binds again because the copy
+            // holds its own copy of an `Rc` handle on the way (plan stage
+            // R0z Z2) has a shadow variable for its group part
+            // (`handlers::rc_shadow_name`): the shadow variable keeps the
+            // state of the shared object. It must point into a place, and
+            // the `Copy` node must not bind it again.
+            let rc_shadow = |v: &VarId| -> Option<VarId> {
+                let info = comp.facts.vars.get(v.index())?;
+                let name = handlers::rc_shadow_name(&info.name);
+                comp.facts
+                    .vars
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, x)| x.name == name && x.span == info.span)
+                    .map(|(j, _)| VarId(u32_of(j)))
+                    .find(|g| {
+                        comp.points.get(g).is_some_and(|ps| !ps.is_empty()) && !rebound.contains(g)
+                    })
+            };
+            let rc_shadows: Vec<VarId> = vars.iter().filter_map(rc_shadow).collect();
+            if let Some(v) = vars
+                .iter()
+                .find(|v| rebound.contains(v) && rc_shadow(v).is_none())
+            {
                 return Err(format!(
                     "summary oracle (A4): in `{}` at {}, a `multi` `resume` runs a copy of a frame again, and the code since the operation made {what} of the target of `{}`, a place that the copies share (E5); the `Copy` node binds it again",
                     comp.facts.name,
@@ -2207,6 +2261,7 @@ impl FactOracle {
             let made_invalid = vars
                 .iter()
                 .chain(&shadows)
+                .chain(&rc_shadows)
                 .any(|v| r.copies.iter().any(|&n| invalid.contains(&(*v, n))));
             if !made_invalid {
                 let v = vars.first().copied().unwrap_or(VarId(0));
@@ -2243,15 +2298,37 @@ impl FactOracle {
         Some(w)
     }
 
-    /// A4: the op of frame `uid` (0 for a copied frame) of task `task` made
-    /// the accesses `events`. An access that reaches the target of a
-    /// reference of a waiting clause frame of the task (not the frame of the
-    /// op) is a hit of that wait.
-    pub fn wait_events(&mut self, task: usize, uid: u64, events: &[HeapEvent]) {
+    /// A4: the op of frame `uid` (0 for a copied frame) of task `task`, in
+    /// IR body `body` if the caller knows it, made the accesses `events`. An
+    /// access that reaches the target of a reference of a waiting clause
+    /// frame of the task (not the frame of the op) is a hit of that wait.
+    pub fn wait_events(
+        &mut self,
+        task: usize,
+        (uid, body): (u64, Option<u32>),
+        events: &[HeapEvent],
+    ) {
         self.reentry_events(task, events);
         if self.waits.is_empty() {
             return;
         }
+        // The unit (the facts) of the frame that made the accesses: of a
+        // followed frame, or of the body of the op of a copied frame (plan
+        // stage R0z Z2, fix 2: a clause in a copy of the frames of an outer
+        // `multi` handler).
+        let by = if uid != 0 {
+            self.frames
+                .get(&uid)
+                .and_then(|f| self.comps.get(f.comp))
+                .map(|c| c.unit)
+        } else {
+            body.and_then(|b| self.comps.iter().find(|c| c.body.0 == b).map(|c| c.unit))
+        };
+        let unit_of: HashMap<usize, usize> = self
+            .waits
+            .values()
+            .filter_map(|w| self.comps.get(w.comp).map(|c| (w.comp, c.unit)))
+            .collect();
         for e in events {
             let (cell, path, what) = match e {
                 HeapEvent::Write(p, false) => (p.cell, Some(p.path.as_slice()), "a write"),
@@ -2285,8 +2362,12 @@ impl FactOracle {
                         }
                     }
                 });
-                if reached && !w.hits.iter().any(|(j, _)| *j == i) {
-                    w.hits.push((i, what));
+                let own = by.is_some() && by == unit_of.get(&w.comp).copied();
+                if reached {
+                    match w.hits.iter_mut().find(|(j, _, _)| *j == i) {
+                        Some(h) => h.2 |= own,
+                        None => w.hits.push((i, what, own)),
+                    }
                 }
             }
         }
@@ -2364,7 +2445,14 @@ impl FactOracle {
                 .flat_map(|n| comp.uses.get(n.index()).cloned().unwrap_or_default())
                 .flat_map(|v| comp.points.get(&v).cloned().unwrap_or_default())
                 .collect();
-            for &(i, what) in &w.hits {
+            // The `Copy` nodes and the `Ret` nodes after them (plan stage R0z
+            // Z2, fix 1: the variable of the frame that waits is used at
+            // `Ret`).
+            let mut at: Vec<NodeId> = w.nodes.clone();
+            for n in &w.nodes {
+                at.extend(comp.succ.get(n.index()).into_iter().flatten().copied());
+            }
+            for &(i, what, own) in &w.hits {
                 let ns = names.get(i).cloned().unwrap_or_default();
                 if ns.is_empty() {
                     self.report.resume_unnamed += 1;
@@ -2373,7 +2461,43 @@ impl FactOracle {
                 self.report.resume += 1;
                 let ok = ns
                     .iter()
-                    .any(|&q| used.iter().any(|&m| comp.below(q, m) || comp.below(m, q)));
+                    .any(|&q| used.iter().any(|&m| comp.overlaps(q, m)));
+                // Plan stage R0z Z2, fix 1: a change of an `rc` object that
+                // code of the component made (a clause of a handler of the
+                // component, or the code after the run node) must make a
+                // variable that points there invalid at a `Copy` node, or at
+                // a `Ret` node after it (the frame that waits at its first
+                // `resume`): the facts see the change.
+                let group = ns.iter().any(|&q| comp.in_group(q));
+                if ok && own && group {
+                    let invalid = self
+                        .copy_invalid
+                        .entry(w.comp)
+                        .or_insert_with(|| copy_invalid(&comp.facts));
+                    let made = at.iter().any(|&n| {
+                        comp.uses.get(n.index()).into_iter().flatten().any(|v| {
+                            invalid.contains(&(*v, n))
+                                && comp.points.get(v).is_some_and(|ps| {
+                                    ps.iter().any(|&m| ns.iter().any(|&q| comp.overlaps(q, m)))
+                                })
+                        })
+                    });
+                    if !made {
+                        let shown: Vec<String> = ns
+                            .iter()
+                            .map(|&q| comp.facts.place(q).display.clone())
+                            .collect();
+                        let nodes: Vec<String> =
+                            w.nodes.iter().map(|&n| comp.node_text(n)).collect();
+                        return Err(format!(
+                            "summary oracle (A4): in `{}` at {}, a frame that the run node runs goes on after a `multi` `resume`, and code of `{}` made {what} of `{}` before, which a reference of the frame points into; no variable that points there is invalid at the `Copy` node or at the `Ret` node after it",
+                            comp.facts.name,
+                            nodes.join(", "),
+                            comp.facts.name,
+                            shown.join("` or `"),
+                        ));
+                    }
+                }
                 if !ok {
                     let shown: Vec<String> = ns
                         .iter()
@@ -2400,7 +2524,7 @@ impl FactOracle {
                 c.iter().chain(f).copied()
             })
             .collect();
-        for &(i, what) in &w.hits {
+        for &(i, what, _) in &w.hits {
             let Some((_, l)) = w.refs.get(i) else {
                 continue;
             };
@@ -3496,12 +3620,13 @@ fn var_name(f: &FnFacts, v: VarId) -> String {
 }
 
 /// The variables with a place that are invalid at each `Copy` node of the
-/// facts `f` (A4 of re-entries, stage R0k-c2 fix 1): `invalid(V, P)` of
+/// facts `f`, and at each node after one (A4 of re-entries, stage R0k-c2
+/// fix 1; A4 of copies, plan stage R0z Z2 fix 1): `invalid(V, P)` of
 /// the checker. The checker reports `error(V, P)` for each use of an
 /// invalid variable, so the facts get a use of each such variable at each
 /// `Copy` node first.
 fn copy_invalid(f: &FnFacts) -> HashSet<(VarId, NodeId)> {
-    let copies: Vec<NodeId> = f
+    let mut copies: Vec<NodeId> = f
         .nodes
         .iter()
         .enumerate()
@@ -3511,6 +3636,16 @@ fn copy_invalid(f: &FnFacts) -> HashSet<(VarId, NodeId)> {
     if copies.is_empty() {
         return HashSet::new();
     }
+    // The `Ret` nodes after them too (plan stage R0z Z2, fix 1).
+    let after: Vec<NodeId> = f
+        .cfg_edge
+        .iter()
+        .filter(|(a, _)| copies.contains(a))
+        .map(|&(_, b)| b)
+        .collect();
+    copies.extend(after);
+    copies.sort();
+    copies.dedup();
     let mut vars: Vec<VarId> = f.points_into.iter().map(|(v, _)| *v).collect();
     vars.sort();
     vars.dedup();

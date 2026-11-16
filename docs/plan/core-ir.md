@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M, Z3 M, Z5 M, Z7 M, Z6 L, Z4 L + S, Z8 M, Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M, Z5 M, Z7 M, Z6 L, Z4 L + S, Z8 M, Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -4575,7 +4575,7 @@ The clean rows (the precision work; tier 1 41, tier 2 16):
 
 | Stage | Design | Size | Tier 1: clean / oldmiss / rejected | Tier 2 | Risks |
 | --- | --- | --- | --- | --- | --- |
-| Z2 rc across the row | The variable "the copy of the frame" of a call (D-MULTI-MID) also points into the `rc` groups that the references of the call reach (the fix that the ledger entry `R0k2C-RC-BETWEEN` names). In the same stage: a reference through an `Rc` handle of a copied frame is valid at the re-entry while a copy of the handle lives (the false W0301 of `root_rc_ok`, R0k-c2 as built, "Open"). | M | 5 / 3 / 0 | 0 | the A4 cover of the fact oracle (`root_rc_fo`); the five clean twins were in scope before fix 1 with no error, and must keep that record |
+| Z2 rc across the row | The variable "the copy of the frame" of a call (D-MULTI-MID) also points into the `rc` groups that the references of the call reach (the fix that the ledger entry `R0k2C-RC-BETWEEN` names). In the same stage: a reference through an `Rc` handle of a copied frame is valid at the re-entry while a copy of the handle lives (the false W0301 of `root_rc_ok`, R0k-c2 as built, "Open"). | M (done: "Z2 as built"; the clause form of the false W0301, `rc_clause_ok`, stays open) | 5 / 3 / 0 | 0 | the A4 cover of the fact oracle (`root_rc_fo`); the five clean twins were in scope before fix 1 with no error, and must keep that record |
 | Z3 small steps of the way | The rest of R0k-b2: (a) a second write of the local of the way with a value of the same closure is no other value (the copy reads the captures through `e`); (b) a heap slot whose values are all one closure (each write of the `Vec` gives closure c); (c) a read of a part with no function type is no run of the closure (`sole`); (d) a copy of a `once` closure (the copy moves `E`; a second run is W0502); (e) a `ByMove` capture in the static copy through `CopyEnv`; (f) the copies for a program whose only reason is `REST_NOT_FOUND`; (g) the order of the weak guard (the maker before a callee that gets the weak value, or a call-site copy of the callee). | M (seven S parts) | 6 / 4 / 3 | 0 | `cell_constant` and `copy_reads_only` for (a); (b) must refuse a slot that another closure can reach; (g) changes the order of `callgraph::infer` |
 | Z5 D1b | The region of a `resume` in a scope body starts at the resume node, and each task of the scope that is active there stays active at each node of the region (the rest of the handled body) up to the end of the scope. So a task footprint conflicts with the rest of the handled body (W0405). | M | 2 / 2 / 0 | 0 | the region (6.5) and the window of a task (R0k-d2) meet; a `multi` continuation runs the region more than once |
 | Z7 D5 rows of the analysis | A run of a function value that can resume more than once in a clause (`clause::Handlers::dyn_rows`) gets the re-entry of R0k-c2 at the node that runs the clause, from the summary of the value (its `repeats` and `multi` parts), also in the copies of R0k-a. | M | 1 / 1 / 0 | 1 / 0 / 0 | `static_row` runs on the copies too |
@@ -4594,7 +4594,7 @@ come before the stages with clean rows only; then the gain for each size):
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Z0 the census tool (done) | A mode that lists each reason of a program (each failing body and each pending construct, not only the first), and the errors of rule G and rule D1 with no other change; run it on the 165 rows and on both tiers | 0 (105) | 0 (60) | S | none (a report); the counts of this plan become exact | low |
 | 2 | Z1 conservative rejections (done: 33 rejected (72) in tier 1, 37 rejected (23) in tier 2) | Rules A to G | 34 rejected (71) | 37 rejected (23) | M | `tests/programs` with `//~ W0314` for a `resume` in a task and a clean case in `sim.run`; probes `fixes/r0z/` for each rule, a bad case and a clean twin; the tests of `scope.rs` for j05 change | hidden second reasons; D1 and G against the old rule (Z0 measures) |
-| 3 | Z2 rc across the row | as in the table above | 8 (63) | 0 (23) | M | the twins `b03` to `b10`, `n18`, `n19`, `p08`; `root_rc_ok`, `root_rc_between`, `root_rc_fo`; a mutation test of A4 | A4 of the fact oracle |
+| 3 | Z2 rc across the row (done: 8 rows of tier 1 close, 72 to 64; "Z2 as built") | as in the table above | 8 (63) | 0 (23) | M | the twins `b03` to `b10`, `n18`, `n19`, `p08`; `root_rc_ok`, `root_rc_between`, `root_rc_fo`; a mutation test of A4 | A4 of the fact oracle |
 | 4 | Z3 small steps of the way | as above | 13 (50) | 0 (23) | M | the twins a02, a05, o01, u12, u13, e04b, n03, g26; `analysis_units` `copy_env::`, `copies::` | the refusals of R0k-b2 change; `R0kB2-STAYS` goes |
 | 5 | Z5 D1b | as above | 4 (46) | 0 (23) | M | k04, rv_p12, c2_task; a `multi` twin | the ledger entry `R0h-STAYS` goes |
 | 6 | Z7 D5 rows of the analysis | as above | 2 (44) | 1 (22) | M | rv_p04 and its twin; `p1669` | the copies with a re-entry |
@@ -4911,6 +4911,232 @@ Z0 and Z1 as built (all the reasons of a fallback, and the conservative rejectio
   row that a rule of Z1 closes must have its full facts first (the precision stages), or
   the net must become a stated rule of the language.
 
+Z2 as built (the `rc` groups of a copied frame across a row, with fixes 1 to 3 of the
+reviews; `docs/ir.md` 6.5, "As built (plan stage R0z Z2 and its fixes 1 and 2)" and
+"The invariant of the filter"; the scratchpad: `r0z/z2/`, `r0z/z2f1/`, `r0z/z2f2/`,
+`r0z/z2f3/`; the review probes: `r0z2rev/p/`, `r0z2rev2/p/`, `r0z2rev3/p/`):
+
+- The summary part `row_refs` (fix 1; `summary::RowRefs`, `handlers::note_row_refs`).
+  The `rc` groups that a reference of a frame of the body holds across a node that waits
+  at a `multi` operation of a handler of a caller: the group places in the references of
+  the values of the locals and of the heap slots in the state before such a node, and the
+  part of a callee that is a function item. A run of a function value or an intrinsic at
+  such a node, a group that is not a definition, and a callee with no part give `Any`.
+- The copy of the frame of a call (`handlers::copy_node`, `held_groups`,
+  `copy_group_vars`). The groups of a call are the part `row_refs` of a callee that is a
+  function item (else, as in the first build, each group that the `Main` node of the
+  call reads, changes, lends or frees). Two variables of the caller stand for them, on a
+  shadow root of each group: "the copy of the frame that `f` runs" (new at `Ret`, used at
+  `Copy`; each change of the group, but at a `Post` node only the part of a clause after
+  its first `resume` that can reach a later `resume`), and "the frame that `f` runs while
+  it waits" (used at the `Ret` nodes; only the parts of the clauses before their first
+  `resume` at the `Main` node of the call). So a change of such a group by a clause of a
+  handler of the function before the first `resume` or between two `resume`s, or by the
+  code after the call, is W0301 at the call.
+- The pending rule `RC_ACROSS_ROW` and the open-old entry `R0k2C-RC-BETWEEN` go.
+  `n18`, `n19`, `p08` are rejected in scope (W0301 at the call of `run` in `main`), and
+  `root_rc_between` too (a HOLE of `main` before the stage).
+- A reference through a copied `Rc` handle (`copy_node`, `Handlers::rc_splits`,
+  `handlers::rc_shadows`). A local of a copied frame whose value points only into the
+  copied frames and into `rc` groups, with at least one place of the copied frames, gets
+  `rebound_at` (and `empty_at`) at the `Copy` node: the copy holds its own copy of the
+  handle (`copy_frames`). Each such variable `V` gets a shadow variable "the `rc` object
+  behind `V`" (`rc_shadow_name`): the group places of `V`, the new values of `V` but not at
+  these `Copy` nodes, the `writes_via` of `V`, and the uses of `V` that these `Copy`
+  nodes reach before a new value of `V`. The shadow variable is invalid only where `V`
+  was invalid before the stage, and only for a change of the group, so the split adds no
+  error in the frame; it removes the errors of the end or of a new value of a copied
+  handle (`root_rc_ok`, `z03_root_handle_ok`, `z05_op_handle_ok`) and of a change of a
+  place of a copied frame. A change of the group by a caller is in the facts of the
+  caller (above). With the split, the error of `root_rc_between2`, `z02`, `z05` and the
+  review probe `r0kc2rev/p09`, `p10` moves from the use in `run` (the end of the handle)
+  to the call in `main`.
+- Fix 1 (the review of Z2, round 1: two blockers; `r0z2rev/p/`):
+  - B1, a new HOLE. A clause of a caller that changes the object before its first
+    `resume` (`m01_own_clear_first_bad`, `m03_own_clause_fn_bad`,
+    `m08_op_handle_first_bad`, `d05_mid_choice_first_bad`): `main` gave W0301 only from
+    the end of the copied handle, which the split removes, and the copy of the frame of
+    the call is new after `Main`, where the clause changes the object. Now the variable
+    of the frame that waits gets these changes: each one is W0301 at the call. The same
+    variable closes `m01_ref_clear_first_bad` (a HOLE of `main` with a reference
+    argument).
+  - B1, A4. A4 of the copies of frames was loose: a variable that points into the target
+    was enough. Now, for an access to an `rc` object that a frame of the facts of the
+    caller made (`Wait::hits`), a variable that points there must be invalid at a `Copy`
+    node of the call or at the `Ret` node after it (`copy_invalid` with the `Ret` nodes).
+    A variable on a shadow root of a group points into the group (`Component::overlaps`).
+    The mutation test `a_frame_that_waits_over_a_change_of_its_group_needs_an_invalid_variable`:
+    with no places for the variable of the frame that waits, A4 fails on
+    `z06_own_clear_first_bad` before the read of the freed cell.
+  - B2, new false positives. The first build took each group that the `Main` node of
+    the call reads or changes, not the groups that the copied frame holds a reference
+    into, and the edge `Post` to `Copy` took the code of a clause after its last
+    `resume` too (`f07` to `f11`, `f13` to `f15`: W0301 on clean programs that `main`
+    accepts). The part `row_refs` and the `Post` rule above make them clean.
+  - What fix 1 cannot do: `f03_clause_other_obj_ok` (the clause clears another object of
+    the same type between two `resume`s) keeps a W0301 that `main` does not give. A group
+    is the type of its objects (`Roots::group`), so the facts cannot tell the two objects
+    apart: the one-function form `f05_same_fn_other_obj_ok` is W0301 in both pipelines.
+    `main` accepted `f03` only because it did not see the group change at all (the gap
+    of `root_rc_between`). It is a review probe, not a probe of tier 1.
+- Fix 2 (the review of Z2, round 2: two blockers; `r0z2rev2/p/`):
+  - B1, a new HOLE. Fix 1 kept at each `Post` node only the changes of a clause that can
+    reach a later `resume` ("a change after the last `resume` reaches no copy"). That is
+    false when the callee waits at the row again (two performs, a loop, a helper: the
+    inner run of the clause runs inside the `resume` of the outer run, so its change
+    after its last `resume` comes before the next copy of the outer run;
+    `c01`, `c03`, `c04`, `c09`, `c09b`), and when an outer `multi` handler copies the frames
+    (`c05`, also with a plain inner operation, `c08`). Now the part `row_refs` has the
+    flag `twice`, and the filter applies only if the callee does not have it, one
+    handler that can resume more than once runs a clause at the call, the `Post` node is
+    of that handler, and the call waits at no row of a caller. `f14` and `f15` stay
+    clean; the same rule closes `c02` and `c06` (a reference argument, HOLEs of main).
+  - B1, A4. A clause of an inner handler in a copy of the frames of an outer `multi`
+    handler runs in a copied frame (no `uid`), so its access was not code of the facts of
+    the caller. Now `wait_events` gets the IR body of the op of a copied frame, and its
+    unit decides. The mutation test
+    `a_change_of_a_clause_after_its_last_resume_before_another_copy_fails_a4` (the filter
+    of fix 1 at each `Post` node): A4 fails on `z20` (`c08`) and `z21` (`c01`). On `c05`
+    the clause oracle (A5) fails before, with the facts as the generator gives them and
+    with `main` too (open, below).
+  - B2, new false positives. The variables of the groups pointed into the whole group,
+    and the part named a group by its definition only: a change of another field of the
+    object (`a13`, `a13b`, `a13c`: `b2.w` while `run` holds `&b.v[0]`) was W0301. Now the
+    part has the first step of each place below the group root, and the variables point
+    below it; the checker tells the fields apart as for one function (`a19`, `a19c`).
+- Fix 3 (the review of Z2, round 3: one blocker; `r0z2rev3/p/`): a new HOLE. The filter
+  of fix 2 did not read the code of the caller after the call: if the handled body
+  waits at the handler again after the call (a perform, a second call, a helper, a
+  branch, a closure or a function value that performs, another `multi` operation of the
+  handler, an outer `multi` handler; `e01`, `e02`, `e04`, `e14`, `e17`, `e18`, `e20`,
+  `e21`, `e22`), that run of the clause starts inside the first `resume` of the first run,
+  clears the object after its last `resume`, and the first run then resumes a copy of
+  the frame of `run`. `e16` (a reference argument) was a HOLE of main with the same
+  cause. Now the filter has a stated invariant and four conditions that follow from it
+  (`handlers::post_filter`, `safe_term`; `docs/ir.md` 6.5, "The invariant of the
+  filter"): the callee starts no other run of a clause, `h` is the only handler whose
+  clause the call runs, each terminator after the call in the handled body of `h` is
+  safe and no loop reaches the call again, and each clause of `h` has only safe
+  terminators and `resume`s. Each of the ten probes is rejected (W0301 at the call); the
+  clean twins `e01`, `e02`, `e18`, `e22` stay clean (`main` rejected them). A4: with the
+  filter of fix 1 at each `Post` node, A4 fails on `z31` (`e01`) and `z32` (`e02`); on `z36`
+  (`e18`) A5 fails before A4 can run (open, below; an issue comment draft for #78:
+  scratchpad `r0z/z2f3/issue78-draft.md`).
+- What stays open: the clause form of the false W0301 (`rc_clause_ok`,
+  `p04_struct_rc_field_ok`; issue #79). The node that runs the clause carries the changes
+  of the whole part of the clause before its first `resume` (`copy_part`), so the `push`
+  that fills the object before the row reaches the `Copy` node of the row through the
+  edge from the `Return` of the function, and the shadow variable keeps it. A fix needs
+  the changes of the clause after the row apart from the changes before it at that node;
+  that is a design of its own. Both programs keep the error that `main` gives.
+  `p04_struct_rc_field_ok` is not a probe of tier 1 (R0k-c2 fix 1: scratchpad
+  `r0k/c2f1/held/`), so the `new-fp` row of tier 1 is still `fixes/f12c/n2/tw.wf`. Also
+  open, older than the stage and in both pipelines: a clause of a plain operation (not
+  `multi`) that changes the object before its one `resume` while a callee holds a
+  reference into it (`r0z/z2/t/once1.wf`, `r0z2rev/p/m04_own_once_bad`): the call of a
+  plain operation has no copy of the frame. Also older than the stage: the clause oracle
+  (A5) fails on `z19`, `z36` and on their clean twins (`r0z/z2f3/held/`, which the stage
+  accepts and `main` rejected through the end of the copied handle): the
+  `resume` node of the clause of the inner handler has no `performs_at` with the
+  capability of the outer local handler whose clause runs while it waits. The clean twins
+  are not probes of tier 1 (they would fail the fact oracle of the gate).
+- The fact oracle, the other parts. A4 of the copies of frames: the `Copy` node of the
+  call uses a variable that points into the group (`root_rc_fo`, `z04_copy_writes_ok`: an
+  A4 failure on a clean program with `main`). A4 of re-entries: a variable that the `Copy`
+  node binds again is correct at a shared target if its shadow variable of the group part
+  points into a place and the node does not bind it again; in a clause frame the shadow
+  variable can be the invalid one. The other mutation tests (`fact_oracle.rs`): no group
+  places for the copy of the frame (A4 fails on `z01`, `z02`); no places for the shadow
+  variables (A4 fails on `z03_root_handle_bad`, `p04_struct_rc_field_bad`). A4 of copies
+  names a target through the arguments of the call: it does not check a handle from an
+  operation (`z05`) or a reference of a handled body of the callee (`n18`), and its strict
+  rule does not see an access that a callee of the clause makes (`z07`). On the rejected
+  programs `n19` and `p08` the strict rule of A4 of re-entries (a clause frame) fails in
+  `run`: the change is in the facts of the caller, as for `p33` and the `q` probes of
+  R0k-c2 fix 1.
+- Probes `tests/gate/probes/fixes/r0z2/` (a bad case and a clean twin): `z01_root_between`
+  (a reference argument), `z02_root_moved` (the handle moves into the call),
+  `z03_root_handle` (the end of the copied handle), `z05_op_handle` (a handle from an
+  operation), `z04_copy_writes_ok` (`root_rc_fo`); from the review (fix 1): `z06` to `z10`
+  (a change before the first `resume`: `m01_own`, `m03`, `m08`, `d05`, `m01_ref`), `z11`
+  to `z18` (`f07` to `f11`, `f13` to `f15`; a bad twin for `f07`, `f11`, `f13`); from the
+  second review (fix 2): `z19` to `z26b` (`c05`, `c08`, `c01`, `c02`, `c03`, `c04`, `c06`,
+  `c09`, `c09b`, with the clean twins of `c08`, `c01`, `c02`), `z27` to `z30` (`a13`,
+  `a13b` bad and ok, `a13c`, `a13d`); from the third review (fix 3): `z31` to `z40`
+  (`e01`, `e02`, `e18`, `e22` with their clean twins but `e18_ok`, and `e04`, `e14`, `e17`,
+  `e20`, `e21`, `e16`). `f03` is not a probe of tier 1: it would be a second `new-fp` row. `tests/programs/199_rc_across_row.wf`
+  (`//~ W0301 old:` at the call and at the use; the change before the first `resume`; a
+  callee that waits two times with a change after the last `resume`; a perform after the
+  call in the handled body (fix 3); the clean forms,
+  also the change after the last `resume` and a change of another field) with its IR
+  text.
+- Tests: `analysis_units` `r0kc2`
+  (`the_copy_of_the_frame_of_a_call_points_into_the_rc_groups_that_it_reaches`,
+  `a_reference_through_a_copied_rc_handle_is_bound_again_with_a_shadow_of_its_group`; they
+  replace `a_clause_reference_into_an_rc_group_across_a_row_is_pending`, whose programs
+  are in scope now); `factgen_units`
+  `the_part_row_refs_names_the_groups_that_a_frame_holds_across_a_row`; `fact_oracle.rs`
+  (the four mutations, the probes of `fixes/r0z2` pass the fact oracle, and
+  `a_copy_node_that_binds_a_shared_reference_again_fails_a4` runs on `m7_rc_shared`
+  again, in scope from this stage). One test expectation changes:
+  `crates/weft-check/tests/data/handlers/rc_ref_closure.wf` (`ir_handlers.rs`) loses its
+  W0301 at the call `apply(g7)`. The copy of the handled body holds its own copy of the
+  handle `rc2`, so `r5` is valid in the copy; the W0301 came from the end of `rc2` in the
+  first run, and the old pipeline does not give it. The W0503 and the W0602 of the line
+  stay (the program faults: a linear value is consumed two times). No test is relaxed.
+- The census (`r0z/z2f3/census/p-t1.tsv`, `p-t2.tsv`). Tier 1 (5471 files with the 61 new
+  files): 85 to 77 fallbacks; the 8 RC rows close (72 to 64 of the census rows), as the
+  plan says. The five clean twins have no error; the other rows have the same codes.
+  Tier 2 (57393): 23 fallbacks, as before; no row changes its codes but
+  `r3/quality/big/all_2.wf`, a time-out at 120 s with main that is done in less than 120 s
+  now (the check of main and of this stage takes about the same time).
+- ev.sh (`r0z/z2f3/ev/ev-main.tsv`, `ev-z2f3.tsv`: 2952 rows, the rows of Z1, `fixes/*`,
+  the review probes of `b1prev`, `r0kb1rev`, `r0kb2rev`, `r0kb2rev2`, `r0zrev`, `r0zrev2`,
+  `r0kc2rev`, `r0kc2rev2`, `r0z2rev`, `r0z2rev2`, `r0z2rev3`, `r0k/c2/y`, the probes of the
+  stage, `r0z/z2/h`, `t`, `r0z/z2f3/held`, and 199): HOLE 57 to 15 (11 of them AST-only,
+  the same as main); FP-IR 75 to 27. No new HOLE. One new FP-IR:
+  `r0z2rev/p/f03_clause_other_obj_ok` (above). 91 rows go from HOLE or FP-IR to a correct
+  verdict. The HOLEs that stay: the 11 AST-only rows of `f8`, `f13b/e17`, `f13c/w09`,
+  `once1`, `m04_own_once_bad` (all of them HOLEs of main too). No FACT-FAIL on a program
+  that the `ir` pipeline accepts (`ev.sh` does not read A5; the A5 failures are on the
+  held clean twins and on rejected programs).
+- Gates (release binaries `r0z/z2f3/bin/weft-z2f3`, `weft-gate-z2f3`): tier 1 0 blockers
+  (5471; 4084 same, 20 open, 372 fixed, 1 new-fp, 0 lost-fault, 156 lost-clean, 148 moved,
+  690 changed). Against main: `n18`, `n19`, `p08` go from `open` to `fixed`; the new files
+  are `same` (the 28 clean probes) or `fixed` (the 32 bad probes and 199); no other row
+  changes its class. Tier 2 (3 workers): 0 blockers (57393; 39873 same, 6 open, 92 fixed,
+  12 new-fp, 0 lost-fault, 3480 lost-clean, 1860 moved, 12070 changed; 54702 programs in
+  scope), the counts of main; one row gets one more code (`r2/oracle/runs/m1/p2945.wf`,
+  `changed` before and after, rejected by W0104: a W0301 of the copy of the frame of the
+  closure `g11` at its first call, whose second call changes `E.hp`). Fact oracle tier 1:
+  0 failures (8 faults, 22 timeouts, 1514 pass). Sigdiff tier 1: 0 rows with no entry.
+  The interpreter sources change in fixes 1 and 2 (A4, `oracle/facts.rs`,
+  `machine/exec.rs`; not in fix 3), so the oracle caches of tier 1 (both engines) and of
+  tier 2 (both engines) ran again at fix 2: no verdict changes but the new files and the
+  HTTP server probes (`benign` when port 8080 is in use, `timeout` when it is free). The
+  code diffs against main (`r0z/z2f3/cmp.sh`, the sets `s00`, `s01`, `s02`, `s04`, `s06`,
+  `s07`, `s08`, `s10`, 7054 files): 2 files.
+  `crates/weft-check/tests/data/handlers/rc_ref_closure.wf` loses its false W0301, and the
+  review probe `c1sign/v3/j10_rc.wf` (rejected, faults) gets a W0301 of the copy of the
+  frame of `sp`.
+- Ledger: `R0k2C-RC-BETWEEN` removed. No new entry. No `lost-clean` row.
+- What I am least sure of: the part `row_refs` reads the references in the state before
+  a node of a row; a reference that the analysis does not have there (a gap of the
+  analysis) is a gap here too, and the strict rule of A4 is the check of it. A run of a
+  function value or an intrinsic at a row gives `Any`, so the caller falls back to the
+  groups of its `Main` node, as in the first build. The split removes errors that the end
+  of a copied handle gave; a program whose only error was that one, and whose fault is a
+  change by code of a caller that has no copy of the frame (a call of an unknown function
+  value, D-ROW-MID), would lose its error; the probes `r0z/z2/h/h01`, `h05` and the review
+  probes `c01`, `c02`, `d06` keep their error. The rule for `Post` (fix 3) follows from
+  the invariant in `docs/ir.md`: a run of a clause starts only at a perform of its
+  effect, and the four conditions exclude each perform that can start one while the
+  frame lives (the callee, the other handlers at the call, the code after the call in
+  the handled body, the clauses of `h`). The argument rests on the summaries being
+  complete for `performs`, `runs` and `tasks`, and on `twice` (a second row node on the
+  IR blocks of the body of the function, a row in another body, or a callee with it). The first steps of `row_refs` are the steps one below the
+  group root; a reference into a field of a field counts for the whole first field.
+
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):
 
@@ -5134,8 +5360,9 @@ R0k-c2 as built (D5 and C8: the re-entry of a clause frame; `docs/ir.md` 6.5, "A
   `rebound_at` at the `Copy` nodes (the state at the end of the function for owned places)
   fail A4 on `m3`; facts with a `rebound_at` of each variable at the `Copy` nodes (the row
   state for shared places) fail A4 on `m7`, before the read of the freed cell.
-- Open (older than the stage; the re-entry of a function body has them too; scratchpad
-  `r0k/c2/y`): a reference through an `Rc` handle of a copied frame is invalid at the
+- Open, closed in plan stage R0z Z2 but for the clause form of the precision loss
+  (`rc_clause_ok`, `p04_struct_rc_field_ok`: "Z2 as built" below). (Older than the stage;
+  the re-entry of a function body has them too; scratchpad `r0k/c2/y`): a reference through an `Rc` handle of a copied frame is invalid at the
   re-entry after the end of the handle in the previous run (a false W0301:
   `root_rc_ok.wf` with `weft-r0kd2`, `rc_clause_ok.wf`); and the variable "the copy of the
   frame" of a call (D-MULTI-MID) points only into the places below the references that the
@@ -5220,7 +5447,8 @@ of the review of R0k-c2 and the findings of the second review of the fix; `docs/
   clause of the caller clears the group through another handle between two `resume`s;
   neither the facts of the caller nor those of the callee see both). The program keeps
   the old pipeline if the `ir` pipeline finds no error, and the old pipeline misses the
-  fault (open-old `R0k2C-RC-BETWEEN`). The re-entry of a function body with no clause
+  fault (open-old `R0k2C-RC-BETWEEN`). (Plan stage R0z Z2 removes the rule and the entry: the facts of the
+  caller see the change.) The re-entry of a function body with no clause
   frame keeps the gap (older than the stage, `root_rc_between`). `fixes/r0kc2/m7_rc_shared`
   and `m7b_rc_shared_ok` are pending now (`m7` stays rejected).
 - A4 of re-entries (stage R0k-c2 fix 1). At a later copy, a reference of a clause frame

@@ -1279,6 +1279,14 @@ pub fn copy_node(
     // captures.
     let mut outside: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
     let mut held_linear: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
+    // The locals whose value points only into the copied frames and into
+    // `rc` groups, through an `Rc` handle of a copied frame or a place of it
+    // (plan stage R0z Z2). The copy holds a copy of the handle, so the end
+    // of the handle in the previous run does not end the object: the copy
+    // binds the variable again, and a shadow variable keeps the state of
+    // the group part ([`rc_shadows`]).
+    let mut split: HashSet<(BodyId, weft_ir::LocalId)> = HashSet::new();
+    let group = |q: PlaceId| matches!(roots.role(facts.place(q).root), Some(Role::Group));
     for (k, tree) in st.trees() {
         if !in_frames(k.0) {
             continue;
@@ -1289,6 +1297,13 @@ pub fn copy_node(
             && v.caps.iter().all(|&q| copied(q)))
         {
             outside.insert(*k);
+            if v.tasks.is_empty()
+                && v.caps.iter().all(|&q| copied(q))
+                && v.refs.iter().all(|&q| copied(q) || group(q))
+                && v.refs.iter().any(|&q| copied(q))
+            {
+                split.insert(*k);
+            }
         }
         if v.linear {
             held_linear.insert(*k);
@@ -1316,11 +1331,15 @@ pub fn copy_node(
         let Ok(k) = super::alpha::owner_local(p, b, l) else {
             continue;
         };
-        if fresh(&k) {
+        let split_k = in_frames(k.0) && split.contains(&k) && !moved.contains(&k);
+        if fresh(&k) || split_k {
             if let Some(v) = em.vars.get(key) {
                 vars.push(v);
                 if held_linear.contains(&k) {
                     linear.insert(v);
+                }
+                if split_k {
+                    em.hx.rc_splits.push((v, c));
                 }
             }
         }
@@ -1418,6 +1437,17 @@ pub fn copy_node(
             })
             .collect();
         places.extend(cells);
+        // The `rc` groups that the copy of the frame holds a reference into
+        // across the operation (plan stage R0z Z2, fix 1): the part
+        // `row_refs` of the summary of a known callee, or each group that
+        // the node reads, changes, lends or frees. They get a variable of
+        // their own ([`copy_group_vars`]).
+        let (groups, once) = held_groups(em, t, main);
+        let only = if groups.is_empty() {
+            None
+        } else {
+            post_filter(em, t, (body, block), main, once && row_returns.is_empty())
+        };
         // A place in the copied frames gets a new copy too (the `Copy` rule):
         // the copy of the frame holds the copied place, not the old one.
         places.retain(|&q| match em.roots.role(em.facts.place(q).root) {
@@ -1427,6 +1457,37 @@ pub fn copy_node(
         });
         places.sort();
         places.dedup();
+        // It binds after the changes of the node itself (at `Ret`, the node
+        // after `Copy`): the callee checks its own changes across its
+        // `multi` point (the re-entry edges of its own facts). A re-entry
+        // through a handler of a caller copies each frame of the function:
+        // the copy of the frame is new on that path (the edges from the
+        // `Return` nodes of the function).
+        let rets: Vec<NodeId> = em
+            .facts
+            .cfg_edge
+            .iter()
+            .filter(|(a, _)| *a == c)
+            .map(|(_, b)| *b)
+            .collect();
+        let mut binds: Vec<NodeId> = if rets.is_empty() {
+            vec![main]
+        } else {
+            rets.clone()
+        };
+        binds.extend(row_returns.iter().copied());
+        if !groups.is_empty() {
+            let label = em.facts.node(main).label.clone();
+            em.hx.copy_groups.push(CopyGroups {
+                copy: c,
+                main,
+                rets,
+                binds: binds.clone(),
+                groups,
+                label,
+                only,
+            });
+        }
         if !places.is_empty() {
             let node = em.facts.node(main).clone();
             let name = format!("copy of the frame that `{}` runs", node.label);
@@ -1440,26 +1501,7 @@ pub fn copy_node(
                 let w = em.facts.wildcard(q);
                 em.facts.points_into.push((var, w));
             }
-            // It binds after the changes of the node itself (at `Ret`, the
-            // node after `Copy`): the callee checks its own changes across
-            // its `multi` point (the re-entry edges of its own facts).
-            let rets: Vec<NodeId> = em
-                .facts
-                .cfg_edge
-                .iter()
-                .filter(|(a, _)| *a == c)
-                .map(|(_, b)| *b)
-                .collect();
-            if rets.is_empty() {
-                em.facts.rebound_at.push((var, main));
-            }
-            for r in rets {
-                em.facts.rebound_at.push((var, r));
-            }
-            // A re-entry through a handler of a caller copies each frame of
-            // the function: the copy of the frame is new on that path (the
-            // edges from the `Return` nodes of the function).
-            for &r in row_returns {
+            for &r in &binds {
                 em.facts.rebound_at.push((var, r));
             }
             em.facts.uses.push((var, c));
@@ -1490,6 +1532,385 @@ pub fn copy_node(
             frame,
         });
     }
+}
+
+/// The root places of the `rc` groups that the copy of the callee frame of
+/// call `t` (its `Main` node `main`) can hold a reference into across the
+/// operation (plan stage R0z Z2, fix 1, [`copy_node`]): the part
+/// `row_refs` of the summary of a callee that is a function item, if it
+/// names the groups; else each group that the node reads, changes, lends or
+/// frees ([`call_groups`]).
+fn held_groups(em: &mut Em<'_>, t: &TermKind, main: NodeId) -> (Vec<GroupPlace>, bool) {
+    let known = match t {
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, _),
+            ..
+        } => em
+            .sums
+            .get(*f)
+            .ok()
+            .and_then(|s| s.row_refs.known().map(|(g, twice)| (g.clone(), twice))),
+        _ => None,
+    };
+    match known {
+        Some((gs, twice)) => {
+            let mut out: Vec<GroupPlace> = Vec::new();
+            for (a, steps) in gs {
+                let root = em.roots.group_of_adt(&*em.tys, em.facts, a);
+                if steps.contains(&None) {
+                    out.push(GroupPlace { root, step: None });
+                    continue;
+                }
+                out.extend(steps.into_iter().map(|step| GroupPlace { root, step }));
+            }
+            out.sort();
+            out.dedup();
+            (out, !twice)
+        }
+        None => (
+            call_groups(&*em.facts, &*em.roots, main)
+                .into_iter()
+                .map(|root| GroupPlace { root, step: None })
+                .collect(),
+            false,
+        ),
+    }
+}
+
+/// A place of an `rc` group that the copy of a callee frame can hold a
+/// reference into ([`CopyGroups`]).
+///
+/// It is the group root, and the first step below it (`None`: each place
+/// of the group; plan stage R0z Z2, fix 2).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GroupPlace {
+    /// The root place of the group.
+    pub root: PlaceId,
+    /// The first step below the root.
+    pub step: Option<crate::analysis::summary::RowStep>,
+}
+
+/// The handler `h` whose `Post` nodes give the variable "the copy of the
+/// frame" of the call `t` at block `block` of body `body` (its `Main` node
+/// `main`) only the changes of a clause before a later `resume`, if one is
+/// sound (plan stage R0z Z2, fix 3; `docs/ir.md` 6.5, "the invariant of the
+/// filter"). `once`: the callee waits at a row at most once in a run, and
+/// the call waits at no row of a caller.
+///
+/// The invariant: a change after the last `resume` of a run `I` of a clause
+/// of `h` reaches no copy of the callee frame only if, while that frame
+/// lives, no other run of a clause of `h` or of a handler around `h` can
+/// start after the change and then resume a copy of the frame. A run of a
+/// clause starts only at a perform of its effect, so each of these holds:
+///
+/// 1. `once`, and the callee is a function item whose summary performs only
+///    the effect of `h` and effects that no handler of the program handles,
+///    and runs no function value and starts no task: the frame itself
+///    starts no other run;
+/// 2. `h` is the only handler whose clause the call runs, and it can
+///    resume more than once;
+/// 3. the call is in the handled body of `h` (the same body), and each
+///    terminator that a path from the call reaches in that body (up to its
+///    end, the `Exit` of the `handle`) is safe ([`safe_term`]), and no such
+///    path reaches the call again: the code after the call starts no run;
+/// 4. each terminator of each clause of `h` is safe or a `resume`: a run of
+///    a clause of `h` starts no run of a handler around `h` that could copy
+///    it (and the frame) again.
+///
+/// After the end of the handled body the frame has returned, so a perform
+/// there gives no copy of it. Else (or if a part is not known) `None`.
+fn post_filter(
+    em: &Em<'_>,
+    t: &TermKind,
+    (body, block): (BodyId, BlockId),
+    main: NodeId,
+    once: bool,
+) -> Option<HandlerId> {
+    let p = em.p;
+    if !once {
+        return None;
+    }
+    // 2.
+    let hs: BTreeSet<HandlerId> = em
+        .hx
+        .runs
+        .iter()
+        .filter(|r| r.node == main && !r.post)
+        .map(|r| r.handler)
+        .collect();
+    let h = match (hs.len(), hs.iter().next()) {
+        (1, Some(&h)) if clause::multi_twice(p, h) => h,
+        _ => return None,
+    };
+    let handled: BTreeSet<&str> = p
+        .handlers
+        .iter()
+        .filter_map(|d| em.tys.effects().get(d.effect.index()))
+        .map(|e| e.identity.as_str())
+        .collect();
+    let effect = p
+        .handlers
+        .get(h.index())
+        .and_then(|d| em.tys.effects().get(d.effect.index()))
+        .map(|e| e.identity.as_str())?;
+    // 1.
+    let TermKind::Call {
+        callee: weft_ir::Callee::Fn(f, _),
+        ..
+    } = t
+    else {
+        return None;
+    };
+    let s = em.sums.get(*f).ok()?;
+    let quiet = s
+        .performs
+        .iter()
+        .all(|pf| pf.effect == effect || !handled.contains(pf.effect.as_str()));
+    if !quiet
+        || !s.runs.is_empty()
+        || s.unknown_runs
+        || !s.tasks.is_empty()
+        || !s.task_effects.is_empty()
+    {
+        return None;
+    }
+    // 3.
+    let b = p.body(body)?;
+    if b.kind != BodyKind::Handled(h) {
+        return None;
+    }
+    let mut seen: HashSet<BlockId> = HashSet::new();
+    let mut work: Vec<BlockId> = b.blocks.get(block.index())?.term.kind.normal_successors();
+    while let Some(k) = work.pop() {
+        if k == block {
+            return None;
+        }
+        if !seen.insert(k) {
+            continue;
+        }
+        let kind = &b.blocks.get(k.index())?.term.kind;
+        if !safe_term(em, &handled, kind) {
+            return None;
+        }
+        work.extend(kind.normal_successors());
+    }
+    // 4.
+    for &(_, c) in &p.handlers.get(h.index())?.clauses {
+        let cb = p.body(c)?;
+        let ok = cb.blocks.iter().filter(|x| !x.cleanup).all(|x| {
+            matches!(x.term.kind, TermKind::Resume { .. }) || safe_term(em, &handled, &x.term.kind)
+        });
+        if !ok {
+            return None;
+        }
+    }
+    Some(h)
+}
+
+/// True if terminator `t` starts no run of a clause of a handler of the
+/// program ([`post_filter`]): a jump, a branch, the end of the body, an
+/// `assert`, or a call of a function item whose summary performs only
+/// effects that no handler of the program handles (`handled`), and runs no
+/// function value and starts no task.
+fn safe_term(em: &Em<'_>, handled: &BTreeSet<&str>, t: &TermKind) -> bool {
+    match t {
+        TermKind::Goto(_)
+        | TermKind::Switch { .. }
+        | TermKind::Return
+        | TermKind::UnwindExit
+        | TermKind::Unreachable
+        | TermKind::Assert { .. } => true,
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, _),
+            ..
+        } => em.sums.get(*f).is_ok_and(|s| {
+            s.performs
+                .iter()
+                .all(|pf| !handled.contains(pf.effect.as_str()))
+                && s.runs.is_empty()
+                && !s.unknown_runs
+                && !s.multi
+                && !s.unknown_multi
+                && s.tasks.is_empty()
+                && s.task_effects.is_empty()
+        }),
+        _ => false,
+    }
+}
+
+/// The root places of the `rc` groups that node `main` reads, changes,
+/// lends or frees (plan stage R0z Z2, [`copy_node`]).
+fn call_groups(facts: &FnFacts, roots: &Roots, main: NodeId) -> Vec<PlaceId> {
+    let at = facts
+        .reads_at
+        .iter()
+        .chain(&facts.mutates_at)
+        .chain(&facts.lends_mut)
+        .chain(&facts.releases_at)
+        .filter(|(n, _)| *n == main)
+        .map(|&(_, q)| q);
+    let mut out: Vec<PlaceId> = at
+        .filter(|&q| matches!(roots.role(facts.place(q).root), Some(Role::Group)))
+        .map(|q| root_place(facts, q))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The root place of place `q`.
+fn root_place(facts: &FnFacts, q: PlaceId) -> PlaceId {
+    let mut top = q;
+    while let Some(up) = facts.place(top).parent {
+        top = up;
+    }
+    top
+}
+
+/// The variables of the `rc` groups of the copy of the frame of a call
+/// (plan stage R0z Z2, fix 1, noted by [`copy_node`], made by
+/// `copy_group_vars`).
+#[derive(Clone, Debug)]
+pub struct CopyGroups {
+    /// The `Copy` node of the call.
+    pub copy: NodeId,
+    /// The `Main` node of the call.
+    pub main: NodeId,
+    /// The `Ret` nodes of the call (after `Copy`).
+    pub rets: Vec<NodeId>,
+    /// The nodes where the copy of the frame is new.
+    pub binds: Vec<NodeId>,
+    /// The places of the groups.
+    pub groups: Vec<GroupPlace>,
+    /// The label of the call.
+    pub label: String,
+    /// The handler whose `Post` nodes give the variable "the copy of the
+    /// frame" only the changes of a clause before a later `resume`
+    /// (`post_filter`; plan stage R0z Z2, fix 3). `None`: each change.
+    pub only: Option<HandlerId>,
+}
+
+/// Notes the `rc` groups that the frames hold a reference into at a node
+/// that waits at a `multi` operation of a handler of a caller.
+///
+/// This is the part `row_refs` of the summary (plan stage R0z Z2, fixes 1
+/// and 2): the references of the values of the locals in the state `st`
+/// before terminator `t` of block `block` of body `body`, the references in
+/// the heap slots, and the part of a callee that is a function item, each
+/// group with the first step of its place. Another run node (a function
+/// value, an intrinsic) can hold a reference into each group. A run of the
+/// body can wait at such a node more than once (`twice`) if the node is not
+/// in the body of the function itself, if a path from the node reaches such
+/// a node again, or if the callee can.
+pub fn note_row_refs(em: &mut Em<'_>, st: &State, t: &TermKind, (body, block): (BodyId, BlockId)) {
+    use crate::analysis::summary::{RowRefs, RowStep};
+    let mut out = std::mem::take(&mut em.hx.row_refs);
+    if matches!(out, RowRefs::Unset) {
+        out = RowRefs::none();
+    }
+    let mut refs: BTreeSet<PlaceId> = BTreeSet::new();
+    for (_, tree) in st.trees() {
+        refs.extend(tree.flat().refs);
+    }
+    for qs in st.behind().values() {
+        refs.extend(qs.iter().copied());
+    }
+    for q in refs {
+        let Some(info) = em.facts.places.get(q.index()) else {
+            continue;
+        };
+        if !matches!(em.roots.role(info.root), Some(Role::Group)) {
+            continue;
+        }
+        let Some(a) = em.roots.group_adt(info.root) else {
+            out.any();
+            continue;
+        };
+        // The place one step below the group root.
+        let mut top = q;
+        while let Some(up) = em.facts.place(top).parent {
+            if em.facts.place(up).parent.is_none() {
+                break;
+            }
+            top = up;
+        }
+        let step = (top != root_place(em.facts, q))
+            .then(|| em.facts.place(top).steps.last().copied())
+            .flatten()
+            .filter(|s| !weft_facts::is_wild_step(s))
+            .map(|s| RowStep {
+                step: s,
+                text: step_text(em.facts, top),
+            });
+        out.add(a, step);
+    }
+    match t {
+        TermKind::Perform { .. } => {}
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, _),
+            ..
+        } => match em.sums.get(*f).map(|s| &s.row_refs) {
+            Ok(r) => match r.known() {
+                Some((gs, twice)) => {
+                    let mut add = RowRefs::Groups {
+                        groups: gs.clone(),
+                        twice,
+                    };
+                    std::mem::swap(&mut add, &mut out);
+                    let _ = out.join(&add);
+                }
+                None => out.any(),
+            },
+            Err(_) => out.any(),
+        },
+        _ => out.any(),
+    }
+    if waits_again(em, (body, block)) {
+        out.twice();
+    }
+    em.hx.row_refs = out;
+}
+
+/// True if a run of the function can wait at a node of a row again after
+/// the node at block `block` of body `body` ([`note_row_refs`]): the body
+/// is not the body of a function, or a path from the block reaches a block
+/// whose terminator waits at a row (the block too, in a loop).
+fn waits_again(em: &Em<'_>, (body, block): (BodyId, BlockId)) -> bool {
+    let p = em.p;
+    let Some(b) = p.body(body) else {
+        return true;
+    };
+    if !matches!(b.kind, BodyKind::Fn(_) | BodyKind::Test(_)) {
+        return true;
+    }
+    let rows: HashSet<BlockId> = super::frames::row_multi_nodes(p, em.tys, em.sums, body)
+        .into_iter()
+        .chain(
+            em.hx
+                .dyn_rows
+                .iter()
+                .filter(|(x, _)| *x == body)
+                .map(|(_, k)| *k),
+        )
+        .collect();
+    let next = |k: BlockId| -> Vec<BlockId> {
+        b.blocks
+            .get(k.index())
+            .map(|x| x.term.kind.normal_successors())
+            .unwrap_or_default()
+    };
+    let mut seen: HashSet<BlockId> = HashSet::new();
+    let mut work: Vec<BlockId> = next(block);
+    while let Some(k) = work.pop() {
+        if !seen.insert(k) {
+            continue;
+        }
+        if rows.contains(&k) {
+            return true;
+        }
+        work.extend(next(k));
+    }
+    false
 }
 
 /// A `Copy` node whose copied frames include frames of clauses (stage
@@ -1548,10 +1969,10 @@ impl ClauseCopy {
 /// An argument that is a place of a parameter of another clause (an outer
 /// clause of the chain, or a clause that runs the clause) maps again
 /// through the runs of that clause. A linear or `!Move`
-/// variable does not change (E7 gives W0503 for it at the row). For a row
-/// of a handler of a caller, an argument in an `rc` group, or a variable of
-/// a copied frame that keeps its state and points into one, makes the
-/// program pending ([`RC_ACROSS_ROW`]).
+/// variable does not change (E7 gives W0503 for it at the row). An
+/// argument in an `rc` group is an argument as the others: a change of the
+/// group by a clause of a caller between two `resume`s is in the facts of
+/// the caller (plan stage R0z Z2, [`copy_node`]).
 fn reentry_args(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, m: &MapCx<'_>) {
     let p = t.p;
     if hx.clause_copies.is_empty() {
@@ -1561,7 +1982,6 @@ fn reentry_args(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, m: &MapCx<'_
     // For each variable: the places of its arguments, the nodes that run
     // its clause, and the `Copy` nodes that keep it.
     let mut found: BTreeMap<VarId, Found> = BTreeMap::new();
-    let mut group = false;
     for cc in &hx.clause_copies {
         let rebound: HashSet<VarId> = facts
             .rebound_at
@@ -1569,15 +1989,6 @@ fn reentry_args(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, m: &MapCx<'_
             .filter(|(_, n)| *n == cc.node)
             .map(|(v, _)| *v)
             .collect();
-        let caller = p.body(cc.root).is_some_and(|b| {
-            matches!(
-                b.kind,
-                BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Closure(_)
-            )
-        });
-        let is_group = |facts: &FnFacts, q: PlaceId| {
-            matches!(t.roots.role(facts.place(q).root), Some(Role::Group))
-        };
         let clause_of = |facts: &FnFacts, q: PlaceId| match t.roots.role(facts.place(q).root) {
             Some(Role::Param(b, _) | Role::Held(b, _)) if cc.clauses.contains(&b) => Some(b),
             _ => None,
@@ -1593,18 +2004,6 @@ fn reentry_args(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, m: &MapCx<'_
             }
             _ => None,
         };
-        // A variable of a copied frame (of a clause or of the function)
-        // that keeps its state and points into an `rc` group.
-        if caller {
-            let all = own_vars(m.ix, m.by_body, cc.root);
-            if facts
-                .points_into
-                .iter()
-                .any(|(v, q)| all.contains(v) && !rebound.contains(v) && is_group(facts, *q))
-            {
-                group = true;
-            }
-        }
         for &cb in &cc.clauses {
             let own = own_vars(m.ix, m.by_body, cb);
             let kept = |v: &VarId| own.contains(v) && !rebound.contains(v);
@@ -1656,9 +2055,6 @@ fn reentry_args(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, m: &MapCx<'_
                         } else if !cc.copies(p, t.roots, facts, x)
                             && !matches!(t.roots.role(facts.place(x).root), Some(Role::Frame(i)) if Some(i) == frame)
                         {
-                            if caller && is_group(facts, x) {
-                                group = true;
-                            }
                             if let Some(e) = found.get_mut(&v) {
                                 e.0.insert(x);
                             }
@@ -1667,12 +2063,6 @@ fn reentry_args(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, m: &MapCx<'_
                 }
             }
         }
-    }
-    if group {
-        clause::note_pending(super::Unsupported {
-            group: crate::irbuild::scope::Group::D,
-            reason: RC_ACROSS_ROW.to_string(),
-        });
     }
     found.retain(|_, (xs, _, _)| !xs.is_empty());
     if found.is_empty() {
@@ -1686,6 +2076,305 @@ fn reentry_args(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, m: &MapCx<'_
         shadow(facts, (v, &xs), (&runs, &copies), &succ);
     }
 }
+
+/// A change of a place at a node: a change (`mutates_at`), a lend
+/// (`lends_mut`) or a free (`releases_at`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Change {
+    /// `mutates_at`.
+    Mutate,
+    /// `lends_mut`.
+    Lend,
+    /// `releases_at`.
+    Free,
+}
+
+/// The changes of the clauses that [`project`] maps to the run nodes, for
+/// [`copy_group_vars`] (plan stage R0z Z2, fix 1).
+#[derive(Default)]
+struct ClauseRows {
+    /// For each run node: the changes of the part of a clause before its
+    /// first `resume`.
+    pre: HashMap<NodeId, Vec<(Change, PlaceId)>>,
+    /// For each `Post` node: the handler, and the changes of the part of a
+    /// clause after its first `resume` that can reach a later `resume` (not
+    /// the changes after the last `resume`).
+    post: HashMap<NodeId, (HandlerId, Vec<(Change, PlaceId)>)>,
+}
+
+/// The changes of the facts `f`.
+fn changes_of(f: &FnFacts) -> Vec<(Change, PlaceId)> {
+    f.mutates_at
+        .iter()
+        .map(|&(_, q)| (Change::Mutate, q))
+        .chain(f.lends_mut.iter().map(|&(_, q)| (Change::Lend, q)))
+        .chain(f.releases_at.iter().map(|&(_, q)| (Change::Free, q)))
+        .collect()
+}
+
+/// The nodes of `nodes` from which a path of one edge or more, inside
+/// `nodes`, reaches a `Main` node of a `resume` of `resumes`: the code of a
+/// clause before a later `resume` ([`project`]).
+fn before_a_resume(
+    nodes: &HashSet<NodeId>,
+    resumes: &HashSet<NodeId>,
+    preds: &Preds,
+) -> HashSet<NodeId> {
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    let mut work: Vec<NodeId> = resumes
+        .iter()
+        .filter(|n| nodes.contains(n))
+        .copied()
+        .collect();
+    while let Some(n) = work.pop() {
+        for &x in preds.get(&n).into_iter().flatten() {
+            if nodes.contains(&x) && seen.insert(x) {
+                work.push(x);
+            }
+        }
+    }
+    seen
+}
+
+/// The variables of the `rc` groups of the copies of the frames of the
+/// calls (plan stage R0z Z2, fixes 1 and 2, [`CopyGroups`]).
+///
+/// The copy of the callee frame of a call can hold a reference into a place
+/// of [`CopyGroups::groups`] across its operation (the part `row_refs` of
+/// the summary of the callee). Two variables stand for it. Each one points
+/// into the places of a shadow root for each group (below the first step
+/// of the place, fix 2), and only the changes below say what changes these
+/// places:
+///
+/// - "the copy of the frame that `f` runs" gets a new value where the copy
+///   of the frame is new and is used at the `Copy` node. It gets each change
+///   of the group at a node of the function. Only if no later copy can
+///   follow a change of a clause after its last `resume` ([`post_filter`],
+///   fix 3), a `Post` node of that handler gives only the changes of the
+///   part of the clause that can reach a later `resume`.
+/// - "the frame that `f` runs while it waits" never gets a new value and is
+///   used at the `Ret` nodes of the call: only the changes of the parts of
+///   the clauses before their first `resume` at the `Main` node of the call
+///   (the clause changes the object, then resumes the frame that holds the
+///   reference).
+fn copy_group_vars(facts: &mut FnFacts, hx: &Handlers, rows: &ClauseRows) {
+    for cg in &hx.copy_groups {
+        let groups: BTreeSet<weft_facts::RootId> =
+            cg.groups.iter().map(|g| facts.place(g.root).root).collect();
+        let in_group = |facts: &FnFacts, q: PlaceId| groups.contains(&facts.place(q).root);
+        // The handler whose `Post` nodes keep only the changes before a
+        // later `resume`.
+        let only = cg.only;
+        let filtered = |n: &NodeId| rows.post.get(n).is_some_and(|(h, _)| Some(*h) == only);
+        // The changes of the groups at the nodes of the function.
+        let mut all: Vec<(NodeId, Change, PlaceId)> = Vec::new();
+        for &(n, q) in &facts.mutates_at {
+            all.push((n, Change::Mutate, q));
+        }
+        for &(n, cap) in &facts.performs_at {
+            for &(c, q) in &facts.footprint {
+                if c == cap {
+                    all.push((n, Change::Mutate, q));
+                }
+            }
+        }
+        for &(n, q) in &facts.lends_mut {
+            all.push((n, Change::Lend, q));
+        }
+        for &(n, q) in &facts.releases_at {
+            all.push((n, Change::Free, q));
+        }
+        for &(q, n) in &facts.moved_part {
+            all.push((n, Change::Free, q));
+        }
+        let mut copy_rows: Vec<(NodeId, Change, PlaceId)> = all
+            .into_iter()
+            .filter(|(n, _, q)| in_group(facts, *q) && !filtered(n))
+            .collect();
+        for (&n, (_, cs)) in rows.post.iter().filter(|(n, _)| filtered(n)) {
+            copy_rows.extend(
+                cs.iter()
+                    .filter(|&&(_, q)| in_group(facts, q))
+                    .map(|&(k, q)| (n, k, q)),
+            );
+        }
+        let wait_rows: Vec<(NodeId, Change, PlaceId)> = rows
+            .pre
+            .get(&cg.main)
+            .into_iter()
+            .flatten()
+            .filter(|&&(_, q)| in_group(facts, q))
+            .map(|&(k, q)| (cg.main, k, q))
+            .collect();
+        let span = facts.node(cg.main).span;
+        let copy = format!("copy of the frame that `{}` runs", cg.label);
+        let v = group_var(facts, (&cg.groups, &copy_rows), (copy, span));
+        facts.rebound_at.extend(cg.binds.iter().map(|&n| (v, n)));
+        facts.uses.push((v, cg.copy));
+        if !wait_rows.is_empty() && !cg.rets.is_empty() {
+            let wait = format!("frame that `{}` runs while it waits", cg.label);
+            let w = group_var(facts, (&cg.groups, &wait_rows), (wait, span));
+            facts.uses.extend(cg.rets.iter().map(|&n| (w, n)));
+        }
+    }
+}
+
+/// A variable named `name` (at `span`) that points into a shadow root of
+/// each group of `groups` (below the first step of the place, if there is
+/// one), with the changes `rows` of the groups on the shadow roots
+/// ([`copy_group_vars`]).
+fn group_var(
+    facts: &mut FnFacts,
+    (groups, rows): (&[GroupPlace], &[(NodeId, Change, PlaceId)]),
+    (name, span): (String, weft_facts::Span),
+) -> VarId {
+    let v = facts.add_var(weft_facts::VarInfo::plain(
+        name,
+        weft_facts::VarKind::Temp,
+        span,
+        "",
+    ));
+    let mut shadow: BTreeMap<weft_facts::RootId, PlaceId> = BTreeMap::new();
+    for g in groups {
+        let root = facts.place(g.root).root;
+        let s = if let Some(&s) = shadow.get(&root) {
+            s
+        } else {
+            let text = facts.roots[root.index()].name.clone();
+            let s = facts.add_root(text, weft_facts::RootKind::Arg);
+            shadow.insert(root, s);
+            s
+        };
+        let at = match &g.step {
+            Some(st) => facts.child(s, st.step, &st.text),
+            None => s,
+        };
+        let w = facts.wildcard(at);
+        facts.points_into.push((v, w));
+    }
+    for &(n, k, q) in rows {
+        let Some(&base) = shadow.get(&facts.place(q).root) else {
+            continue;
+        };
+        let y = reroot(facts, q, base);
+        match k {
+            Change::Mutate => facts.mutates_at.push((n, y)),
+            Change::Lend => facts.lends_mut.push((n, y)),
+            Change::Free => facts.releases_at.push((n, y)),
+        }
+    }
+    v
+}
+
+/// The shadow variables of the `rc` group parts of the variables that a
+/// `Copy` node binds again (plan stage R0z Z2, [`copy_node`]).
+///
+/// A variable `V` of a copied frame whose value points into the copied
+/// frames and into an `rc` group (a reference through an `Rc` handle of the
+/// frame) is valid in the copy: the copy holds its own copy of the handle,
+/// so the end or a new value of the handle in the previous run does not end
+/// the object. So the `Copy` node binds `V` again. But the copies share the
+/// object, and a change of the group after the operation (the code of the
+/// previous run, or the code of the clause between two `resume`s) reaches
+/// the copy. Thus `V` gets a shadow variable ([`RC_SHADOW`]) that points
+/// into the group places of `V`. It gets a new value where `V` gets one, but
+/// not at these `Copy` nodes; a write through `V` is a write through it;
+/// and its uses are the uses of `V` that the `Copy` nodes reach before a new
+/// value of `V`. So it is invalid only where `V` was invalid before the
+/// stage, and only for a change of the group: the split removes the errors
+/// of the end of a copied handle, and adds none. A change of the group by
+/// code of a caller between two `resume`s is in the facts of the caller:
+/// the variable "the copy of the frame" of its call points into the groups
+/// that the call reaches.
+fn rc_shadows(facts: &mut FnFacts, roots: &Roots, hx: &Handlers) {
+    if hx.rc_splits.is_empty() {
+        return;
+    }
+    let mut copies_of: BTreeMap<VarId, BTreeSet<NodeId>> = BTreeMap::new();
+    for &(v, c) in &hx.rc_splits {
+        copies_of.entry(v).or_default().insert(c);
+    }
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    for (v, copies) in copies_of {
+        let xs: BTreeSet<PlaceId> = facts
+            .points_into
+            .iter()
+            .filter(|(w, q)| {
+                *w == v && matches!(roots.role(facts.place(*q).root), Some(Role::Group))
+            })
+            .map(|(_, q)| *q)
+            .collect();
+        if xs.is_empty() {
+            continue;
+        }
+        let rebound: BTreeSet<NodeId> = facts
+            .rebound_at
+            .iter()
+            .filter(|(w, _)| *w == v)
+            .map(|(_, n)| *n)
+            .collect();
+        let used: HashSet<NodeId> = facts
+            .uses
+            .iter()
+            .filter(|(w, _)| *w == v)
+            .map(|(_, n)| *n)
+            .collect();
+        // The uses of `v` that a `Copy` node reaches before a new value of
+        // `v`.
+        let mut uses: BTreeSet<NodeId> = BTreeSet::new();
+        let mut seen: HashSet<NodeId> = copies.iter().copied().collect();
+        let mut work: Vec<NodeId> = copies.iter().copied().collect();
+        while let Some(n) = work.pop() {
+            for &x in succ.get(&n).into_iter().flatten() {
+                if !seen.insert(x) {
+                    continue;
+                }
+                if used.contains(&x) {
+                    uses.insert(x);
+                }
+                if !rebound.contains(&x) {
+                    work.push(x);
+                }
+            }
+        }
+        let info = facts.var(v).clone();
+        let w = facts.add_var(weft_facts::VarInfo::plain(
+            rc_shadow_name(&info.name),
+            weft_facts::VarKind::Temp,
+            info.span,
+            &info.ty,
+        ));
+        facts.points_into.extend(xs.iter().map(|&q| (w, q)));
+        facts.rebound_at.extend(
+            rebound
+                .iter()
+                .filter(|n| !copies.contains(n))
+                .map(|&n| (w, n)),
+        );
+        let via: Vec<(NodeId, VarId)> = facts
+            .writes_via
+            .iter()
+            .filter(|(_, x)| *x == v)
+            .map(|&(n, _)| (n, w))
+            .collect();
+        facts.writes_via.extend(via);
+        facts.uses.extend(uses.into_iter().map(|n| (w, n)));
+    }
+}
+
+/// The name of the shadow variable of the `rc` group part of a variable
+/// named `name` (plan stage R0z Z2, `rc_shadows`): the fact oracle (A4 of
+/// re-entries) reads it.
+pub fn rc_shadow_name(name: &str) -> String {
+    format!("{RC_SHADOW} `{name}`")
+}
+
+/// The first words of the name of a shadow variable of an `rc` group part
+/// ([`rc_shadow_name`]).
+pub const RC_SHADOW: &str = "`rc` object behind";
 
 /// What [`reentry_args`] finds for a variable: the places of its arguments,
 /// the nodes that run its clause, and the `Copy` nodes that keep it.
@@ -1866,20 +2555,6 @@ fn shadow(
         }
     }
 }
-
-/// The reason of the pending rule for a reference into an `rc` group in a
-/// copied frame across a `multi` operation of a handler of a caller in a
-/// clause (stage R0k-c2 fix 1, `reentry_args`).
-///
-/// The clause of the caller can
-/// change an `rc` group between two `resume`s through another handle, and
-/// neither the facts of the caller nor the facts of the function see both
-/// the reference and the change (`fixes/r0kc2c/p08_rc_between_param_bad`,
-/// `n19_rc_param_arg_bad`). A variable of the frame of the function at such
-/// a `Copy` node has the same gap (`n18_rc_handled_frame_bad`): it is
-/// pending too. The re-entry of a function body with no clause frame keeps
-/// the gap (`root_rc_between`, older than the stage).
-pub const RC_ACROSS_ROW: &str = "a reference into an `rc` group in a copied frame across a `multi` operation of a handler of a caller in a clause (stage R0k-c2 fix 1)";
 
 /// The tables of [`project`] that [`reentry_args`] reads.
 struct MapCx<'a> {
@@ -2577,6 +3252,12 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
     }
     let mut clause_preds: HashMap<(BodyId, bool), Preds> = HashMap::new();
     let quiet = quiet_reruns(p, &ix, facts, hx);
+    // The changes of the clauses for the variables of the `rc` groups of
+    // the copies of the frames (plan stage R0z Z2, fix 1,
+    // [`copy_group_vars`]): the part before the first `resume` at each run
+    // node, and the part after it that can reach a later `resume` at each
+    // `Post` node.
+    let mut rows = ClauseRows::default();
     for r in order {
         let Some((pre, post)) = regions.get(&r.clause) else {
             continue;
@@ -2612,6 +3293,26 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
             (&s, &r.ins, r.given.as_deref()),
             (r.node, cap),
         );
+        if !hx.copy_groups.is_empty() {
+            if r.post {
+                let between = before_a_resume(nodes, &resumes, &all_preds);
+                let nb = copy_part(
+                    facts,
+                    part,
+                    &m,
+                    (&between, own),
+                    (&s, &r.ins, r.given.as_deref()),
+                    (r.node, cap),
+                );
+                rows.post
+                    .entry(r.node)
+                    .or_insert_with(|| (r.handler, Vec::new()))
+                    .1
+                    .extend(changes_of(&nb));
+            } else {
+                rows.pre.entry(r.node).or_default().extend(changes_of(&new));
+            }
+        }
         let abort = part
             .may_abort
             .iter()
@@ -2725,6 +3426,8 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
             param_runs: &param_runs,
         },
     );
+    rc_shadows(facts, t.roots, hx);
+    copy_group_vars(facts, hx, &rows);
     for (c, (pre, post)) in &regions {
         let Some(h) = hx.runs.iter().find(|r| r.clause == *c).map(|r| r.handler) else {
             continue;

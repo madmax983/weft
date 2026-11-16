@@ -1,0 +1,22 @@
+// Plan stage R0z Z2, fix 2 (a probe of the second review of the stage: c01_nested_after_last_own_ok).
+// clean: as bad, but the clause reads after its last resume.
+// clause clears the object after its last resume. The inner instance of the
+// clause clears it while the outer instance still has a resume to run: the
+// next copy reads a freed cell.
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn run(b: Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let c = choose()
+    let d = choose()
+    print(r)
+    1
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice { fn choose() { resume(true)
+        resume(false)
+        print(b2.v.len()) } } in { print(run(b.clone())) }
+}

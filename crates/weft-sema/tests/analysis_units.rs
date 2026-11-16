@@ -3059,44 +3059,95 @@ mod r0kc2 {
         assert!(!r_bound_at_perform(&f, "pick"));
     }
 
-    /// The scope of the program `src` (its fallback and the reason of its
-    /// pending construct).
-    fn scope_of(src: &str) -> (Option<String>, String) {
-        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
-        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
-        let units = vec![
-            prelude,
-            weft_sema::Unit {
-                name: String::new(),
-                file,
-                is_std: false,
-            },
-        ];
-        let a = weft_sema::analyze(&units, weft_sema::Options::default());
-        let s = a.ir_scope.expect("a scope");
-        (s.fallback, s.pending.map(|p| p.reason).unwrap_or_default())
+    /// The probe `name` of plan stage R0z Z2 (`fixes/r0z2`).
+    fn z2(name: &str) -> String {
+        probe("r0z2", name)
     }
 
-    /// Stage R0k-c2 fix 1: a reference of a clause frame into an `rc` group
-    /// across a `multi` operation of a handler of a caller makes the program
-    /// pending (the clause of the caller can change the group through
-    /// another handle): a reference that the clause takes (`p08`), a
-    /// parameter whose argument is in the group (`n19`), and a reference of
-    /// the frame of the function (`n18`).
+    /// True if variable `v` of `f` points into an `rc` group.
+    fn into_group(f: &FnFacts, v: VarId) -> bool {
+        f.points_into.iter().any(|(w, q)| {
+            *w == v && f.roots[f.place(*q).root.index()].kind == weft_facts::RootKind::Group
+        })
+    }
+
+    /// True if variable `v` of `f` points into a shadow root of an `rc`
+    /// group: a root of kind `Arg` with the name of a group (plan stage R0z
+    /// Z2, fix 1).
+    fn into_group_shadow(f: &FnFacts, v: VarId) -> bool {
+        let groups: Vec<&str> = f
+            .roots
+            .iter()
+            .filter(|r| r.kind == weft_facts::RootKind::Group)
+            .map(|r| r.name.as_str())
+            .collect();
+        f.points_into.iter().any(|(w, q)| {
+            let r = &f.roots[f.place(*q).root.index()];
+            *w == v && r.kind == weft_facts::RootKind::Arg && groups.contains(&r.name.as_str())
+        })
+    }
+
+    /// Plan stage R0z Z2 (the open-old entry `R0k2C-RC-BETWEEN` before the
+    /// stage): a copied frame holds a reference into the `rc` object of
+    /// `main` across the row `choose`, and the clause of `main` clears the
+    /// object through another handle between two `resume`s. The programs
+    /// are in scope (the pending rule `RC_ACROSS_ROW` goes): the variable
+    /// "the copy of the frame" of the call of `run` in `main` points into
+    /// the group of the object (a shadow root of the group, fix 1), which
+    /// the frame of `run` holds a reference into across the row. So the
+    /// change of the clause makes it invalid at the `Copy` node.
     #[test]
-    fn a_clause_reference_into_an_rc_group_across_a_row_is_pending() {
-        for name in [
-            "p08_rc_between_param_bad.wf",
-            "n19_rc_param_arg_bad.wf",
-            "n18_rc_handled_frame_bad.wf",
+    fn the_copy_of_the_frame_of_a_call_points_into_the_rc_groups_that_it_reaches() {
+        for src in [
+            probe("r0kc2c", "p08_rc_between_param_bad.wf"),
+            probe("r0kc2c", "n19_rc_param_arg_bad.wf"),
+            probe("r0kc2c", "n18_rc_handled_frame_bad.wf"),
+            z2("z01_root_between_bad.wf"),
+            z2("z02_root_moved_bad.wf"),
         ] {
-            let (fallback, pending) = scope_of(&probe("r0kc2c", name));
-            assert_eq!(fallback, None, "{name}");
-            assert!(
-                pending.contains(weft_sema::factgen::handlers::RC_ACROSS_ROW),
-                "{name}: {pending}"
-            );
+            let (fallback, pending, f) = facts(&src, "main");
+            assert_eq!((fallback, pending), (None, None), "{src}");
+            let copy: Vec<VarId> = f
+                .vars
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| v.name.starts_with("copy of the frame that `run`"))
+                .map(|(i, _)| VarId(u32::try_from(i).unwrap_or(u32::MAX)))
+                .collect();
+            assert!(copy.iter().any(|&v| into_group_shadow(&f, v)), "{src}");
         }
+    }
+
+    /// Plan stage R0z Z2: a reference through an `Rc` handle of a copied
+    /// frame (`r = &b.v[0]` with `b: Rc<B>` a local of `run`) is valid in
+    /// the copy: the `Copy` node of `choose` binds `r` again, and the shadow
+    /// variable of its group part points into the group and keeps its state
+    /// there.
+    #[test]
+    fn a_reference_through_a_copied_rc_handle_is_bound_again_with_a_shadow_of_its_group() {
+        let (fallback, pending, f) = facts(&z2("z03_root_handle_ok.wf"), "run");
+        assert_eq!((fallback, pending), (None, None));
+        let copies: Vec<NodeId> = f
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.kind.ends_with(" copy") && n.label == "choose")
+            .map(|(i, _)| NodeId(u32::try_from(i).unwrap_or(u32::MAX)))
+            .collect();
+        assert!(!copies.is_empty());
+        let r = vars(&f, "r");
+        assert!(r.iter().any(|v| f
+            .rebound_at
+            .iter()
+            .any(|(w, n)| w == v && copies.contains(n))));
+        let g = vars(&f, &weft_sema::factgen::handlers::rc_shadow_name("r"));
+        assert_eq!(g.len(), 1, "{g:?}");
+        assert!(into_group(&f, g[0]));
+        assert!(!f
+            .rebound_at
+            .iter()
+            .any(|(w, n)| *w == g[0] && copies.contains(n)));
+        assert!(f.uses.iter().any(|(w, _)| *w == g[0]));
     }
 
     /// C8: a node of the clause of `Ask` (inside the handled body of the

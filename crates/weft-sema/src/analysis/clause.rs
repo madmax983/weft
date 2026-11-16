@@ -145,6 +145,20 @@ pub struct Handlers {
     /// `crate::factgen::handlers::project` relates the variables of these
     /// frames that point into a parameter of their clause to the arguments.
     pub clause_copies: Vec<crate::factgen::handlers::ClauseCopy>,
+    /// The variables of copied frames that a `Copy` node binds again,
+    /// although they point into an `rc` group too (plan stage R0z Z2,
+    /// `crate::factgen::handlers::copy_node`), each with the `Copy` node:
+    /// `crate::factgen::handlers::project` gives each one a shadow variable
+    /// that keeps the state of the group part.
+    pub rc_splits: Vec<(weft_facts::VarId, weft_facts::NodeId)>,
+    /// The `rc` groups that the frames hold a reference into at the nodes
+    /// that wait at a `multi` operation of a handler of a caller (part
+    /// `row_refs` of the summary, plan stage R0z Z2, fix 1).
+    pub row_refs: super::summary::RowRefs,
+    /// The variables "the copy of the frame" of the calls for their `rc`
+    /// groups (plan stage R0z Z2, fix 1): `crate::factgen::handlers::project`
+    /// gives them their facts.
+    pub copy_groups: Vec<crate::factgen::handlers::CopyGroups>,
     /// The run nodes whose function values can resume more than once (the
     /// analysis finds them: an applied summary is `multi`, plan stage F16).
     /// They are nodes of `crate::factgen::frames::row_multi` too.

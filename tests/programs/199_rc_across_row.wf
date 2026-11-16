@@ -1,0 +1,216 @@
+// Plan stage R0z Z2: a reference into an `rc` object in a copied frame
+// across a `multi` operation of a handler of a caller. The copies share the
+// object (an `rc` object is not copied). The copy of a frame holds its own
+// copy of each `Rc` handle of the frame, so the end of the handle in the
+// previous run does not end the object.
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+
+fn hold(b: &Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let c = choose()
+    print(r)
+    1
+}
+
+// The clause of the caller clears the object through another handle
+// between its two resumes: the copy of the frame of `hold` reads a freed
+// cell. The copy of the frame of the call points into the group of the
+// object (W0301 at the call).
+fn cleared_between() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice {
+        fn choose() {
+            resume(true)
+            b2.v.clear()
+            resume(false)
+        }
+    } in {
+        print(hold(&b))   //~ W0301 old:
+    }
+}
+
+// The clause of the caller reads the object between its two resumes.
+fn read_between() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice {
+        fn choose() {
+            resume(true)
+            print(b2.v.len())
+            resume(false)
+        }
+    } in {
+        print(hold(&b))
+    }
+}
+
+fn own(b: Rc<B>) -> u64 / Choice, mut(B) {
+    let r = &b.v[0]
+    let c = choose()
+    print(r)
+    1
+}
+
+// `own` owns a handle and holds a reference through it across the row. The
+// handle goes out of scope at the end of the first run, but the copy holds
+// its own copy of it.
+fn own_handle() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice {
+        fn choose() {
+            resume(true)
+            resume(false)
+        }
+    } in {
+        print(own(b))
+    }
+}
+
+// After the read, the first run clears the object through its handle: the
+// second copy reads a freed cell.
+fn own_cleared(b: Rc<B>) -> u64 / Choice, mut(B) {
+    let r = &b.v[0]
+    let c = choose()
+    print(r)   //~ W0301 old:
+    b.v.clear()
+    1
+}
+
+fn own_handle_cleared() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    handle Choice {
+        fn choose() {
+            resume(true)
+            resume(false)
+        }
+    } in {
+        print(own_cleared(b))
+    }
+}
+
+// The clause of the caller clears the object before its first resume: the
+// frame of `own` that waits at the row holds a reference into it (W0301 at
+// the call).
+fn cleared_first() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice {
+        fn choose() {
+            b2.v.clear()
+            resume(true)
+            resume(false)
+        }
+    } in {
+        print(own(b.clone()))   //~ W0301 old:
+    }
+}
+
+// The clause of the caller clears the object after its last resume: no
+// copy of the frame of `hold` runs after the change.
+fn cleared_after_last() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice {
+        fn choose() {
+            resume(true)
+            resume(false)
+            b2.v.clear()
+        }
+    } in {
+        print(hold(&b))
+    }
+}
+
+fn hold_twice(b: &Rc<B>) -> u64 / Choice {
+    let r = &b.v[0]
+    let c = choose()
+    let d = choose()
+    print(r)
+    1
+}
+
+// `hold_twice` waits at the row two times: the clause of the inner run
+// clears the object after its last resume, and then the outer run of the
+// clause resumes a copy of the frame again (W0301 at the call).
+fn cleared_after_last_twice() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice {
+        fn choose() {
+            resume(true)
+            resume(false)
+            b2.v.clear()
+        }
+    } in {
+        print(hold_twice(&b))   //~ W0301 old:
+    }
+}
+
+// The handled body performs `choose` again after the call: the clause of
+// that second run clears the object after its last resume, and then the
+// first run of the clause resumes a copy of the frame of `own` again
+// (W0301 at the call).
+fn perform_after_call() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice {
+        fn choose() {
+            resume(true)
+            resume(false)
+            b2.v.clear()
+        }
+    } in {
+        print(own(b.clone()))   //~ W0301 old:
+        print(choose())
+    }
+}
+
+struct C { v: Vec<u64>, w: Vec<u64> }
+
+fn hold_v(c: &Rc<C>) -> u64 / Choice {
+    let r = &c.v[0]
+    let x = choose()
+    print(r)
+    1
+}
+
+// The clause changes another field of the object between its two resumes:
+// the copy of the frame of `hold_v` holds a reference into the field `v`
+// only.
+fn other_field_between() {
+    let c = Rc.new(C { v: Vec.new(), w: Vec.new() })
+    c.v.push(4)
+    c.w.push(4)
+    let c2 = c.clone()
+    handle Choice {
+        fn choose() {
+            resume(true)
+            c2.w.clear()
+            resume(false)
+        }
+    } in {
+        print(hold_v(&c))
+    }
+}
+
+fn main() {
+    cleared_between()
+    read_between()
+    own_handle()
+    own_handle_cleared()
+    cleared_first()
+    cleared_after_last()
+    cleared_after_last_twice()
+    perform_after_call()
+    other_field_between()
+}

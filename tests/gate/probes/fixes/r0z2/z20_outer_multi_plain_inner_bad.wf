@@ -1,0 +1,23 @@
+// Plan stage R0z Z2, fix 2 (a probe of the second review of the stage: c08_outer_multi_plain_inner_bad).
+// bad (Choice is a plain operation): an outer multi handler `Pick` copies the frames of the inner handler
+// `Choice` and of `run`. The clause of `Choice` clears after its last resume;
+// a later copy of `Pick` reads a freed cell.
+struct B { v: Vec<u64> }
+effect Choice { fn choose() -> bool }
+effect Pick { multi fn pick() -> bool }
+fn run(b: Rc<B>) -> u64 / Choice, Pick {
+    let r = &b.v[0]
+    let c = choose()
+    let d = pick()
+    print(r)
+    1
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Pick { fn pick() { resume(true)
+        resume(false) } } in {
+    handle Choice { fn choose() { resume(true)
+        b2.v.clear() } } in { print(run(b.clone())) } }
+}

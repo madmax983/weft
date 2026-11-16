@@ -1,4 +1,5 @@
 // Issue #56 (stage C1): the bad twin of `rc_ref_closure_ok.wf`. The closure runs a function that performs a `multi` operation whose clause resumes two times (W0503).
+// Plan stage R0z Z2: no W0301 at the call. The copy of the handled body holds its own copy of the handle `rc2`, so `r5` is valid in the copy (the W0301 before the stage came from the end of `rc2` in the first run; the old pipeline gives no W0301).
 effect Pick { multi fn pick() -> bool }
 struct E { hp: u64 }
 linear struct Tx { id: u64 }
@@ -11,7 +12,7 @@ fn main() {
         let tx = Tx { id: 4 }
         let r5 = &rc2.hp
         let g7 = || { print(r5); choose() }
-        apply(g7)   //~ W0301 W0503 W0602
+        apply(g7)   //~ W0503 W0602
         commit(tx)
     }
 }

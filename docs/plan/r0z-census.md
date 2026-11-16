@@ -43,13 +43,23 @@ the counts.
   old pipeline rejects the program, and each closed row is such a row. No program that
   is in scope without Z1 changes.
 
+## Z2 (as built)
+
+- Z2 closed the 8 RC rows of tier 1 (rows 35 to 42; 72 to 64 fallbacks of the census
+  rows; tier 1 85 to 77 fallbacks of 5471 files with the new probes, also with fixes 1
+  to 3 of the reviews of Z2). The five clean twins
+  `b03`, `b07` to `b10` are in scope with no error (their record before R0k-c2 fix 1). The
+  three oldmiss rows `n18`, `n19`, `p08` are rejected in scope (W0301 at the call of `run`
+  in `main`: the copy of the frame of the call points into the group of the object).
+  Tier 2 has no RC row. No other row of the census changes.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
   handler (`OP_KEPT`); `D1` a `resume` of a captured continuation (`KONT_CAPTURED`); `D3`
   a call that runs a clause of a local handler whose operation gives a value back
   (`GIVES_BACK`); `RC` a reference into an `rc` group in a copied frame across a `multi`
-  operation (`RC_ACROSS_ROW`); `NESTED` a function value that a function value of a callee
+  operation (`RC_ACROSS_ROW`; stage Z2 removes the rule); `NESTED` a function value that a function value of a callee
   runs as a task (R0e fix 2); `VT` a function value that runs a value of its arguments as
   a task (`VALUE_TASKS`); `F18` a function value that changes places or holds a
   nonportable value, and that code of a caller can run on another thread (`TASK_RUN`);
@@ -109,14 +119,14 @@ the counts.
 | 32 | `fixes/r0e/rv1_b2_h10.wf` | NESTED | a closure that a callee runs spawns a `once` value two times | W0502 | fault | rejected | yes | Z1-E (closed) |
 | 33 | `fixes/r0e/rv1_b2_h18.wf` | NESTED | a callee runs the closure that spawns a `once` value two times | W0502 | fault | rejected | yes | Z1-E (closed) |
 | 34 | `verify/partb/p/a2_escapes.wf` | C2 | a capability closure as the value of a handled body (via `id`, `wrap`, `pair`, `pop`, ...), no `main` | W0301, 9xW0313 | no `main` | rejected | no | Z1-G (closed) |
-| 35 | `fixes/r0kc2b/b03_rc_between_ok.wf` | RC | rc-across-multi: an `rc` object shared between the copies | clean | no fault | clean | no | Z2 |
-| 36 | `fixes/r0kc2b/b07_abort_in_copy_ok.wf` | RC | rc-across-multi: an abort in a copy | clean | no fault | clean | no | Z2 |
-| 37 | `fixes/r0kc2b/b08_handled_after_ok.wf` | RC | rc-across-multi: the rest of the handled body runs again | clean | no fault | clean | no | Z2 |
-| 38 | `fixes/r0kc2b/b09_post_row_ok.wf` | RC | rc-across-multi: a row after the `resume` | clean | no fault | clean | no | Z2 |
-| 39 | `fixes/r0kc2b/b10_post_row_after_ok.wf` | RC | rc-across-multi: a row after the `resume`, a read after the handler | clean | no fault | clean | no | Z2 |
-| 40 | `fixes/r0kc2c/n18_rc_handled_frame_bad.wf` | RC | rc-across-multi: the handled body of `run` holds a reference into the `rc` across `pick` | clean | fault | oldmiss | no | Z2 |
-| 41 | `fixes/r0kc2c/n19_rc_param_arg_bad.wf` | RC | rc-across-multi: a reference into the `rc` as the argument of `pick` | clean | fault | oldmiss | no | Z2 |
-| 42 | `fixes/r0kc2c/p08_rc_between_param_bad.wf` | RC | rc-across-multi: a reference into the `rc` through a parameter of `run` | clean | fault | oldmiss | no | Z2 |
+| 35 | `fixes/r0kc2b/b03_rc_between_ok.wf` | RC | rc-across-multi: an `rc` object shared between the copies | clean | no fault | clean | no | Z2 (closed) |
+| 36 | `fixes/r0kc2b/b07_abort_in_copy_ok.wf` | RC | rc-across-multi: an abort in a copy | clean | no fault | clean | no | Z2 (closed) |
+| 37 | `fixes/r0kc2b/b08_handled_after_ok.wf` | RC | rc-across-multi: the rest of the handled body runs again | clean | no fault | clean | no | Z2 (closed) |
+| 38 | `fixes/r0kc2b/b09_post_row_ok.wf` | RC | rc-across-multi: a row after the `resume` | clean | no fault | clean | no | Z2 (closed) |
+| 39 | `fixes/r0kc2b/b10_post_row_after_ok.wf` | RC | rc-across-multi: a row after the `resume`, a read after the handler | clean | no fault | clean | no | Z2 (closed) |
+| 40 | `fixes/r0kc2c/n18_rc_handled_frame_bad.wf` | RC | rc-across-multi: the handled body of `run` holds a reference into the `rc` across `pick` | clean | fault | oldmiss | no | Z2 (closed) |
+| 41 | `fixes/r0kc2c/n19_rc_param_arg_bad.wf` | RC | rc-across-multi: a reference into the `rc` as the argument of `pick` | clean | fault | oldmiss | no | Z2 (closed) |
+| 42 | `fixes/r0kc2c/p08_rc_between_param_bad.wf` | RC | rc-across-multi: a reference into the `rc` through a parameter of `run` | clean | fault | oldmiss | no | Z2 (closed) |
 | 43 | `fixes/r0k2/a05_by_value_bad.wf` | D3 | a `ByMove` capture (static copy refused) | W0301 | fault | rejected | yes | Z3 |
 | 44 | `fixes/r0k2/a05_by_value_ok.wf` | D3 | a `ByMove` capture (clean twin) | clean | no fault | clean | yes | Z3 |
 | 45 | `fixes/r0k2/g26_weak_run_in_callee_bad.wf` | C2 | weak guard order: the weak value goes to `apply`, which the analysis runs before the maker | W0301, W0403, W0405 | fault | rejected | yes | Z3 |

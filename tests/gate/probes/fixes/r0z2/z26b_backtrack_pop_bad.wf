@@ -1,0 +1,22 @@
+// Plan stage R0z Z2, fix 2 (a probe of the second review of the stage: c09b_backtrack_pop_bad).
+// bad (a backtracking search): `solve` holds a reference into the trail across
+// two choices. The clause undoes (clears the trail) after both resumes. The
+// inner instance clears while the outer one still has a resume to run.
+struct St { trail: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn solve(s: Rc<St>) -> u64 / Choice {
+    let top = &s.trail[0]
+    let a = choose()
+    let b = choose()
+    print(top)
+    1
+}
+fn main() {
+    let s = Rc.new(St { trail: Vec.new() })
+    s.trail.push(7)
+    let s2 = s.clone()
+    handle Choice { fn choose() {
+        resume(true)
+        resume(false)
+        let u = s2.trail.pop() } } in { print(solve(s.clone())) }
+}

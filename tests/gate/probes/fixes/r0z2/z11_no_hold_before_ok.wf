@@ -1,0 +1,19 @@
+// Plan stage R0z Z2, fix 1 (a probe of the review of the stage: f07_no_hold_before_ok).
+// clean: `run` holds no reference into the object across the row. The
+// clause clears the object through another handle between its two resumes.
+struct B { v: Vec<u64> }
+effect Choice { multi fn choose() -> bool }
+fn run(b: &Rc<B>) -> u64 / Choice {
+    print(b.v.len())
+    let c = choose()
+    print(c)
+    1
+}
+fn main() {
+    let b = Rc.new(B { v: Vec.new() })
+    b.v.push(4)
+    let b2 = b.clone()
+    handle Choice { fn choose() { resume(true)
+        b2.v.clear()
+        resume(false) } } in { print(run(&b)) }
+}
