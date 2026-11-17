@@ -1189,17 +1189,24 @@ pub fn alpha_with(
         // A `Kept` capture whose variable is a variable of the frame of the
         // region (through scope bodies, handled bodies and clauses) is that
         // variable too, as in `apply::made_sigma`: the closure value shares
-        // its cell, so a read of the capture is a read of the variable.
-        if let Some((sb, src)) =
-            crate::analysis::apply::frame_capture_source(p, c, k as usize, body)
-        {
-            let a = alpha_with(p, tys, facts, roots, sb, &src, pointees)?;
-            out.places.extend(a.places);
-            out.ptrs.extend(a.ptrs);
-            out.handles.extend(a.handles);
-            out.places.sort();
-            out.places.dedup();
+        // its cell, so a read of the capture is a read of the variable. The
+        // value can be each closure of the region (plan stage R0z Z3).
+        let mut cs = p.copy_env_closures(body, place.local);
+        if cs.is_empty() {
+            cs.push(c);
         }
+        for ci in cs {
+            if let Some((sb, src)) =
+                crate::analysis::apply::frame_capture_source(p, ci, k as usize, body)
+            {
+                let a = alpha_with(p, tys, facts, roots, sb, &src, pointees)?;
+                out.places.extend(a.places);
+                out.ptrs.extend(a.ptrs);
+                out.handles.extend(a.handles);
+            }
+        }
+        out.places.sort();
+        out.places.dedup();
         (out, At::Ty(t), 1)
     } else {
         // An upvar local that views the environment of a closure

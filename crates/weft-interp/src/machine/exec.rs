@@ -1014,7 +1014,7 @@ impl super::Machine<'_, '_> {
             Op::UnwindValue { var, path } => return self.unwind_value(*var, path),
             Op::UnwindKont(s) => return self.unwind_kont(*s),
             Op::UnwindExit => return self.unwind_exit(),
-            Op::PushHenv { var, code } => {
+            Op::PushHenv { var, code, also } => {
                 let cell = self.cell_of(*var)?;
                 let (made, ran) = match self.heap.slot(cell).map(|s| &s.val) {
                     Ok(Value::Closure(c)) => (Some(c.henv.clone()), Some(c.code)),
@@ -1023,7 +1023,10 @@ impl super::Machine<'_, '_> {
                 // The facts of a copy region hold only for a run of the
                 // copied closure (plan stage R0k-b2): the copy replaces the run
                 // by the body of that closure.
-                if self.facts.is_some() && ran != Some(*code) {
+                if self.facts.is_some()
+                    && ran != Some(*code)
+                    && ran.is_none_or(|c| !also.contains(&c))
+                {
                     return Err(self.fault(format!(
                         "fact oracle (copy): the closure value of a copy region runs the code {}, not the code {code} of the copied closure",
                         ran.map_or_else(|| "of no closure".to_string(), |c| c.to_string())

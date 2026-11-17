@@ -1,0 +1,19 @@
+// Plan stage R0z Z3, part f (an adversarial probe): as f2_two_regs_ok, but
+// the clause of `Log` clears `v` while `r` points into it. The program keeps
+// the fallback or is rejected.
+effect Reg { fn reg(f: fn()) }
+effect Log { fn log(m: u64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Log { fn log(m) { v.clear()
+        resume(()) } } in {
+        let r = &v[0]
+        handle Reg { fn reg(g) { g()
+            resume(()) } } in {
+            reg(|| log(1))
+            reg(|| log(2))
+        }
+        print(r)
+    }
+}

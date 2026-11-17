@@ -1,0 +1,18 @@
+// Plan stage R0z Z3, part g: the clean twin of `fixes/r0k2/g26`. `k` has the
+// weak form, and `main` gives it to `apply`. The call of `apply` gets a copy
+// at the call, so the run of `k` is in `main` and gets a copy of its body.
+// The value that the clause runs does not clear `v`. The program prints 4,
+// then 1.
+effect Run { fn run(g: fn()) }
+fn apply(f: fn(fn()), g: fn()) { f(g) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let k = |g: fn()| run(g)
+        apply(k, || print(4))
+    }
+    print(r)
+}

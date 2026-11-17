@@ -391,6 +391,19 @@ struct Inst<'a> {
     /// The ways of the values of the copy regions of each closure
     /// ([`sole_runs`]).
     chains: BTreeMap<ClosureId, BTreeSet<Link>>,
+    /// The closure of the original program that each closure of a copy
+    /// copies (plan stage R0z Z3). A closure of the original program is not
+    /// in the map: it is its own origin.
+    origin: BTreeMap<ClosureId, ClosureId>,
+    /// The moves of the value of a `once` closure into the local of its copy
+    /// region (plan stage R0z Z3, part d): the body, the block and the index
+    /// of the statement. Such a move runs the closure, so a way of the value
+    /// of another run does not see it as another use.
+    run_moves: BTreeSet<(BodyId, BlockId, usize)>,
+    /// The second sweep of plan stage R0z Z3, part a: a local of the way can
+    /// get more than one value, each a copy of the same closure
+    /// ([`Inst::walk_multi`]).
+    multi: bool,
 }
 
 /// The plan of a copy of a closure body at a run node (stages R0k-a2 and
@@ -422,6 +435,13 @@ struct RunPlan {
     /// The closure that the cell of each such capture holds, if the copy
     /// knows it ([`weft_ir::CopyRegion::env_fns`]).
     env_fns: Vec<(u32, ClosureId)>,
+    /// The other closures that the value can be (plan stage R0z Z3, part a:
+    /// copies of the same closure, [`weft_ir::CopyRegion::also`]).
+    also: Vec<ClosureId>,
+    /// The run moves the value: a `once` closure (plan stage R0z Z3, parts d
+    /// and e). The copy moves the value into a new local first, and the end
+    /// of the region ends it.
+    moves: bool,
 }
 
 /// A step of the way of the value of a run node ([`Walk::chain`]).
@@ -675,7 +695,57 @@ impl Inst<'_> {
             .any
             .get(f)
             .is_some_and(|s| s.iter().any(|&e| env_binds(&self.p, *env, e)));
-        served.then_some(*f)
+        let TermKind::Call { args, .. } = &blk.term.kind else {
+            return None;
+        };
+        (served || self.weak_arg(b, k, args, *env)).then_some(*f)
+    }
+
+    /// True if an argument `args` of a call in body `b` with environment
+    /// `env` is a whole local that holds a closure with the weak form, of an
+    /// effect that `env` binds (plan stage R0z Z3, part g): the closure
+    /// performs an operation with a function value or a reference through a
+    /// captured capability ([`Inst::walk_value`]: one closure on each path).
+    ///
+    /// The guard of the analysis (`analysis::transfer::note_weak_call`)
+    /// refuses such a call: the summary of the callee would run the weak
+    /// summary of the closure where a local handler serves the effect. A copy
+    /// of the callee at the call puts the run of the closure into `b`, where
+    /// it can get a copy of the closure body.
+    fn weak_arg(&self, b: BodyId, k: BlockId, args: &[Operand], env: CapEnvId) -> bool {
+        args.iter().any(|o| {
+            let Some(q) = o.place().filter(|q| q.is_local()) else {
+                return false;
+            };
+            let except = matches!(o, Operand::Move(_)).then_some((k, usize::MAX));
+            let Some(Walk {
+                source: Source::Made { closure, .. },
+                ..
+            }) = self.walk_from(b, q.local, except)
+            else {
+                return false;
+            };
+            let Some(d) = self.p.closures.get(closure.index()) else {
+                return false;
+            };
+            std::iter::once(d.body)
+                .chain(inner_bodies(&self.p, d.body))
+                .filter_map(|x| self.p.body(x))
+                .any(|xb| {
+                    xb.blocks.iter().any(|blk| match &blk.term.kind {
+                        TermKind::Perform {
+                            cap: CapOperand::Local(c),
+                            op,
+                            ..
+                        } => {
+                            weft_ir::print::cap_effect(&self.p, &self.tys, xb, c).is_some_and(|e| {
+                                risky_op(&self.tys, e, *op).0 && env_binds(&self.p, env, e)
+                            })
+                        }
+                        _ => false,
+                    })
+                })
+        })
     }
 
     /// True if the call of `f` at block `k` of body `b` can get a copy.
@@ -741,7 +811,7 @@ impl Inst<'_> {
     fn closure_copy(&self, b: BodyId, k: BlockId) -> Option<RunPlan> {
         let body = self.p.body(b)?;
         let TermKind::Call {
-            callee: Callee::Value(Operand::Copy(callee)),
+            callee: Callee::Value(op @ (Operand::Copy(callee) | Operand::Move(callee))),
             caps: CapArgs::Lexical(_),
             unwind: Some(_),
             ..
@@ -752,7 +822,15 @@ impl Inst<'_> {
         if !callee.is_local() {
             return None;
         }
-        let w = self.walk_value(b, callee.local)?;
+        // A `move` of the value runs a `once` closure (plan stage R0z Z3,
+        // parts d and e): the run is the one read of the value there.
+        let moves = matches!(op, Operand::Move(_));
+        let except = moves.then_some((k, usize::MAX));
+        let (w, also) = match self.walk_from(b, callee.local, except) {
+            Some(w) => (w, Vec::new()),
+            None if self.multi => self.walk_multi((b, k), callee.local)?,
+            None => return None,
+        };
         let (maker, cid, env, made, fcallee) = match &w.source {
             Source::Made {
                 body: m,
@@ -783,10 +861,15 @@ impl Inst<'_> {
             }
         };
         let decl = self.p.closures.get(cid.index())?;
-        if decl.once || (made.is_some() && decl.maker != maker) {
+        // A `once` closure runs with a `move` of its value; the copy moves
+        // the value too (plan stage R0z Z3, part d).
+        if decl.once != moves || (made.is_some() && decl.maker != maker) {
             return None;
         }
-        let mut region = maker != b || made.is_none();
+        if decl.once && !self.once_ok(decl) {
+            return None;
+        }
+        let mut region = maker != b || made.is_none() || !also.is_empty() || moves;
         let cb = self.p.body(decl.body)?;
         let envl = *cb.params.first()?;
         // The captures. A capture that the copy cannot name through a place
@@ -798,11 +881,16 @@ impl Inst<'_> {
         for _ in 0..2 {
             env_caps.clear();
             for (ci, cap) in decl.captures.iter().enumerate() {
+                // A region whose value can be more than one closure names
+                // only a `Cap` capture through a place of the site; it reads
+                // each other capture through the environment local.
                 let direct = match &w.source {
-                    Source::Made { .. } => {
+                    Source::Made { .. }
+                        if also.is_empty() || cap.mode == weft_ir::CaptureMode::Cap =>
+                    {
                         self.direct_capture(cap, region, maker, made, (b, k), &w)
                     }
-                    Source::Call { .. } => false,
+                    _ => false,
                 };
                 if direct {
                     continue;
@@ -901,11 +989,19 @@ impl Inst<'_> {
         {
             return None;
         }
+        if !also.is_empty() && !self.also_ok(decl, env, &also, &env_caps, (b, k), &w) {
+            return None;
+        }
         let size: usize = std::iter::once(decl.body)
             .chain(inner)
             .filter_map(|x| self.p.body(x))
             .map(|x| x.blocks.len())
             .sum();
+        let env_fns = if also.is_empty() {
+            self.env_fns(&w.source, decl, &env_caps, b)
+        } else {
+            Vec::new()
+        };
         (self.added + size <= self.bounds.blocks).then_some(RunPlan {
             closure: cid,
             maker,
@@ -913,9 +1009,236 @@ impl Inst<'_> {
             region,
             callee: fcallee,
             chain: w.chain,
-            env_fns: self.env_fns(&w.source, decl, &env_caps, b),
+            env_fns,
             env_caps,
+            also,
+            moves,
         })
+    }
+
+    /// True if the copy of the body of the `once` closure `decl` can run
+    /// (plan stage R0z Z3, parts d and e): each capture that is not `Cap` is
+    /// `ByMove` or `Kept`, and its type has no linear, `once` or resource
+    /// value. The copy moves the value of the closure into a new local and
+    /// reads such a capture through the environment local: the closure body
+    /// moves it, or copies it.
+    fn once_ok(&self, decl: &weft_ir::ClosureDecl) -> bool {
+        let Some(cb) = self.p.body(decl.body) else {
+            return false;
+        };
+        let Some(&envl) = cb.params.first() else {
+            return false;
+        };
+        let Some(cid) = self
+            .p
+            .closures
+            .iter()
+            .position(|d| d.body == decl.body)
+            .and_then(|i| u32::try_from(i).ok())
+            .map(ClosureId)
+        else {
+            return false;
+        };
+        decl.captures.iter().enumerate().all(|(ci, cap)| {
+            let Ok(field) = u32::try_from(ci) else {
+                return false;
+            };
+            match cap.mode {
+                weft_ir::CaptureMode::Cap => true,
+                weft_ir::CaptureMode::ByMove | weft_ir::CaptureMode::Kept => {
+                    let mut tys = self.tys.clone();
+                    crate::factgen::alpha::capture_ty(&self.p, &mut tys, cid, field).is_some_and(
+                        |t| {
+                            let pr = crate::props::ir_props(&self.tys, t);
+                            !pr.linear && !pr.once && !pr.immovable
+                        },
+                    ) && whole_reads_only(cb, envl, field)
+                }
+                _ => false,
+            }
+        })
+    }
+
+    /// True if each closure of `also` can stand for the closure `decl` at
+    /// the copy region of the run at block `k` of body `b` (plan stage R0z
+    /// Z3, part a; [`Inst::walk_multi`] gives `also`). Each one is a copy of
+    /// the same closure ([`Inst::walk_multi`] checks the origin), it has the
+    /// captures of `decl` (the same modes, and for a `Cap` capture the same
+    /// capability of the site), each capture that is not `Cap` can be read
+    /// through the environment local ([`Inst::env_capture_ok`]), its
+    /// environment sends each effect to the destination of `env`, and the
+    /// extent rule holds for it ([`Inst::extent_ok`]).
+    fn also_ok(
+        &self,
+        decl: &weft_ir::ClosureDecl,
+        env: CapEnvId,
+        also: &[ClosureId],
+        env_caps: &BTreeSet<usize>,
+        (b, k): (BodyId, BlockId),
+        w: &Walk,
+    ) -> bool {
+        let cap_root = |d: &weft_ir::ClosureDecl, c: &weft_ir::Capture| {
+            root_place(&self.p, d.maker, &c.source)
+        };
+        for &a in also {
+            let Some(ad) = self.p.closures.get(a.index()) else {
+                return false;
+            };
+            if ad.once != decl.once || ad.captures.len() != decl.captures.len() {
+                return false;
+            }
+            for (ci, (x, y)) in ad.captures.iter().zip(&decl.captures).enumerate() {
+                if x.mode != y.mode {
+                    return false;
+                }
+                if x.mode == weft_ir::CaptureMode::Cap {
+                    let made = None;
+                    if env_caps.contains(&ci)
+                        || cap_root(ad, x) != cap_root(decl, y)
+                        || !self.direct_capture(x, true, ad.maker, made, (b, k), w)
+                    {
+                        return false;
+                    }
+                } else {
+                    let src = Source::Made {
+                        body: ad.maker,
+                        blk: BlockId(0),
+                        si: 0,
+                        closure: a,
+                    };
+                    if !env_caps.contains(&ci) || !self.env_capture_ok(&src, a, ad, ci) {
+                        return false;
+                    }
+                }
+            }
+            let same = self.tys.effects().iter().all(|d| {
+                super::frames::resolve(&self.p, &self.tys, env, &d.identity, true)
+                    == super::frames::resolve(&self.p, &self.tys, ad.cap_env, &d.identity, true)
+            });
+            if !same || !self.extent_ok(ad.body, ad.cap_env, &ad.captures, ad.maker, &w.bodies) {
+                return false;
+            }
+        }
+        self.one_clause_node(decl, (b, k))
+    }
+
+    /// True if each operation with a function value or a reference that the
+    /// code of the closure `decl` gives to a clause can run that clause at no
+    /// other node than the copy at the run at block `k` of body `b` (plan
+    /// stage R0z Z3, fix 2).
+    ///
+    /// The facts of a clause join the values of its parameters over each node
+    /// that runs it. So with two nodes, the value that a region with more
+    /// closures gives to the clause joins the references of one closure with
+    /// those of another one, and a clause that keeps its parameter gets a
+    /// false W0301 (issue #79; the same false W0301 is in the program with two
+    /// locals). A region whose value can be more than one closure is refused
+    /// then, and the program keeps its fallback. The operation must go through
+    /// a captured capability of a local handler H: an operation through the
+    /// row refuses the region. Another node that can run the clause of H is a
+    /// perform of the operation through the capability of H in any body, and,
+    /// in a body inside the handled body of H, a perform of the effect through
+    /// the row, a call of a callee that can perform the effect, and a call of a
+    /// function value whose row can have the effect (the other runs of the
+    /// local of the way too). A perform through the environment of a closure
+    /// body runs where the closure runs, so the calls count for it.
+    fn one_clause_node(&self, decl: &weft_ir::ClosureDecl, (b, k): (BodyId, BlockId)) -> bool {
+        let Some(cb) = self.p.body(decl.body) else {
+            return false;
+        };
+        for blk in &cb.blocks {
+            let TermKind::Perform { cap, op, .. } = &blk.term.kind else {
+                continue;
+            };
+            let e = match cap {
+                CapOperand::Local(q) => weft_ir::print::cap_effect(&self.p, &self.tys, cb, q),
+                CapOperand::Row(e) => Some(*e),
+            };
+            let Some(e) = e else { return false };
+            if !risky_op(&self.tys, e, *op).0 {
+                continue;
+            }
+            // The capability of the local handler: a `Cap` capture.
+            let CapOperand::Local(q) = cap else {
+                return false;
+            };
+            let Some(Proj::Field(f)) = q.proj.first() else {
+                return false;
+            };
+            let Some(c) = decl
+                .captures
+                .get(f.index())
+                .filter(|c| c.mode == weft_ir::CaptureMode::Cap)
+            else {
+                return false;
+            };
+            let Some((hb, capl)) = root_place(&self.p, decl.maker, &c.source) else {
+                return false;
+            };
+            if self.clause_sites(hb, &capl, (e, *op), (b, k)) > 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The number of the nodes but the run at block `k` of body `b` that can
+    /// run the clause of operation `op` of effect `e` of the local handler
+    /// whose handled body is `hb` and whose capability is `cap`
+    /// ([`Inst::one_clause_node`]).
+    fn clause_sites(
+        &self,
+        hb: BodyId,
+        cap: &Place,
+        (e, op): (EffectId, OpIdx),
+        (b, k): (BodyId, BlockId),
+    ) -> usize {
+        let mut n = 0usize;
+        for (bi, x) in self.p.bodies.iter().enumerate() {
+            let id = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
+            let under = inside(&self.p, id, hb);
+            for (ki, blk) in x.blocks.iter().enumerate() {
+                let kid = BlockId(u32::try_from(ki).unwrap_or(u32::MAX));
+                if (id, kid) == (b, k) {
+                    continue;
+                }
+                match &blk.term.kind {
+                    TermKind::Perform {
+                        cap: CapOperand::Local(q),
+                        op: o,
+                        ..
+                    } => {
+                        let root = root_place(&self.p, id, q);
+                        let to_h = root.as_ref().is_some_and(|(a, pl)| *a == hb && pl == cap);
+                        // A perform through the environment of a closure runs
+                        // where the closure runs: a call of a function value.
+                        let env = root.as_ref().is_some_and(|(a, pl)| {
+                            body_kind_of(&self.p, *a, pl.local) == Some(LocalKind::Env)
+                        });
+                        let same = weft_ir::print::cap_effect(&self.p, &self.tys, x, q) == Some(e);
+                        n += usize::from((to_h && *o == op) || (under && same && !to_h && !env));
+                    }
+                    TermKind::Perform {
+                        cap: CapOperand::Row(e2),
+                        ..
+                    } if under => n += usize::from(*e2 == e),
+                    TermKind::Call { callee, .. } if under => {
+                        let can = match callee {
+                            Callee::Fn(g, _) => {
+                                self.needs.unknown.contains(g)
+                                    || self.needs.row.get(g).is_some_and(|r| r.contains(&e))
+                            }
+                            Callee::Value(o) => {
+                                value_row(&self.tys, x, o).is_none_or(|r| r.contains(&e))
+                            }
+                        };
+                        n += usize::from(can);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        n
     }
 
     /// The closure that the cell of each capture of `env_caps` holds, if one
@@ -1061,7 +1384,7 @@ impl Inst<'_> {
         let Some(cap) = decl.captures.get(ci) else {
             return false;
         };
-        if decl.once || cap.source.has_deref() {
+        if cap.source.has_deref() {
             return false;
         }
         let Some(cb) = self.p.body(decl.body) else {
@@ -1073,7 +1396,14 @@ impl Inst<'_> {
         let Ok(field) = u32::try_from(ci) else {
             return false;
         };
-        if !copy_reads_only(cb, envl, field) {
+        // The body of a `once` closure can move a capture (plan stage R0z
+        // Z3, parts d and e): the run moves the value of the closure.
+        let reads = if decl.once {
+            self.once_ok(decl) && whole_reads_only(cb, envl, field)
+        } else {
+            copy_reads_only(cb, envl, field)
+        };
+        if !reads {
             return false;
         }
         let mut tys = self.tys.clone();
@@ -1123,10 +1453,17 @@ impl Inst<'_> {
     /// A body inside a body on the way must not write, move or borrow the
     /// local there ([`nested_writes`]).
     fn walk_value(&self, b: BodyId, l: LocalId) -> Option<Walk> {
+        self.walk_from(b, l, None)
+    }
+
+    /// [`Inst::walk_value`], where `except` is the one read of the value of
+    /// `l` (a `move` of it at a statement, or at a terminator with the index
+    /// `usize::MAX`).
+    fn walk_from(&self, b: BodyId, l: LocalId, except: Option<(BlockId, usize)>) -> Option<Walk> {
         let (mut x, mut at) = (b, l);
         let mut bodies = vec![b];
         let mut jumped = false;
-        let mut except: Option<(BlockId, usize)> = None;
+        let mut except = except;
         let mut chain: Vec<Link> = Vec::new();
         // The part of the value of `at` that holds the closure (plan stage
         // R0k-b2, form 3): the field and variant steps from the value of
@@ -1147,7 +1484,7 @@ impl Inst<'_> {
                     continue;
                 }
                 LocalKind::Param(i) if matches!(body.kind, BodyKind::Clause(..)) => {
-                    if nested_writes(&self.p, x, at) || !param_kept(body, at) {
+                    if nested_writes_but(&self.p, x, at, &self.run_moves) || !param_kept(body, at) {
                         return None;
                     }
                     let (y, blk, arg) = self.clause_arg(x, i)?;
@@ -1164,7 +1501,7 @@ impl Inst<'_> {
                 }
                 _ => {}
             }
-            if nested_writes(&self.p, x, at) {
+            if nested_writes_but(&self.p, x, at, &self.run_moves) {
                 return None;
             }
             if let Some(blk) = call_value_of(body, at, except) {
@@ -1192,7 +1529,13 @@ impl Inst<'_> {
                     chain,
                 });
             }
-            match single_value(body, at, except)? {
+            let skip: BTreeSet<(BlockId, usize)> = self
+                .run_moves
+                .iter()
+                .filter(|(y, _, _)| *y == x)
+                .map(|&(_, k, i)| (k, i))
+                .collect();
+            match single_value_but(body, at, except, &skip)? {
                 One::Closure(blk, si, c) => {
                     if !path.is_empty() {
                         return None;
@@ -1253,6 +1596,253 @@ impl Inst<'_> {
         None
     }
 
+    /// True if a write at block `wblk` of clause body `cl` gives the local of
+    /// the way its value before the run at block `run` of body `b` (plan stage
+    /// R0z Z3, fix 3; the form of `u13`): one direct perform can run the
+    /// clause ([`Inst::clause_perform`]: no callee, closure or function value
+    /// that performs the effect), it runs in `b` or in a body inside `b`
+    /// whose terminator in `b` comes before the run on each path and not after
+    /// it, and the write comes before each `resume` of the clause. Then the
+    /// write is done when the clause resumes the perform, before the run, and
+    /// the facts of the node that runs the clause have it.
+    fn clause_write_ok(&self, cl: BodyId, wblk: BlockId, (b, run): (BodyId, BlockId)) -> bool {
+        let Some((y, pk, _)) = self.clause_perform(cl) else {
+            return false;
+        };
+        let gate = if y == b {
+            Some(pk)
+        } else if inside(&self.p, y, b) {
+            gateway(&self.p, b, y)
+        } else {
+            None
+        };
+        let (Some(g), Some(bb), Some(cb)) = (gate, self.p.body(b), self.p.body(cl)) else {
+            return false;
+        };
+        let to_run = reach(bb, g, true);
+        let back = reach(bb, run, true);
+        if g == run
+            || !to_run.get(run.index()).copied().unwrap_or(false)
+            || back.get(g.index()).copied().unwrap_or(true)
+        {
+            return false;
+        }
+        // No path from a `resume` reaches the write.
+        cb.blocks.iter().all(|blk| {
+            if !matches!(blk.term.kind, TermKind::Resume { .. }) {
+                return true;
+            }
+            blk.term.kind.successors().iter().all(|&s| {
+                s != wblk
+                    && !reach(cb, s, true)
+                        .get(wblk.index())
+                        .copied()
+                        .unwrap_or(true)
+            })
+        })
+    }
+
+    /// The ways of the values of local `l` of body `b` (plan stage R0z Z3,
+    /// part a), if the local (through upvar locals: the cell of a local of a
+    /// body around `b`) gets more than one value and each value is a closure
+    /// that is a copy of the same closure of a function with no type
+    /// parameters ([`Inst::origin`]). Each write is a whole `move` or `copy`
+    /// of a local (or a make of the closure), in the body that owns the
+    /// local or in a body inside it, and its way is exact
+    /// ([`Inst::walk_from`]). No statement or terminator moves, borrows or
+    /// writes the cell in another way, but a `move` that runs it (the run of
+    /// a `once` closure).
+    ///
+    /// The result is the way of the first value, with the bodies and the
+    /// steps of each way, and the other closures. `None` if the values are
+    /// one closure.
+    fn walk_multi(
+        &self,
+        (b, run): (BodyId, BlockId),
+        l: LocalId,
+    ) -> Option<(Walk, Vec<ClosureId>)> {
+        let (mut o, mut lo) = (b, l);
+        let mut bodies = vec![b];
+        let mut chain = vec![Link::Local(b, l)];
+        for _ in 0..32 {
+            let body = self.p.body(o)?;
+            match body.local_kind(lo)? {
+                LocalKind::Upvar(s) if body.kind.has_upvars() => {
+                    o = body.parent?;
+                    lo = s;
+                    bodies.push(o);
+                    chain.push(Link::Local(o, lo));
+                }
+                LocalKind::User | LocalKind::Temp(_) => break,
+                _ => return None,
+            }
+        }
+        if !matches!(
+            body_kind_of(&self.p, o, lo),
+            Some(LocalKind::User | LocalKind::Temp(_))
+        ) {
+            return None;
+        }
+        // The writes of the cell: (body, block, statement, the value).
+        let mut writes: Vec<(BodyId, BlockId, usize)> = Vec::new();
+        for x in std::iter::once(o).chain(inner_bodies(&self.p, o)) {
+            let xb = self.p.body(x)?;
+            let cell = |q: &Place| {
+                if x == o {
+                    q.local == lo
+                } else {
+                    cell_of(&self.p, x, q) == Some((o, lo))
+                }
+            };
+            let mut accepted = 0usize;
+            for (bi, blk) in xb.blocks.iter().enumerate() {
+                let id = BlockId(u32::try_from(bi).ok()?);
+                for (si, st) in blk.stmts.iter().enumerate() {
+                    if self.run_moves.contains(&(x, id, si)) {
+                        continue;
+                    }
+                    if let StmtKind::Assign(q, rv) = &st.kind {
+                        if q.proj.is_empty() && cell(q) {
+                            let ok = match rv {
+                                Rvalue::Use(Operand::Move(t) | Operand::Copy(t)) => {
+                                    t.is_local() && !cell(t)
+                                }
+                                Rvalue::Aggregate(weft_ir::AggKind::Closure(_), _) => true,
+                                _ => false,
+                            };
+                            if !ok {
+                                return None;
+                            }
+                            writes.push((x, id, si));
+                            accepted += 1;
+                        }
+                    }
+                }
+                if x == o && runs_moved(&blk.term.kind, lo) {
+                    accepted += 1;
+                }
+            }
+            // Each other write, move or borrow of the cell refuses the way.
+            let named = if x == o {
+                let mut n = 0usize;
+                for (bi, blk) in xb.blocks.iter().enumerate() {
+                    let id = BlockId(u32::try_from(bi).ok()?);
+                    for (si, st) in blk.stmts.iter().enumerate() {
+                        if self.run_moves.contains(&(x, id, si)) {
+                            continue;
+                        }
+                        n += usize::from(stmt_writes(st, lo).0 || stmt_borrows_or_moves(st, lo));
+                    }
+                    if blk.term.kind.dest().is_some_and(|d| d.local == lo) {
+                        return None;
+                    }
+                    n += usize::from(term_moves(&blk.term.kind, lo));
+                }
+                n
+            } else {
+                body_writes_but(xb, x, &self.run_moves)
+                    .iter()
+                    .filter(|q| cell(q))
+                    .count()
+            };
+            if named != accepted {
+                return None;
+            }
+        }
+        if writes.len() < 2 {
+            return None;
+        }
+        // A write in a clause (plan stage R0z Z3, fix 3): only in the form of
+        // `u13` (`Inst::clause_write_ok`). Else the facts give the cell a weak
+        // update at the node that runs the clause, and the copy would join the
+        // value before the write with the value of the write.
+        for &(x, blk, _) in &writes {
+            let mut at = x;
+            for _ in 0..=self.p.bodies.len() {
+                if at == o {
+                    break;
+                }
+                let xb = self.p.body(at)?;
+                if matches!(xb.kind, BodyKind::Clause(..))
+                    && (at != x || !self.clause_write_ok(x, blk, (b, run)))
+                {
+                    return None;
+                }
+                at = xb.parent?;
+            }
+        }
+        // The way of each value.
+        let mut ways: Vec<Walk> = Vec::new();
+        for &(x, blk, si) in &writes {
+            let st = self.p.body(x)?.block(blk)?.stmts.get(si)?;
+            let StmtKind::Assign(_, rv) = &st.kind else {
+                return None;
+            };
+            let w = match rv {
+                Rvalue::Aggregate(weft_ir::AggKind::Closure(c), _) => Walk {
+                    source: Source::Made {
+                        body: x,
+                        blk,
+                        si,
+                        closure: *c,
+                    },
+                    bodies: vec![x],
+                    jumped: false,
+                    chain: Vec::new(),
+                },
+                Rvalue::Use(Operand::Move(t)) => self.walk_from(x, t.local, Some((blk, si)))?,
+                Rvalue::Use(Operand::Copy(t)) => self.walk_from(x, t.local, None)?,
+                _ => return None,
+            };
+            if !matches!(w.source, Source::Made { .. }) {
+                return None;
+            }
+            ways.push(w);
+        }
+        // Each value is a copy of the same closure, of a function with no
+        // type parameters: the copies have the same code and the same types.
+        let origin = |c: ClosureId| self.origin.get(&c).copied().unwrap_or(c);
+        let closure_of = |w: &Walk| match w.source {
+            Source::Made { closure, .. } => Some(closure),
+            Source::Call { .. } => None,
+        };
+        let first = ways.first().and_then(closure_of)?;
+        let o0 = origin(first);
+        let od = self.orig.closures.get(o0.index())?;
+        let generic = fn_of(self.orig, od.body)
+            .and_then(|f| self.orig.fns.get(f.index()))
+            .is_none_or(|d| d.generics != 0);
+        if generic {
+            return None;
+        }
+        let mut also: Vec<ClosureId> = Vec::new();
+        for w in &ways {
+            let c = closure_of(w)?;
+            if origin(c) != o0 {
+                return None;
+            }
+            if c != first && !also.contains(&c) {
+                also.push(c);
+            }
+        }
+        if also.is_empty() {
+            return None;
+        }
+        let mut main = ways.first()?.clone();
+        main.bodies = bodies;
+        main.chain = chain;
+        for w in &ways {
+            main.jumped |= w.jumped;
+            for &x in &w.bodies {
+                if !main.bodies.contains(&x) {
+                    main.bodies.push(x);
+                }
+            }
+            main.chain.extend(w.chain.iter().copied());
+        }
+        Some((main, also))
+    }
+
     /// The body, the block and the argument `i` of the one perform that can run the
     /// clause body `cl` (stage R0k-b1'): a perform of the operation of the
     /// clause through the capability of its handler, in the handled body or
@@ -1262,13 +1852,20 @@ impl Inst<'_> {
     /// performs the effect through its row where the handler serves it, a
     /// task.
     fn clause_arg(&self, cl: BodyId, i: u32) -> Option<(BodyId, BlockId, Operand)> {
+        let (y, k, args) = self.clause_perform(cl)?;
+        Some((y, k, args.get(i as usize)?.clone()))
+    }
+
+    /// The body, the block and the arguments of the one perform that can run
+    /// the clause body `cl` ([`Inst::clause_arg`]).
+    fn clause_perform(&self, cl: BodyId) -> Option<(BodyId, BlockId, Vec<Operand>)> {
         let BodyKind::Clause(h, op) = self.p.body(cl)?.kind else {
             return None;
         };
         let hd = self.p.handlers.get(h.index())?;
         let hb = self.p.body(hd.handled)?;
         let (eff, cap) = *hb.caps.first()?;
-        let mut found: Option<(BodyId, BlockId, Operand)> = None;
+        let mut found: Option<(BodyId, BlockId, Vec<Operand>)> = None;
         for (bi, x) in self.p.bodies.iter().enumerate() {
             let id = BodyId(u32::try_from(bi).ok()?);
             let under = inside(&self.p, id, hd.handled);
@@ -1301,7 +1898,7 @@ impl Inst<'_> {
                             return None;
                         }
                         let k = BlockId(u32::try_from(ki).ok()?);
-                        found = Some((id, k, args.get(i as usize)?.clone()));
+                        found = Some((id, k, args.clone()));
                     }
                     // A callee or a function value that the handler serves.
                     TermKind::Call {
@@ -1998,8 +2595,10 @@ impl Inst<'_> {
         for (ci, d) in orig.closures.iter().enumerate() {
             if c.bodies.contains_key(&d.body) {
                 let id = ClosureId(u32::try_from(self.p.closures.len()).map_err(|_| NoCopy)?);
-                c.closures
-                    .insert(ClosureId(u32::try_from(ci).map_err(|_| NoCopy)?), id);
+                let old = ClosureId(u32::try_from(ci).map_err(|_| NoCopy)?);
+                c.closures.insert(old, id);
+                let first = self.origin.get(&old).copied().unwrap_or(old);
+                self.origin.insert(id, first);
                 self.p.closures.push(d.clone());
             }
         }
@@ -2096,13 +2695,49 @@ impl Inst<'_> {
             .as_ref()
             .map(|r| r.env_caps.clone())
             .unwrap_or_default();
+        // The callee of the run, and for a `once` closure the new local that
+        // the copy moves the value into (plan stage R0z Z3, part d): the
+        // region reads the value there, and its end ends the value.
+        let callee_place = match &call.kind {
+            TermKind::Call {
+                callee: Callee::Value(Operand::Copy(q) | Operand::Move(q)),
+                ..
+            } => Some(q.clone()),
+            _ => None,
+        };
+        let moved_to: Option<LocalId> = match &plan {
+            Some(r) if r.moves => {
+                if !r.region {
+                    return Err(NoCopy);
+                }
+                let q = callee_place.clone().filter(Place::is_local).ok_or(NoCopy)?;
+                let ty = self
+                    .p
+                    .body(b)
+                    .and_then(|x| x.local(q.local))
+                    .ok_or(NoCopy)?
+                    .ty;
+                let mut props = crate::props::ir_props(&self.tys, ty);
+                props.copy = false;
+                props.once = true;
+                let id = LocalId(base + u32::try_from(new_locals.len()).map_err(|_| NoCopy)?);
+                new_locals.push(LocalDecl {
+                    ty,
+                    kind: LocalKind::Temp(TempKind::Value),
+                    name: None,
+                    props,
+                    in_place: false,
+                    origin: call.origin,
+                });
+                Some(id)
+            }
+            _ => None,
+        };
         let copy_env: Option<LocalId> = if let (Some(r), false) = (&plan, env_caps.is_empty()) {
             if !r.region {
                 return Err(NoCopy);
             }
-            let q = call_value_place(&call.kind)
-                .filter(Place::is_local)
-                .ok_or(NoCopy)?;
+            let q = callee_place.clone().filter(Place::is_local).ok_or(NoCopy)?;
             let ty = self
                 .p
                 .body(b)
@@ -2288,7 +2923,33 @@ impl Inst<'_> {
         let mut entry_stmts: Vec<Stmt> = Vec::new();
         // The entry of a copy region reads the closure value first: the
         // interpreter takes its handlers there (`docs/ir.md` 6.1).
-        let value = call_value_place(&call.kind);
+        let value = match moved_to {
+            Some(t) => Some(Place::local(t)),
+            None => call_value_place(&call.kind),
+        };
+        // The end of a value that the copy moved (plan stage R0z Z3, part
+        // d): at a normal exit, and on the cleanup path.
+        let moved_end: Vec<Stmt> = moved_to
+            .map(|t| Stmt {
+                kind: StmtKind::Dead(t),
+                origin,
+            })
+            .into_iter()
+            .collect();
+        let moved_unwind: Vec<Stmt> = moved_to
+            .map(|t| {
+                vec![
+                    Stmt {
+                        kind: StmtKind::UnwindValue(Place::local(t), weft_ir::UnwindAction::Drop),
+                        origin,
+                    },
+                    Stmt {
+                        kind: StmtKind::Dead(t),
+                        origin,
+                    },
+                ]
+            })
+            .unwrap_or_default();
         if let (Some(_), Some(q)) = (region, &value) {
             entry_stmts.push(Stmt {
                 kind: StmtKind::Mention(q.clone()),
@@ -2374,12 +3035,14 @@ impl Inst<'_> {
                             origin: blk.term.origin,
                         });
                         stmts.extend(ends.iter().cloned());
+                        stmts.extend(moved_end.iter().cloned());
                         TermKind::Goto(*n)
                     }
                     None => TermKind::Unreachable,
                 },
                 TermKind::UnwindExit => {
                     stmts.extend(ends.iter().cloned());
+                    stmts.extend(moved_unwind.iter().cloned());
                     TermKind::Goto(unwind)
                 }
                 t => self.map_term(&mut c, b, t, &pm, &fb, (call_env, None))?,
@@ -2467,6 +3130,19 @@ impl Inst<'_> {
         let entry = BlockId(c.block_base);
         if let Some(blk) = site.blocks.get_mut(k.index()) {
             blk.term.kind = TermKind::Goto(entry);
+            // The copy of a `once` closure moves the value first (plan stage
+            // R0z Z3, part d), as the run did.
+            if let (Some(t), Some(q)) = (moved_to, &callee_place) {
+                blk.stmts.push(Stmt {
+                    kind: StmtKind::Live(t),
+                    origin,
+                });
+                self.run_moves.insert((b, k, blk.stmts.len()));
+                blk.stmts.push(Stmt {
+                    kind: StmtKind::Assign(Place::local(t), Rvalue::Use(Operand::Move(q.clone()))),
+                    origin,
+                });
+            }
         }
         site.blocks.extend(blocks);
         // A copy at a call inside a copy region is a part of the region: its
@@ -2492,13 +3168,22 @@ impl Inst<'_> {
                 sole: false,
                 env_local: copy_env,
                 env_fns: r.env_fns.clone(),
+                also: r.also.clone(),
             });
-            self.chains
-                .entry(r.closure)
-                .or_default()
-                .extend(r.chain.iter().copied());
+            // The way of a value that the copy moves goes through the new
+            // local.
+            let mut chain = r.chain.clone();
+            if let Some(t) = moved_to {
+                chain.push(Link::Local(b, t));
+            }
+            for c in std::iter::once(r.closure).chain(r.also.iter().copied()) {
+                self.chains
+                    .entry(c)
+                    .or_default()
+                    .extend(chain.iter().copied());
+                self.copied.insert(c);
+            }
             self.regions += 1;
-            self.copied.insert(r.closure);
         }
         for i in 0..nblocks {
             let id = BlockId(c.block_base + u32::try_from(i).unwrap_or(u32::MAX));
@@ -2756,7 +3441,29 @@ fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instant
         regions: 0,
         copied: BTreeSet::new(),
         chains: BTreeMap::new(),
+        origin: BTreeMap::new(),
+        run_moves: BTreeSet::new(),
+        multi: false,
     };
+    sweep(&mut inst);
+    // The second sweep (plan stage R0z Z3, part a): the runs whose value can
+    // be one of more copies of the same closure. The first sweep makes the
+    // copies of the makers first.
+    if !inst.kont {
+        inst.multi = true;
+        sweep(&mut inst);
+        inst.multi = false;
+    }
+    finish_inst(inst, orig, built)
+}
+
+/// One sweep of the copies over the bodies and the blocks of the program of
+/// `inst`. In the second sweep ([`Inst::multi`]) a block that is in the
+/// program at its start gets only a copy of a closure body whose value can
+/// be one of more copies of the same closure; a block that a copy adds gets
+/// each kind of copy.
+fn sweep(inst: &mut Inst<'_>) {
+    let sizes: Vec<usize> = inst.p.bodies.iter().map(|x| x.blocks.len()).collect();
     let mut bi = 0usize;
     while bi < inst.p.bodies.len() {
         let b = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
@@ -2764,7 +3471,14 @@ fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instant
         while k < inst.p.bodies.get(bi).map_or(0, |x| x.blocks.len()) {
             let blk = BlockId(u32::try_from(k).unwrap_or(u32::MAX));
             let mut plan: Option<KontPlan> = None;
-            let what = if inst.kont {
+            let old = inst.multi && sizes.get(bi).is_some_and(|&n| k < n);
+            let what = if old {
+                // The first sweep tried each kind of copy at this block.
+                let run = inst.closure_copy(b, blk).filter(|x| !x.also.is_empty());
+                let w = run.as_ref().map(|x| What::Closure(x.closure));
+                inst.run_plan = run;
+                w
+            } else if inst.kont {
                 match inst.kont_wants(b, blk) {
                     Some(f) if inst.can_copy(b, blk, f) => Some(What::Fn(f)),
                     Some(_) => None,
@@ -2794,7 +3508,13 @@ fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instant
                             inst.closure_calls,
                             inst.regions,
                         ),
-                        (inst.added, inst.copied.clone(), inst.chains.clone()),
+                        (
+                            inst.added,
+                            inst.copied.clone(),
+                            inst.chains.clone(),
+                            inst.origin.clone(),
+                            inst.run_moves.clone(),
+                        ),
                         inst.calls,
                         inst.blk_chain.clone(),
                         inst.body_chain.clone(),
@@ -2819,6 +3539,8 @@ fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instant
                         inst.regions = save.0 .3;
                         inst.copied = save.1 .1;
                         inst.chains = save.1 .2;
+                        inst.origin = save.1 .3;
+                        inst.run_moves = save.1 .4;
                         inst.added = save.1 .0;
                         inst.calls = save.2;
                         inst.blk_chain = save.3;
@@ -2833,6 +3555,11 @@ fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instant
         }
         bi += 1;
     }
+}
+
+/// The result of the sweeps of `inst` over the program of `built`
+/// ([`instantiate_mode`]).
+fn finish_inst(mut inst: Inst<'_>, orig: &Program, built: &Built) -> Option<Instantiated> {
     if inst.calls + inst.closure_calls == 0 {
         return None;
     }
@@ -2840,11 +3567,13 @@ fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instant
     let sole: BTreeSet<ClosureId> = inst
         .chains
         .iter()
-        .filter(|(_, ch)| sole_runs(&inst.p, ch))
+        .filter(|(_, ch)| sole_runs(&inst.p, &inst.tys, ch))
         .map(|(c, _)| *c)
         .collect();
     for r in &mut inst.p.regions {
-        r.sole = sole.contains(&r.closure);
+        // A region whose value can be more than one closure (plan stage R0z
+        // Z3) does not make its closure sole.
+        r.sole = sole.contains(&r.closure) && r.also.is_empty();
     }
     let tys = &inst.tys;
     let before = weft_ir::verify::verify_program(orig, &built.tys).len();
@@ -3077,6 +3806,18 @@ fn stmt_borrows_or_moves(st: &Stmt, l: LocalId) -> bool {
         StmtKind::Print(ops) => ops.iter().any(moved),
         _ => false,
     }
+}
+
+/// True if terminator `t` runs the `once` closure in local `l` (plan stage
+/// R0z Z3, part d): a call of `move l`, whole, that moves `l` in no other
+/// operand. The move ends the value; it gives the cell no other value.
+fn runs_moved(t: &TermKind, l: LocalId) -> bool {
+    let moved = |o: &Operand| matches!(o, Operand::Move(q) if q.local == l);
+    matches!(t, TermKind::Call {
+        callee: Callee::Value(Operand::Move(q)),
+        args,
+        ..
+    } if *q == Place::local(l) && !args.iter().any(moved))
 }
 
 /// True if terminator `t` moves local `l` (or a part of it).
@@ -3436,6 +4177,18 @@ enum One {
 /// of `usize::MAX` is the terminator of the block: a perform that moves `l`
 /// into the parameter of a clause.
 fn single_value(body: &Body, l: LocalId, except: Option<(BlockId, usize)>) -> Option<One> {
+    single_value_but(body, l, except, &BTreeSet::new())
+}
+
+/// [`single_value`], but the statements of `skip` (the block and the index):
+/// the moves of the value of a `once` closure into the local of its copy
+/// region (plan stage R0z Z3, part d).
+fn single_value_but(
+    body: &Body,
+    l: LocalId,
+    except: Option<(BlockId, usize)>,
+    skip: &BTreeSet<(BlockId, usize)>,
+) -> Option<One> {
     if !matches!(
         body.local_kind(l)?,
         LocalKind::User | LocalKind::Temp(_) | LocalKind::Return
@@ -3447,6 +4200,9 @@ fn single_value(body: &Body, l: LocalId, except: Option<(BlockId, usize)>) -> Op
     for (bi, blk) in body.blocks.iter().enumerate() {
         let id = BlockId(u32::try_from(bi).ok()?);
         for (si, st) in blk.stmts.iter().enumerate() {
+            if skip.contains(&(id, si)) {
+                continue;
+            }
             let (w, made) = stmt_writes(st, l);
             if w {
                 writes += 1;
@@ -3486,7 +4242,9 @@ fn single_value(body: &Body, l: LocalId, except: Option<(BlockId, usize)>) -> Op
             }
         }
         if blk.term.kind.dest().is_some_and(|d| d.local == l)
-            || (term_moves(&blk.term.kind, l) && except != Some((id, usize::MAX)))
+            || (term_moves(&blk.term.kind, l)
+                && except != Some((id, usize::MAX))
+                && !runs_moved(&blk.term.kind, l))
         {
             return None;
         }
@@ -3582,19 +4340,28 @@ pub(crate) fn whole_cell_of(p: &Program, x: BodyId, q: &Place) -> Option<(BodyId
     None
 }
 
-/// The places that body `b` writes, moves or borrows: the targets of the
-/// assignments and of the terminators, the places of `drop`, `uninit` and
-/// `consume`, each `move` operand, each borrow, and the place of an
-/// iterator over elements.
-fn body_writes(b: &Body) -> Vec<Place> {
+/// The places that body `b` (with the id `id`) writes, moves or borrows:
+/// the targets of the assignments and of the terminators, the places of
+/// `drop`, `uninit` and `consume`, each `move` operand but the whole callee
+/// of a call, each borrow, and the place of an iterator over elements.
+///
+/// The statements of `skip` are not read: the moves of the value of a
+/// `once` closure into the local of its copy region (plan stage R0z Z3,
+/// part d). Such a move, and a call of a whole `move` callee, runs the
+/// closure; it gives the cell no other value.
+fn body_writes_but(b: &Body, id: BodyId, skip: &BTreeSet<(BodyId, BlockId, usize)>) -> Vec<Place> {
     let mut out = Vec::new();
     let mv = |o: &Operand, out: &mut Vec<Place>| {
         if let Operand::Move(q) = o {
             out.push(q.clone());
         }
     };
-    for blk in &b.blocks {
-        for st in &blk.stmts {
+    for (bi, blk) in b.blocks.iter().enumerate() {
+        let bid = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+        for (si, st) in blk.stmts.iter().enumerate() {
+            if skip.contains(&(id, bid, si)) {
+                continue;
+            }
             match &st.kind {
                 StmtKind::Assign(q, rv) => {
                     out.push(q.clone());
@@ -3633,8 +4400,12 @@ fn body_writes(b: &Body) -> Vec<Place> {
         }
         match t {
             TermKind::Call { callee, args, .. } => {
+                // The run of a `once` closure moves a whole value: it gives
+                // the cell no other value (plan stage R0z Z3, part d).
                 if let Callee::Value(o) = callee {
-                    mv(o, &mut out);
+                    if o.place().is_none_or(|q| !q.proj.is_empty()) {
+                        mv(o, &mut out);
+                    }
                 }
                 for o in args {
                     mv(o, &mut out);
@@ -3726,6 +4497,23 @@ fn copy_reads_only(b: &Body, l: LocalId, k: u32) -> bool {
     named == copies
 }
 
+/// True if body `b` names field `k` of local `l` only as a whole operand,
+/// `copy l.k` or `move l.k` (plan stage R0z Z3, parts d and e): no write,
+/// no borrow, and no place below the field.
+fn whole_reads_only(b: &Body, l: LocalId, k: u32) -> bool {
+    let whole = Place {
+        local: l,
+        proj: vec![Proj::Field(weft_ir::FieldIdx(k))],
+    };
+    let at_k = |q: &Place| q.local == l && q.proj.first() == whole.proj.first();
+    let named = body_places(b).iter().filter(|q| at_k(q)).count();
+    let reads = body_operands(b)
+        .iter()
+        .filter(|o| matches!(o, Operand::Copy(q) | Operand::Move(q) if *q == whole))
+        .count();
+    named == reads
+}
+
 /// True if the cell of local `l` of body `a` keeps one value (plan stage
 /// R0k-b2): `l` is a variable, a parameter or a temporary with at most one
 /// write, no statement or terminator moves or borrows it, and no body inside
@@ -3765,9 +4553,19 @@ fn cell_constant(p: &Program, a: BodyId, l: LocalId) -> bool {
 /// inside them) writes, moves or borrows the cell of local `l` of `b`,
 /// through an upvar local or a capture of a closure (stage R0k-a2 fix).
 fn nested_writes(p: &Program, b: BodyId, l: LocalId) -> bool {
+    nested_writes_but(p, b, l, &BTreeSet::new())
+}
+
+/// [`nested_writes`], but the statements of `skip` ([`body_writes_but`]).
+fn nested_writes_but(
+    p: &Program,
+    b: BodyId,
+    l: LocalId,
+    skip: &BTreeSet<(BodyId, BlockId, usize)>,
+) -> bool {
     inner_bodies(p, b).into_iter().any(|x| {
         p.body(x).is_some_and(|xb| {
-            body_writes(xb)
+            body_writes_but(xb, x, skip)
                 .iter()
                 .any(|q| cell_of(p, x, q) == Some((b, l)))
         })
@@ -3782,7 +4580,10 @@ fn nested_writes(p: &Program, b: BodyId, l: LocalId) -> bool {
 /// cell, or a value of a cleanup chain. The run nodes are copies now, so no
 /// terminator runs the value; another use (an argument, a field, a capture)
 /// can give it to code that runs it.
-fn sole_runs(p: &Program, chain: &BTreeSet<Link>) -> bool {
+///
+/// A place of a local of a way whose type holds no function value (a part
+/// of an aggregate, as `b.n`) reads no closure (plan stage R0z Z3, part c).
+fn sole_runs(p: &Program, tys: &TyTable, chain: &BTreeSet<Link>) -> bool {
     let locals: BTreeSet<(BodyId, LocalId)> = chain
         .iter()
         .filter_map(|x| match x {
@@ -3811,7 +4612,10 @@ fn sole_runs(p: &Program, chain: &BTreeSet<Link>) -> bool {
             break;
         }
     }
-    let named = |b: BodyId, q: &Place| names.contains(&(b, q.local));
+    let mut tys = tys.clone();
+    let mut named = |b: BodyId, q: &Place| {
+        names.contains(&(b, q.local)) && (q.proj.is_empty() || fn_part(p, &mut tys, b, q))
+    };
     for (bi, b) in p.bodies.iter().enumerate() {
         let id = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
         for (ki, blk) in b.blocks.iter().enumerate() {
@@ -3864,6 +4668,13 @@ fn sole_runs(p: &Program, chain: &BTreeSet<Link>) -> bool {
         }
     }
     true
+}
+
+/// True if place `q` of body `b` can hold a function value: its type holds
+/// one, names a type parameter, or is not known (plan stage R0z Z3, part c).
+fn fn_part(p: &Program, tys: &mut TyTable, b: BodyId, q: &Place) -> bool {
+    crate::factgen::alpha::place_ty(p, tys, b, q)
+        .is_none_or(|t| tys.mentions_param(t) || crate::props::ir_has_fns(tys, t))
 }
 
 /// Place `q` of body `x` in the terms of the body that owns its local: each

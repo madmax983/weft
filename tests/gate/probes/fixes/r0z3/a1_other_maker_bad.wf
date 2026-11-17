@@ -1,0 +1,26 @@
+// Plan stage R0z Z3, part a (an adversarial probe): `c` gets a closure of
+// `mk`, then a scope body gives it a closure of `mk2`, another function.
+// The two values are not copies of the same closure, so the run gets no
+// copy (the program keeps the fallback or is rejected). The second closure
+// keeps `r`, the clause keeps the value, and `main` runs it after the clear
+// of `v`.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn mk2(h: fn()) -> fn() / Run { || run(h) }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let c = mk(|| print(0))
+        scope { s => c = mk2(|| print(r)) }
+        c()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

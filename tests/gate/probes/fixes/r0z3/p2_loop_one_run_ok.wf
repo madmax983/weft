@@ -1,0 +1,27 @@
+// Plan stage R0z Z3, fix 2: `c` gets a new closure of `mk` (it keeps `q`) in each turn
+// of a loop before its one run there. The copy reads the captures of the closure that
+// the state has at the run. The clause keeps the value, and `main` runs it after the
+// clear of `a`: no error. The program prints 2.
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn main() {
+    let a = Vec.new()
+    a.push(1)
+    let b = Vec.new()
+    b.push(2)
+    let keep = || print(0)
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in {
+        let r = &a[0]
+        let q = &b[0]
+        let c = mk(|| print(r))
+        let i = 0
+        while i < 2 {
+            c = mk(|| print(q))
+            c()
+            i = i + 1
+        }
+    }
+    a.clear()
+    keep()
+}

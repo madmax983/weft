@@ -726,7 +726,14 @@ impl<'a> BodyCx<'a> {
             else {
                 return bad(format!("a copy region names no closure c{}", r.closure.0));
             };
-            self.emit(Op::PushHenv { var, code });
+            let mut also = Vec::with_capacity(r.also.len());
+            for c in &r.also {
+                let Some(d) = self.p.closures.get(c.index()) else {
+                    return bad(format!("a copy region names no closure c{}", c.0));
+                };
+                also.push(d.body.index());
+            }
+            self.emit(Op::PushHenv { var, code, also });
         }
         for (i, s) in block.stmts.iter().enumerate() {
             self.at(b, i, s.origin);

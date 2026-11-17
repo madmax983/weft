@@ -1,0 +1,114 @@
+// Plan stage R0z Z3: the small steps of the way of a closure value to its
+// run. Each run gets a copy of the closure body (a copy region), so the
+// perform in the closure goes to the clause of the local handler.
+struct H { f: fn() }
+struct Bx { f: fn() / Run, n: u64 }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+effect Get { fn get() -> fn() }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn mk_box(h: fn()) -> Bx / Run { Bx { f: || run(h), n: 3 } }
+fn eat(w: Vec<u64>) { print(w.len()) }
+fn apply(f: fn(fn()), g: fn()) { f(g) }
+
+// Part a: a scope body gives `c` a second closure of `mk`. The copy reads
+// the captures of the actual value. The clause keeps the second one, which
+// keeps `r`, and the function runs it after the clear of `v`.
+fn second_write() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let c = mk(|| print(0))
+        scope { s => c = mk(|| print(r)) }
+        c()
+    }
+    v.clear()
+    let x = h.f   //~ W0301 old:
+    x()
+}
+
+// Part a, the clean form: the kept value runs before the clear.
+fn second_write_ok() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let c = mk(|| print(0))
+        scope { s => c = mk(|| print(r)) }
+        c()
+    }
+    let x = h.f
+    x()
+    v.clear()
+}
+
+// Part c: the site tests another field of the struct of the way. The test
+// reads no closure, so the region is the only run of the closure.
+fn field_test() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { v.clear()
+        resume(()) } } in {
+        let b = mk_box(|| print(0))
+        let r = &v[0]
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            let c = b.f
+            c()
+        }
+        if b.n > 2 {
+            print(r)   //~ W0301 old:
+        }
+    }
+}
+
+// Part d: a `once` closure runs two times. The copy moves the value first,
+// so the second run moves a moved value.
+fn once_twice() {
+    let w = Vec.new()
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let c = || { eat(w)
+            run(|| print(0)) }
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            c()
+            c()   //~ W0502
+        }
+    }
+}
+
+// Part e: a static copy of a `once` closure with a `ByMove` capture. The
+// clause of `Get` gives back a closure that clears `v`.
+fn by_move() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    handle Get { fn get() { resume(|| v.clear()) } } in {
+        let r = &v[0]
+        let k = || { eat(w)
+            let g = get()
+            g() }
+        k()
+        print(r)   //~ W0301
+    }
+}
+
+// Part g: a closure with the weak form goes to `apply`. The call gets a copy
+// of `apply`, so the run of `k` is here and gets a copy of its body.
+fn weak_to_callee() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let k = |g: fn()| run(g)
+        apply(k, || v.clear())   //~ old: W0405 W0403
+    }
+    print(r)   //~ W0301
+}

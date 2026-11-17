@@ -1,7 +1,7 @@
-// Plan stage R0k-a2 (a refusal: a `ByMove` capture): the closure moves `w`
-// into its value, so the run of `k` gets no copy and the program keeps the
-// old pipeline. The value of the clause clears `c.v` while `r` points
-// into it.
+// Plan stage R0k-a2 (a `ByMove` capture): the closure moves `w` into its
+// value. Plan stage R0z Z3: the run of `k` gets a copy that moves the value
+// first and reads `w` through its environment local. The value of the clause
+// clears `c.v` while `r` points into it: W0301.
 struct C { v: Vec<u64> }
 effect Get { fn get() -> fn() }
 fn eat(w: Vec<u64>) { print(w.len()) }

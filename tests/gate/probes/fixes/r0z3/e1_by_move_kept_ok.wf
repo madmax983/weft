@@ -1,0 +1,20 @@
+// Plan stage R0z Z3, part e: the clean twin of e1. The handled body reads
+// `r` before the run. The program prints 1, 0, then 2.
+struct C { v: Vec<u64> }
+effect Get { fn get() -> fn() }
+fn eat(w: Vec<u64>, n: u64) { print(w.len())
+    print(n) }
+fn main() {
+    let c = C { v: Vec.new() }
+    c.v.push(1)
+    let w = Vec.new()
+    let n = 2
+    handle Get { fn get() { resume(|| c.v.clear()) } } in {
+        let r = &c.v[0]
+        print(r)
+        let k = || { eat(w, n)
+            let g = get()
+            g() }
+        k()
+    }
+}

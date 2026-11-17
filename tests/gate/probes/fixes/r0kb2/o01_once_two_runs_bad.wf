@@ -1,7 +1,7 @@
 // Plan stage R0k-b2 (an acceptance probe of the B1 note): `c` is a `once`
 // closure (it moves `w` out of its environment), and the site runs it two
-// times in the handled body of H2: the second run is W0502. A copy of a
-// `once` closure is refused, so the program keeps the fallback.
+// times in the handled body of H2: the second run is W0502. Plan stage R0z
+// Z3: each run gets a copy that moves the value first.
 effect Run { fn run(g: fn()) }
 fn eat(w: Vec<u64>) { print(w.len()) }
 fn outer() {

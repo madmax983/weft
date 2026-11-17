@@ -1,0 +1,18 @@
+// Plan stage R0z Z3, part d: the clean twin of d3. The clause of H does not
+// resume, so the run of the `once` closure (a copy that moved the value)
+// ends on the cleanup path, and the value with `w` in it is dropped there.
+// The program prints 9.
+effect Run { fn run(g: fn()) }
+fn show(w: Vec<u64>, r: &u64) { print(w.len())
+    print(r) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    handle Run { fn run(g) { g() } } in {
+        let r = &v[0]
+        let c = || { run(|| print(9))
+            show(w, r) }
+        c()
+    }
+}

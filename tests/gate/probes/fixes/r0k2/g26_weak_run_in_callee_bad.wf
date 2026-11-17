@@ -1,9 +1,9 @@
 // Plan stage R0k-a2 fix (the order of the weak guard): `k` performs through
 // a captured capability with a function value, so its summary has the weak
 // form. `main` gives it to `apply`, a body that the analysis runs before
-// `main`, the maker of `k`. The guard refuses the call of `apply` in the
-// handled body (the program keeps the old pipeline). The clause runs the
-// value that clears `v` while `r` points into it.
+// `main`, the maker of `k`. Plan stage R0z Z3: the call of `apply` gets a
+// copy, so the run of `k` is in `main` and gets a copy of its body. The
+// clause runs the value that clears `v` while `r` points into it: W0301.
 effect Run { fn run(g: fn()) }
 fn apply(f: fn(fn()), g: fn()) { f(g) }
 fn main() {

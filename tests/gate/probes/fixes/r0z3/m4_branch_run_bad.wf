@@ -1,0 +1,15 @@
+// Plan stage R0z Z3, fix 1: the `once` closure `c` is outside the handled
+// body of M, and the handled body runs it in a branch after `m`. Both runs
+// of the rest take the branch, so the second run moves a moved value
+// (W0502).
+effect M { multi fn m() -> bool }
+fn eat(w: Vec<u64>) { print(w.len()) }
+fn main() {
+    let w = Vec.new()
+    let c = || eat(w)
+    handle M { fn m() { resume(true)
+        resume(true) } } in {
+        let b = m()
+        if b { c() }
+    }
+}

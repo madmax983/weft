@@ -579,7 +579,7 @@ to V17; the others need the type table.
 | V16 | The cleanup chain of a clause starts with `UnwindKont` of its continuation. A cleanup chain lists `_0` if it has a value, then the live temporaries newest first, then the live locals from the highest index, then the parameters. (`Dead(_0)` with no value comes before the parameters.) | one unwind order for the interpreter, the facts and the effects model |
 | V17 | `Drop(p)` only on a place with a `Deref`, and the next statement is `Assign(p, _)`. | the drop pair of W0601 behind a reference |
 | V18 | Each `Return` has the origin of the expression whose value it returns. | W0204 spans |
-| V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. (Plan stage R0k-b2.) The environment local of a region is a local of kind `CopyEnv` of the closure of the region, and the value of the region is a whole local; a `CopyEnv` local that no region of its body names breaks V14, and so does its `Live` or `Dead`; a move below it breaks V14 (`EnvMove`). | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
+| V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. (Plan stage R0k-b2.) The environment local of a region is a local of kind `CopyEnv` of the closure of the region, and the value of the region is a whole local; a `CopyEnv` local that no region of its body names breaks V14, and so does its `Live` or `Dead`; a move below it breaks V14 (`EnvMove`), but in a region of a `once` closure (plan stage R0z Z3). | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
 
 ---
 ## 5. Lowering rules: typed tree to IR
@@ -2526,6 +2526,70 @@ For these captures the copy now reads the cell that the closure value holds.
   part of the way (an aggregate, a copy of a part) and a test of the variant of a local of
   the way as steps.
 
+As built (plan stage R0z Z3, the small steps of the way; `factgen/instantiate.rs`):
+
+- A second write of the local of the way (part a). In a second sweep of the copies
+  (`instantiate::sweep`, after the first sweep made the copies of the makers), a run
+  whose local gets more than one value can get a copy region (`Inst::walk_multi`). The
+  local (also through upvar locals) gets each value by a whole `move` or `copy` of a
+  local, or a make, in the body that owns it or in a scope body, a handled body or a
+  clause inside it, and each value has an exact way to a closure. No other statement or
+  terminator writes, moves or borrows it; a write in a closure body (a task) refuses.
+  Each value is a copy of the same closure of a function with no type parameters
+  (`Inst::origin`). The region names one closure, and `CopyRegion::also` names the
+  others. It reads each capture that is not `Cap` through its environment local, so its
+  code is the code of a run of each of them; a `Cap` capture of each closure must name
+  the same capability of the site. Each closure has the capture modes of the first, its
+  environment sends each effect to the destination of the environment of the region,
+  and the extent rule holds for it (`Inst::also_ok`). Such a region is never `sole`.
+  Fix 2: it is refused if the code gives a function value or a reference to an operation
+  whose clause can run at another node (`Inst::one_clause_node`): the facts of a clause
+  join the values of its parameters over its nodes (issue #79). Fix 3: a write of the
+  local in a clause is a value of the way only in one form (`Inst::clause_write_ok`):
+  one direct perform runs the clause before the run, and the write comes before each
+  `resume` of the clause; else the facts give the local a weak update at the node that
+  runs the clause.
+- The analysis of such a region (part a). The value of `e.k` is the join of the value of
+  capture `k` of each closure that the value can be in the state (fix 2; each closure of
+  the region if the state names none of them) (`transfer::copy_env_value_of`): the value of its variable
+  if the variable is a variable of the frame of the region and the state has it, else
+  the held values of a made closure, else an unknown function value; the references are
+  those of the whole closure value. α of `e.k` has the variable of each closure
+  (`alpha`). The fact oracle accepts each closure of the region at `PushHenv` (8.5).
+- A part with no function type (part c). `CopyRegion::sole` does not count a place of a
+  local of the way whose type holds no function value and names no type parameter (a
+  read or a test of `b.n`): it reads no closure (`instantiate::fn_part`).
+- A `once` closure (parts d and e). A run `call (move l)()` of a `once` closure gets a
+  copy region (`RunPlan::moves`). The block of the run moves the value into a new local
+  `t` first (`t = move l`), as the run did; `t` is the value of the region, and each exit
+  of the region ends it (`Dead(t)`, and `UnwindValue(t, Drop)` on the cleanup path). A
+  second run of the value moves a moved value: W0502, as before. The copy reads each
+  capture that is not `Cap` through the environment local, and the closure body can move
+  it (`move e.k`; V14 allows it for a `once` closure). Each such capture is `ByMove` or
+  `Kept`, and its type has no linear, `once` or immovable value (`Inst::once_ok`). The
+  run of a `once` closure (`call (move l)`, and the move of a copy into `t`) is not
+  another write of `l` for the walks (`runs_moved`, `Inst::run_moves`).
+- The copies for a program whose only pending reason is `REST_NOT_FOUND` (part f,
+  `factgen::rest_view`). As for the copies of stage R0k-c1: the check takes the facts
+  without the copies first; if they find no error, it takes the facts with the copies,
+  if those have no construct with no full facts (`Pending::copy`).
+- The weak guard (part g). A call of a function item gets a call-site copy also if an
+  argument is a whole local with an exact way to a closure that performs an operation with
+  a function value or a reference through a captured capability, of an effect that the
+  environment of the call binds (`Inst::weak_arg`). Without the copy the guard of the weak
+  form refuses the call (`transfer::note_weak_call`). With the copy, the run of the
+  closure is in the site and gets a copy of its body. The order of `callgraph::infer` does
+  not change.
+- Fix 1 (the review of Z3): `spared_at` for a function value outside the handled body
+  of a local `multi` handler (`handlers::project`, the candidates of `spare`). See 6.5,
+  the parts of stage F15 in a first form.
+- Not built: a heap slot (part b, a value in a `Vec`). A design (each value that goes
+  into the `Vec` is a copy of the same closure, and no other value can reach a slot)
+  gives the copies, but the facts of the clean twin `a02_vec_same_id_ok` then have a
+  false W0301 of the join of the parameter of a clause that runs at two nodes (the same
+  error as the program with two locals, which the `ir` pipeline gives before this
+  stage). So a value in a heap slot keeps the fallback.
+
 ### 6.2 Nodes and phases
 
 Each statement is one node. Each terminator is one node (phase `Main`), and some
@@ -3855,7 +3919,15 @@ puts it in the default set):
   ends with no `resume`, with the values of the arguments of that perform); the
   `Landing` edge; `spared_at` of each variable outside the handled bodies at a
   perform whose aborts all go to local handlers, if no node of the `pre` part can
-  abort (other than a `resume`).
+  abort (other than a `resume`). As built (plan stage R0z Z3, fix 1): a function value
+  is a candidate too, not only a linear or `!Move` one. A `once` closure outside the
+  handled body of a local `multi` handler is not copied by its resume (no W0503), and
+  each run of it moves it, so a second run of the rest of the handled body moves a moved
+  value (W0502). Its flag `once` comes after this pass (`not_many`), so each function
+  value is a candidate, and `prune` keeps the rows of the variables that a rule reads. A
+  continuation and a value that holds a `once` value in another way (an `Rc` handle)
+  are no candidates: the facts do not see a second `resume` or a second run through a
+  handle in the second run of the rest, so W0503 stays for them.
 - A call in a handled body that performs through a local handler (or fails to a
   local `Fail` handler) runs the clauses of the handler: the analysis runs each
   clause up to its resume points with plain parameters, and the call node gets the
@@ -6199,7 +6271,8 @@ Stage R0k-b2 adds `EnvCell(k)` (6.1, "As built (plan stage R0k-b2)"): the cell o
 `k` of the closure value at the place on the stack, for a field of the environment local
 of a copy region. It takes the cell, not the value, so it is not a read of the place for
 the oracles. `PushHenv` names the code of the copied closure: with the fact oracle on, the
-closure value at the entry of the region must run that code (8.5).
+closure value at the entry of the region must run that code (8.5), or the code of a
+closure of `CopyRegion::also` (plan stage R0z Z3).
 Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles
@@ -6481,7 +6554,9 @@ runs the code of the closure of the region; else the run fails with "fact oracle
 A copy of stage R0k-a2 in the body of the maker (no region) is not checked: its value is
 the closure that the body makes. Test: `fact_oracle.rs`
 `a_copy_region_that_names_another_closure_fails_the_fact_oracle` (the mutation
-`RunOptions::wrong_closure_in_copies`: each region names another closure).
+`RunOptions::wrong_closure_in_copies`: each region names another closure). From plan stage
+R0z Z3 a region can name more closures (`CopyRegion::also`, copies of one closure with the
+same code): the value must run the code of one of them; the mutation clears that list.
 
 **As built (F19.3): the task check (ORACLE-GAP of the review of group E).** The oracle
 records each task that a frame starts at a node with one `spawned_at(T, _)` as a task of

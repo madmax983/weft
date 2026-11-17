@@ -570,6 +570,12 @@ fn copy_env_value(
     let props = ir_props(cx.tys, t);
     let fns_ty = crate::props::ir_has_fns(cx.tys, t);
     let mut v = AbsVal::of_type(props.linear);
+    // The value can be each closure of the region (plan stage R0z Z3:
+    // copies of the same closure). The cell is a cell of one of them.
+    let cs = cx.p.copy_env_closures(body, place.local);
+    if cs.len() > 1 {
+        return copy_env_value_of(cx, body, st, (&cs, k), &whole, (t, fns_ty));
+    }
     if fns_ty {
         // The closure that the cell holds, if the copy knows it: one closure
         // of the function gives the cell its one value.
@@ -600,6 +606,58 @@ fn copy_env_value(
             v.fns.clone_from(&sv.fns);
         }
         v.join(&sv);
+    }
+    Ok(Some(Tree::leaf(v)))
+}
+
+/// [`copy_env_value`] for a region whose value can be each closure of
+/// `cs` (plan stage R0z Z3, `weft_ir::CopyRegion::also`): the join of the
+/// value of capture `k` of each of them that the value of the closure in
+/// state `st` can be. A closure whose cell the state does
+/// not know adds an unknown function value; the references are those of the
+/// whole closure value `whole`.
+fn copy_env_value_of(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    (cs, k): (&[weft_ir::ClosureId], u32),
+    whole: &AbsVal,
+    (t, fns_ty): (TyId, bool),
+) -> Result<Option<Tree>, AlphaError> {
+    let props = ir_props(cx.tys, t);
+    let mut v = AbsVal::of_type(props.linear);
+    if props.holds_refs || fns_ty {
+        v.refs.clone_from(&whole.refs);
+    }
+    // The closures that the value can be in this state (plan stage R0z Z3,
+    // fix 2): the cell of the capture is a cell of one of them. If the state
+    // names none of them, each closure of the region.
+    let held: Vec<weft_ir::ClosureId> = cs
+        .iter()
+        .copied()
+        .filter(|&c| whole.fns.contains(&FnVal::Closure(c)) || whole.fns.contains(&FnVal::Made(c)))
+        .collect();
+    let cs: &[weft_ir::ClosureId] = if held.is_empty() || whole.fns.contains(&FnVal::Unknown) {
+        cs
+    } else {
+        &held
+    };
+    for &c in cs {
+        let src = super::apply::frame_capture_source(cx.p, c, k as usize, body);
+        let known = match &src {
+            Some((sb, q)) => st.tree(key(cx.p, *sb, q.local)?).is_some(),
+            None => false,
+        };
+        if let (Some((sb, q)), true) = (&src, known) {
+            let sv = place_value(cx, *sb, st, q)?.flat();
+            v.join(&sv);
+        } else if fns_ty {
+            if whole.fns.contains(&FnVal::Made(c)) {
+                v.fns.extend(made_held(cx.p, c, k, &whole.fns));
+            } else {
+                v.fns.insert(FnVal::Unknown);
+            }
+        }
     }
     Ok(Some(Tree::leaf(v)))
 }

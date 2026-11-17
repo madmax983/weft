@@ -1,0 +1,23 @@
+// Plan stage R0z Z3, part g (an adversarial probe): the callee that gets the
+// weak value is recursive, so the call gets no copy. The guard of the weak
+// form refuses the call (the program keeps the fallback or is rejected).
+// The clause runs the value that clears `v` while `r` points into it.
+effect Run { fn run(g: fn()) }
+fn apply(f: fn(fn()), g: fn(), n: u64) {
+    if n > 0 {
+        apply(f, g, n - 1)
+    } else {
+        f(g)
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let k = |g: fn()| run(g)
+        apply(k, || v.clear(), 1)
+    }
+    print(r)
+}

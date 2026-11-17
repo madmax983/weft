@@ -634,6 +634,7 @@ fn region(p: &Program, entry: u32, blocks: &[u32]) -> CopyRegion {
         sole: false,
         env_local: None,
         env_fns: Vec::new(),
+        also: Vec::new(),
     }
 }
 

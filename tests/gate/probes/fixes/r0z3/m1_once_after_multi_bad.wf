@@ -1,0 +1,20 @@
+// Plan stage R0z Z3, fix 1: the bad twin of m1. The run of the `once`
+// closure `c` is in the handled body of M, after `m`. The rest of the handled
+// body runs two times, so the second run moves a moved value. The program is
+// rejected (the old pipeline gives W0503 and W0502).
+effect Run { fn run(g: fn()) }
+effect M { multi fn m() -> bool }
+fn eat(w: Vec<u64>) { print(w.len()) }
+fn outer() {
+    let w = Vec.new()
+    handle Run { fn run(g) { resume(()) } } in {
+        let c = || { eat(w)
+            run(|| print(0)) }
+        handle M { fn m() { resume(true)
+            resume(false) } } in {
+            let b = m()
+            c()
+        }
+    }
+}
+fn main() { outer() }

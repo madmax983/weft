@@ -160,12 +160,18 @@ impl<'a> Printer<'a> {
             let bs: Vec<String> = r.blocks.iter().map(|b| format!("bb{}", b.0)).collect();
             let _ = writeln!(
                 out,
-                "region r{i}: body b{}, entry bb{}, env e{}, value {}, closure c{}{}{}, blocks [{}]",
+                "region r{i}: body b{}, entry bb{}, env e{}, value {}, closure c{}{}{}{}, blocks [{}]",
                 r.body.0,
                 r.entry.0,
                 r.env.0,
                 place(&r.value),
                 r.closure.0,
+                if r.also.is_empty() {
+                    String::new()
+                } else {
+                    let cs: Vec<String> = r.also.iter().map(|c| format!("c{}", c.0)).collect();
+                    format!(" (also {})", cs.join(", "))
+                },
                 if r.sole { ", sole" } else { "" },
                 r.env_local
                     .map(|l| format!(", env local _{}", l.0))

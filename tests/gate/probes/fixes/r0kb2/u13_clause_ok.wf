@@ -2,8 +2,8 @@
 // run of the kept value). `c` gets a closure of `mk` with a capture,
 // then a clause gives `c` a second closure of `mk` before the run. The
 // second one keeps `r`, a reference into `v`. The clause of the handler of
-// `main` keeps the value, and `main` runs it before the clear of `v`. A body
-// inside the owner writes `c`, so the run gets no copy.
+// `main` keeps the value, and `main` runs it before the clear of `v`. Plan
+// stage R0z Z3: both values are copies of one closure, so the run gets a copy.
 struct H { f: fn() }
 fn noop() {}
 effect Run { fn run(g: fn()) }

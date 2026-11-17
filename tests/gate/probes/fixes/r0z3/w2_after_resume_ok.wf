@@ -1,0 +1,28 @@
+// Plan stage R0z Z3, fix 3 (the review of Z3, round 3: wa): the clause of `Sw` gives
+// `c` its second closure after its `resume`, when the run is done. The facts give `c` a
+// weak update at the clause, so the run gets no copy region (fix 3), and the program
+// keeps the fallback. The program prints 2.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+effect Sw { fn sw() }
+fn main() / async {
+    let a = Vec.new()
+    a.push(1)
+    let b = Vec.new()
+    b.push(2)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &a[0]
+        let q = &b[0]
+        let c = mk(|| print(r))
+        handle Sw { fn sw() { resume(())
+            c = mk(|| print(q)) } } in { sw() }
+        c()
+    }
+    a.clear()
+    let x = h.f
+    x()
+}

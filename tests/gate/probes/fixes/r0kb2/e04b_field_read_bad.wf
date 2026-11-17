@@ -2,9 +2,9 @@
 // holds a closure that keeps `h` and gives it to `run` through the row of
 // `mk_box`. `mk_box` is called in the handled body of H, whose clause
 // clears `v`. The site reads the field into a local and runs it in the
-// handled body of H2. The `run` goes to H. The site also reads `b.n`: a
-// use of the local of the way that is no step of the way, so the closure
-// body can run elsewhere (no `sole`), and the program keeps the fallback.
+// handled body of H2. The `run` goes to H. The site also reads `b.n`, a
+// part with no function type: plan stage R0z Z3, it reads no closure, so the
+// region is the only run of the closure (`sole`). The read of `r` is W0301.
 effect Run { fn run(g: fn()) }
 struct Bx { f: fn() / Run, n: u64 }
 fn mk_box(h: fn()) -> Bx / Run { Bx { f: || run(h), n: 3 } }
