@@ -1,0 +1,13 @@
+// Plan stage R0z Z5: the bad twin of e1. The rest of the handled body writes
+// before the join: W0405.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) -> Task<()> }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => let t = s.spawn(g)
+        resume(t) } } } in {
+        let t = run(|| print(st.count))
+        st.count += 1
+        t.join()
+    }
+}

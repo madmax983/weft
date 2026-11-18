@@ -6529,7 +6529,7 @@ const VALUE_TASKS: &str = "a function value that runs a value of its arguments a
 
 /// Why a task that runs code of a caller is not in scope (plan stage F19:
 /// the caller checks the value as a task).
-const TASK_CODE: &str = "a task that runs code of a caller (stage F19)";
+pub const TASK_CODE: &str = "a task that runs code of a caller (stage F19)";
 
 /// True if fact place `inner` is at or below fact place `outer`.
 fn at_or_below(facts: &FnFacts, inner: PlaceId, outer: PlaceId) -> bool {

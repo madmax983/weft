@@ -1,0 +1,13 @@
+// Plan stage R0z Z5: the scope body of the clause moves `v` before its
+// `resume`, and the rest of the handled body uses `v` after that: W0302.
+effect Run { fn run() }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run() { scope { s => let w = v
+        resume(())
+        print(w.len()) } } } in {
+        run()
+        print(v.len())
+    }
+}

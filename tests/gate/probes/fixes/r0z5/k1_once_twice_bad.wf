@@ -1,0 +1,10 @@
+// Plan stage R0z Z5: the scope body resumes a `once` continuation two times:
+// W0501.
+effect Run { fn run() }
+fn main() / async {
+    handle Run { fn run() { scope { s => resume(())
+        resume(()) } } } in {
+        run()
+        print(1)
+    }
+}

@@ -1,0 +1,16 @@
+// Plan stage R0z Z5: a `resume` in a loop of the scope body of a `multi`
+// clause, while a task of the scope runs: W0405.
+struct Stats { count: u64 }
+effect Run { multi fn run(g: fn()) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        let i = 0
+        while i < 2 {
+            resume(())
+            i += 1
+        } } } } in {
+        run(|| print(st.count))
+        st.count += 1
+    }
+}

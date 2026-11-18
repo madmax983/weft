@@ -147,14 +147,16 @@ fn rule_e_a_nested_task_run_cannot_run_a_once_value_twice() {
 }
 
 /// Rule F: two `resume`s of a `once` continuation on a path of a scope body
-/// of the clause are W0501 at the second one.
+/// of the clause are W0501 at the second one. From plan stage R0z Z5 a
+/// `resume` in a scope body of the clause is a resume point, so the clean
+/// twin is in scope.
 #[test]
 fn rule_f_a_once_continuation_cannot_resume_twice_in_a_scope_body() {
     twins(
         "f1_scope_resumes_bad.wf",
         &[("W0501", 6)],
         "f1_scope_resumes_ok.wf",
-        false,
+        true,
     );
 }
 

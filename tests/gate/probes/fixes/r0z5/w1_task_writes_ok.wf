@@ -1,0 +1,13 @@
+// Plan stage R0z Z5: the clean twin of w1. The rest of the handled body does
+// not use `st` after the perform.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    let n = 1
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in {
+        run(|| st.count += 1)
+        print(n)
+    }
+}

@@ -1,0 +1,13 @@
+// Plan stage R0z Z5: the handled body performs `run` two times. Each run of
+// the clause spawns a task that writes `st.count`: the two tasks race. The
+// program keeps the old pipeline, or the pending rule rejects it (W0405).
+struct Stats { count: u64 }
+effect Run { fn run() }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run() { scope { s => s.spawn(|| st.count += 1)
+        resume(()) } } } in {
+        run()
+        run()
+    }
+}
