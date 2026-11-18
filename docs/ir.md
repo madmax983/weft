@@ -3360,12 +3360,23 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   no write in that window the value of the variable for the whole task is its value at
   the spawn, which the state of the spawn node has, so the run at the spawn node applies
   each value that the task can run, and the program is in scope.
+  From plan stage R0z Z5 the window of a task of a scope in a clause includes the region
+  of a `resume` in the scope body (6.5, "As built (plan stage R0z Z5)"): the task runs
+  while the rest of the handled body runs, up to the end of the scope. The facts give this
+  at the `resume` (it reads, changes and frees what the region does), not at the nodes of
+  the region. A task of a clause that runs a function value that a callee gives to the
+  operation (`TASK_CODE`, code of a caller for the clause) gets the copy of the callee at
+  its call (R0k-a, `factgen::copy_reasons`): the copy makes the perform a perform of the
+  local handler, and the task runs the closure of the copy, with its places. The copies
+  apply if `TASK_CODE`, `REST_NOT_FOUND` and `SCOPE_RESUME_AGAIN` are the only pending
+  reasons and the copies have full facts.
 
 As built (plan stage R0g: continuations and capabilities in closures):
 
 - A program that the facts do not model whole. Some constructs have no complete
   template yet: a `resume` in a closure or in a body inside the clause (no resume point
-  of the clause), a `multi` operation of a handler of a caller in a clause and a `multi`
+  of the clause; from plan stage R0z Z5 a `resume` in a scope body of the clause through
+  scope bodies only is a resume point, 6.5), a `multi` operation of a handler of a caller in a clause and a `multi`
   resume of a node in a clause or a closure inside the handled body (no re-entry of a
   clause frame, the design note of plan stage R0d), and a run of a closure whose
   captured capability left its handler where no W0313 of that handler is found. The fact
@@ -4439,6 +4450,61 @@ clause).
 - E-POST-ROUNDS. If the values of the clauses after their resume points do not reach
   a fixpoint in `POST_ROUNDS` rounds, the program is not in scope, as for
   `MULTI_ROUNDS`.
+
+As built (plan stage R0z Z5, a `resume` in a scope body of a clause; `clause::resume_point`,
+`clause::scope_resumes`, `handlers::continuations`):
+
+- The resume point. A `resume` in a scope body of the clause is a resume point of the
+  clause if the parent chain of the scope body up to the clause has only scope bodies,
+  each `Resume` of these scope bodies resumes the continuation of the clause, and no other
+  body inside them (a closure, a handled body) resumes it. Before Z5 such a `resume` was
+  pending (`KONT_CAPTURED`, reason D1b of the census). Another form (a `resume` in a
+  handled body inside the clause, in a closure) stays pending.
+- The analysis. The run of the clause up to its resume points (`run_clause`) runs such a
+  scope body up to its `Resume`s too (`Handlers::pre_stop`, `tasks::scope_run`): their
+  states are resume points of the clause (`Handlers::pre_resumes`), and a `scope` whose
+  scope body stops at a resume point on each path has no normal successor in that run
+  (`Handlers::no_normal`). The code after such a resume point runs from the state at the
+  end of the handled body (`post_seeds`), up to the end of the scope body; then the `scope`
+  ends (`tasks::scope_after`) and the code of the clause goes on after it (`post_run`).
+  `has_resume` and `lands` read a `scope` with a resume point as a resume point; such a
+  `scope` lands only if its scope body can end with no resume point (`lands_in`).
+- The parts of the facts. The `pre` part of the clause stops at a `scope` with a resume
+  point, and the `post` part starts after it (`handlers::regions`); the scope body has
+  parts of its own: a node before its `Resume` runs where the `Main` node of the `scope`
+  runs, and a node after it, and `Exit` and `FrameEnd` of the `scope`, are in the `post`
+  part (`handlers::clause_nodes`). The rows of the clause in `frames::clause_rows` count
+  in both parts in such a scope body (a conservative result).
+- The tasks of the scope. A task of the scope that runs at the `resume` (its spawn comes
+  before the `resume` in the scope body or in a scope body around it, with no `join` on
+  the way) runs while the clause waits there: at each node of the region, up to the end of
+  the scope, which comes after the `resume` returns. The `resume` lends and frees what the
+  region changes and frees (as for each `resume`), and it also reads what the region reads
+  (`reads_at`, only for such a `resume`): a task that is active at the `Main` node of the
+  `resume` conflicts with each change and each read of the rest of the handled body
+  (W0405 at the `resume`, as the old pipeline gives it). A task that the clause joins before
+  the `resume`, or starts after it, is not active there.
+- The rows of the clause itself. The region has the nodes that run the clause (a call that
+  runs the clause, D-CONT-RUN) and `Post`. The rows that only the clause gives there (its
+  `pre` part at a run node, which runs before the `resume`, and its `post` part at `Post`,
+  which runs after the `resume` returns, such as the end of the task at `ScopeWait`) do not
+  count for such a `resume` (`handlers::LateUses::own_post`): a row that the node has
+  before the projection, or that the projection of another clause gives there, still
+  counts. Another run of the clause in its own region (a second perform of the operation,
+  a loop) runs while the first run waits, so its rows would count: the facts keep the weak
+  form, and the program is pending (`handlers::SCOPE_RESUME_AGAIN`). A node that runs the
+  clause and code after the perform (a call of a callee that performs the operation,
+  the run of a closure) can run the clause again, so it makes the program pending too;
+  the copies of R0k-a then put the code of the callee at the call (the perform is a node of
+  the handled body), and the facts of the copies apply if they are full.
+- A `multi` continuation. Each `resume` of the scope body is a resume point with the
+  region of its own, so each run of the rest of the handled body is in the facts of the
+  `resume` that starts it, and a task that is active at the second `resume` conflicts with
+  the second run.
+- Open (precision, issue #79): a task whose handle the clause gives to the rest of the
+  handled body (`resume(t)`) and that the rest joins is active in the whole region, so a
+  change after the `join` is W0405 (`fixes/r0z5/e1_handle_given_ok`; the old pipeline gives
+  the same W0405).
 
 ### 6.6 The analysis
 

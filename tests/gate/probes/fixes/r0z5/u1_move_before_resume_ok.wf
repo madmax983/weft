@@ -1,0 +1,12 @@
+// Plan stage R0z Z5: the clean twin of u1. The scope body of the clause reads
+// `v` and does not move it.
+effect Run { fn run() }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run() { scope { s => print(v.len())
+        resume(()) } } } in {
+        run()
+        print(v.len())
+    }
+}

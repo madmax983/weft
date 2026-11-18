@@ -1,0 +1,12 @@
+// Plan stage R0z Z5: the clean twin of d1. The local is outside the handled
+// body, so it lives until the scope of the clause ends.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    let r = &st
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in {
+        run(|| print(r.count))
+    }
+}

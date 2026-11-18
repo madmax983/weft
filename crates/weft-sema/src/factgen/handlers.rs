@@ -1159,7 +1159,9 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
         return Err(AlphaError::BadPlace("not a resume".to_string()));
     };
     let body = em.body;
-    let own = clause::kont_handler(em.p, body, kont).filter(|&(_, cb, _)| cb == body);
+    // A `resume` of the clause body, or of a scope body of the clause
+    // through scope bodies only (plan stage R0z Z5).
+    let own = clause::resume_point(em.p, body, kont);
     let Some((h, cb, multi)) = own else {
         // A continuation in a closure or in a body inside the clause (stage
         // R0g): the facts do not model the resume point
@@ -1212,6 +1214,9 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
         em.facts.may_abort.push(n);
     }
     em.hx.resumes.push((n, h, cb));
+    if body != cb {
+        em.hx.scope_resumes.push(n);
+    }
     if let Some(r) = nodes.ret {
         let resumed = em.hx.info(h).map_or_else(Tree::none, |i| i.resumed.clone());
         bind_dest(em, r, st, dest, &resumed)?;
@@ -2664,10 +2669,19 @@ pub fn clause_entry(em: &mut Em<'_>, n: NodeId, params: &[(weft_ir::LocalId, Tre
     Ok(())
 }
 
-/// The blocks of clause body `c` in the `pre` part (from the entry, up to
-/// and with the resume points) and in the `post` part (from the block after
-/// each resume point), by the normal edges.
-fn regions(b: &weft_ir::Body) -> (BTreeSet<BlockId>, BTreeSet<BlockId>) {
+/// The blocks of body `bid` (clause body `c`, or a scope body of its chain
+/// with a resume point, plan stage R0z Z5) in the `pre` part (from the
+/// entry, up to and with the resume points) and in the `post` part (from the
+/// block after each resume point), by the normal edges. A `scope` whose
+/// scope body has a resume point of `c` (`clause::resume_scope`) is a resume
+/// point too: the `pre` part goes on after it only if its scope body can end
+/// with no resume point, and the `post` part starts after it.
+fn regions(
+    p: &Program,
+    bid: BodyId,
+    b: &weft_ir::Body,
+    c: BodyId,
+) -> (BTreeSet<BlockId>, BTreeSet<BlockId>) {
     let walk = |starts: Vec<BlockId>, stop: bool| {
         let mut seen: BTreeSet<BlockId> = BTreeSet::new();
         let mut work = starts;
@@ -2681,6 +2695,13 @@ fn regions(b: &weft_ir::Body) -> (BTreeSet<BlockId>, BTreeSet<BlockId>) {
             if stop && matches!(blk.term.kind, TermKind::Resume { .. }) {
                 continue;
             }
+            if stop {
+                if let Some(sb) = clause::resume_scope(p, bid, &blk.term.kind, c) {
+                    if !clause::lands_in(p, sb, c) {
+                        continue;
+                    }
+                }
+            }
             work.extend(blk.term.kind.normal_successors());
         }
         seen
@@ -2689,56 +2710,114 @@ fn regions(b: &weft_ir::Body) -> (BTreeSet<BlockId>, BTreeSet<BlockId>) {
     let nexts: Vec<BlockId> = b
         .blocks
         .iter()
-        .filter_map(|blk| match blk.term.kind {
-            TermKind::Resume { next, .. } => Some(next),
-            _ => None,
+        .flat_map(|blk| match blk.term.kind {
+            TermKind::Resume { next, .. } => vec![next],
+            ref t if clause::resume_scope(p, bid, t, c).is_some() => t.normal_successors(),
+            _ => Vec::new(),
         })
         .collect();
     let post = walk(nexts, false);
     (pre, post)
 }
 
+/// The blocks of the `pre` part, of the `post` part, and the resume points
+/// of a body of [`clause_nodes`].
+type ClauseParts = (BTreeSet<BlockId>, BTreeSet<BlockId>, BTreeSet<BlockId>);
+
 /// The nodes of the `pre` part and of the `post` part of clause body `c`,
-/// with the nodes of the handled bodies that splice into it (the region of
-/// the block of their `handle`).
+/// with the nodes of the handled bodies and scope bodies that splice into
+/// it (the region of the block of their `handle` or `scope`).
+///
+/// A scope body of the chain of the clause with a resume point (plan stage
+/// R0z Z5, `clause::scope_resumes`) has parts of its own ([`regions`]): a
+/// node of its `pre` part runs where the `Main` node of its `scope` runs,
+/// and a node of its `post` part runs after a resume point. The nodes of
+/// the `scope` after its scope body (`Exit`, `FrameEnd`) run after a resume
+/// point too.
 fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet<NodeId>) {
     let mut pre = HashSet::new();
     let mut post = HashSet::new();
     let Some(b) = p.body(c) else {
         return (pre, post);
     };
-    let (pre_blocks, post_blocks) = regions(b);
-    // The block of the clause where each spliced body runs.
-    let place_of = |key: &NodeKey| -> Option<(BlockId, u32, Phase)> {
-        if key.body == c {
-            return Some((key.block, key.at, key.phase));
-        }
-        let mut at = key.body;
+    // The parts of the blocks of the clause and of each scope body of its
+    // chain with a resume point.
+    let mut parts: HashMap<BodyId, ClauseParts> = HashMap::new();
+    let mut own_scope: HashMap<BodyId, bool> = HashMap::new();
+    // The block of the body around a spliced body `x` whose terminator runs
+    // it.
+    let site_block = |x: BodyId| -> Option<(BodyId, BlockId)> {
+        let xb = p.bodies.get(x.index())?;
+        let site = xb.parent?;
+        let s = p.body(site)?;
+        let blk = s
+            .blocks
+            .iter()
+            .position(|blk| match (xb.kind, &blk.term.kind) {
+                (BodyKind::Handled(h), TermKind::Handle { handler, .. }) => *handler == h,
+                (BodyKind::Scope(k), TermKind::Scope { scope, .. }) => *scope == k,
+                _ => false,
+            })?;
+        Some((site, BlockId(u32::try_from(blk).ok()?)))
+    };
+    // The part of a node of body `x` at block `block` (`pre`, `post`).
+    let mut class = |key: &NodeKey| -> Option<(bool, bool)> {
+        // The chain from the body of the node up to the clause.
+        let mut chain: Vec<(BodyId, BlockId, u32, Phase)> =
+            vec![(key.body, key.block, key.at, key.phase)];
         for _ in 0..=p.bodies.len() {
-            let x = p.bodies.get(at.index())?;
+            let &(x, ..) = chain.last()?;
+            if x == c {
+                break;
+            }
+            let xb = p.bodies.get(x.index())?;
             // A handled body or a scope body splices into the clause at the
             // terminator of its `handle` or `scope` (a scope body from stage
             // R0e fix 2: its code and its spawns run at the nodes that run
             // the clause too).
-            if !matches!(x.kind, BodyKind::Handled(_) | BodyKind::Scope(_)) {
+            if !matches!(xb.kind, BodyKind::Handled(_) | BodyKind::Scope(_)) {
                 return None;
             }
-            let site = x.parent?;
-            if site == c {
-                let s = p.body(c)?;
-                let blk = s
+            let (site, blk) = site_block(x)?;
+            chain.push((site, blk, TERM, Phase::Main));
+        }
+        if chain.last().map(|x| x.0) != Some(c) {
+            return None;
+        }
+        // From the clause down: the part of each level.
+        let mut out = (true, false);
+        for &(x, block, at, phase) in chain.iter().rev() {
+            let own = x == c
+                || *own_scope.entry(x).or_insert_with(|| {
+                    matches!(p.body(x).map(|d| d.kind), Some(BodyKind::Scope(_)))
+                        && clause::scope_resumes(p, x, c)
+                });
+            if !own {
+                // A body with no resume point runs where its site runs.
+                break;
+            }
+            let xb = p.body(x)?;
+            let (pre_b, post_b, points) = parts.entry(x).or_insert_with(|| {
+                let (pre_b, post_b) = regions(p, x, xb, c);
+                let points: BTreeSet<BlockId> = xb
                     .blocks
                     .iter()
-                    .position(|blk| match (x.kind, &blk.term.kind) {
-                        (BodyKind::Handled(h), TermKind::Handle { handler, .. }) => *handler == h,
-                        (BodyKind::Scope(k), TermKind::Scope { scope, .. }) => *scope == k,
-                        _ => false,
-                    })?;
-                return Some((BlockId(u32::try_from(blk).ok()?), TERM, Phase::Main));
-            }
-            at = site;
+                    .enumerate()
+                    .filter(|(_, blk)| {
+                        matches!(blk.term.kind, TermKind::Resume { .. })
+                            || clause::resume_scope(p, x, &blk.term.kind, c).is_some()
+                    })
+                    .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
+                    .collect();
+                (pre_b, post_b, points)
+            });
+            let point = points.contains(&block);
+            let after = point && at == TERM && phase != Phase::Main;
+            let lpre = pre_b.contains(&block) && !after;
+            let lpost = post_b.contains(&block) || after;
+            out = (out.0 && lpre, lpost || (lpre && out.1));
         }
-        None
+        Some(out)
     };
     // The clause and the handled bodies and scope bodies that splice into it.
     let mut bodies = vec![c];
@@ -2776,18 +2855,13 @@ fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet
                 continue;
             }
         }
-        let Some((block, at, phase)) = place_of(key) else {
+        let Some((is_pre, is_post)) = class(key) else {
             continue;
         };
-        let resume_block = b
-            .blocks
-            .get(block.index())
-            .is_some_and(|blk| matches!(blk.term.kind, TermKind::Resume { .. }));
-        let after_resume = resume_block && at == TERM && phase != Phase::Main;
-        if pre_blocks.contains(&block) && !after_resume {
+        if is_pre {
             pre.insert(n);
         }
-        if post_blocks.contains(&block) || after_resume {
+        if is_post {
             post.insert(n);
         }
     }
@@ -3214,6 +3288,7 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
         moves: facts.moved_at.iter().copied().collect(),
         parts: facts.moved_part.iter().copied().collect(),
         uses: Vec::new(),
+        own_post: HashMap::new(),
     };
     // The `Main` nodes of the `Resume`s (their aborts are of the handled
     // body), and the variables that `spared_at` can matter for: a linear or
@@ -3267,6 +3342,22 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
     // node, and the part after it that can reach a later `resume` at each
     // `Post` node.
     let mut rows = ClauseRows::default();
+    // The clauses with a resume point in a scope body (plan stage R0z Z5),
+    // the rows of their `Post` nodes before the projection, and the rows
+    // that each `post` part gives there ([`LateUses::own_post`]).
+    let z5: HashSet<BodyId> = hx
+        .resumes
+        .iter()
+        .filter(|(n, _, _)| hx.scope_resumes.contains(n))
+        .map(|&(_, _, c)| c)
+        .collect();
+    let native: HashMap<NodeId, OwnRows> = hx
+        .runs
+        .iter()
+        .filter(|r| z5.contains(&r.clause))
+        .map(|r| (r.node, OwnRows::of(facts, Some(r.node))))
+        .collect();
+    let mut post_rec: HashMap<NodeId, Vec<(BodyId, OwnRows)>> = HashMap::new();
     for r in order {
         let Some((pre, post)) = regions.get(&r.clause) else {
             continue;
@@ -3321,6 +3412,12 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
             } else {
                 rows.pre.entry(r.node).or_default().extend(changes_of(&new));
             }
+        }
+        if native.contains_key(&r.node) {
+            post_rec
+                .entry(r.node)
+                .or_default()
+                .push((r.clause, OwnRows::of(&new, None)));
         }
         let abort = part
             .may_abort
@@ -3388,6 +3485,26 @@ pub fn project(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> LateUses {
             if let Some(hb) = p.handlers.get(r.handler.index()).map(|d| d.handled) {
                 spare(p, facts, &cands, (r.node, &[hb]));
             }
+        }
+    }
+    // The rows that only a part of a clause of `z5` gives to a node that
+    // runs it (the `pre` part at a run node, the `post` part at `Post`): no
+    // row there before the projection, and no row of the projection of
+    // another clause there.
+    for (x, list) in &post_rec {
+        for (i, (c, mine)) in list.iter().enumerate() {
+            if !z5.contains(c) {
+                continue;
+            }
+            let mut other = native.get(x).cloned().unwrap_or_default();
+            for (j, (d, theirs)) in list.iter().enumerate() {
+                if j != i && d != c {
+                    other.add(theirs);
+                }
+            }
+            let mut own = mine.clone();
+            own.remove(&other);
+            late.own_post.entry((*x, *c)).or_default().add(&own);
         }
     }
     // A clause that puts a reference of its parameter into a place outside
@@ -3870,6 +3987,64 @@ pub struct LateUses {
     /// value of `v` from the site, with the places that the clause reads,
     /// changes or lends.
     uses: Vec<(VarId, NodeId, Vec<PlaceId>)>,
+    /// The rows that only a part of a clause with a resume point in a scope
+    /// body gives to a node that runs it (the `pre` part at a run node, the
+    /// `post` part at `Post`), by the node and the clause (plan stage R0z
+    /// Z5, [`OwnRows`]).
+    own_post: HashMap<(NodeId, BodyId), OwnRows>,
+}
+
+/// The rows of a node that [`continuations`] reads for a region (plan stage
+/// R0z Z5): the places that the node changes, reads and frees, and the
+/// variables that it moves.
+#[derive(Clone, Debug, Default)]
+struct OwnRows {
+    changes: BTreeSet<PlaceId>,
+    reads: BTreeSet<PlaceId>,
+    frees: BTreeSet<PlaceId>,
+    moves: BTreeSet<VarId>,
+}
+
+impl OwnRows {
+    /// The rows of the facts `f` at node `x`, or at each node if `x` is
+    /// `None`.
+    fn of(f: &FnFacts, x: Option<NodeId>) -> Self {
+        let at = |n: NodeId| x.is_none_or(|x| x == n);
+        Self {
+            changes: f
+                .mutates_at
+                .iter()
+                .chain(&f.lends_mut)
+                .filter(|r| at(r.0))
+                .map(|r| r.1)
+                .collect(),
+            reads: f.reads_at.iter().filter(|r| at(r.0)).map(|r| r.1).collect(),
+            frees: f
+                .releases_at
+                .iter()
+                .filter(|r| at(r.0))
+                .map(|r| r.1)
+                .chain(f.moved_part.iter().filter(|r| at(r.1)).map(|r| r.0))
+                .collect(),
+            moves: f.moved_at.iter().filter(|r| at(r.1)).map(|r| r.0).collect(),
+        }
+    }
+
+    /// Adds the rows of `o`.
+    fn add(&mut self, o: &Self) {
+        self.changes.extend(o.changes.iter().copied());
+        self.reads.extend(o.reads.iter().copied());
+        self.frees.extend(o.frees.iter().copied());
+        self.moves.extend(o.moves.iter().copied());
+    }
+
+    /// Removes the rows of `o`.
+    fn remove(&mut self, o: &Self) {
+        self.changes.retain(|q| !o.changes.contains(q));
+        self.reads.retain(|q| !o.reads.contains(q));
+        self.frees.retain(|q| !o.frees.contains(q));
+        self.moves.retain(|v| !o.moves.contains(v));
+    }
 }
 
 /// The uses `uses` of a clause at its run node that can see the value of
@@ -4155,7 +4330,7 @@ pub fn map_stored(
 ///
 /// Returns [`AlphaError::Later`] for a clause whose run nodes the region
 /// does not find in the handled body.
-pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> R {
+pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers, late: &LateUses) -> R {
     let p = t.p;
     let joined = &joined_sigma(hx);
     // The frames of the clauses end at `Post`: a reference into a local of a
@@ -4238,6 +4413,15 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> R {
     {
         ends_of.entry(x).or_default().push(v);
     }
+    // The reads of each node (plan stage R0z Z5): a `resume` in a scope body
+    // of the clause reads what its region reads.
+    let scope_resumes: HashSet<NodeId> = hx.scope_resumes.iter().copied().collect();
+    let mut reads_of: HashMap<NodeId, Vec<PlaceId>> = HashMap::new();
+    if !scope_resumes.is_empty() {
+        for &(x, q) in &facts.reads_at {
+            reads_of.entry(x).or_default().push(q);
+        }
+    }
     let mut frees_of: HashMap<NodeId, Vec<PlaceId>> = HashMap::new();
     for &(q, x) in &facts.moved_part {
         frees_of.entry(x).or_default().push(q);
@@ -4275,12 +4459,76 @@ pub fn continuations(t: &Tables<'_>, facts: &mut FnFacts, hx: &Handlers) -> R {
             .collect();
         let mut changed: BTreeSet<PlaceId> = BTreeSet::new();
         let mut freed: BTreeSet<PlaceId> = BTreeSet::new();
+        // A task of the scope that is active at a `resume` in a scope body of
+        // the clause stays active while the region runs, up to the end of the
+        // scope (plan stage R0z Z5): the `resume` reads what the region
+        // reads, so a write of the task conflicts with it (W0405). It also
+        // changes and frees what the region changes and frees (below).
+        //
+        // The `post` part of the clause at `Post` runs after the `resume`
+        // returns, and its `pre` part at a run node in the region (a call
+        // that runs the clause, D-CONT-RUN) runs before the `resume`: their
+        // rows there do not count for such a `resume`
+        // ([`LateUses::own_post`]). Another run of the clause in the region
+        // runs while this run waits: then the facts keep this weak form, and
+        // the program is in scope only if the `ir` pipeline rejects it.
+        let z5 = scope_resumes.contains(&r);
+        let empty = OwnRows::default();
+        let own_rows = |x: &NodeId| -> &OwnRows {
+            if z5 {
+                late.own_post.get(&(*x, c)).unwrap_or(&empty)
+            } else {
+                &empty
+            }
+        };
+        if z5 {
+            if rg.reruns(h, c) {
+                clause::note_pending(crate::factgen::Unsupported {
+                    group: crate::irbuild::scope::Group::D,
+                    reason: SCOPE_RESUME_AGAIN.to_string(),
+                });
+            }
+            let mut read: BTreeSet<PlaceId> = BTreeSet::new();
+            for x in &seen {
+                let o = own_rows(x);
+                read.extend(
+                    reads_of
+                        .get(x)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .filter(|q| !o.reads.contains(q)),
+                );
+            }
+            reads_of.entry(r).or_default().extend(read.iter().copied());
+            facts.reads_at.extend(read.into_iter().map(|q| (r, q)));
+        }
         for x in &seen {
-            changed.extend(changes.get(x).into_iter().flatten().copied());
-            for v in ends_of.get(x).into_iter().flatten() {
+            let o = own_rows(x);
+            changed.extend(
+                changes
+                    .get(x)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|q| !o.changes.contains(q)),
+            );
+            for v in ends_of
+                .get(x)
+                .into_iter()
+                .flatten()
+                .filter(|v| !o.moves.contains(v))
+            {
                 freed.extend(owners.get(v).into_iter().flatten().copied());
             }
-            freed.extend(frees_of.get(x).into_iter().flatten().copied());
+            freed.extend(
+                frees_of
+                    .get(x)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|q| !o.frees.contains(q)),
+            );
         }
         freed.retain(|&q| !own.contains(&facts.place(q).root));
         // The places of the parameters of the clause.
@@ -4513,6 +4761,37 @@ impl Region<'_> {
         Some(out)
     }
 
+    /// True if clause `c` of handler `h` can run again while it waits at a
+    /// `resume` (plan stage R0z Z5): a run of the clause in the region of
+    /// the continuation after a path of one edge or more, or a run node that
+    /// is in the region because it runs code after the perform (D-CONT-RUN:
+    /// a callee or a closure that can perform the operation again). A region
+    /// with no start counts as a run again.
+    fn reruns(&self, h: HandlerId, c: BodyId) -> bool {
+        let Some(hb) = self.handled(h) else {
+            return true;
+        };
+        let body = self.body_nodes(hb);
+        let Some(starts) = self.starts(c, &body) else {
+            return true;
+        };
+        if starts.iter().any(|&(_, with)| with) {
+            return true;
+        }
+        let from: Vec<(NodeId, bool)> = starts.iter().map(|&(n, _)| (n, false)).collect();
+        let mut seen: HashSet<NodeId> = HashSet::new();
+        self.walk(&from, &body, &mut seen);
+        // The nodes of an outer `multi` handler that runs the region again
+        // (D-COPY-WAIT) count too.
+        let all = self.of_quiet(h, c).unwrap_or_default();
+        let firsts: HashSet<NodeId> = starts.iter().map(|&(n, _)| n).collect();
+        self.hx.runs.iter().any(|x| {
+            x.clause == c
+                && !x.post
+                && (seen.contains(&x.node) || (all.contains(&x.node) && !firsts.contains(&x.node)))
+        })
+    }
+
     /// True if body `b` is inside the body of a task that W0314 rejects
     /// (`Handlers::w0314_bodies`): `b` or a body around it.
     fn in_w0314_task(&self, b: BodyId) -> bool {
@@ -4566,13 +4845,21 @@ impl Region<'_> {
     fn of(&self, h: HandlerId, c: BodyId) -> Option<HashSet<NodeId>> {
         let hb = self.handled(h)?;
         let body = self.body_nodes(hb);
-        let Some(starts) = self.starts(c, &body) else {
+        if self.starts(c, &body).is_none() {
             clause::note_pending(crate::factgen::Unsupported {
                 group: crate::irbuild::scope::Group::A,
                 reason: REST_NOT_FOUND.to_string(),
             });
             return None;
-        };
+        }
+        self.of_quiet(h, c)
+    }
+
+    /// [`Self::of`] with no note.
+    fn of_quiet(&self, h: HandlerId, c: BodyId) -> Option<HashSet<NodeId>> {
+        let hb = self.handled(h)?;
+        let body = self.body_nodes(hb);
+        let starts = self.starts(c, &body)?;
         let mut seen: HashSet<NodeId> = HashSet::new();
         self.walk(&starts, &body, &mut seen);
         let ends = self.ends(h);
@@ -4610,6 +4897,11 @@ impl Region<'_> {
         Some(seen)
     }
 }
+
+/// Why the facts of a `resume` in a scope body of a clause are weak: another
+/// run of the clause is in the region of the `resume` (plan stage R0z Z5).
+pub const SCOPE_RESUME_AGAIN: &str =
+    "a clause with a resume point in a scope body that runs again in the rest of its handled body (plan stage R0z Z5)";
 
 /// Why the facts of a resume have no region: a run of the clause maps to
 /// no node of the handled body (stage F17; pending from stage R0k-d1).

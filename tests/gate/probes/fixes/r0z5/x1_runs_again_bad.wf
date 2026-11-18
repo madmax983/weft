@@ -1,0 +1,14 @@
+// Plan stage R0z Z5: the handled body performs `run` two times, so the clause
+// runs again while its first run waits at its `resume`. The second run of
+// the rest of the handled body writes what the tasks read: W0405.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in {
+        run(|| print(st.count))
+        run(|| print(st.count))
+        st.count += 1
+    }
+}

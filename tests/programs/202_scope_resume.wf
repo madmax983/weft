@@ -1,0 +1,69 @@
+// Plan stage R0z Z5: a `resume` in a scope body of a clause. Each task of the
+// scope that runs at the `resume` runs while the rest of the handled body
+// runs, up to the end of the scope. A callee that performs the operation is
+// in the probes `tests/gate/probes/fixes/r0z5/c1_callee_*`.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+effect Many { multi fn many(g: fn()) }
+
+// The task reads `st.count`, and the rest of the handled body writes it.
+fn task_reads() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in {   //~ W0405
+        run(|| print(st.count))
+        st.count += 1
+    }
+}
+
+// The task writes `st.count`, and the rest of the handled body reads it.
+fn task_writes() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in {   //~ W0405
+        run(|| st.count += 1)
+        print(st.count)
+    }
+}
+
+// The rest of the handled body only reads what the task reads.
+fn both_read() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in {
+        run(|| print(st.count))
+        print(st.count)
+    }
+}
+
+// The clause joins the task before the `resume`.
+fn joined_before() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => let t = s.spawn(g)
+        t.join()
+        resume(()) } } } in {
+        run(|| print(st.count))
+        st.count += 1
+    }
+}
+
+// The clause reads what the task writes after its scope ends.
+fn read_after_scope() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) }   //~ old: W0405
+        print(st.count) } } in {
+        run(|| st.count += 1)
+    }
+}
+
+// A `multi` clause resumes two times while the task runs.
+fn multi_twice() / async {
+    let st = Stats { count: 0 }
+    handle Many { fn many(g) { scope { s => s.spawn(g)
+        resume(())   //~ W0405
+        resume(()) } } } in {   //~ W0405
+        many(|| print(st.count))
+        st.count += 1
+    }
+}

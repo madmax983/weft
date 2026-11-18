@@ -1,0 +1,12 @@
+// Plan stage R0z Z5: the scope body resumes on one path only. On that path the
+// task reads `st.count` while the rest of the handled body writes it: W0405.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn(), go: bool) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g, go) { scope { s => s.spawn(g)
+        if go { resume(()) } } } } in {
+        run(|| print(st.count), true)
+        st.count += 1
+    }
+}

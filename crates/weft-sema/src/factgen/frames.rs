@@ -364,12 +364,30 @@ fn clause_rows_at(p: &Program, tys: &TyTable, sums: &Summaries, cb: BodyId) -> C
     if !matches!(b.kind, BodyKind::Clause(..)) {
         return out;
     }
-    let (pre, post) = resume_parts(b);
+    let (pre, post) = resume_parts(p, cb, b);
     for (i, x) in p.bodies.iter().enumerate() {
         let sb = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
         if super::handlers::splice_root(p, sb) != cb {
             continue;
         }
+        // A body inside a scope body of the clause with a resume point (plan
+        // stage R0z Z5): a row there counts in both parts (a conservative
+        // result).
+        let in_point = sb != cb && {
+            let mut at = Some(sb);
+            let mut hit = false;
+            for _ in 0..=p.bodies.len() {
+                let Some(y) = at.filter(|&y| y != cb) else {
+                    break;
+                };
+                if crate::analysis::clause::scope_resumes(p, y, cb) {
+                    hit = true;
+                    break;
+                }
+                at = p.body(y).and_then(|d| d.parent);
+            }
+            hit
+        };
         let Some(anchor) = anchor_block(p, sb, cb) else {
             continue;
         };
@@ -383,18 +401,19 @@ fn clause_rows_at(p: &Program, tys: &TyTable, sums: &Summaries, cb: BodyId) -> C
             // A block of the clause counts where it is; a block of a body
             // that splices into the clause counts where its site block is.
             let at = if sb == cb { j } else { anchor.index() };
-            out.pre |= pre.get(at).copied().unwrap_or(true);
-            out.post |= post.get(at).copied().unwrap_or(true);
+            out.pre |= in_point || pre.get(at).copied().unwrap_or(true);
+            out.post |= in_point || post.get(at).copied().unwrap_or(true);
         }
     }
     out
 }
 
-/// The blocks of clause body `b` that run before its first `resume`
-/// (reached from the entry with no `Resume` on the way) and the blocks that
-/// run after a `resume`, by block index. The `Resume` block itself runs
-/// before.
-fn resume_parts(b: &weft_ir::Body) -> (Vec<bool>, Vec<bool>) {
+/// The blocks of clause body `b` (body `cb`) that run before its first
+/// `resume` (reached from the entry with no `Resume` on the way) and the
+/// blocks that run after a `resume`, by block index. The `Resume` block
+/// itself runs before. A `scope` whose scope body has a resume point of the
+/// clause (plan stage R0z Z5) counts as a `Resume` here.
+fn resume_parts(p: &Program, cb: BodyId, b: &weft_ir::Body) -> (Vec<bool>, Vec<bool>) {
     let n = b.blocks.len();
     let mut pre = vec![false; n];
     let mut post = vec![false; n];
@@ -409,7 +428,15 @@ fn resume_parts(b: &weft_ir::Body) -> (Vec<bool>, Vec<bool>) {
             continue;
         };
         let succ = blk.term.kind.successors();
-        if matches!(blk.term.kind, TermKind::Resume { .. }) {
+        let scope = crate::analysis::clause::resume_scope(p, cb, &blk.term.kind, cb);
+        if let Some(sb) = scope {
+            // The scope body can also end with no resume point: the blocks
+            // after it run before a `resume` too.
+            if crate::analysis::clause::lands_in(p, sb, cb) {
+                work.extend(succ.iter().copied());
+            }
+            after.extend(succ);
+        } else if matches!(blk.term.kind, TermKind::Resume { .. }) {
             after.extend(succ);
         } else {
             work.extend(succ);

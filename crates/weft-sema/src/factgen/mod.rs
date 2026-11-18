@@ -488,10 +488,12 @@ fn check_supported(
                 // facts do not model it (no resume point of the clause), so
                 // the program is in scope only if the `ir` pipeline rejects
                 // it (stage R0g).
+                // A `resume` in a scope body of the clause through scope
+                // bodies only is a resume point of the clause (plan stage
+                // R0z Z5, `clause::resume_point`).
                 TermKind::Resume { kont, .. } => {
-                    match crate::analysis::clause::kont_handler(p, bid, kont) {
-                        Some((_, c, _)) if c == bid => {}
-                        _ => crate::analysis::clause::note_kont_pending(p, bid),
+                    if crate::analysis::clause::resume_point(p, bid, kont).is_none() {
+                        crate::analysis::clause::note_kont_pending(p, bid);
                     }
                 }
                 // The task terminators of a body that splices into a
@@ -1170,6 +1172,7 @@ pub fn emit_parts(
         },
         facts,
         &hx,
+        &late,
     )
     .map_err(|e| unsupported(&e))?;
     // A `@ uniq` value is not `many` (`once_var`, as in the old lowering):
@@ -2024,6 +2027,7 @@ fn closure_summary(
             },
             &mut facts,
             &hx,
+            &late,
         )
         .map_err(|e| unsupported(&e))?;
         handlers::late_uses(&mut facts, &late);
@@ -2459,6 +2463,7 @@ fn merge_handlers(
 ) {
     into.runs.append(&mut from.runs);
     into.resumes.append(&mut from.resumes);
+    into.scope_resumes.append(&mut from.scope_resumes);
     for (h, x) in std::mem::take(&mut from.ids) {
         into.ids.entry(h).or_insert(x);
     }
@@ -2817,7 +2822,7 @@ pub fn components_built(
     // A program whose only pending reason is a perform whose rest of the
     // handled body the facts do not find: the copies of plan stage R0z Z3,
     // part f, as `run` makes them (`rest_view`).
-    let rest = u.reason == handlers::REST_NOT_FOUND;
+    let rest = copy_reasons(&u.reason);
     let Some(inst) = (instantiate::wanted(u) || rest)
         .then(|| instantiate::instantiate(&built))
         .flatten()
@@ -4374,7 +4379,7 @@ pub(crate) fn run(
         // A perform whose rest of the handled body the facts do not find
         // (F17): the copies of the closure bodies at their runs can put the
         // perform at a node of the handled body (plan stage R0z Z3, part f).
-        let rest = pend.iter().all(|x| x.reason == handlers::REST_NOT_FOUND);
+        let rest = pend.iter().all(|x| copy_reasons(&x.reason));
         let copy = if kont {
             kont_view(a, &built, &s, no_runtime, kept.clone())
         } else if rest {
@@ -4741,9 +4746,7 @@ pub fn reasons(a: &Analysis, on: Groups, no_runtime: bool) -> Vec<String> {
     }
     // The copies of plan stage R0z Z3, part f: a program whose only reason
     // is a perform whose rest of the handled body the facts do not find.
-    let rest = failed.is_empty()
-        && !pend.is_empty()
-        && pend.iter().all(|x| x.ends_with(handlers::REST_NOT_FOUND));
+    let rest = failed.is_empty() && !pend.is_empty() && pend.iter().all(|x| copy_reasons(x));
     let first = failed.first().map(|(_, u)| instantiate::wanted(u));
     if first == Some(true) || rest {
         {
@@ -4770,6 +4773,22 @@ pub fn reasons(a: &Analysis, on: Groups, no_runtime: bool) -> Vec<String> {
     let _ = crate::analysis::clause::take_z1_sink();
     let _ = crate::analysis::clause::take_pending();
     out
+}
+
+/// True if the pending reason `why` (its text, or the text of its
+/// [`Unsupported`]) can go with the call-site copies of stage R0k-a
+/// ([`rest_view`]): a perform whose rest of the handled body the facts do
+/// not find (plan stage R0z Z3, part f), a task that runs code of a caller,
+/// or a clause with a resume point in a scope body whose region has a node
+/// that runs the clause and code after the perform (plan stage R0z Z5).
+/// With the copies, the code of a callee that performs the operation of a
+/// local handler is code of the site: its perform is a node of the handled
+/// body, and a task of the clause runs a known closure. The copies apply
+/// only if their facts are full.
+fn copy_reasons(why: &str) -> bool {
+    why.ends_with(handlers::REST_NOT_FOUND)
+        || why.ends_with(templates::TASK_CODE)
+        || why.ends_with(handlers::SCOPE_RESUME_AGAIN)
 }
 
 /// The facts of the program `built` with the copies of stage R0k-c1
@@ -4837,7 +4856,9 @@ fn kont_view(
 /// only the pending reason [`handlers::REST_NOT_FOUND`]: a closure body runs
 /// at a node that is not in the handled body of its perform (a clause that
 /// runs its parameter). A copy region of the closure body at that run puts
-/// the perform there.
+/// the perform there. From plan stage R0z Z5 the reason can also be
+/// `templates::TASK_CODE` ([`copy_reasons`]): a clause that runs a function
+/// value of a callee as a task gets the closure of the copy of the callee.
 fn rest_view(
     a: &Analysis,
     built: &Built,

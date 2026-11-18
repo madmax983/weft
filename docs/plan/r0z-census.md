@@ -25,7 +25,7 @@ the counts.
   the first one. 27 of the 165 rows have more than one reason (scratchpad
   `r0z/z0/reasons-a3.tsv`). The second reasons that a later stage must close too:
   - D1 and TC (a task that runs code of a caller): `c2_task`, `k04_c2_race_ok`, `rv_p12`
-    and its twin (Z5);
+    and its twin (Z5; closed, "Z5 (as built)");
   - F18 and NESTED: `a13`, `a13b`, `a13c`, `j07_run_bad`, `j07_run_ok`, `sim1` (Z9c);
   - C2 and D5: `rv_p04` and its twin (Z7);
   - D3 and TC: `d3f_task`;
@@ -78,6 +78,30 @@ the counts.
   can run at more than one node (the join of issue #79, in the one-local form), and the
   value of a capture joins only the closures that the state can have. The rows 52 to 55
   (`u12`, `u13`, one run) stay closed. Tier 1: 81 fallbacks of 5516 files (main 77 of 5471): the 11 census rows stay closed; of the files of the stage, the probes `a3` and `a5` (two runs of the local) and the refusal probes `n1`, `n2` keep the fallback.
+
+## Z5 (as built)
+
+- Z5 closed the 4 D1b rows of tier 1 (rows 56 to 59; 53 to 49 fallbacks of the census
+  rows). A `resume` in a scope body of the clause through scope bodies only is a resume
+  point; the task of the scope that is active at the `resume` conflicts at the `resume`
+  with what the rest of the handled body reads, changes and frees. TC, the second reason
+  of these rows, goes with the copies of R0k-a: the copy of the callee makes the perform
+  a perform of the local handler, so the task runs the closure of the copy.
+  `c2_task` and `rv_p12_c2_task_after_perform` (oldmiss) are rejected in scope (W0405 at
+  the `resume`); `k04_c2_race_ok` and `rv_p12_c2_task_after_perform_ok` are in scope with
+  no error.
+- Tier 1: 85 fallbacks of 5562 files (main: 85 of 5520, and 125 of 5562 with the 42 new
+  files of the stage: 41 probes `fixes/r0z5/` and the corpus program
+  `202_scope_resume.wf`). Out of the census rows, `fixes/r0z/f1_scope_resumes_ok` (the
+  clean twin of rule F) leaves the fallback too. Of the new files, five keep the
+  fallback: `x1_runs_again_ok`, `y1_callee_twice_bad`, `y1_callee_twice_ok`,
+  `y2_local_twice_bad`, `y2_local_twice_ok` (the clause runs again in the region of its
+  `resume`, `SCOPE_RESUME_AGAIN`); `x1_runs_again_bad` is rejected by the pending rule.
+- Tier 2 has no D1b row of the census (row 13, `m3b/p21376`, closed in Z1): 23
+  fallbacks of 57393 files, as main, and no row changes its reason
+  (`r3/quality/big/all_2.wf` was a time-out of 150 s in the census of main on a loaded
+  machine).
+- The open-old entry `R0h-STAYS` keeps only `rv_p04_c2_multi` (Z7).
 
 ## Columns
 
@@ -166,10 +190,10 @@ the counts.
 | 53 | `fixes/r0kb2/u12_scope_body_ok.wf` | C2 | a second write by a scope body (clean twin) | clean | no fault | clean | yes | Z3 (closed) |
 | 54 | `fixes/r0kb2/u13_clause_bad.wf` | C2 | a second write of the local of the way by a clause (the same closure id) | clean | fault | oldmiss | yes | Z3 (closed) |
 | 55 | `fixes/r0kb2/u13_clause_ok.wf` | C2 | a second write by a clause (clean twin) | clean | no fault | clean | yes | Z3 (closed) |
-| 56 | `fixes/r0h/c2_task.wf` | D1 | D1b: the clause spawns the value, then resumes in the scope body; the rest of the handled body writes what the task reads | clean | fault | oldmiss | no | Z5 |
-| 57 | `fixes/r0k/k04_c2_race_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 |
-| 58 | `fixes/r0k/rv_p12_c2_task_after_perform.wf` | D1 | D1b: as c2_task; the callee spawns a writer after the perform | clean | fault | oldmiss | no | Z5 |
-| 59 | `fixes/r0k/rv_p12_c2_task_after_perform_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 |
+| 56 | `fixes/r0h/c2_task.wf` | D1 | D1b: the clause spawns the value, then resumes in the scope body; the rest of the handled body writes what the task reads | clean | fault | oldmiss | no | Z5 (closed) |
+| 57 | `fixes/r0k/k04_c2_race_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 (closed) |
+| 58 | `fixes/r0k/rv_p12_c2_task_after_perform.wf` | D1 | D1b: as c2_task; the callee spawns a writer after the perform | clean | fault | oldmiss | no | Z5 (closed) |
+| 59 | `fixes/r0k/rv_p12_c2_task_after_perform_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 (closed) |
 | 60 | `fixes/r0k/rv_p04_c2_multi.wf` | C2>D5 | a `multi` clause runs the value between two `resume`s; the copy brings in a row that only the analysis finds | clean | fault | oldmiss | no | Z7 |
 | 61 | `fixes/r0k/rv_p04_c2_multi_ok.wf` | C2>D5 | as rv_p04 (clean twin) | clean | no fault | clean | no | Z7 |
 | 62 | `fixes/r0k2/a04_two_closures_bad.wf` | D3 | two closures can reach the local (static copy refused) | W0301 | fault | rejected | yes | Z6 |

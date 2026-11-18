@@ -1,0 +1,14 @@
+// Plan stage R0z Z5: the clean twin of x1. The rest of the handled body only
+// reads `st.count`. The facts of a clause that runs again in its region are
+// weak, so the program keeps the old pipeline.
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(()) } } } in {
+        run(|| print(st.count))
+        run(|| print(st.count))
+        print(st.count)
+    }
+}

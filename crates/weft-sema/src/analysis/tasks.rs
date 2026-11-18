@@ -275,7 +275,24 @@ pub fn scope_run(cx: &mut Cx<'_>, st: &State, k: ScopeId) -> Result<ScopeOut, Al
     // nodes of the scope body (`Handlers::extra`, plan stage F19).
     let mut seeds = vec![(sbody.entry, init)];
     seeds.extend(cx.hx.extra.get(&sb).into_iter().flatten().cloned());
-    let (states, ends) = super::run_from(cx, sb, seeds, super::Mode::default())?;
+    // The code of a clause before its resume points (plan stage R0z Z5): a
+    // scope body of the clause with a resume point stops at its `Resume`s,
+    // and the clause gets their states (`clause::Handlers::pre_resumes`).
+    let stop = cx
+        .hx
+        .pre_stop
+        .last()
+        .is_some_and(|&c| super::clause::scope_resumes(p, sb, c));
+    let mode = super::Mode {
+        all: false,
+        stop_at_resume: stop,
+    };
+    let (states, ends) = super::run_from(cx, sb, seeds, mode)?;
+    if stop {
+        for (rb, s) in &ends.resumes {
+            cx.hx.pre_resumes.push((sb, *rb, s.clone()));
+        }
+    }
     let mut exit: Option<State> = None;
     for s in ends.returns.values() {
         match &mut exit {
@@ -285,9 +302,48 @@ pub fn scope_run(cx: &mut Cx<'_>, st: &State, k: ScopeId) -> Result<ScopeOut, Al
             None => exit = Some(s.clone()),
         }
     }
-    let mut value = exit
-        .as_ref()
-        .map_or_else(Tree::none, |e| e.value((sb, sbody.ret), &[]));
+    // A scope body that stops at a resume point on each path does not end
+    // here: the `scope` has no normal successor in this run.
+    let no_normal = stop && exit.is_none() && !ends.resumes.is_empty();
+    let (after, value) = match &exit {
+        Some(e) => scope_after(cx, k, e)?,
+        None => (scope_finish(p, sb, st), Tree::none()),
+    };
+    let mut unwind: Option<State> = None;
+    for s in ends.unwinds.values() {
+        let s = scope_finish(p, sb, s);
+        match &mut unwind {
+            Some(u) => {
+                u.join(&s);
+            }
+            None => unwind = Some(s),
+        }
+    }
+    cx.hx.no_normal = no_normal;
+    Ok(ScopeOut {
+        body: sb,
+        states,
+        exit,
+        after,
+        value,
+        unwind,
+    })
+}
+
+/// The end of scope `k` from the state `exit` at the `Return`s of its scope
+/// body: the state after the `scope` (with no local of the scope body), and
+/// the value of the `scope`.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::BadPlace`] if the scope does not exist.
+pub fn scope_after(cx: &Cx<'_>, k: ScopeId, exit: &State) -> Result<(State, Tree), AlphaError> {
+    let p = cx.p;
+    let sb = scope_body(p, k)?;
+    let sbody = p
+        .body(sb)
+        .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", sb.0)))?;
+    let mut value = exit.value((sb, sbody.ret), &[]);
     // A handle of a task of the scope in the value (a spawn as the tail of
     // the scope body): the task ended at `ScopeWait`, so the handle holds
     // only its result (as a spawn statement, the old lowering).
@@ -309,41 +365,25 @@ pub fn scope_run(cx: &mut Cx<'_>, st: &State, k: ScopeId) -> Result<ScopeOut, Al
         value.top.linear = false;
         value.top.empty = true;
     }
+    Ok((scope_finish(p, sb, exit), value))
+}
+
+/// The state `s` of scope body `sb` with no local of the scope body. A
+/// closure that the scope body makes keeps the values of the locals that it
+/// captures: it can run after the `scope` (as after a `handle`).
+fn scope_finish(p: &weft_ir::Program, sb: BodyId, s: &State) -> State {
     let mine = |b: BodyId| super::clause::inside(p, b, sb);
-    // A closure that the scope body makes keeps the values of the locals
-    // that it captures: it can run after the `scope` (as after a `handle`).
     let captured = super::clause::captured_locals(p, sb);
-    let finish = |s: &State| {
-        let kept: Vec<(Key, Tree)> = captured
-            .iter()
-            .filter_map(|k| s.tree(*k).map(|t| (*k, t.clone())))
-            .collect();
-        let mut out = s.clone();
-        out.remove_bodies(&mine);
-        for (k, t) in kept {
-            out.keep_value(k, t);
-        }
-        out
-    };
-    let after = exit.as_ref().map_or_else(|| finish(st), &finish);
-    let mut unwind: Option<State> = None;
-    for s in ends.unwinds.values() {
-        let s = finish(s);
-        match &mut unwind {
-            Some(u) => {
-                u.join(&s);
-            }
-            None => unwind = Some(s),
-        }
+    let kept: Vec<(Key, Tree)> = captured
+        .iter()
+        .filter_map(|k| s.tree(*k).map(|t| (*k, t.clone())))
+        .collect();
+    let mut out = s.clone();
+    out.remove_bodies(&mine);
+    for (k, t) in kept {
+        out.keep_value(k, t);
     }
-    Ok(ScopeOut {
-        body: sb,
-        states,
-        exit,
-        after,
-        value,
-        unwind,
-    })
+    out
 }
 
 /// `Scope`: the run of the scope body; then the destination gets its

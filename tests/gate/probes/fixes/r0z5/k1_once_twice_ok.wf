@@ -1,0 +1,9 @@
+// Plan stage R0z Z5: the clean twin of k1. The scope body resumes the `once`
+// continuation one time.
+effect Run { fn run() }
+fn main() / async {
+    handle Run { fn run() { scope { s => resume(()) } } } in {
+        run()
+        print(1)
+    }
+}

@@ -1,0 +1,13 @@
+// Plan stage R0z Z5: the clean twin of y1. Each task only reads `st.count`.
+// The program keeps the old pipeline, as y1.
+struct Stats { count: u64 }
+effect Run { fn run() }
+fn f() / Run {
+    run()
+    run()
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run() { scope { s => s.spawn(|| print(st.count))
+        resume(()) } } } in { f() }
+}

@@ -76,6 +76,10 @@ pub struct Handlers {
     /// The `Main` node of each `Resume` of a clause in the facts, with the
     /// handler and the clause body.
     pub resumes: Vec<(weft_facts::NodeId, HandlerId, BodyId)>,
+    /// The `Main` nodes of [`Self::resumes`] in a scope body of the clause
+    /// (plan stage R0z Z5): each task that is active there runs while the
+    /// rest of the handled body runs.
+    pub scope_resumes: Vec<weft_facts::NodeId>,
     /// The handler id and the capability id of each handler in the facts.
     pub ids: BTreeMap<HandlerId, (weft_facts::HandlerId, weft_facts::CapId)>,
     /// The `Exit` and `Post` nodes of each `handle` in the facts.
@@ -238,6 +242,20 @@ pub struct Handlers {
     /// The program runs with no runtime (`// weft: no-runtime`): no root
     /// handler serves a standard effect on a task (plan stage F18).
     pub no_runtime: bool,
+    /// The clause bodies whose code before their resume points runs now
+    /// (`run_clause`), the innermost last (plan stage R0z Z5): a scope
+    /// body of the chain of such a clause with a resume point
+    /// ([`scope_resumes`]) stops at its `Resume`s too
+    /// (`super::tasks::scope_run`).
+    pub pre_stop: Vec<BodyId>,
+    /// The states at the resume points in scope bodies that the runs of
+    /// [`Self::pre_stop`] found: the scope body, the block of the `Resume`
+    /// and the state before its terminator (plan stage R0z Z5).
+    pub pre_resumes: Vec<(BodyId, BlockId, State)>,
+    /// The terminator that the analysis ran last has no normal successor: a
+    /// `scope` whose scope body stops at its resume points on each path
+    /// (plan stage R0z Z5, `super::edges` takes it).
+    pub no_normal: bool,
     /// The closure bodies that a task runs, for each task that W0314
     /// rejects (`crate::factgen::templates::task_start`, stage R0c). A
     /// clause that a node of such a body runs runs on another task: the
@@ -1049,6 +1067,100 @@ pub fn kont_handler(p: &Program, body: BodyId, place: &Place) -> Option<(Handler
     }
 }
 
+/// The clause body above body `b` through scope bodies only (plan stage R0z
+/// Z5): `b` is a scope body, and its parent chain has only scope bodies up
+/// to a clause body.
+pub fn scope_chain_clause(p: &Program, b: BodyId) -> Option<BodyId> {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let x = p.body(at)?;
+        match (x.kind, x.parent) {
+            (BodyKind::Scope(_), Some(up)) => at = up,
+            (BodyKind::Clause(..), _) if at != b => return Some(at),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The continuation of a `resume` that is a resume point of its clause.
+///
+/// The result is the handler, the clause body and the flag `multi` of the
+/// continuation of a `resume` of `kont` in body `body` (plan stage R0z Z5):
+/// a `resume` in the clause body itself, or in a scope body inside the
+/// clause through scope bodies only ([`scope_resumes`] is true for the
+/// outermost of these scope bodies).
+pub fn resume_point(p: &Program, body: BodyId, kont: &Place) -> Option<(HandlerId, BodyId, bool)> {
+    let (h, cb, multi) = kont_handler(p, body, kont)?;
+    if cb == body {
+        return Some((h, cb, multi));
+    }
+    let top = top_scope(p, body, cb)?;
+    scope_resumes(p, top, cb).then_some((h, cb, multi))
+}
+
+/// The scope body of clause `cb` whose site is `cb` and that is `b` or has
+/// `b` inside it through scope bodies only.
+fn top_scope(p: &Program, b: BodyId, cb: BodyId) -> Option<BodyId> {
+    if scope_chain_clause(p, b) != Some(cb) {
+        return None;
+    }
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let up = p.body(at)?.parent?;
+        if up == cb {
+            return Some(at);
+        }
+        at = up;
+    }
+    None
+}
+
+/// True if scope body `sb` has a resume point of clause `cb` (plan stage
+/// R0z Z5).
+///
+/// The chain of scope bodies of `sb` reaches `cb` ([`scope_chain_clause`]),
+/// and `sb` or a scope body inside it through scope bodies only has a
+/// `Resume` of the continuation of `cb`. Each `Resume` of these scope bodies
+/// must resume that continuation, and no other body inside `sb` (a closure,
+/// a handled body, a clause) can resume it: else the test is false.
+pub fn scope_resumes(p: &Program, sb: BodyId, cb: BodyId) -> bool {
+    if scope_chain_clause(p, sb) != Some(cb) {
+        return false;
+    }
+    let mut any = false;
+    for (i, x) in p.bodies.iter().enumerate() {
+        let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        if !inside(p, id, sb) {
+            continue;
+        }
+        let chain = scope_chain_clause(p, id) == Some(cb);
+        for blk in x.blocks.iter().filter(|blk| !blk.cleanup) {
+            let TermKind::Resume { kont, .. } = &blk.term.kind else {
+                continue;
+            };
+            let of_cb = kont_handler(p, id, kont).is_some_and(|k| k.1 == cb);
+            match (chain, of_cb) {
+                (true, true) => any = true,
+                (false, false) => {}
+                _ => return false,
+            }
+        }
+    }
+    any
+}
+
+/// The scope body of the `scope` terminator `t` of body `b` of clause
+/// chain `cb` if [`scope_resumes`] is true for it: the terminator runs a
+/// resume point of the clause (plan stage R0z Z5).
+pub fn resume_scope(p: &Program, b: BodyId, t: &TermKind, cb: BodyId) -> Option<BodyId> {
+    let TermKind::Scope { scope, .. } = t else {
+        return None;
+    };
+    let sb = p.scopes.get(scope.index())?.body;
+    (p.body(sb)?.parent == Some(b) && scope_resumes(p, sb, cb)).then_some(sb)
+}
+
 /// The clause body of operation `op` of handler `h`.
 pub fn clause_of(p: &Program, h: HandlerId, op: weft_ir::OpIdx) -> Option<BodyId> {
     p.handlers
@@ -1068,9 +1180,22 @@ pub fn clause_of(p: &Program, h: HandlerId, op: weft_ir::OpIdx) -> Option<BodyId
 /// handler, so a perform of its operation has no abort edge to the handler.
 /// The test is on the blocks of the clause body: a `resume` in a body
 /// inside the clause is not a resume point here (stage F16), so the clause
-/// counts as one that can end with no resume point.
+/// counts as one that can end with no resume point. From plan stage R0z Z5
+/// a `scope` whose scope body has a resume point of the clause
+/// ([`resume_scope`]) is a resume point here if its scope body does not
+/// land ([`lands_in`]).
 pub fn lands(p: &Program, cb: BodyId) -> bool {
-    let Some(b) = p.body(cb) else {
+    lands_in(p, cb, cb)
+}
+
+/// True if body `b_id` can end with no resume point of clause `cb`.
+///
+/// `b_id` is `cb` or a scope body of its chain. A path from its entry
+/// reaches a `Return` with no resume point on the way. A `scope` whose
+/// scope body has a resume point of `cb` ([`resume_scope`]) goes on only if
+/// that body can end with no resume point (plan stage R0z Z5).
+pub fn lands_in(p: &Program, b_id: BodyId, cb: BodyId) -> bool {
+    let Some(b) = p.body(b_id) else {
         return true;
     };
     let mut seen = vec![false; b.blocks.len()];
@@ -1089,7 +1214,10 @@ pub fn lands(p: &Program, cb: BodyId) -> bool {
         match blk.term.kind {
             TermKind::Return => return true,
             TermKind::Resume { .. } => {}
-            ref t => work.extend(t.normal_successors()),
+            ref t => match resume_scope(p, b_id, t, cb) {
+                Some(sb) if !lands_in(p, sb, cb) => {}
+                _ => work.extend(t.normal_successors()),
+            },
         }
     }
     false
@@ -1496,10 +1624,10 @@ fn run_handled(
             let mut vals = Tree::none();
             cx.hx.open.push(Open::new(h));
             let mut run = || -> Result<(), AlphaError> {
-                for (cb, seeds) in post_seeds(cx, &open.resumes, ex, &resumed)? {
+                for (rbody, seeds) in post_seeds(cx, &open.resumes, ex, &resumed)? {
+                    let (cb, returns) = post_run(cx, rbody, seeds)?;
                     let ret = body_of(p, cb)?.ret;
-                    let (_, ends) = run_from(cx, cb, seeds, Mode::default())?;
-                    for s in ends.returns.into_values() {
+                    for s in returns {
                         let v = s.value((cb, ret), &[]);
                         check_kont_escape(cx, (h, cb), &s, Some(&v), None);
                         vals.join(&v);
@@ -2013,6 +2141,64 @@ fn post_seeds(
     Ok(by.into_iter().collect())
 }
 
+/// The run of the code of a clause after its resume points in body `body`
+/// from the seeds `seeds` ([`post_seeds`]): the clause body, and the states
+/// at its `Return`s.
+///
+/// A resume point in a scope body of the clause (plan stage R0z Z5) goes on
+/// after the scope body: from the `Return`s of the scope body, the `scope`
+/// ends (`super::tasks::scope_after`), its destination gets the value of the
+/// scope body, and the run goes on in the body around it from the normal
+/// successor of the `scope`, up to the clause body.
+///
+/// # Errors
+///
+/// The errors of the transfer functions.
+fn post_run(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    seeds: Seeds,
+) -> Result<(BodyId, Vec<State>), AlphaError> {
+    let p = cx.p;
+    let mut at = body;
+    let mut seeds = seeds;
+    for _ in 0..=p.bodies.len() {
+        let (_, ends) = run_from(cx, at, seeds, Mode::default())?;
+        let b = body_of(p, at)?;
+        let (BodyKind::Scope(k), Some(up)) = (b.kind, b.parent) else {
+            return Ok((at, ends.returns.into_values().collect()));
+        };
+        let mut exit: Option<State> = None;
+        for s in ends.returns.values() {
+            match &mut exit {
+                Some(e) => {
+                    e.join(s);
+                }
+                None => exit = Some(s.clone()),
+            }
+        }
+        let ub = body_of(p, up)?;
+        let site = ub.blocks.iter().find_map(|blk| match &blk.term.kind {
+            TermKind::Scope { scope, dest, .. } if *scope == k => {
+                Some((dest, blk.term.kind.normal_successors()))
+            }
+            _ => None,
+        });
+        let (Some(exit), Some((dest, next))) = (exit, site) else {
+            // The scope body does not end: the clause does not go on.
+            let top = scope_chain_clause(p, at).unwrap_or(up);
+            return Ok((top, Vec::new()));
+        };
+        let (mut after, value) = super::tasks::scope_after(cx, k, &exit)?;
+        transfer::bind_result(cx, up, &mut after, &[], dest, value)?;
+        seeds = next.into_iter().map(|x| (x, after.clone())).collect();
+        at = up;
+    }
+    Err(AlphaError::BadPlace(
+        "a chain of scope bodies with no end".to_string(),
+    ))
+}
+
 /// The transfer of a `Resume` of body `body` in state `st`: the argument
 /// moves, a `once` continuation moves, the locals that are not of the clause
 /// get their values from the state `exit` at the end of the handled body
@@ -2365,18 +2551,33 @@ fn run_clause(
         stop_at_resume: true,
     };
     cx.hx.frames.extend(frame.iter().copied());
+    // The resume points in the scope bodies of the clause (plan stage R0z
+    // Z5): the run of such a scope body stops at them too.
+    let mark = cx.hx.pre_resumes.len();
+    cx.hx.pre_stop.push(cb);
     let run = run_from(cx, cb, vec![(cbody.entry, init)], mode);
+    cx.hx.pre_stop.pop();
+    cx.hx.no_normal = false;
+    let inner: Vec<(BodyId, BlockId, State)> = cx.hx.pre_resumes.split_off(mark);
     let n = cx.hx.frames.len().saturating_sub(own.len());
     cx.hx.frames.truncate(n);
     let (_, ends) = run?;
     let mine = |b: BodyId| inside(p, b, cb);
     let mut after: Option<State> = None;
     let mut value = Tree::none();
-    for (rb, sr) in &ends.resumes {
-        if let Some(TermKind::Resume { arg, .. }) =
-            cbody.blocks.get(rb.index()).map(|b| &b.term.kind)
+    let points: Vec<(BodyId, BlockId, &State)> = ends
+        .resumes
+        .iter()
+        .map(|(rb, sr)| (cb, *rb, sr))
+        .chain(inner.iter().map(|(b, rb, sr)| (*b, *rb, sr)))
+        .collect();
+    for (rbody, rb, sr) in points {
+        if let Some(TermKind::Resume { arg, .. }) = p
+            .body(rbody)
+            .and_then(|b| b.blocks.get(rb.index()))
+            .map(|b| &b.term.kind)
         {
-            let v = transfer::operand(cx, cb, sr, arg)?;
+            let v = transfer::operand(cx, rbody, sr, arg)?;
             check_kont_escape(cx, (h, cb), sr, None, Some(&v));
             value.join(&v);
         }
@@ -2391,7 +2592,7 @@ fn run_clause(
         }
         let rec = clean_all(&sr);
         if let Some(o) = cx.hx.open_mut(h) {
-            o.resumes.push((cb, *rb, rec));
+            o.resumes.push((rbody, rb, rec));
         }
     }
     // A clause that ends with no `resume` aborts to its handler.
@@ -2525,13 +2726,16 @@ pub fn note_cap_apps(
     }
 }
 
-/// True if clause body `cb` has a resume point (a `Resume` of its own
-/// blocks).
+/// True if clause body `cb` has a resume point: a `Resume` of its own
+/// blocks, or a `scope` whose scope body has one (plan stage R0z Z5,
+/// [`resume_scope`]).
 pub fn has_resume(p: &Program, cb: BodyId) -> bool {
     p.body(cb).is_some_and(|b| {
-        b.blocks
-            .iter()
-            .any(|blk| !blk.cleanup && matches!(blk.term.kind, TermKind::Resume { .. }))
+        b.blocks.iter().any(|blk| {
+            !blk.cleanup
+                && (matches!(blk.term.kind, TermKind::Resume { .. })
+                    || resume_scope(p, cb, &blk.term.kind, cb).is_some())
+        })
     })
 }
 

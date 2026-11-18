@@ -1,0 +1,14 @@
+// Plan stage R0z Z5: the task starts after the first `resume` of a `multi`
+// clause and before the second one. The second run of the rest of the
+// handled body writes what the task reads: W0405.
+struct Stats { count: u64 }
+effect Run { multi fn run(g: fn()) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => resume(())
+        s.spawn(g)
+        resume(()) } } } in {
+        run(|| print(st.count))
+        st.count += 1
+    }
+}

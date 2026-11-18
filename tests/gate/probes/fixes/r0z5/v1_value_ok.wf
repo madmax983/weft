@@ -1,0 +1,12 @@
+// Plan stage R0z Z5: the clean twin of v1. The rest of the handled body only
+// reads `st.count`.
+struct Stats { count: u64 }
+effect Get { fn get(g: fn()) -> u64 }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Get { fn get(g) { scope { s => s.spawn(g)
+        resume(41) } } } in {
+        let k = get(|| print(st.count))
+        print(st.count + k)
+    }
+}

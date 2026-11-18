@@ -1,0 +1,14 @@
+// Plan stage R0z Z5: a `multi` clause resumes two times in the scope body
+// while a task of the scope runs. The task reads `st.count`, and each run of
+// the rest of the handled body writes it: W0405.
+struct Stats { count: u64 }
+effect Run { multi fn run(g: fn()) }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => s.spawn(g)
+        resume(())
+        resume(()) } } } in {
+        run(|| print(st.count))
+        st.count += 1
+    }
+}

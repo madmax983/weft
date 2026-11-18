@@ -1,0 +1,15 @@
+// Plan stage R0z Z5: the clause gives the handle of the task to the rest of
+// the handled body, and the rest joins it before the write. The task ends
+// inside the region, so the program is clean. The facts keep the task
+// active for the whole region: they can give W0405 (a precision gap).
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) -> Task<()> }
+fn main() / async {
+    let st = Stats { count: 0 }
+    handle Run { fn run(g) { scope { s => let t = s.spawn(g)
+        resume(t) } } } in {
+        let t = run(|| print(st.count))
+        t.join()
+        st.count += 1
+    }
+}

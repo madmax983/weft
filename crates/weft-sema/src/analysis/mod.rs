@@ -99,7 +99,11 @@ pub fn edges(
     let mut out: Vec<(BlockId, State)> = Vec::new();
     let before = term.unwind().map(|u| (u, st.clone()));
     cx.hx.abort_edge = None;
+    cx.hx.no_normal = false;
     transfer::term(cx, body, blk_id, &mut st, term)?;
+    // A `scope` whose scope body stops at a resume point of a clause on
+    // each path (plan stage R0z Z5): no normal successor in this run.
+    let stopped = std::mem::take(&mut cx.hx.no_normal);
     // A node that runs a clause that can resume more than once: a later
     // `resume` runs the code after it again (plan stage F16).
     clause::note_reentry(cx, body, blk_id, term, &st);
@@ -138,7 +142,7 @@ pub fn edges(
     }
     // A perform whose clause has no `resume` does not go on (plan stage
     // F19).
-    if !clause::perform_never_returns(cx.p, body, term) {
+    if !stopped && !clause::perform_never_returns(cx.p, body, term) {
         for s in term.normal_successors() {
             out.push((s, st.clone()));
         }

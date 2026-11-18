@@ -10239,15 +10239,6 @@ signed_by = "reviewer R0h: both programs are clean (c4_resume_arg_ok: the closur
 stage = "R0h"
 
 [[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0h/c2_task.wf",
-]
-finding = "R0h-STAYS"
-reason = "stage R0h (from stage R0k-a only `c2_task`: the other files of this entry get call-site copies and the `ir` pipeline rejects them, class `fixed`): the forms that keep the old pipeline, and the old pipeline misses each fault. A value with a reference in it that code of a caller (the clause of an operation) can keep and run after a change (`c2_result`, `c2_stored_ref`; the facts of code of a caller have no part for a value that it keeps, R0f open item 1), a closure of an operation that a callee spawns (`c2_task`, reason E5 of the callee), and a value that a clause gives back to the callee and that holds a reference, can race or is `once` (`d3f_dangling`, `d3f_mut_race`, `d3f_once`)"
-stage = "R0h"
-
-[[entry]]
 class = "sig"
 files = [
     "tests/gate/probes/fixes/r0h/c2_mut_local.wf",
@@ -10695,10 +10686,9 @@ stage = "R0j"
 class = "open-old"
 files = [
     "tests/gate/probes/fixes/r0k/rv_p04_c2_multi.wf",
-    "tests/gate/probes/fixes/r0k/rv_p12_c2_task_after_perform.wf",
 ]
 finding = "R0h-STAYS"
-reason = "stage R0k (probes of the design review of R0k; from stage R0k-a the other probes of the review get call-site copies and the `ir` pipeline rejects them, class `fixed`): forms of C2 and D3 that keep the old pipeline, and the old pipeline misses each fault. `rv_p04_c2_multi`: the copy brings in a `multi` operation of a handler of a caller in a clause (D5, no full facts), so the program keeps the fallback (R0k-a as built); `rv_p07_d3_in_closure` gets the copy of the closure body at its run node in stage R0k-a2 (class `fixed`); `rv_p12_c2_task_after_perform`: a `resume` in a scope body of the clause (D1, stage R0k-c)"
+reason = "stage R0k (probes of the design review of R0k; from stage R0k-a the other probes of the review get call-site copies and the `ir` pipeline rejects them, class `fixed`): a form of C2 that keeps the old pipeline, and the old pipeline misses the fault. `rv_p04_c2_multi`: the copy brings in a `multi` operation of a handler of a caller in a clause (D5, no full facts), so the program keeps the fallback (R0k-a as built; plan stage R0z Z7). `rv_p07_d3_in_closure` gets the copy of the closure body at its run node in stage R0k-a2 (class `fixed`). From plan stage R0z Z5, `rv_p12_c2_task_after_perform` and `fixes/r0h/c2_task` (the other entry of this finding, which goes) are rejected in scope (W0405 at the `resume` in the scope body of the clause, with the copy of the callee at the call: class `fixed`)"
 stage = "R0k"
 
 [[entry]]
@@ -11298,3 +11288,54 @@ files = [
 finding = "R0z3-CLAUSE-WRITE"
 reason = "plan stage R0z Z3, fix 3 (the review of Z3, round 3): a clause gives the local of the way its second closure, but a callee performs the operation (`w1`), or the clause writes after its `resume` (`w2`). The facts give the local a weak update at the node that runs the clause, so the clean twins would get a false W0301 (main gives it on the same forms in scope, `r0z3rev3/ha2`, `ha3`, `wa2`, `wa3`): the run gets no copy region (`Inst::clause_write_ok`), and the program keeps the C2 fallback; the old pipeline misses the fault, as with main"
 stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/202_scope_resume.wf",
+    "tests/gate/probes/fixes/r0z5/p1_post_in_scope_bad.wf",
+]
+codes = ["W0405"]
+reason = "plan stage R0z Z5: a `resume` in a scope body of a clause is a resume point, and the program comes into scope. A task of the scope that runs at the `resume` conflicts with the rest of the handled body at the `resume` (W0405 there, as the old pipeline gives it). The old pipeline also gives W0405 for a read of the clause after the `resume` (`p1_post_in_scope_bad`, line 9, inside the scope: the `ir` pipeline gives it at the `resume`, line 8, one error for the task) and after the scope ends (`202_scope_resume`, `read_after_scope`, line 54: the task has ended at the end of the scope, a false positive of the old pipeline; the marker is `old:`). Both pipelines reject each program; ev.sh: `p1_post_in_scope_bad` faults (both-reject); the corpus program has no `main`"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0z5/m2_spawn_between_bad.wf"]
+codes = ["W0503"]
+reason = "plan stage R0z Z5: the program comes into scope (a `multi` clause resumes two times in its scope body and spawns its task between the two). Both pipelines give W0405 at the second `resume`. The old pipeline also gives W0503 at the spawn (`resume` is not `many` but live across the spawn, which it reads as a node that can resume more than once); the spawn resumes nothing, and the continuation of a `multi` clause is `many`, so the `ir` pipeline does not give it. Both reject; ev.sh: the program faults (a data race), both-reject"
+stage = "R0z"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/fixes/r0z5/p1_post_after_scope_ok.wf",
+    "tests/gate/probes/fixes/r0z5/w1_task_writes_ok.wf",
+]
+reason = "plan stage R0z Z5: a `resume` in a scope body of a clause is a resume point, and the program comes into scope. The task of the scope writes `st.count`. `p1_post_after_scope_ok`: the clause reads `st.count` after the scope ends, so the task has ended (the `ScopeWait` of the scope joins it). `w1_task_writes_ok`: the rest of the handled body does not use `st`. The old pipeline gives W0405 for each (it counts the end of the task and the code of the clause after the scope as a part of the region of the `resume`); the `ir` pipeline does not count the rows that only the clause itself gives at `Post` (`handlers::LateUses::own_post`). Both are false positives of the old pipeline"
+signed_by = "stage R0z Z5 (author check, and the independent review of the stage, round 1, which ran the oracle on each with the same result): the task ends at the end of the scope before the read of `p1` and no code of the rest reads `st` in `w1`; the oracle runs each program with no fault with the ast and the ir engines (seeds 1 to 8, 1, 2 and 4 workers); ev.sh nofault; the fact oracle passes on each"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/fixes/r0z/f1_scope_resumes_ok.wf",
+    "tests/gate/probes/fixes/r0z5/k1_once_twice_bad.wf",
+    "tests/gate/probes/fixes/r0z5/k1_once_twice_ok.wf",
+    "tests/gate/probes/fixes/r0z5/u1_move_before_resume_bad.wf",
+    "tests/gate/probes/fixes/r0z5/u1_move_before_resume_ok.wf",
+]
+reason = "class F19-SIG-RAISES (plan stage R0z Z5: a `resume` in a scope body of a clause is a resume point, and the program comes into scope): the scope body of the clause has no spawn, so it cannot fail at its `ScopeWait` (stage F18), and `main` does not raise; the old inference gives `raises` to each scope"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["pins", "tasks"]
+files = [
+    "tests/gate/probes/fixes/r0z5/*.wf",
+    "tests/programs/202_scope_resume.wf",
+]
+reason = "class F19-SIG-PINS (plan stage R0z Z5: a `resume` in a scope body of a clause is a resume point, and the program comes into scope): the clause spawns a task in its scope; the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`), and the part `tasks` of the old inference (the function values that a later task can run) has no IR part (as `verify/partb/p/c10_clause_task`, a task of a clause)"
+stage = "R0z"
+
