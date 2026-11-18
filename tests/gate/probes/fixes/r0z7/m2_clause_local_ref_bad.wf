@@ -1,0 +1,18 @@
+// Plan stage R0z Z7 (review round 4): the bad twin of m2. `f` clears `v`
+// after the `handle`: a fault. The row stays pending, and the program keeps
+// the fallback.
+effect Pick { multi fn pick() -> u64 }
+effect Run { multi fn run(g: fn(&u64)) }
+fn f(v: &Vec<u64>) / Pick, mut(v) {
+    handle Run { fn run(g) { let r = &v[0]
+        g(r)
+        resume(()) } } in { run(|x| { print(pick())
+            print(x) }) }
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(1)
+        resume(2) } } in { f(&v) }
+}

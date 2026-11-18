@@ -104,6 +104,115 @@ pub fn has_multi_ops(tys: &TyTable) -> bool {
     tys.effects().iter().any(|e| e.ops.iter().any(|o| o.multi))
 }
 
+thread_local! {
+    /// The run nodes of clauses (and of the bodies inside clauses) whose
+    /// function values can resume more than once, that an earlier run of
+    /// the analysis of the program found (`clause::Handlers::dyn_rows`,
+    /// plan stage R0z Z7). While a [`ClauseDynRows`] is live, they are rows
+    /// of their clauses before the analysis ([`clause_rows`],
+    /// [`row_multi_nodes`]).
+    static CLAUSE_DYN_ROWS: std::cell::RefCell<std::collections::BTreeSet<(BodyId, BlockId)>> =
+        const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+    /// The run nodes of clauses that the analysis found as rows, and that
+    /// are not in [`CLAUSE_DYN_ROWS`] ([`note_clause_dyn_row`]).
+    static CLAUSE_DYN_FOUND: std::cell::RefCell<std::collections::BTreeSet<(BodyId, BlockId)>> =
+        const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+    /// The nodes of [`CLAUSE_DYN_FOUND`] that stay pending
+    /// ([`refuse_clause_dyn_row`]).
+    static CLAUSE_DYN_REFUSED: std::cell::RefCell<std::collections::BTreeSet<(BodyId, BlockId)>> =
+        const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
+}
+
+/// While a value of this type is live, the run nodes of
+/// [`ClauseDynRows::add`] are rows of their clauses (plan stage R0z Z7).
+///
+/// The analysis finds a run of a function value that can resume more than
+/// once in a clause (`clause::Handlers::dyn_rows`) only after the facts of
+/// the nodes that run the clause have their re-entry edges. So the fact
+/// generator runs the analysis of the program again with such a node as a
+/// row of its clause (`super::emit_each`): the node that runs the clause
+/// gets the re-entry of stage R0k-c2.
+#[derive(Debug)]
+pub struct ClauseDynRows {
+    old: std::collections::BTreeSet<(BodyId, BlockId)>,
+    found: std::collections::BTreeSet<(BodyId, BlockId)>,
+    refused: std::collections::BTreeSet<(BodyId, BlockId)>,
+}
+
+impl ClauseDynRows {
+    /// Starts with no such node.
+    pub fn enter() -> Self {
+        let old = CLAUSE_DYN_ROWS.with(|c| c.replace(std::collections::BTreeSet::new()));
+        let found = CLAUSE_DYN_FOUND.with(|c| c.replace(std::collections::BTreeSet::new()));
+        let refused = CLAUSE_DYN_REFUSED.with(|c| c.replace(std::collections::BTreeSet::new()));
+        Self {
+            old,
+            found,
+            refused,
+        }
+    }
+
+    /// Adds the nodes `rows`. Returns true if one of them is new.
+    pub fn add(&self, rows: &std::collections::BTreeSet<(BodyId, BlockId)>) -> bool {
+        CLAUSE_DYN_ROWS.with(|c| {
+            let mut c = c.borrow_mut();
+            let n = c.len();
+            c.extend(rows.iter().copied());
+            c.len() > n
+        })
+    }
+}
+
+impl Drop for ClauseDynRows {
+    fn drop(&mut self) {
+        let old = std::mem::take(&mut self.old);
+        let found = std::mem::take(&mut self.found);
+        let refused = std::mem::take(&mut self.refused);
+        CLAUSE_DYN_ROWS.with(|c| c.replace(old));
+        CLAUSE_DYN_FOUND.with(|c| c.replace(found));
+        CLAUSE_DYN_REFUSED.with(|c| c.replace(refused));
+    }
+}
+
+/// True if block `block` of body `body` is a row of its clause that an
+/// earlier run of the analysis found ([`ClauseDynRows`]).
+pub fn clause_dyn_row(body: BodyId, block: BlockId) -> bool {
+    CLAUSE_DYN_ROWS.with(|c| c.borrow().contains(&(body, block)))
+}
+
+/// Notes a run node of a clause whose function values can resume more than
+/// once, and that is not a row of the clause before the analysis (plan
+/// stage R0z Z7): [`take_clause_dyn_found`] gives it.
+pub fn note_clause_dyn_row(body: BodyId, block: BlockId) {
+    CLAUSE_DYN_FOUND.with(|c| {
+        c.borrow_mut().insert((body, block));
+    });
+}
+
+/// Notes that the run node at block `block` of body `body` stays pending
+/// (plan stage R0z Z7, review round 3: the environment of its value can hold
+/// references): [`take_clause_dyn_found`] leaves it out.
+pub fn refuse_clause_dyn_row(body: BodyId, block: BlockId) {
+    CLAUSE_DYN_REFUSED.with(|c| {
+        c.borrow_mut().insert((body, block));
+    });
+}
+
+/// True if a run of the analysis noted block `block` of body `body` with
+/// [`note_clause_dyn_row`] since the last [`take_clause_dyn_found`].
+pub fn clause_dyn_found(body: BodyId, block: BlockId) -> bool {
+    CLAUSE_DYN_FOUND.with(|c| c.borrow().contains(&(body, block)))
+}
+
+/// The nodes of [`note_clause_dyn_row`] since the last call, which clears
+/// them.
+pub fn take_clause_dyn_found() -> std::collections::BTreeSet<(BodyId, BlockId)> {
+    let refused = CLAUSE_DYN_REFUSED.with(|c| c.borrow().clone());
+    let mut found = CLAUSE_DYN_FOUND.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    found.retain(|k| !refused.contains(k));
+    found
+}
+
 /// True if terminator `t` of body `body` can wait at a `multi` operation of
 /// a handler of a caller (OL-R2a, plan stage F16).
 ///
@@ -395,7 +504,10 @@ fn clause_rows_at(p: &Program, tys: &TyTable, sums: &Summaries, cb: BodyId) -> C
             own_row_multi(p, tys, sums, sb, t) || runs_row_clause(p, tys, sums, sb, t)
         };
         for (j, blk) in x.blocks.iter().enumerate() {
-            if blk.cleanup || !is_row(&blk.term.kind) {
+            // A run node that an earlier run of the analysis found (plan
+            // stage R0z Z7, [`ClauseDynRows`]) is a row too.
+            let dynamic = clause_dyn_row(sb, BlockId(u32::try_from(j).unwrap_or(u32::MAX)));
+            if blk.cleanup || !(dynamic || is_row(&blk.term.kind)) {
                 continue;
             }
             // A block of the clause counts where it is; a block of a body
@@ -550,7 +662,8 @@ pub fn post_row_handles(
 }
 
 /// The blocks of body `body` whose terminator can wait at a `multi`
-/// operation of a handler of a caller ([`row_multi`]).
+/// operation of a handler of a caller ([`row_multi`]), and the run nodes of
+/// [`ClauseDynRows`] in it (plan stage R0z Z7).
 pub fn row_multi_nodes(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyId) -> Vec<BlockId> {
     let Some(b) = p.body(body) else {
         return Vec::new();
@@ -561,7 +674,11 @@ pub fn row_multi_nodes(p: &Program, tys: &TyTable, sums: &Summaries, body: BodyI
     b.blocks
         .iter()
         .enumerate()
-        .filter(|(_, blk)| !blk.cleanup && row_multi(p, tys, sums, body, &blk.term.kind))
+        .filter(|(i, blk)| {
+            !blk.cleanup
+                && (row_multi(p, tys, sums, body, &blk.term.kind)
+                    || clause_dyn_row(body, BlockId(u32::try_from(*i).unwrap_or(u32::MAX))))
+        })
         .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
         .collect()
 }

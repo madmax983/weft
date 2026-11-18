@@ -1,0 +1,19 @@
+// Plan stage R0z Z7 (review round 4): the bad twin of m1. `f` clears `v`
+// after the `handle`, and a later run of `g` reads the argument: a fault.
+// The row stays pending, the old pipeline misses the fault, and the program
+// keeps the fallback.
+effect Pick { multi fn pick() -> u64 }
+effect Run { multi fn run(g: fn(&u64)) }
+fn f(v: &Vec<u64>) / Pick, mut(v) {
+    let r = &v[0]
+    handle Run { fn run(g) { g(r)
+        resume(()) } } in { run(|x| { print(pick())
+            print(x) }) }
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(1)
+        resume(2) } } in { f(&v) }
+}

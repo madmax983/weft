@@ -344,8 +344,10 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
             }
         }
         let name = match var.kind {
-            VarKind::Temp | VarKind::BlockValue => format!("the {}", var.name),
-            VarKind::Result => var.name.clone(),
+            VarKind::Temp | VarKind::BlockValue if !var.name.starts_with("the ") => {
+                format!("the {}", var.name)
+            }
+            VarKind::Temp | VarKind::BlockValue | VarKind::Result => var.name.clone(),
             _ => shown_name(var),
         };
         let handle = path.strip_suffix(".*");

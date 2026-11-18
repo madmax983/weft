@@ -27,7 +27,7 @@ the counts.
   - D1 and TC (a task that runs code of a caller): `c2_task`, `k04_c2_race_ok`, `rv_p12`
     and its twin (Z5; closed, "Z5 (as built)");
   - F18 and NESTED: `a13`, `a13b`, `a13c`, `j07_run_bad`, `j07_run_ok`, `sim1` (Z9c);
-  - C2 and D5: `rv_p04` and its twin (Z7);
+  - C2 and D5: `rv_p04` and its twin (Z7; closed, "Z7 (as built)");
   - D3 and TC: `d3f_task`;
   - three bodies with C2 and TC (with the copies VT): the four `e2b` rows;
   - C2, D1 and TC: the four tier-2 mutants of 85;
@@ -102,6 +102,42 @@ the counts.
   (`r3/quality/big/all_2.wf` was a time-out of 150 s in the census of main on a loaded
   machine).
 - The open-old entry `R0h-STAYS` keeps only `rv_p04_c2_multi` (Z7).
+
+## Z7 (as built)
+
+- Z7 closed the 2 D5 rows of tier 1 (rows 60 and 61; 49 to 47 fallbacks of the census
+  rows) and the D5 row of tier 2 (row 22; 23 to 22). In each of them the clause runs its
+  parameter, and the value that the perform gives cannot resume more than once: the run of
+  the function runs the clause with that value and finds no row, so the run of the
+  parameter is no row and no `multi` point (`analysis::code_row`). `rv_p04_c2_multi`
+  (oldmiss) is rejected in scope with the copy of the callee (W0301 at lines 5, 11 and 12:
+  the run of `g` after the first `resume` reads `r`, which points into the cleared `v`);
+  `rv_p04_c2_multi_ok` and `p1669` are in scope with no error. Before Z7 the weak form
+  gave `rv_p04_c2_multi_ok` a false W0301 (the `multi_at` of the run of `g` at `Post` put
+  the rest of `main` into the region of the `resume`).
+- A row that the run of the function finds (a value that performs a `multi` operation of a
+  handler of a caller) gets the re-entry of R0k-c2: the analysis of the program runs again
+  with the node as a row of its clause (`frames::ClauseDynRows`). No census row has this
+  form; the probes `fixes/r0z7/` have it (the test programs
+  `crates/weft-check/tests/data/handlers/c15/clause_m.wf` and `clause_after_m.wf` have it
+  too, but the refusal of the reviews keeps their row pending, as with main).
+- Tier 1: 106 fallbacks of 5607 files (main: 85 of 5562, and 122 of 5607 with the 45 new
+  files of the stage: 44 probes `fixes/r0z7/` and the corpus program
+  `203_clause_value_rows.wf`). Of the new files, `o1_other_clause_ok` keeps the fallback
+  (a refusal probe: the clause of `Run` gives the value to the clause of `Go`, whose row
+  is not in the chain of the clause of `Run`), and so do the `r1_repeats` pair and the 20
+  probes `z1`, `z3`, `g1`, `g3`, `c4`, `t3`, `s5`, `m1`, `m2`, `m3` of the reviews of Z7
+  (the refusals `factgen::arg_shadow_gap` and `analysis::env_can_hold_refs`: a reference
+  goes into the run); `o1_other_clause_bad` is rejected by the pending rule. No other
+  fallback changes its reason. 12 files in scope lose the pending reason D5 (the `ir`
+  pipeline rejected each of them with the weak form; with the full facts it rejects each
+  but three, which lose a false error: `r2/oracle/fp3/W0503_p345`, a signed `lost-clean`
+  entry, and the new probes `a1_between_ok`, `p1_param_ok`): `p345`, `e2_spared`,
+  `or4_v1`, `f1_multi`, the corpus program and 7 new probes.
+- Tier 2: 22 fallbacks of 57393 files (main 23); only `p1669` leaves the fallback, and no
+  row comes in. `r3/quality/big/all_2.wf` (in scope, rule G) was a time-out of 150 s in
+  the census of Z7 on a loaded machine (182 s with main, 263 s with Z7).
+- The open-old entry `R0h-STAYS` goes.
 
 ## Columns
 
@@ -194,8 +230,8 @@ the counts.
 | 57 | `fixes/r0k/k04_c2_race_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 (closed) |
 | 58 | `fixes/r0k/rv_p12_c2_task_after_perform.wf` | D1 | D1b: as c2_task; the callee spawns a writer after the perform | clean | fault | oldmiss | no | Z5 (closed) |
 | 59 | `fixes/r0k/rv_p12_c2_task_after_perform_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 (closed) |
-| 60 | `fixes/r0k/rv_p04_c2_multi.wf` | C2>D5 | a `multi` clause runs the value between two `resume`s; the copy brings in a row that only the analysis finds | clean | fault | oldmiss | no | Z7 |
-| 61 | `fixes/r0k/rv_p04_c2_multi_ok.wf` | C2>D5 | as rv_p04 (clean twin) | clean | no fault | clean | no | Z7 |
+| 60 | `fixes/r0k/rv_p04_c2_multi.wf` | C2>D5 | a `multi` clause runs the value between two `resume`s; the copy brings in a row that only the analysis finds | clean | fault | oldmiss | no | Z7 (closed) |
+| 61 | `fixes/r0k/rv_p04_c2_multi_ok.wf` | C2>D5 | as rv_p04 (clean twin) | clean | no fault | clean | no | Z7 (closed) |
 | 62 | `fixes/r0k2/a04_two_closures_bad.wf` | D3 | two closures can reach the local (static copy refused) | W0301 | fault | rejected | yes | Z6 |
 | 63 | `fixes/r0k2/a04_two_closures_ok.wf` | D3 | two closures (clean twin) | clean | no fault | clean | yes | Z6 |
 | 64 | `fixes/r0k2/u03_callee_reassigns_via_clause.wf` | C2 | two values at the run node: a clause of another handler gives `k` a second closure | clean | fault | oldmiss | yes | Z6 |
@@ -296,7 +332,7 @@ The other 35 rows of tier 2:
 | 19 | `verify/s5/S5c/mut/progs/m01268_85_op_args.wf` | C2>D1 | as m00982 | W0313, 11xW0314 | no `main` | rejected | no | Z1-G (closed) |
 | 20 | `verify/s5/S5c/mut/progs/m01766_85_op_args.wf` | C2>D1 | as m00982 | W0313, 12xW0314 | no `main` | rejected | no | Z1-G (closed) |
 | 21 | `verify/s5/S5c/mut/progs/m02309_85_op_args.wf` | C2>D1 | as m00982 | W0313, 9xW0314 | no `main` | rejected | no | Z1-G (closed) |
-| 22 | `r2/oracle/runs/m1/p1669.wf` | D5 | a `multi` clause runs its parameter: a row that only the analysis finds | clean | no fault | clean | no | Z7 |
+| 22 | `r2/oracle/runs/m1/p1669.wf` | D5 | a `multi` clause runs its parameter: a row that only the analysis finds | clean | no fault | clean | no | Z7 (closed) |
 | 23 | `r3/oracle/runs/m3a/p5750.wf` | D1 | D1a refusal: a call (`print(r)`) between the make and the run | W0301 | no fault | rejected | no | Z4 |
 | 24 | `r3/oracle/runs/m3a/p7154.wf` | D1 | D1a refusal: a call (`Box.new`) between, a `resume` in a nested handled body | W0301 | no fault | rejected | no | Z4 |
 | 25 | `r2/oracle/runs/g2/p2515.wf` | esc | closures that capture a capability in a block of a closure body that no node runs | clean | no fault | clean | no | Z8 |

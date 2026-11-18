@@ -4956,6 +4956,13 @@ fn emit_apps(
             if app.code && app.run.is_some() {
                 let added = em.facts.multi_at.get(multi..).unwrap_or_default();
                 em.run_multi.extend(added.iter().copied());
+                // A run of a parameter of a clause where the run of the
+                // body that has the handler, with the values that the nodes
+                // that run the clause give, finds no row (plan stage R0z
+                // Z7, `crate::analysis::code_row`): no `multi` point.
+                if crate::analysis::code_row(em.p, em.tys, em.sums, em.hx, (em.body, block)) {
+                    em.facts.multi_at.truncate(multi);
+                }
             }
             slot_reads(em, n, read);
             // Code of a caller reads the places behind the parameters of the

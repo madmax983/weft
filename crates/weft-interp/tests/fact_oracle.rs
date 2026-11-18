@@ -1389,13 +1389,14 @@ fn the_probes_of_the_rc_groups_of_a_copied_frame_pass_the_fact_oracle() {
     assert!(n >= 5, "{n}");
 }
 
-/// Each probe of stage R0k-c2 (`fixes/r0kc2`, `fixes/r0kc2b`, `fixes/r0kc2c`) that the `ir`
-/// pipeline accepts runs with no failure of the fact oracle, and A4 of
-/// re-entries checks the references of the copied frames.
+/// Each probe of stage R0k-c2 (`fixes/r0kc2`, `fixes/r0kc2b`, `fixes/r0kc2c`) and of plan
+/// stage R0z Z7 (`fixes/r0z7`: the rows of a clause that only the analysis finds) that the
+/// `ir` pipeline accepts runs with no failure of the fact oracle, and A4 of re-entries
+/// checks the references of the copied frames.
 #[test]
 fn the_probes_of_the_reentry_of_a_clause_pass_the_fact_oracle() {
     let mut checked = 0;
-    for d in ["r0kc2", "r0kc2b", "r0kc2c"] {
+    for d in ["r0kc2", "r0kc2b", "r0kc2c", "r0z7"] {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/gate/probes/fixes")
             .join(d);

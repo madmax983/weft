@@ -1,0 +1,22 @@
+// Plan stage R0z Z7 (review round 2): the perform gives a closure, and the
+// clause runs it. The closure performs `pick`, a `multi` operation of a
+// handler of a caller, then reads the captured `r`, which points into `v`.
+// The rest of `f` clears `v`. A later `resume` of `pick` runs the rest of
+// the closure again and reads `r`: a fault. The copy of the frame of the
+// value at the re-entry of the clause holds the references of its
+// environment, so the clear invalidates it: W0301.
+effect Pick { multi fn pick() -> u64 }
+effect Run { multi fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Pick, mut(v) {
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        resume(()) } } in { run(|| { print(pick())
+            print(r) }) }
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(1)
+        resume(2) } } in { f(&v) }
+}
