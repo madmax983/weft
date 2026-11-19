@@ -986,6 +986,9 @@ pub fn emit_parts(
         table.row_reentry_edges(p, facts, entry, &new);
         hx = fresh_handlers(&mut hx);
     };
+    // The dispatches of the component (plan stage R0z Z6), after the last
+    // run of the analysis.
+    dispatch_checks(p, &spliced, &hx, &known, &table, facts);
     let mut uniq: BTreeMap<weft_facts::VarId, bool> = BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
     let has_tasks = !task_ids.is_empty();
@@ -1653,6 +1656,90 @@ fn fresh_handlers(hx: &mut crate::analysis::clause::Handlers) -> crate::analysis
     out.real_rows = std::mem::take(&mut hx.real_rows);
     out.escapes = std::mem::take(&mut hx.escapes);
     out
+}
+
+/// Why the program with a dispatch keeps its fallback (plan stage R0z Z6).
+///
+/// The analysis finds a value at the test that is not a closure of the static
+/// set, or an arm that it finds dead and that the static check cannot make
+/// dead.
+pub const DISPATCH_MISS: &str =
+    "a dispatch whose value can be a value that its tests do not know (plan stage R0z Z6)";
+
+/// Why the program with a dispatch keeps its fallback (plan stage R0z Z6): a
+/// block of a dispatch is a node of a row (a re-entry of stage R0k-c2 or Z7).
+pub const DISPATCH_ROW: &str =
+    "a dispatch at a node that can wait at a `multi` operation (plan stage R0z Z6)";
+
+/// The checks of the dispatches of the bodies `bodies` of a component after the
+/// last run of the analysis (plan stage R0z Z6, `weft_ir::Dispatch`).
+///
+/// - A block of a dispatch (a test, an arm entry, a block of the region of an
+///   arm) that is a node of a row (`rows`, the rows that the analysis found,
+///   [`frames::clause_dyn_row`]) notes [`DISPATCH_ROW`].
+/// - A dispatch whose first test the analysis reached, where the value can be
+///   a value that is not a closure of the dispatch, notes [`DISPATCH_MISS`].
+/// - An arm of a reached dispatch that got no state is dead
+///   (`analysis::transfer::dispatch_cut`): its blocks get no templates
+///   (`emit_blocks` skips a block with no state). If the static check of the
+///   arm allows it (`weft_ir::DispatchArm::killable`), the `cfg_edge` into
+///   its entry goes, so the fact oracle (which reads these facts) fails if a
+///   run takes the arm. Else the static set and the analysis do not agree:
+///   [`DISPATCH_MISS`].
+fn dispatch_checks(
+    p: &weft_ir::Program,
+    bodies: &[weft_ir::BodyId],
+    hx: &crate::analysis::clause::Handlers,
+    rows: &std::collections::BTreeSet<(weft_ir::BodyId, weft_ir::BlockId)>,
+    table: &nodes::NodeTable,
+    facts: &mut FnFacts,
+) {
+    let note = |reason: &str| {
+        crate::analysis::clause::note_pending(Unsupported {
+            group: Group::C,
+            reason: reason.to_string(),
+        });
+    };
+    for d in &p.dispatches {
+        if !bodies.contains(&d.body) {
+            continue;
+        }
+        let mut blocks: Vec<weft_ir::BlockId> = d.blocks().collect();
+        for a in &d.arms {
+            if let Some(r) = a.region.and_then(|i| p.regions.get(i)) {
+                blocks.extend(r.blocks.iter().copied());
+            }
+        }
+        let row = blocks.iter().any(|&k| {
+            rows.contains(&(d.body, k))
+                || hx.dyn_rows.contains(&(d.body, k))
+                || frames::clause_dyn_row(d.body, k)
+        });
+        if row {
+            note(DISPATCH_ROW);
+        }
+        let Some(first) = d.arms.first().map(|a| a.test) else {
+            continue;
+        };
+        if !hx.dispatch_reached.contains(&(d.body, first)) {
+            continue;
+        }
+        if hx.dispatch_miss.contains(&(d.body, first)) {
+            note(DISPATCH_MISS);
+        }
+        for a in &d.arms {
+            if hx.dispatch_live.contains(&(d.body, a.entry)) {
+                continue;
+            }
+            if !a.killable {
+                note(DISPATCH_MISS);
+                continue;
+            }
+            if let Some(n) = table.first(d.body, a.entry, nodes::NORMAL) {
+                facts.cfg_edge.retain(|&(_, to)| to != n);
+            }
+        }
+    }
 }
 
 /// The `Main` node of the `handle` of each handled body of the component

@@ -1,0 +1,27 @@
+// Plan stage R0z Z6 (a refusal, R-JOIN; the review of Z6, round 1, B1): two dispatches one
+// after the other (the form j3 with no loop) give closures to the clause of `Run`, which keeps
+// its parameter. Another node runs the clause with a function value, so the facts of the
+// clause join its parameter over the two nodes (issue #79; main gives the same false W0301
+// for the form with one value). No dispatch: the program keeps the fallback.
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep = || print(0)
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in {
+        let i = 0
+        v.push(2)
+        let r = &v[0]
+        let k = || run(|| print(5))
+        if i == 1 { k = || run(|| print(r)) }
+        k()
+        i = 1
+        v.push(2)
+        let r2 = &v[0]
+        let k2 = || run(|| print(5))
+        if i == 1 { k2 = || run(|| print(r2)) }
+        k2()
+    }
+    keep()
+}

@@ -20,6 +20,11 @@ pub enum Rvalue {
     Len(Place),
     /// The variant of an enum value. It reads the tag.
     Discriminant(Place),
+    /// True if the closure value at the place is a closure of the list (plan
+    /// stage R0z Z6): the test of a dispatch ([`crate::Dispatch`]). It reads the
+    /// value, and it does not run it. Only the copies of the fact generator make
+    /// it.
+    ClosureIs(Place, Vec<ClosureId>),
     /// A string interpolation: the text of each operand, joined.
     Concat(Vec<Operand>),
     /// A new iterator over the elements of a place, or over a range.

@@ -10751,19 +10751,6 @@ reason = "stage R0k-a2: the closure that the handled body makes and runs gets a 
 stage = "R0k"
 
 [[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0k2/u03_callee_reassigns_via_clause.wf",
-    "tests/gate/probes/fixes/r0k2/u05_scope_body.wf",
-    "tests/gate/probes/fixes/r0k2/u06_handled_body.wf",
-    "tests/gate/probes/fixes/r0k2/u07_if_branch.wf",
-    "tests/gate/probes/fixes/r0k2/u10_clause_of_inner.wf",
-]
-finding = "R0k2-NESTED"
-reason = "stage R0k-a2 fix (probes of the review of R0k-a2): the local `k` gets another closure in a clause of another handler (u03), a scope body (u05), the handled body of a nested handler (u06), a branch (u07) or a clause that a perform of a callee runs (u10), so the run of `k` gets no copy of the closure body (`nested_writes`, or two values in the body) and the program keeps the old pipeline; the old pipeline misses each fault. They are acceptance tests of the copies with an environment local (R0k-b1 design note), which must see each value of `k`"
-stage = "R0k"
-
-[[entry]]
 class = "changed"
 files = [
     "tests/gate/probes/fixes/r0kc2/m1_outside_ref_cleared.wf",
@@ -11211,13 +11198,6 @@ reason = "plan stage R0z Z3 (part d): `g` holds the `once` closure `f` and runs 
 stage = "R0z"
 
 [[entry]]
-class = "open-old"
-files = ["tests/gate/probes/fixes/r0z3/a1_other_maker_bad.wf"]
-finding = "R0z3-OTHER-MAKER"
-reason = "plan stage R0z Z3 (part a, an adversarial probe): the local of the way gets a closure of `mk` and a closure of `mk2`. They are not copies of one closure, so the run gets no copy, and the program keeps the C2 fallback; the old pipeline misses the fault. This is the form of two values at the run node (stage Z6, the dispatch copies)"
-stage = "R0z"
-
-[[entry]]
 class = "sig"
 parts = ["op_fns", "pins", "raises", "ret", "ret_refs", "task_runs", "repeats", "reaches", "reach_repeats"]
 files = [
@@ -11417,4 +11397,51 @@ files = [
 ]
 finding = "R0z7-ARG-SHADOW"
 reason = "plan stage R0z Z7, the reviews of Z7: a row of a clause that only the analysis finds (form a) stays pending when the row can hold references across the operation (a clause on the way has a parameter that holds a reference, or the node runs a function value) and the function can wait at a `multi` operation of a handler of a caller by itself, at a static row or at a run of a function value (`g1`, `g3`: a local closure that performs `pick`; `factgen::arg_shadow_gap`). From review round 3 a row stays pending too when the environment of a value that the node runs can hold references (`analysis::env_can_hold_refs`: `c4`, `t3`, `s5`), because the copy of the frame of the value at the re-entry gives a false W0301 on the clean twins (main gives the same for a known closure, issue #79). From review round 4 an argument of the run that can hold references (a reference, or a value whose type holds a reference or a function value) counts too (`m1`, `m2`, `m3`; `r1_repeats_bad` gives the function value `g` to `twice`). With the re-entry the shadow variable of the parameter (stage R0k-c2 fix 1) gets the changes that the re-entry of the function runs again before the node that runs the clause, so the clean twins `z1_reentry_assign_ok` and `z3_value_noreentry_ok` would get a false W0301 (main gives the same false W0301 for a static row of the clause, `z2_static_analog_ok` of the review, issue #79). So these programs keep the fallback, as with main, and the old pipeline misses the fault (a read of a cleared `Vec` in a later run of the clause)"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0z6/t08_unknown_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t09b_clause_row_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t11_loop_changes_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t14_nested_region_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t20_loop_join_bad.wf",
+]
+finding = "R0z6-STAYS"
+reason = "plan stage R0z Z6 (the refusal probes of the dispatch): the run of the local gets no dispatch, so the program keeps the C2 fallback, as with main; the old pipeline misses each fault. t08: a value of a caller (a parameter) in the set; t09b: a dispatch in a clause of a program with a `multi` operation (R-ROW); t11, t20: a run in a loop whose copy arm gives a function value to an operation (R-LOOP: the clean twin t20_loop_join_ok got a false W0301 of the join of the kept value of one turn with the push of the next turn, which main gives for the form with one value, issue #79); t14: a dispatch inside a copy region"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/204_dispatch.wf",
+]
+codes = ["W0301"]
+reason = "plan stage R0z Z6: the runs of a local with closures of two origins get a dispatch (a test of the closure, and a copy of the closure body in each arm). The `ir` pipeline gives W0301 at the read and at the run of the kept value in `scope_body`, `branch` and `clause_write` (the old pipeline misses these faults, which the probes `fixes/r0z6/t02_scope_body_bad`, `t01_if_branch_bad` and `t04_clause_write_bad` show with a `main`), and the W0301 of `two_paths` that the old pipeline gives too; `branch_ok` has no error in both. The corpus program has no `main`"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["op_fns", "raises", "reaches", "repeats", "ret", "ret_refs", "task_runs"]
+files = [
+    "tests/gate/probes/fixes/r0k2/u05_scope_body.wf",
+    "tests/gate/probes/fixes/r0kb2/a01_two_paths_bad.wf",
+    "tests/gate/probes/fixes/r0kb2/a01_two_paths_ok.wf",
+    "tests/gate/probes/fixes/r0z3/a1_other_maker_bad.wf",
+    "tests/gate/probes/fixes/r0z3/a1_other_maker_ok.wf",
+    "tests/gate/probes/fixes/r0z6/rev_s3_clause_resume_twice_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t02_scope_body_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t02_scope_body_ok.wf",
+    "tests/gate/probes/fixes/r0z6/t06_two_paths_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t06_two_paths_ok.wf",
+    "tests/gate/probes/fixes/r0z6/t07_two_makers_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t07_two_makers_ok.wf",
+    "tests/gate/probes/fixes/r0z6/t15_first_gone_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t15_first_gone_ok.wf",
+    "tests/gate/probes/fixes/r0z6/t18_group_and_other_bad.wf",
+    "tests/gate/probes/fixes/r0z6/t18_group_and_other_ok.wf",
+    "tests/programs/204_dispatch.wf",
+]
+reason = "plan stage R0z Z6: the programs leave the C2 or D3 fallback with a dispatch, so their signatures are those of the `ir` inference. `main` (or the function of the run) does not have the part `raises` and `reaches` of the old inference: the old pipeline gives `raises` from the worst case of a run of a value that the clause keeps, and the `ir` facts know each closure of the dispatch. The makers `mk`, `mk2` give back a closure that performs `run` with a function value through their row: their summaries have the weak form of stage R0k-a2 (`op_fns`, `task_runs`, `repeats`, `ret`, `ret_refs` of the closure), and each call of them has a copy, so no caller applies these summaries where a local handler serves `run`"
 stage = "R0z"

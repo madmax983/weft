@@ -1,0 +1,12 @@
+// Review Z6: the same, with the write of the clause unconditional (form of u13).
+effect Sw { fn sw() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let k = || print(0)
+    handle Sw { fn sw() { k = || v.push(2)
+        resume(()) } } in { sw() }
+    let r = &v[0]
+    k()
+    print(r)
+}

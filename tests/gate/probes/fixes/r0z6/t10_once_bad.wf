@@ -1,0 +1,24 @@
+// Plan stage R0z Z6: two `once` closures in the set (each one moves `w` or `u`), and two
+// runs. At the second run the value moved, so the analysis finds each arm of the second
+// dispatch dead, and the static check does not allow it (no write of `c` comes between
+// the runs): `DISPATCH_MISS`, and the program keeps the fallback, which gives W0502.
+effect Run { fn run(g: fn()) }
+fn eat(w: Vec<u64>) { print(w.len()) }
+fn outer(t: bool) {
+    let w = Vec.new()
+    let u = Vec.new()
+    u.push(1)
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let c = || { eat(w)
+            run(|| print(0)) }
+        if t { c = || { eat(u)
+            run(|| print(1)) } }
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            c()
+            c()
+        }
+    }
+}
+fn main() { outer(true) }

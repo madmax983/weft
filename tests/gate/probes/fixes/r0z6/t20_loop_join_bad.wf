@@ -1,0 +1,25 @@
+// Plan stage R0z Z6 (a refusal, R-LOOP; the form j3 of the review, with a dispatch),
+// the bad twin: in the last turn the dispatch runs the closure that gives `run` a closure
+// that keeps `r`, a reference into `v`. After the loop a push of `v` moves its buffer,
+// and the run of the kept value reads `r`. No dispatch: the program keeps the fallback
+// (the old pipeline misses the fault).
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep = || print(0)
+    let i = 0
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in {
+        while i < 2 {
+            v.push(2)
+            let r = &v[0]
+            let k = || run(|| print(5))
+            if i == 1 { k = || run(|| print(r)) }
+            k()
+            i = i + 1
+        }
+    }
+    v.push(3)
+    keep()
+}

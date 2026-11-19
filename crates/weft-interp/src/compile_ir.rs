@@ -919,6 +919,18 @@ impl<'a> BodyCx<'a> {
                 self.place(p)?;
                 self.emit(Op::Tag);
             }
+            Rvalue::ClosureIs(p, cs) => {
+                // The code unit of body `i` is code unit `i` (`compile_ir`).
+                let mut codes = Vec::with_capacity(cs.len());
+                for c in cs {
+                    let Some(d) = self.p.closures.get(c.index()) else {
+                        return bad(format!("a dispatch names no closure c{}", c.0));
+                    };
+                    codes.push(d.body.index());
+                }
+                self.place(p)?;
+                self.emit(Op::ClosureIs(codes));
+            }
             Rvalue::Concat(ops) => {
                 for o in ops {
                     self.operand(o)?;
@@ -1220,7 +1232,16 @@ impl<'a> BodyCx<'a> {
             }
             TermKind::Unreachable => {
                 let o = t.origin.span;
-                let msg = if let Some(m) = self.shared.jumps.get(&(o.unit as usize, o.lo, o.hi)) {
+                let miss = self
+                    .p
+                    .dispatches
+                    .iter()
+                    .any(|d| d.body == self.id && d.miss == b);
+                let msg = if miss {
+                    // The miss block of a dispatch (plan stage R0z Z6): the
+                    // tests of the dispatch are total, so no run comes here.
+                    Rc::from("fact oracle (dispatch): the closure value is a closure that no arm of the dispatch tests")
+                } else if let Some(m) = self.shared.jumps.get(&(o.unit as usize, o.lo, o.hi)) {
                     Rc::clone(m)
                 } else if self.variant_test(b) {
                     Rc::from("this value is another variant: it has no such field")

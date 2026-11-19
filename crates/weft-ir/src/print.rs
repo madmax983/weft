@@ -179,6 +179,31 @@ impl<'a> Printer<'a> {
                 bs.join(", ")
             );
         }
+        for d in &self.p.dispatches {
+            let arms: Vec<String> = d
+                .arms
+                .iter()
+                .map(|a| {
+                    let cs: Vec<String> = a.closures.iter().map(|c| format!("c{}", c.0)).collect();
+                    format!(
+                        "[{}] test bb{} -> bb{} ({})",
+                        cs.join(", "),
+                        a.test.0,
+                        a.entry.0,
+                        a.region
+                            .map_or_else(|| "call".to_string(), |r| format!("region r{r}"))
+                    )
+                })
+                .collect();
+            let _ = writeln!(
+                out,
+                "dispatch: body b{}, value {}, arms {}, miss bb{}",
+                d.body.0,
+                place(&d.value),
+                arms.join("; "),
+                d.miss.0
+            );
+        }
     }
 
     /// Returns the text of body `id`: a header line, the locals and the blocks.
@@ -309,6 +334,10 @@ impl<'a> Printer<'a> {
             Rvalue::Aggregate(k, ops) => self.aggregate(k, ops),
             Rvalue::Len(p) => format!("Len({})", place(p)),
             Rvalue::Discriminant(p) => format!("Discriminant({})", place(p)),
+            Rvalue::ClosureIs(p, cs) => {
+                let cs: Vec<String> = cs.iter().map(|c| format!("c{}", c.0)).collect();
+                format!("ClosureIs({}, [{}])", place(p), cs.join(", "))
+            }
             Rvalue::Concat(ops) => format!("Concat({})", self.operands(ops)),
             Rvalue::Iter(IterSource::Elems(p)) => format!("Iter(elems {})", place(p)),
             Rvalue::Iter(IterSource::Range(lo, hi)) => {

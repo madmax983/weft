@@ -200,6 +200,16 @@ pub struct Handlers {
     /// The handlers whose capability a closure takes out of the `handle`,
     /// with how it leaves (W0313, plan stage F17).
     pub escapes: Vec<(HandlerId, Escape)>,
+    /// The test blocks of the dispatches that the analysis reached (plan
+    /// stage R0z Z6, `super::edges`).
+    pub dispatch_reached: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The arm entries of the dispatches that got a state (plan stage R0z
+    /// Z6): an arm of a reached dispatch that is not here is dead.
+    pub dispatch_live: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The first test blocks of the dispatches where the value can be a value
+    /// that is not a closure of the dispatch (plan stage R0z Z6,
+    /// `DISPATCH_MISS`).
+    pub dispatch_miss: std::collections::BTreeSet<(BodyId, BlockId)>,
     /// The value of the result of the task of each spawn site, a join over
     /// the runs of the spawn (plan stage F18, `super::tasks`): `ScopeWait`
     /// gives it to the `TaskResult` local of a spawn statement.

@@ -1,0 +1,30 @@
+// Plan stage R0z Z6 (a refusal, R-ROW; the review of Z6, round 1, N1): a dispatch in the
+// handled body of a local handler of a `multi` operation, after the perform of it. A later
+// `resume` runs the dispatch again. No dispatch: the program keeps the fallback, as the
+// region with one value does (the fact oracle failed A5 on the dispatch).
+effect Run { fn run(g: fn()) }
+effect Sw { fn sw() }
+effect Pick { multi fn pick() -> bool }
+fn outer(t: bool) {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let r = &v[0]
+        let k0 = || run(|| print(0))
+        let k1 = || run(|| print(1))
+        handle Run { fn run(g) { v.clear()
+            resume(()) } } in {
+            let kb = || run(|| print(2))
+            let k = k0
+            handle Pick { fn pick() { resume(true)
+                resume(false) } } in {
+                scope { s => let b = pick()
+                    k()
+                    k = kb }
+            }
+        }
+        print(r)
+    }
+}
+fn main() { outer(false) }

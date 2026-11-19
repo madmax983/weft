@@ -1960,11 +1960,20 @@ mod copies {
     /// R0k-b2 on: the copy reads the capture whose source ends through the
     /// environment local of the region, `copy_env`. A `once` closure with a
     /// `ByMove` capture, `a05_by_value`, gets one from plan stage R0z Z3 on:
-    /// `a_once_closure_gets_a_copy_that_moves_its_value`.)
+    /// `a_once_closure_gets_a_copy_that_moves_its_value`.) From plan stage
+    /// R0z Z6 the run gets a dispatch instead (a copy of each closure after a
+    /// test of the closure, `r0z6::`), and no copy that is not an arm of it.
     #[test]
     fn a_closure_copy_is_refused_for_two_closures() {
         let (_, b) = built(&r0k2("a04_two_closures_bad.wf"));
-        assert!(instantiate(&b).is_none_or(|i| i.closure_calls == 0));
+        assert!(instantiate(&b).is_none_or(|i| i.closure_calls
+            == i.built
+                .program
+                .dispatches
+                .iter()
+                .flat_map(|d| d.arms.iter())
+                .filter(|a| a.region.is_some())
+                .count()));
     }
 
     /// A `once` closure (plan stage R0z Z3, parts d and e): the run moves the
@@ -2111,7 +2120,9 @@ mod copies {
     /// The review of R0k-a2: a body inside the owner of the local (a scope
     /// task, a scope body, a nested handled body, a clause) gives the local
     /// another closure through an upvar, so the run of the local gets no
-    /// copy of the first closure.
+    /// copy of the first closure. From plan stage R0z Z6 a scope body, a nested
+    /// handled body and a clause give the run a dispatch (`r0z6::`): each
+    /// copy is an arm of it. A task keeps no copy.
     #[test]
     fn a_closure_copy_is_refused_when_a_nested_body_writes_the_local() {
         for name in [
@@ -2125,9 +2136,20 @@ mod copies {
             "u11_clause_harmless_then.wf",
         ] {
             let (_, b) = built(&r0k2(name));
+            let task = ["u04", "u08", "u09"].iter().any(|t| name.starts_with(t));
             assert!(
-                instantiate(&b).is_none_or(|i| i.closure_calls == 0),
-                "{name}: a copy"
+                instantiate(&b).is_none_or(|i| {
+                    let arms = i
+                        .built
+                        .program
+                        .dispatches
+                        .iter()
+                        .flat_map(|d| d.arms.iter())
+                        .filter(|a| a.region.is_some())
+                        .count();
+                    i.closure_calls == arms && (arms > 0) != task
+                }),
+                "{name}: a copy that is not an arm of a dispatch"
             );
         }
     }
@@ -2480,9 +2502,9 @@ mod copy_env {
         let mut srcs = vec![("writes".to_string(), writes.to_string())];
         // From plan stage R0z Z3, `u12` and `u13` (a second write with a copy
         // of the same closure) and `o01` (a `once` closure) get a copy:
-        // `a_second_write_with_a_copy_of_the_same_closure_gets_a_region`.
+        // `a_second_write_with_a_copy_of_the_same_closure_gets_a_region`. From
+        // plan stage R0z Z6, `a01` gets a dispatch (`r0z6::`).
         for name in [
-            "a01_two_paths_bad.wf",
             "a02_vec_same_id_bad.wf",
             "a03_put_fns_bad.wf",
             "u14_task_bad.wf",
@@ -2680,6 +2702,308 @@ mod r0z3 {
         assert_eq!(u.reason, weft_sema::factgen::handlers::REST_NOT_FOUND);
         let (_, ok) = full(&a, &b);
         assert!(ok);
+    }
+}
+
+/// The dispatches of plan stage R0z Z6 (`docs/ir.md` 6.1, "As built (plan
+/// stage R0z Z6)"): a run whose value can be closures of two or more origins
+/// gets a test of the closure and one arm for each group.
+mod r0z6 {
+    use weft_ir::verify::{verify_program, Rule};
+    use weft_ir::{Program, Rvalue, StmtKind, TermKind};
+    use weft_sema::factgen::instantiate::instantiate;
+    use weft_sema::factgen::{nodes, DISPATCH_MISS};
+    use weft_sema::irbuild::Built;
+
+    /// The analysis of `src` and its IR.
+    fn built(src: &str) -> (weft_sema::Analysis, Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The text of probe `name` of `dir` in `tests/gate/probes`.
+    fn probe(dir: &str, name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(dir)
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The components of the program `b` (with the weak form if `weak`).
+    fn comps(
+        a: &weft_sema::Analysis,
+        b: &Built,
+        weak: bool,
+    ) -> Result<Vec<weft_sema::factgen::Component>, weft_sema::factgen::Unsupported> {
+        let _weak = weak.then(weft_sema::analysis::transfer::WeakRowOps::enter);
+        weft_sema::factgen::components(a, b)
+    }
+
+    /// The program of probe `dir/name` with the copies, and its weak form.
+    fn copied(dir: &str, name: &str) -> (weft_sema::Analysis, Built, bool) {
+        let (a, b) = built(&probe(dir, name));
+        let inst = instantiate(&b).unwrap_or_else(|| panic!("{name}: no copy"));
+        (a, inst.built, inst.weak_ok)
+    }
+
+    /// The targets of the stage: the value set of the run has two origins, so
+    /// the run gets a dispatch with two arms. Each arm with a region copies the
+    /// closures of its group, the program is well formed, and its facts are
+    /// full.
+    #[test]
+    fn a_run_with_closures_of_two_origins_gets_a_dispatch() {
+        for (dir, name) in [
+            ("fixes/r0k2", "u03_callee_reassigns_via_clause.wf"),
+            ("fixes/r0k2", "u05_scope_body.wf"),
+            ("fixes/r0k2", "u06_handled_body.wf"),
+            ("fixes/r0k2", "u07_if_branch.wf"),
+            ("fixes/r0k2", "u11_clause_harmless_then.wf"),
+            ("fixes/r0kb2", "a01_two_paths_bad.wf"),
+            ("fixes/r0k2", "a04_two_closures_bad.wf"),
+            ("fixes/r0z3", "a1_other_maker_bad.wf"),
+        ] {
+            let (a, b, weak) = copied(dir, name);
+            let p = &b.program;
+            assert_eq!(p.dispatches.len(), 1, "{name}");
+            let d = &p.dispatches[0];
+            assert_eq!(d.arms.len(), 2, "{name}");
+            for arm in &d.arms {
+                if let Some(i) = arm.region {
+                    let r = &p.regions[i];
+                    let mut cs: Vec<_> = r.closures().collect();
+                    cs.sort();
+                    let mut want = arm.closures.clone();
+                    want.sort();
+                    assert_eq!(cs, want, "{name}");
+                }
+            }
+            // The order rules of a cleanup chain do not hold across a copy
+            // (`instantiate` lets them go); V19 and V20 hold.
+            assert!(
+                !verify_program(p, &b.tys)
+                    .iter()
+                    .any(|x| matches!(x.rule, Rule::BadDispatch | Rule::BadRegion)),
+                "{name}"
+            );
+            assert!(comps(&a, &b, weak).is_ok(), "{name}: no full facts");
+        }
+    }
+
+    /// A closure that needs no copy (no served operation) is a plain arm: the
+    /// call stays, and the analysis gives it only the closures of its group.
+    /// The region of the other closure of `a01` stays `sole`: the test and the
+    /// plain arm do not run it.
+    #[test]
+    fn a_closure_that_needs_no_copy_is_a_plain_arm() {
+        for (dir, name) in [
+            ("fixes/r0k2", "u11_clause_harmless_then.wf"),
+            ("fixes/r0kb2", "a01_two_paths_ok.wf"),
+        ] {
+            let (_, b, _) = copied(dir, name);
+            let d = &b.program.dispatches[0];
+            assert!(d.arms.iter().any(|x| x.region.is_none()), "{name}");
+            assert!(d.arms.iter().any(|x| x.region.is_some()), "{name}");
+        }
+        let (_, b, _) = copied("fixes/r0kb2", "a01_two_paths_bad.wf");
+        assert!(b.program.regions.iter().any(|r| r.sole));
+    }
+
+    /// The refusals: a value that the walk does not know (a parameter), a
+    /// value from a field with two values, a heap slot, a dispatch in a clause
+    /// of a program with a `multi` operation (R-ROW), a dispatch in a copy
+    /// region, a closure that a recursive callee gives back (the form `h1` of
+    /// the review, in the source of the test).
+    #[test]
+    fn a_dispatch_is_refused_for_the_forms_that_the_walk_does_not_take() {
+        for name in [
+            "t08_unknown_bad.wf",
+            "t12_field_bad.wf",
+            "t13_vec_bad.wf",
+            "t09b_clause_row_bad.wf",
+            "t14_nested_region_bad.wf",
+        ] {
+            let (_, b) = built(&probe("fixes/r0z6", name));
+            assert!(
+                instantiate(&b).is_none_or(|i| i.built.program.dispatches.is_empty()),
+                "{name}"
+            );
+        }
+        // The form `h1` of the review: `k` gets the closure of the recursive `mk`
+        // from two calls, under two handlers of `Run`. A recursive maker gets no
+        // copy at its calls, so both values have one closure id; the walk takes
+        // no closure that a callee gives back, so no dispatch.
+        let (_, b) = built(TWO_CALLS_ONE_ID);
+        assert!(instantiate(&b).is_none_or(|i| i.built.program.dispatches.is_empty()));
+    }
+
+    /// The refusals of rounds 1 and 2 of the review of Z6: R-JOIN (two
+    /// dispatches one after the other give values to the clause of one
+    /// operation), R-REF (a run of a function value that can hold a reference
+    /// in the handled body of the handler of a copy arm), and R-ROW for a run in
+    /// the handled body of a local handler of a `multi` operation. No dispatch. The targets keep theirs
+    /// (`a_run_with_closures_of_two_origins_gets_a_dispatch`).
+    #[test]
+    fn a_dispatch_is_refused_for_the_forms_of_the_review() {
+        for name in [
+            "rev1_fp_d06_unrolled_j3_ok.wf",
+            "rev1_fp_m6_dispatch_ok.wf",
+            "rev1_fp_v1_ff_outer_ok.wf",
+            "rev1_fp_v5_ff_after_ok.wf",
+            "rev1_r01_local_multi_bad.wf",
+            "rev1_r11_resume_ref_ok.wf",
+            "rev1_r14_outer_first_bad.wf",
+            "rev2_b01_ff_before_handle_ok.wf",
+            "rev2_b02_ref_local_capture_ok.wf",
+            "rev2_b05_mkff_callee_ok.wf",
+            "rev2_b12_ff_before_run_after_ok.wf",
+            "rev2_b13_ff_in_outer_fn_run_in_hb_ok.wf",
+            "rev2_b19_param_cond_ok.wf",
+            "rev2_b20_other_type_ok.wf",
+        ] {
+            let (_, b) = built(&probe("fixes/r0z6", name));
+            assert!(
+                instantiate(&b).is_none_or(|i| i.built.program.dispatches.is_empty()),
+                "{name}"
+            );
+        }
+    }
+
+    /// The form `h1` of the review of Z6.
+    const TWO_CALLS_ONE_ID: &str = "effect Run { fn run(g: fn()) }
+fn mk(n: u64) -> fn() / Run {
+    if n > 0 { mk(n - 1) } else { || run(|| print(1)) }
+}
+fn main() {
+    let t = true
+    handle Run { fn run(g) { print(7)
+        resume(()) } } in {
+        let k = mk(1)
+        handle Run { fn run(g) { print(9)
+            resume(()) } } in {
+            if t { k = mk(0) }
+            k()
+        }
+    }
+}
+";
+
+    /// A dead arm: the scope body of `t15_first_gone_ok` gives `k` its second
+    /// value on each path, so the analysis finds the arm of the first value
+    /// dead, the static check allows it, and the facts have no edge into the
+    /// arm. In the bad twin the scope body writes only if `t`: the arm is
+    /// live, and its edge stays.
+    #[test]
+    fn the_arm_of_a_value_that_each_path_replaces_is_dead() {
+        for (name, dead) in [
+            ("t15_first_gone_ok.wf", true),
+            ("t15_first_gone_bad.wf", false),
+        ] {
+            let (a, b, weak) = copied("fixes/r0z6", name);
+            let d = b.program.dispatches[0].clone();
+            let cs = comps(&a, &b, weak).unwrap_or_else(|u| panic!("{name}: {u}"));
+            let arm = &d.arms[0];
+            assert!(arm.killable, "{name}");
+            let c = cs
+                .iter()
+                .find(|c| {
+                    c.emitted
+                        .table
+                        .first(d.body, arm.entry, nodes::NORMAL)
+                        .is_some()
+                })
+                .unwrap_or_else(|| panic!("{name}: no component"));
+            let n = c.emitted.table.first(d.body, arm.entry, nodes::NORMAL);
+            let has_edge = c.facts.cfg_edge.iter().any(|&(_, to)| Some(to) == n);
+            assert_eq!(has_edge, !dead, "{name}");
+        }
+    }
+
+    /// The static check and the analysis disagree: an arm that the analysis
+    /// finds dead and that the static check does not allow (made by hand),
+    /// and a dispatch whose tests do not know a closure that the analysis
+    /// finds at the run (made by hand): `DISPATCH_MISS`, the program keeps
+    /// its fallback.
+    #[test]
+    fn a_dispatch_that_the_analysis_does_not_agree_with_is_a_miss() {
+        let (a, mut b, weak) = copied("fixes/r0z6", "t15_first_gone_ok.wf");
+        for arm in &mut b.program.dispatches[0].arms {
+            arm.killable = false;
+        }
+        let err = comps(&a, &b, weak).err().map(|u| u.reason);
+        assert_eq!(err.as_deref(), Some(DISPATCH_MISS));
+        let (a, mut b, weak) = copied("fixes/r0k2", "u07_if_branch.wf");
+        // The second test names another closure (the inner closure of the
+        // first arm): the value of the run can be a closure that no test knows.
+        let d = b.program.dispatches[0].clone();
+        let other = b
+            .program
+            .closures
+            .iter()
+            .position(|c| c.maker == b.program.closures[d.arms[0].closures[0].index()].body)
+            .map(|i| weft_ir::ClosureId(u32::try_from(i).unwrap_or(0)))
+            .expect("an inner closure");
+        b.program.dispatches[0].arms[1].closures = vec![other];
+        let test = d.arms[1].test;
+        let body = &mut b.program.bodies[d.body.index()];
+        if let Some(StmtKind::Assign(_, Rvalue::ClosureIs(_, cs))) = body.blocks[test.index()]
+            .stmts
+            .last_mut()
+            .map(|s| &mut s.kind)
+        {
+            *cs = vec![other];
+        }
+        let err = comps(&a, &b, weak).err().map(|u| u.reason);
+        assert_eq!(err.as_deref(), Some(DISPATCH_MISS));
+    }
+
+    /// V20: a `ClosureIs` that is not the test of a dispatch, a miss block that
+    /// is not `Unreachable`, and a region whose closures are not those of its
+    /// arm break the rule.
+    #[test]
+    fn a_dispatch_that_is_not_well_formed_breaks_v20() {
+        let (_, b, _) = copied("fixes/r0k2", "u07_if_branch.wf");
+        let bad = |p: &Program| {
+            verify_program(p, &b.tys)
+                .iter()
+                .any(|x| x.rule == Rule::BadDispatch)
+        };
+        assert!(!bad(&b.program));
+        let d = b.program.dispatches[0].clone();
+        let mut p = b.program.clone();
+        p.bodies[d.body.index()].blocks[d.miss.index()].term.kind = TermKind::Return;
+        assert!(bad(&p));
+        let mut p = b.program.clone();
+        p.dispatches.clear();
+        assert!(bad(&p));
+        let mut p = b.program.clone();
+        let other = p.dispatches[0].arms[1].closures.clone();
+        p.dispatches[0].arms[0].closures.clone_from(&other);
+        assert!(bad(&p));
+    }
+
+    /// Part B: the clause of `Sw` gives `k` its second closure, and a callee
+    /// performs `sw` (`u10`). The pre-scan gives the call of the callee a copy,
+    /// so the clause has one direct perform (the form of `u13`), and the run
+    /// gets a dispatch.
+    #[test]
+    fn a_callee_that_runs_the_clause_of_a_write_gets_a_copy() {
+        let (a, b) = built(&probe("fixes/r0k2", "u10_clause_of_inner.wf"));
+        let inst = instantiate(&b).expect("a copy");
+        assert!(inst.calls >= 1);
+        assert_eq!(inst.built.program.dispatches.len(), 1);
+        assert!(comps(&a, &inst.built, inst.weak_ok).is_ok());
     }
 }
 

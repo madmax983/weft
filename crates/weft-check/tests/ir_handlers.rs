@@ -1149,18 +1149,21 @@ fn function_values_and_references_across_operations_have_full_facts() {
 }
 
 /// Stage R0k-a: a call that gets no copy keeps the old pipeline for the D3
-/// form: a recursive callee, and a run of a local that can hold one of two
-/// closures (stage R0k-a2 copies a closure body only for one closure).
+/// form: a recursive callee. Plan stage R0z Z6: a run of a local that can
+/// hold one of two closures gets a dispatch (a copy of each closure body after
+/// a test of the closure), so the D3 form has full facts: W0301 at the read
+/// of `r`.
 #[test]
 fn a_call_with_no_copy_keeps_the_old_pipeline() {
-    for name in ["rec_callee.wf", "two_closures.wf"] {
-        let (_, fallback, _) = stage_codes("r0k", name);
-        let fallback = fallback.unwrap_or_default();
-        assert!(
-            fallback.contains("gives a function value or a reference back"),
-            "{name}: {fallback}"
-        );
-    }
+    let (_, fallback, _) = stage_codes("r0k", "rec_callee.wf");
+    let fallback = fallback.unwrap_or_default();
+    assert!(
+        fallback.contains("gives a function value or a reference back"),
+        "rec_callee.wf: {fallback}"
+    );
+    let (got, fallback, _) = stage_codes("r0k", "two_closures.wf");
+    assert!(fallback.is_none(), "two_closures.wf: {fallback:?}");
+    assert_eq!(got, vec![("W0301".to_string(), 17)]);
     // Stage R0k-a2: the closure that the callee makes and runs gets a copy
     // of its body at the run.
     let (got, fallback, _) = stage_codes("r0k", "closure_run.wf");

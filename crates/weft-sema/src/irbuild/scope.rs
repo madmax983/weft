@@ -279,7 +279,11 @@ fn rvalue_groups(p: &Program, rv: &Rvalue) -> Groups {
         Rvalue::Aggregate(_, ops) | Rvalue::Concat(ops) => operands_groups(p, ops),
         Rvalue::Use(o) | Rvalue::Unary(_, _, o) => operand_groups(p, o),
         Rvalue::Binary(_, _, x, y) => operand_groups(p, x).union(operand_groups(p, y)),
-        Rvalue::Ref(_) | Rvalue::Len(_) | Rvalue::Discriminant(_) | Rvalue::Iter(_) => Groups::NONE,
+        Rvalue::Ref(_)
+        | Rvalue::Len(_)
+        | Rvalue::Discriminant(_)
+        | Rvalue::ClosureIs(..)
+        | Rvalue::Iter(_) => Groups::NONE,
     }
 }
 

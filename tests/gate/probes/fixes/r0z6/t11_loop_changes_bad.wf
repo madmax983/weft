@@ -1,0 +1,29 @@
+// Plan stage R0z Z6 (a refusal, R-LOOP): the loop runs `k`, then gives it the other
+// closure (a set that changes in a loop). A copy arm gives a function value to an
+// operation in a loop, and the facts of a clause that keeps such a value join the value
+// of one turn with the changes of the next turn (a false W0301 of main for the form with
+// one value, issue #79). So no dispatch: the program keeps the fallback. In the second
+// turn the run gives `run` a closure that keeps `r`, and `main` runs it after the clear
+// of `v`.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let k = || run(|| print(0))
+        let i = 0
+        while i < 2 {
+            k()
+            k = || run(|| print(r))
+            i = i + 1
+        }
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

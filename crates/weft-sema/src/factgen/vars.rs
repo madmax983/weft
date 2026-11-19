@@ -163,6 +163,7 @@ fn accessed(b: &weft_ir::Body) -> Vec<&Place> {
                         Rvalue::Ref(q)
                         | Rvalue::Len(q)
                         | Rvalue::Discriminant(q)
+                        | Rvalue::ClosureIs(q, _)
                         | Rvalue::Iter(IterSource::Elems(q)) => out.push(q),
                         _ => {}
                     }

@@ -1,0 +1,28 @@
+// Plan stage R0z Z6 (a refusal): a closure of `k` performs `sw`, whose clause gives `k`
+// a new value while the closure runs. The clause of `Sw` can run at a node that the walk
+// does not order (Z3 fix 3), so no dispatch: the program has the result of main (W0313:
+// the clause of `Sw` gets a closure with the capability of `Run` through `k`).
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+effect Sw { fn sw() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let k = || run(|| print(0))
+        handle Sw { fn sw() { k = || run(|| print(r))
+            resume(()) } } in {
+            k = || { sw()
+                run(|| print(1)) }
+            k()
+            k()
+        }
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

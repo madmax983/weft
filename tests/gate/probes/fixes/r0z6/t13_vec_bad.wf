@@ -1,0 +1,22 @@
+// Plan stage R0z Z6 (a refusal: a heap slot). The closures are in a `Vec`, and the run
+// reads one of them out. No dispatch, and the program keeps the fallback.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let fs = Vec.new()
+        fs.push(|| run(|| print(0)))
+        fs.push(|| run(|| print(r)))
+        let k = fs[1]
+        k()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

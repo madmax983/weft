@@ -99,7 +99,7 @@ source ──parse──► AST (an ExprId on each expression)
        ──resolve + typeck──► THIR: final types, callees, effect identities, argument
                              order, implicit dereferences, integer types
        ──build──► IR: bodies, blocks, locals, cleanup chains (no places, no rows)
-       ──verify──► V1 to V19
+       ──verify──► V1 to V20
        ──analyze──► for each body: abstract states (places, function values, tasks, init)
                     for each SCC of the call graph: summaries and effect rows
        ──emit──► FnFacts (schema unchanged) ──► checker and spec (unchanged) ──► diagnostics
@@ -463,6 +463,7 @@ pub enum Rvalue {
     Aggregate(AggKind, Vec<Operand>),
     Len(Place),
     Discriminant(Place),
+    ClosureIs(Place, Vec<ClosureId>), // plan stage R0z Z6: the test of a dispatch (6.1)
     Concat(Vec<Operand>),
     Iter(IterSource),
 }
@@ -580,6 +581,7 @@ to V17; the others need the type table.
 | V17 | `Drop(p)` only on a place with a `Deref`, and the next statement is `Assign(p, _)`. | the drop pair of W0601 behind a reference |
 | V18 | Each `Return` has the origin of the expression whose value it returns. | W0204 spans |
 | V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. (Plan stage R0k-b2.) The environment local of a region is a local of kind `CopyEnv` of the closure of the region, and the value of the region is a whole local; a `CopyEnv` local that no region of its body names breaks V14, and so does its `Live` or `Dead`; a move below it breaks V14 (`EnvMove`), but in a region of a `once` closure (plan stage R0z Z3). | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
+| V20 | (Plan stage R0z Z6.) Each dispatch (`Program::dispatches`, 6.1) has two arms or more; its value is a whole local of its body (an upvar local has no `Live`, so the rule asks for none); the groups are not empty, do not meet, and name closures with distinct bodies (distinct code units) and one `once` flag. The last statement of each test block is `g = ClosureIs(value, group)` and its terminator is `switch g -> [1: entry, otherwise: next]` (the next test, or the miss block after the last arm). The miss block has only `Dead` statements (the end of the result of the last test, as each successor of a test has) and `Unreachable`. The one edge into an arm entry is from its test; a plain arm ends with a call of the value; the region of a copy arm copies the closures of the group, and its value is the value of the dispatch or the local of a `once` move of it. Each `ClosureIs` of the program is the test of an arm. | the interpreter tests the code of the closure value (8.4) |
 
 ---
 ## 5. Lowering rules: typed tree to IR
@@ -2589,6 +2591,109 @@ As built (plan stage R0z Z3, the small steps of the way; `factgen/instantiate.rs
   false W0301 of the join of the parameter of a clause that runs at two nodes (the same
   error as the program with two locals, which the `ir` pipeline gives before this
   stage). So a value in a heap slot keeps the fallback.
+
+As built (plan stage R0z Z6, dispatches; `factgen/instantiate.rs`, `Inst::dispatch_plan`):
+
+- The form. A run `call (op l)(args)` whose local can hold closures of two to four
+  origins (`DISPATCH_ARMS`) gets a dispatch (`weft_ir::Dispatch`). The block of the run
+  gets the first test, `g1 = ClosureIs(l, group1); switch move g1 -> [1: arm1, otherwise:
+  test2]`; each other test is a new block; after the last test the miss block is
+  `Unreachable`. Each arm entry is a new block with the call of the run. A copy arm gets
+  the copy of the closure body at its entry (a copy region, with `PushHenv` and
+  `PopHenv`, its environment and its environment local); a plain arm keeps the call. The
+  closures of one origin (`Inst::origin`) are one group, as `CopyRegion::also` of Z3. No
+  new terminator: the test is a read of one place, as `Discriminant`, and the `Switch`
+  on a `bool` is a node that the facts and the analysis know.
+- The value set (`Inst::walk_set`). The walk of `walk_multi` (Z3 part a) with no rule of
+  one origin: the cell of the run through upvar locals; each write in the owner or in a
+  body inside it is a make, or a whole `move` or `copy` of a local with an exact way to a
+  closure that the program makes (`walk_from`), or, if that local has more writes, the
+  value set of that local (four levels; the read that the walk follows is not another
+  use). No other statement or terminator writes, moves or borrows the cell or a part of
+  it. A write in a clause has the form of `u13` (Z3 fix 3). A closure that a callee gives
+  back (`Source::Call`), the destination of a terminator (a call, a perform, a
+  `resume`), a value of a caller, a value of a heap slot and a part of a local with more
+  values are no leaf: the walk refuses. So `None` of an `Option` (or another variant) on
+  the path of a part is never a leaf. The set is complete: each value of the cell at the
+  run is the value of one enumerated write.
+- The arms (`Inst::plan_run` with `arm`). A closure with no served operation (the rule of
+  a copy, with `region`) is a plain arm, before each other check. Else the arm is a copy
+  region with the rules of R0k-b1', R0k-b2 and Z3 on the way of the arm: it reads each
+  capture but `Cap` through the environment local, the extent and the agreement rules,
+  `once_ok`, `also_ok` for a group with more closures, `one_clause_node` (the arms of one
+  dispatch are one node: one run takes one arm). One refusal refuses the dispatch; one
+  arm at least is a copy. A dispatch in a copy region or in a closure body is refused.
+  Each closure of the set has the `once` flag of the run (a `move` run); the copy arm
+  moves the value into its own local, as in Z3 part d.
+- R-ROW, the syntactic part (`Inst::row_refused`): no dispatch if the program has a
+  `multi` operation and the run is in a clause (or in a body that splices into one), or
+  if a closure of the set can perform an effect with a `multi` operation (a perform, a
+  callee of `Needs::row` or `Needs::unknown`, a function value whose row can have one).
+- The refusals of round 1 of the review of Z6 (`Inst::arm_join_refused`, for each
+  operation with a function value or a reference that a copy arm performs through a
+  captured capability of a local handler H). R-JOIN: another node can run the clause of
+  that operation (a perform through the capability of H; in the handled body of H, a
+  perform of the effect through the row, a callee whose row has the effect or that gets
+  a function value of the site, a run of a value that performs the operation through a
+  capture of the capability of H, or of a value that the walk does not know): the facts
+  of the clause join its parameter over the nodes (issue #79; two dispatches one after
+  the other). R-REF (round 2): in the handled body of H (and the bodies inside it but
+  those of the dispatch) a function value runs whose value can hold a reference (a
+  `ByRef` or `Kont` capture, a capture whose type is or holds a reference or a function
+  value, or a value that the walk does not know), or a callee gets a function value of
+  the site. After that run the facts of the perform give the clause the places below
+  that reference (main gives the same false W0301 for a region with one value). A run of
+  a parameter of a clause that no node can run does not count. The root of this gap is
+  in the facts of a perform after such a run, in main too; this stage does not change
+  those facts. R-ROW also refuses a run
+  in the handled body of a local handler of an effect with a `multi` operation (a later
+  `resume` runs the dispatch again; the fact oracle failed A5 there).
+- R-LOOP: no dispatch at a run in a loop (a cycle of its body, or of a body around it
+  through the terminator that runs it) if a copy arm gives a function value or a
+  reference to an operation. The facts of a clause that keeps such a value join the value
+  of one turn with the changes of the next turn (a false W0301 that main gives for the
+  form with one value, issue #79).
+- The value of a capture of a copy arm is the value of the state (`copy_env_value_of`),
+  as for a region of Z3 with more closures, not `CopyRegion::env_fns`.
+- The bounds: four groups, the block bound of the copies (the tests, the arms and each
+  copy), `DISPATCH_TRIES` (64) runs of a program for the walk (and for the pre-scan of
+  Part B); the writes of each cell are kept until the program changes.
+- No later copy: the tests, the arm entries and the miss block are not copied again
+  (`Inst::no_copy`), and a body with a dispatch gets no copy (`copy_code`), so the ids of
+  the tests and of the record never change.
+- `sole` (`sole_runs`): a `ClosureIs` reads the code of the value and does not run it, as
+  `Discriminant`; an arm entry of another group (a plain call, or the move of a copy arm)
+  does not run the closure. So the region of `a01` stays `sole`.
+- The analysis (`analysis::edges`, `transfer::dispatch_cut`, the same function for the
+  facts). The edge into an arm gets the state with only the closures of the group in the
+  value; the next edge gets the other closures. An edge with no closure left gets no
+  state: the arm is dead. At the first test, a value that is not a closure of the set
+  (`Unknown`, a value of a caller, a capture, a function item, another closure) notes
+  `DISPATCH_MISS`.
+- After the last run of the analysis (`factgen::dispatch_checks`, also after the
+  re-entry runs and the runs of `infer_rows`): a block of a dispatch (a test, an arm
+  entry, a block of a copy arm) that is a node of a row notes `DISPATCH_ROW`; a dead arm
+  of a reached dispatch loses the `cfg_edge` into its entry, if the static check allows
+  it (`DispatchArm::killable`: each path from each write of a closure of the group to the
+  run passes another write of the cell; a write in a body inside the owner counts at its
+  gateway terminator), else `DISPATCH_MISS`. The static check is weak: a conditional
+  write in a clause, a handled body or a scope body counts as a kill at its gateway. It
+  only allows the cut; the analysis must also find the arm dead, and it keeps the value
+  of the arm after such a write. A block with no state gets no templates
+  (`emit_blocks`). Each of `DISPATCH_MISS` and `DISPATCH_ROW` is a construct with no full
+  facts in the program with the copies: the program keeps its fallback.
+- Part B, the pre-scan (`Inst::clause_callees`): before the first sweep, a run of the
+  original program whose value set has more values, and whose only refusal is a clause
+  write that Z3 fix 3 refuses, gives a copy to each call of a callee that can run that
+  clause (`Inst::clause_calls`; none if a function value, a task, another capability or a
+  closure can run it). Then the clause has one direct perform (`u10`).
+- Why it is sound. The test is total: the set is complete, and the interpreter tests the
+  code of the closure value. On the arm of a group the value is a closure of the group,
+  so the copy of R0k-b1' to Z3 is the code of the run, with the captures through the
+  cells of the value and the handlers of the closure value. The analysis cuts the value
+  only on a tested edge. With the fact oracle, a run that comes to the miss block faults
+  ("fact oracle (dispatch)"), a run into a dead arm fails trace conformance (no edge), and
+  the closure check of `PushHenv` holds at each copy arm.
 
 ### 6.2 Nodes and phases
 
@@ -6162,6 +6267,7 @@ lines) at the end of the migration.
 | `Concat(ops)` | each operand, `ToStr`, then `Concat` |
 | `Iter(Elems(p))`, `Iter(Range(a, b))` | the place ops and `ElemIter`; `a`, `b` and `RangeIter` |
 | `Len`, `Discriminant` | new ops `Len` and `Tag` |
+| `ClosureIs(p, cs)` | the place ops and `ClosureIs` with the code unit of each closure (plan stage R0z Z6) |
 | `Switch` | `JumpIfFalse` for a `bool`; a new `JumpTable` for an integer or a tag |
 | `Call`, `Perform`, `Resume` | `Call`, `CallValue`, `Perform`; `Resume` is `CallValue` of the continuation |
 | `Handle`, `Scope`, `ScopeWait`, `Fork`, `Assert`, `IterNext`, `Print` | the ops of the same name |
@@ -6424,6 +6530,10 @@ of a copy region. It takes the cell, not the value, so it is not a read of the p
 the oracles. `PushHenv` names the code of the copied closure: with the fact oracle on, the
 closure value at the entry of the region must run that code (8.5), or the code of a
 closure of `CopyRegion::also` (plan stage R0z Z3).
+Plan stage R0z Z6 adds `ClosureIs(codes)` (6.1, "As built (plan stage R0z Z6)"): the test
+of a dispatch takes the place of a closure value and gives `true` if the value is a
+closure whose code is one of `codes` (another value gives `false`). It reads the place.
+The miss block of a dispatch faults with "fact oracle (dispatch)".
 Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles

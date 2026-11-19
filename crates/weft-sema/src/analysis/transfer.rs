@@ -53,6 +53,57 @@ pub struct Cx<'a> {
     pub hx: &'a mut super::clause::Handlers,
 }
 
+/// The state on an edge of a test of a dispatch (plan stage R0z Z6).
+///
+/// It is the state `st` where the function values of the closure value
+/// `value` (`weft_ir::Dispatch`) are only those of a closure for which `keep`
+/// is true. `None` if no function value stays: the edge gets no state (the arm
+/// or the rest of the tests is dead).
+///
+/// The analysis (`super::edges`) and the facts (the same function, through
+/// `crate::factgen` `emit_blocks`) make the same cut. A value that is not a
+/// closure (`Unknown`, a value of a caller, a function item) never stays:
+/// `super::edges` notes such a value at the first test (`DISPATCH_MISS`).
+///
+/// # Errors
+///
+/// Returns [`AlphaError::BadPlace`] if the local does not exist.
+pub fn dispatch_cut(
+    p: &Program,
+    body: BodyId,
+    st: &State,
+    value: &weft_ir::Place,
+    keep: &dyn Fn(weft_ir::ClosureId) -> bool,
+) -> Result<Option<State>, AlphaError> {
+    let k = key(p, body, value.local)?;
+    let mut out = st.clone();
+    let any = out.cut_fns(k, &|f| match f {
+        FnVal::Closure(c) | FnVal::Made(c) => keep(*c),
+        _ => false,
+    });
+    Ok(any.then_some(out))
+}
+
+/// True if each function value of the closure value `value` in state `st`
+/// is a closure of `known` (plan stage R0z Z6): the first test of a dispatch.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::BadPlace`] if the local does not exist.
+pub fn dispatch_known(
+    p: &Program,
+    body: BodyId,
+    st: &State,
+    value: &weft_ir::Place,
+    known: &dyn Fn(weft_ir::ClosureId) -> bool,
+) -> Result<bool, AlphaError> {
+    let k = key(p, body, value.local)?;
+    Ok(st.value(k, &[]).flat().fns.iter().all(|f| match f {
+        FnVal::Closure(c) | FnVal::Made(c) => known(*c),
+        _ => false,
+    }))
+}
+
 /// The key of local `l` of body `body`: the site local of an upvar local.
 ///
 /// # Errors
@@ -722,6 +773,7 @@ pub fn rvalue(cx: &mut Cx<'_>, body: BodyId, st: &State, rv: &Rvalue) -> Result<
         | Rvalue::Unary(..)
         | Rvalue::Len(_)
         | Rvalue::Discriminant(_)
+        | Rvalue::ClosureIs(..)
         | Rvalue::Concat(_)
         | Rvalue::Iter(weft_ir::IterSource::Range(..)) => Ok(Tree::leaf(AbsVal::plain())),
         Rvalue::Aggregate(kind, ops) => aggregate(cx, body, st, kind, ops),
@@ -939,6 +991,7 @@ pub fn rvalue_operands(rv: &Rvalue) -> Vec<&Operand> {
         Rvalue::Ref(_)
         | Rvalue::Len(_)
         | Rvalue::Discriminant(_)
+        | Rvalue::ClosureIs(..)
         | Rvalue::Iter(weft_ir::IterSource::Elems(_)) => Vec::new(),
     }
 }

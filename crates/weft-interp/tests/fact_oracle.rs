@@ -1461,7 +1461,7 @@ fn a_copy_region_that_runs_with_the_handlers_of_the_run_node_fails_a5() {
 #[test]
 fn the_probes_of_the_copy_regions_pass_the_fact_oracle() {
     let mut checked = 0;
-    for d in ["r0kb1", "r0k3", "r0kb2"] {
+    for d in ["r0kb1", "r0k3", "r0kb2", "r0z6"] {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/gate/probes/fixes")
             .join(d);
@@ -1519,5 +1519,41 @@ fn a_copy_region_that_names_another_closure_fails_the_fact_oracle() {
             Err(e) => e.message,
         };
         assert!(m.starts_with("fact oracle (copy)"), "{name}: {m}");
+    }
+}
+
+/// The dispatches of plan stage R0z Z6, the mutation: with
+/// `wrong_arm_in_dispatch` the first two arms of each dispatch test the
+/// closures of each other, so the run takes the arm of the other closure. The
+/// check at the entry of the region of that arm fails, or, for an arm that the
+/// facts find dead (the first arm of `t02_scope_body_ok`: the scope body gives
+/// `k` its second value on each path), trace conformance fails: the facts have
+/// no edge into that arm.
+#[test]
+fn a_dispatch_whose_arms_test_other_closures_fails_the_fact_oracle() {
+    for name in ["t02_scope_body_ok.wf", "t06_two_paths_ok.wf"] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z6")
+            .join(name);
+        let c = check(&fs::read_to_string(&p).unwrap());
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| ir.ok()),
+            "{name}: {:?}",
+            c.diags
+        );
+        let r = run_main(&c, &opts());
+        assert!(r.is_ok(), "{name}: {:?}", r.err().map(|e| e.message));
+        let wrong = RunOptions {
+            wrong_arm_in_dispatch: true,
+            ..opts()
+        };
+        let m = match run_main(&c, &wrong) {
+            Ok(_) => panic!("{name}: a dispatch with swapped arms passes"),
+            Err(e) => e.message,
+        };
+        assert!(
+            m.starts_with("fact oracle") || m.starts_with("trace conformance"),
+            "{name}: {m}"
+        );
     }
 }

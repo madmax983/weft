@@ -1,0 +1,14 @@
+// Review Z6: the single-node analog of j1: one run node of a local `k` with two closures.
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep = || print(0)
+    let t = true
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in {
+        v.push(2)
+        run(|| print(v[0]))
+    }
+    keep()
+}

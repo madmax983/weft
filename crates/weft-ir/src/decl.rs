@@ -27,6 +27,61 @@ pub struct Program {
     /// The copy regions (plan stage R0k-b1'). Only a program with the copies of
     /// the fact generator has them: the builder makes none.
     pub regions: Vec<CopyRegion>,
+    /// The dispatches (plan stage R0z Z6). Only a program with the copies of the
+    /// fact generator has them.
+    pub dispatches: Vec<Dispatch>,
+}
+
+/// A dispatch (plan stage R0z Z6, `docs/ir.md` 6.1).
+///
+/// It is the run of a closure value that can be a closure of two or more
+/// groups. A test block for each group
+/// tests the closure of the value ([`crate::Rvalue::ClosureIs`]) and goes to the
+/// arm of the group if the test is true, else to the next test. The `otherwise`
+/// of the last test is the miss block: its terminator is `Unreachable`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Dispatch {
+    /// The body of the run.
+    pub body: BodyId,
+    /// The closure value that the run runs, a whole local of [`Dispatch::body`].
+    pub value: Place,
+    /// The arms, in the order of the tests.
+    pub arms: Vec<DispatchArm>,
+    /// The miss block: no test is true. Control cannot come here.
+    pub miss: BlockId,
+}
+
+/// An arm of a [`Dispatch`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DispatchArm {
+    /// The closures of the group of the arm.
+    pub closures: Vec<ClosureId>,
+    /// The test block of the arm: its last statement is the `ClosureIs` of the
+    /// group, and its terminator is a `Switch` on that result.
+    pub test: BlockId,
+    /// The entry of the arm: the block that the test goes to if it is true. Its
+    /// one edge in is from the test.
+    pub entry: BlockId,
+    /// The arm runs a copy region of the closure body (the index in
+    /// [`Program::regions`]), or `None` for a call of the value (a plain arm).
+    pub region: Option<usize>,
+    /// The static check of a dead arm: each path from each write of a closure
+    /// of the group into the cell of the value, to the run, passes another
+    /// write of the cell (a write in a body inside the owner of the cell counts
+    /// at the terminator that runs that body). Only then can the analysis find
+    /// the arm dead.
+    pub killable: bool,
+}
+
+impl Dispatch {
+    /// Each block of the dispatch that is not a block of a copy region: the test
+    /// blocks, the arm entries and the miss block.
+    pub fn blocks(&self) -> impl Iterator<Item = BlockId> + '_ {
+        self.arms
+            .iter()
+            .flat_map(|a| [a.test, a.entry])
+            .chain(std::iter::once(self.miss))
+    }
 }
 
 /// A copy region (plan stage R0k-b1', `docs/ir.md` 6.1): the blocks of a body that
@@ -247,7 +302,15 @@ pub struct CapEnv {
 }
 
 impl Program {
-    /// Returns the copy region of block `b` of body `body`, if it is in one.
+    /// Returns the dispatch of block `b` of body `body` (plan stage R0z Z6): a
+    /// test block, an arm entry or the miss block of it.
+    pub fn dispatch_at(&self, body: BodyId, b: BlockId) -> Option<&Dispatch> {
+        self.dispatches
+            .iter()
+            .find(|d| d.body == body && d.blocks().any(|x| x == b))
+    }
+
+    /// Returns the copy region that holds block `b` of body `body`, if one does.
     pub fn region_of(&self, body: BodyId, b: BlockId) -> Option<&CopyRegion> {
         self.regions
             .iter()
