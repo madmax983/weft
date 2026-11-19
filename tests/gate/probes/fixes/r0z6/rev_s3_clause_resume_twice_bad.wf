@@ -1,0 +1,10 @@
+// Review Z6: no write of `k` reaches the run but through a nested scope body.
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let k = || print(0)
+    scope { s => if v.len() > 5 { k = || print(1) } else { k = || v.push(2) } }
+    let r = &v[0]
+    k()
+    print(r)
+}

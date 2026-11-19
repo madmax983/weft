@@ -749,6 +749,25 @@ impl State {
         self.must.insert(key, path);
     }
 
+    /// Keeps only the function values of the value of local `key` (each part)
+    /// for which `keep` is true (plan stage R0z Z6: the cut of a dispatch arm,
+    /// `super::transfer::dispatch_cut`). Returns true if a function value
+    /// stays.
+    pub fn cut_fns(&mut self, key: Key, keep: &dyn Fn(&FnVal) -> bool) -> bool {
+        fn cut(t: &mut Tree, keep: &dyn Fn(&FnVal) -> bool, any: &mut bool) {
+            t.top.fns.retain(|f| keep(f));
+            *any |= !t.top.fns.is_empty();
+            for k in t.kids.values_mut() {
+                cut(k, keep, any);
+            }
+        }
+        let mut any = false;
+        if let Some(t) = self.vals.get_mut(key) {
+            cut(Rc::make_mut(t), keep, &mut any);
+        }
+        any
+    }
+
     /// Joins `v` into the move path `path` of local `key` (a weak update:
     /// a store through a reference or into an element). The path can hold a
     /// value now.

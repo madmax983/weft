@@ -1,0 +1,24 @@
+// Plan stage R0z Z6: a group of two copies of the closure of `mk` (one arm with the other
+// closures of Z3) and a closure of `mk2`. The closure of `mk2` keeps `r`: W0301.
+struct H { f: fn() }
+fn noop() {}
+effect Run { fn run(g: fn()) }
+fn mk(h: fn()) -> fn() / Run { || run(h) }
+fn mk2(h: fn()) -> fn() / Run { || { print(2)
+    run(h) } }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let h = H { f: noop }
+    handle Run { fn run(g) { h.f = g
+        resume(()) } } in {
+        let r = &v[0]
+        let c = mk(|| print(0))
+        if v.len() > 3 { c = mk(|| print(1)) }
+        if v.len() > 0 { c = mk2(|| print(r)) }
+        c()
+    }
+    v.clear()
+    let x = h.f
+    x()
+}

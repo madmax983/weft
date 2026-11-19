@@ -495,7 +495,11 @@ fn cap_used(
                     {
                         return true;
                     }
-                    if let Rvalue::Ref(q) | Rvalue::Len(q) | Rvalue::Discriminant(q) = rv {
+                    if let Rvalue::Ref(q)
+                    | Rvalue::Len(q)
+                    | Rvalue::Discriminant(q)
+                    | Rvalue::ClosureIs(q, _) = rv
+                    {
                         if place_reads(q) {
                             return true;
                         }

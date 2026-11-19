@@ -151,6 +151,10 @@ pub enum Rule {
     /// that is not its entry, an edge out of it is not a `Goto`, or two regions
     /// share a block.
     BadRegion,
+    /// V20: a dispatch (plan stage R0z Z6) is not well formed: a test block, an
+    /// arm, the miss block or a group is not as `docs/ir.md` 6.1 gives, or a
+    /// `ClosureIs` is not the test of a dispatch.
+    BadDispatch,
 }
 
 impl Rule {
@@ -176,6 +180,7 @@ impl Rule {
             Self::BadDrop => 17,
             Self::ReturnOrigin => 18,
             Self::BadRegion => 19,
+            Self::BadDispatch => 20,
         }
     }
 
@@ -222,6 +227,7 @@ impl Rule {
                 "a write of `_0` is not inside the origin of the `Return`".to_string()
             }
             Self::BadRegion => "a copy region is not well formed".to_string(),
+            Self::BadDispatch => "a dispatch is not well formed".to_string(),
         }
     }
 }
@@ -248,6 +254,7 @@ pub fn verify_program(p: &Program, tys: &TyTable) -> Vec<Broken> {
     }
     once_run(p, &mut out);
     regions(p, &mut out);
+    dispatches(p, &mut out);
     let views = env_views(p);
     let made = closure_sites(p);
     for (ci, c) in p.closures.iter().enumerate() {
@@ -317,6 +324,142 @@ fn regions(p: &Program, out: &mut Vec<Broken>) {
                     inside(from) && !inside(to) && !matches!(blk.term.kind, TermKind::Goto(_));
                 if edge_in || edge_out {
                     bad(out, Some(from));
+                }
+            }
+        }
+    }
+}
+
+/// V20: each dispatch of program `p` (plan stage R0z Z6) is well formed.
+///
+/// - The value is a whole local of the body. (An upvar local has no `Live`, so
+///   the rule does not ask for one.)
+/// - There are two arms or more. The groups are not empty, they do not meet, the
+///   closures exist and have distinct bodies (distinct code units: the
+///   interpreter tests the code of the value), and they agree on `once`.
+/// - The last statement of each test block is `g = ClosureIs(value, group)`, with
+///   `g` a whole local, and its terminator is `switch g -> [1: entry,
+///   otherwise: next]`: the test of the next arm, or the miss block after the
+///   last arm.
+/// - The miss block has only `Dead` statements (the end of the result of the
+///   last test, as each successor of a test has) and `Unreachable`.
+/// - The one edge into an arm entry is from its test. A plain arm ends with a
+///   call of the value. The region of a copy arm is in the body and copies the
+///   closures of the group, and its value is the value of the dispatch or a
+///   local that the arm entry moves it into.
+/// - Each `ClosureIs` of the program is the test of an arm.
+fn dispatches(p: &Program, out: &mut Vec<Broken>) {
+    let bad = |out: &mut Vec<Broken>, body: BodyId, block: Option<BlockId>| {
+        out.push(Broken {
+            body,
+            block,
+            local: None,
+            rule: Rule::BadDispatch,
+        });
+    };
+    let mut tests: HashSet<(BodyId, BlockId)> = HashSet::new();
+    for d in &p.dispatches {
+        let Some(body) = p.body(d.body) else {
+            bad(out, d.body, None);
+            continue;
+        };
+        let mut seen_c: HashSet<crate::ClosureId> = HashSet::new();
+        let mut seen_b: HashSet<BodyId> = HashSet::new();
+        let mut once: Option<bool> = None;
+        let mut groups_ok =
+            d.arms.len() >= 2 && d.value.is_local() && body.local(d.value.local).is_some();
+        for a in &d.arms {
+            groups_ok &= !a.closures.is_empty();
+            for c in &a.closures {
+                let Some(cd) = p.closures.get(c.index()) else {
+                    groups_ok = false;
+                    continue;
+                };
+                groups_ok &= seen_c.insert(*c) && seen_b.insert(cd.body);
+                groups_ok &= *once.get_or_insert(cd.once) == cd.once;
+            }
+        }
+        if !groups_ok {
+            bad(out, d.body, None);
+            continue;
+        }
+        let mut preds: Vec<Vec<BlockId>> = vec![Vec::new(); body.blocks.len()];
+        for (i, blk) in body.blocks.iter().enumerate() {
+            for s in blk.term.kind.successors() {
+                if let Some(x) = preds.get_mut(s.index()) {
+                    x.push(bid(i));
+                }
+            }
+        }
+        for (i, a) in d.arms.iter().enumerate() {
+            let next = d.arms.get(i + 1).map_or(d.miss, |n| n.test);
+            let Some(t) = body.block(a.test) else {
+                bad(out, d.body, Some(a.test));
+                continue;
+            };
+            tests.insert((d.body, a.test));
+            let test_ok = match (t.stmts.last().map(|x| &x.kind), &t.term.kind) {
+                (
+                    Some(StmtKind::Assign(g, Rvalue::ClosureIs(q, cs))),
+                    TermKind::Switch {
+                        on: Operand::Move(o) | Operand::Copy(o),
+                        arms,
+                        otherwise,
+                    },
+                ) => {
+                    g.is_local()
+                        && o == g
+                        && *q == d.value
+                        && *cs == a.closures
+                        && arms.as_slice() == [(1, a.entry)]
+                        && *otherwise == next
+                }
+                _ => false,
+            };
+            let one_in = preds
+                .get(a.entry.index())
+                .is_some_and(|x| x.as_slice() == [a.test]);
+            let Some(e) = body.block(a.entry) else {
+                bad(out, d.body, Some(a.entry));
+                continue;
+            };
+            let arm_ok = match a.region {
+                None => matches!(&e.term.kind, TermKind::Call {
+                    callee: crate::Callee::Value(Operand::Move(v) | Operand::Copy(v)),
+                    ..
+                } if *v == d.value),
+                Some(ri) => p.regions.get(ri).is_some_and(|r| {
+                    let mut cs: Vec<crate::ClosureId> = r.closures().collect();
+                    let mut want = a.closures.clone();
+                    cs.sort();
+                    want.sort();
+                    let moved = e.stmts.iter().any(|x| {
+                        matches!(&x.kind, StmtKind::Assign(t, Rvalue::Use(Operand::Move(v)))
+                            if *t == r.value && *v == d.value)
+                    });
+                    r.body == d.body && cs == want && (r.value == d.value || moved)
+                }),
+            };
+            if !test_ok || !one_in || !arm_ok {
+                bad(out, d.body, Some(a.test));
+            }
+        }
+        let miss_ok = body.block(d.miss).is_some_and(|m| {
+            matches!(m.term.kind, TermKind::Unreachable)
+                && m.stmts.iter().all(|x| matches!(x.kind, StmtKind::Dead(_)))
+        });
+        if !miss_ok {
+            bad(out, d.body, Some(d.miss));
+        }
+    }
+    for (bi, body) in p.bodies.iter().enumerate() {
+        for (ki, blk) in body.blocks.iter().enumerate() {
+            let last = blk.stmts.len().checked_sub(1);
+            for (si, x) in blk.stmts.iter().enumerate() {
+                if let StmtKind::Assign(_, Rvalue::ClosureIs(..)) = x.kind {
+                    if Some(si) != last || !tests.contains(&(BodyId(id_of(bi)), bid(ki))) {
+                        bad(out, BodyId(id_of(bi)), Some(bid(ki)));
+                    }
                 }
             }
         }
@@ -588,7 +731,7 @@ fn rvalue_uses<'a>(r: &'a Rvalue, f: &mut impl FnMut(Use<'a>)) {
             f(Use::Op(y));
         }
         Rvalue::Ref(p) | Rvalue::Iter(IterSource::Elems(p)) => f(Use::Borrow(p)),
-        Rvalue::Len(p) | Rvalue::Discriminant(p) => f(Use::Place(p)),
+        Rvalue::Len(p) | Rvalue::Discriminant(p) | Rvalue::ClosureIs(p, _) => f(Use::Place(p)),
         Rvalue::Aggregate(_, ops) | Rvalue::Concat(ops) => {
             for o in ops {
                 f(Use::Op(o));

@@ -1081,6 +1081,34 @@ mod ir_ops {
         assert!(fault(ops, 1, 0).contains("names no capture cell"));
     }
 
+    #[test]
+    fn closure_is_tests_the_code_of_a_closure_value() {
+        // Plan stage R0z Z6: slot 0 is a closure of code unit `code`.
+        // `ClosureIs` with that code gives `true`, with another code `false`,
+        // and on a value that is not a closure `false`.
+        let code = first_extra_unit();
+        let body = vec![Op::Unit, Op::Return];
+        let mut ops = vec![
+            Op::MakeClosureIr {
+                code,
+                holds: vec![],
+                span: Span::default(),
+            },
+            Op::Bind(0),
+            var(0),
+            Op::ClosureIs(vec![code]),
+            var(0),
+            Op::ClosureIs(vec![code + 1]),
+            Op::Int(3),
+            Op::Bind(1),
+            var(1),
+            Op::ClosureIs(vec![code]),
+        ];
+        ops.extend([Op::Print(3), Op::Pop, Op::Unit, Op::Return]);
+        let o = run_units(ops, 2, 0, vec![closure_unit(body, 0, 0)]).unwrap();
+        assert_eq!(o.stdout, "true false false\n");
+    }
+
     fn effect(name: &str) -> weft_sema::EffectId {
         let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
         weft_sema::EffectId(

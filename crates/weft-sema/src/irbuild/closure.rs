@@ -978,7 +978,11 @@ fn each_operand_rv(rv: &Rvalue, f: &mut impl FnMut(&Operand)) {
             f(b);
         }
         Rvalue::Aggregate(_, ops) | Rvalue::Concat(ops) => ops.iter().for_each(f),
-        Rvalue::Ref(_) | Rvalue::Len(_) | Rvalue::Discriminant(_) | Rvalue::Iter(_) => {}
+        Rvalue::Ref(_)
+        | Rvalue::Len(_)
+        | Rvalue::Discriminant(_)
+        | Rvalue::ClosureIs(..)
+        | Rvalue::Iter(_) => {}
     }
 }
 
@@ -1040,6 +1044,7 @@ fn each_place_stmt(k: &mut StmtKind, f: &mut impl FnMut(&mut Place)) {
                 Rvalue::Ref(q)
                 | Rvalue::Len(q)
                 | Rvalue::Discriminant(q)
+                | Rvalue::ClosureIs(q, _)
                 | Rvalue::Iter(IterSource::Elems(q)) => f(q),
             }
         }

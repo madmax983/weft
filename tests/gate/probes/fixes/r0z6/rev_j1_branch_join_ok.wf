@@ -1,0 +1,16 @@
+// Review Z6: two perform nodes of `run` on two branches (no loop). The first branch
+// gives a closure that borrows `v` in the branch, after a push of `v`. The clause keeps
+// the value. Clean: the push comes before the borrow.
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep = || print(0)
+    let t = true
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in {
+        v.push(2)
+        if t { run(|| print(v[0])) } else { run(|| print(5)) }
+    }
+    keep()
+}

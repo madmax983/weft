@@ -140,6 +140,44 @@ pub fn edges(
         clause::note_past(cx, body, term, &s);
         out.push((u, s));
     }
+    // A test of a dispatch (plan stage R0z Z6): the edge to the arm gets the
+    // state with only the closures of the arm in the value, the next edge
+    // the state with the other closures. An edge with no closure left gets
+    // no state: the code there does not run.
+    if let Some(d) = cx.p.dispatch_at(body, blk_id) {
+        if let Some(i) = d.arms.iter().position(|a| a.test == blk_id) {
+            let arm = d.arms.get(i).cloned();
+            let next = d.arms.get(i + 1).map_or(d.miss, |n| n.test);
+            if let (Some(arm), false) = (arm, stopped) {
+                cx.hx.dispatch_reached.insert((body, blk_id));
+                if i == 0 {
+                    let all: Vec<weft_ir::ClosureId> = d
+                        .arms
+                        .iter()
+                        .flat_map(|a| a.closures.iter().copied())
+                        .collect();
+                    if !transfer::dispatch_known(cx.p, body, &st, &d.value, &|c| all.contains(&c))?
+                    {
+                        cx.hx.dispatch_miss.insert((body, blk_id));
+                    }
+                }
+                let value = d.value.clone();
+                let into = transfer::dispatch_cut(cx.p, body, &st, &value, &|c| {
+                    arm.closures.contains(&c)
+                })?;
+                if let Some(s) = into {
+                    cx.hx.dispatch_live.insert((body, arm.entry));
+                    out.push((arm.entry, s));
+                }
+                if let Some(s) = transfer::dispatch_cut(cx.p, body, &st, &value, &|c| {
+                    !arm.closures.contains(&c)
+                })? {
+                    out.push((next, s));
+                }
+                return Ok(out);
+            }
+        }
+    }
     // A perform whose clause has no `resume` does not go on (plan stage
     // F19).
     if !stopped && !clause::perform_never_returns(cx.p, body, term) {

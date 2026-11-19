@@ -1149,18 +1149,21 @@ fn function_values_and_references_across_operations_have_full_facts() {
 }
 
 /// Stage R0k-a: a call that gets no copy keeps the old pipeline for the D3
-/// form: a recursive callee, and a run of a local that can hold one of two
-/// closures (stage R0k-a2 copies a closure body only for one closure).
+/// form: a recursive callee. Plan stage R0z Z6: a run of a local that can
+/// hold one of two closures gets a dispatch (a copy of each closure body after
+/// a test of the closure), so the D3 form has full facts: W0301 at the read
+/// of `r`.
 #[test]
 fn a_call_with_no_copy_keeps_the_old_pipeline() {
-    for name in ["rec_callee.wf", "two_closures.wf"] {
-        let (_, fallback, _) = stage_codes("r0k", name);
-        let fallback = fallback.unwrap_or_default();
-        assert!(
-            fallback.contains("gives a function value or a reference back"),
-            "{name}: {fallback}"
-        );
-    }
+    let (_, fallback, _) = stage_codes("r0k", "rec_callee.wf");
+    let fallback = fallback.unwrap_or_default();
+    assert!(
+        fallback.contains("gives a function value or a reference back"),
+        "rec_callee.wf: {fallback}"
+    );
+    let (got, fallback, _) = stage_codes("r0k", "two_closures.wf");
+    assert!(fallback.is_none(), "two_closures.wf: {fallback:?}");
+    assert_eq!(got, vec![("W0301".to_string(), 17)]);
     // Stage R0k-a2: the closure that the callee makes and runs gets a copy
     // of its body at the run.
     let (got, fallback, _) = stage_codes("r0k", "closure_run.wf");
@@ -1279,5 +1282,54 @@ fn a_closure_made_in_the_run_of_the_inner_handler_performs_to_it() {
         "c31_struct_ok.wf",
     ] {
         assert_eq!(henv_codes(name), Vec::new(), "{name}");
+    }
+}
+
+/// Plan stage R0z Z6, the root fix of round 3 of the review
+/// (`clause::call_landings` takes only the handlers whose clauses the call can
+/// run): a run of a closure that holds a reference and runs no clause gives
+/// nothing to the parameters of a clause. The forms with one value, where the
+/// `ir` pipeline gave a false W0301, and the dispatch forms that rounds 1 and
+/// 2 refused are in scope with no error; their bad twins keep W0301.
+#[test]
+fn a_run_that_runs_no_clause_gives_nothing_to_the_clause_parameters() {
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z6");
+    let codes = |name: &str| {
+        let src = std::fs::read_to_string(dir.join(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let opts = Options {
+            facts: weft_sema::FactGen::Ir,
+            ..Options::from_markers(&src)
+        };
+        let a = analyze_source(&src, opts).unwrap_or_else(|d| panic!("{name}: {}", d.message));
+        let c = check_analysis(a, &[]);
+        let fallback = c
+            .analysis
+            .ir_scope
+            .as_ref()
+            .and_then(|s| s.fallback.clone());
+        let got: Vec<String> = c.diags.iter().map(|d| format!("{:?}", d.code)).collect();
+        (got, fallback)
+    };
+    for name in [
+        "rev3_h1_one_value_ok.wf",
+        "rev3_b01_one_value_ok.wf",
+        "rev3_b02_one_value_ok.wf",
+        "rev3_b12_one_value_ok.wf",
+        "rev3_fp_m5_one_value_ok.wf",
+        "rev3_m5_one_value_ok.wf",
+        "rev3_ov_root_ok.wf",
+        "rev3_h1_ff_in_arm_ok.wf",
+        "rev2_b19_param_cond_ok.wf",
+        "rev1_fp_m6_dispatch_ok.wf",
+    ] {
+        let (got, fallback) = codes(name);
+        assert!(fallback.is_none(), "{name}: {fallback:?}");
+        assert!(got.is_empty(), "{name}: {got:?}");
+    }
+    for name in ["rev3_h1_ff_in_arm_bad.wf", "rev2_b19_param_cond_bad.wf"] {
+        let (got, fallback) = codes(name);
+        assert!(fallback.is_none(), "{name}: {fallback:?}");
+        assert!(got.iter().any(|c| c == "W0301"), "{name}: {got:?}");
     }
 }

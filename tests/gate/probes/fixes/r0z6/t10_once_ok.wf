@@ -1,0 +1,21 @@
+// Plan stage R0z Z6: the clean twin of t10: one run of the `once` value. Each copy arm
+// moves the value into its own local first. The program prints 1, then 1.
+effect Run { fn run(g: fn()) }
+fn eat(w: Vec<u64>) { print(w.len()) }
+fn outer(t: bool) {
+    let w = Vec.new()
+    let u = Vec.new()
+    u.push(1)
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let c = || { eat(w)
+            run(|| print(0)) }
+        if t { c = || { eat(u)
+            run(|| print(1)) } }
+        handle Run { fn run(g) { g()
+            resume(()) } } in {
+            c()
+        }
+    }
+}
+fn main() { outer(true) }

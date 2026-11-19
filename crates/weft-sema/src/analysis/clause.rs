@@ -200,6 +200,16 @@ pub struct Handlers {
     /// The handlers whose capability a closure takes out of the `handle`,
     /// with how it leaves (W0313, plan stage F17).
     pub escapes: Vec<(HandlerId, Escape)>,
+    /// The test blocks of the dispatches that the analysis reached (plan
+    /// stage R0z Z6, `super::edges`).
+    pub dispatch_reached: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The arm entries of the dispatches that got a state (plan stage R0z
+    /// Z6): an arm of a reached dispatch that is not here is dead.
+    pub dispatch_live: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The first test blocks of the dispatches where the value can be a value
+    /// that is not a closure of the dispatch (plan stage R0z Z6,
+    /// `DISPATCH_MISS`).
+    pub dispatch_miss: std::collections::BTreeSet<(BodyId, BlockId)>,
     /// The value of the result of the task of each spawn site, a join over
     /// the runs of the spawn (plan stage F18, `super::tasks`): `ScopeWait`
     /// gives it to the `TaskResult` local of a spawn statement.
@@ -3133,7 +3143,12 @@ pub fn call_landings(
 ) -> Result<Vec<(HandlerId, Tree)>, AlphaError> {
     let p = cx.p;
     let mut out = Vec::new();
-    let hs = call_handlers(cx, body, t);
+    // Only the handlers whose clauses the call can run ([`run_handlers`], as
+    // the clause runs of [`call_clauses`]): a run of a function value that runs
+    // no clause gives no values to the parameters of a clause (plan stage R0z
+    // Z6, the review: else the run of a closure that holds a reference gave
+    // that reference to a function-typed parameter of each reachable clause).
+    let hs = run_handlers(cx, body, block, t);
     if hs.is_empty() {
         return Ok(out);
     }

@@ -342,6 +342,10 @@ pub enum Op {
     Len,
     /// Place to value: the index of the variant of an enum value.
     Tag,
+    /// Pops a place of a closure value and pushes `true` if the value is a
+    /// closure with one of the codes (plan stage R0z Z6: the test of a
+    /// dispatch). It reads the place. Another value gives `false`.
+    ClosureIs(Vec<CodeId>),
     /// Pops an integer or a boolean, and jumps to the target of its value
     /// (`false` is 0, `true` is 1), else to `otherwise`.
     JumpTable {

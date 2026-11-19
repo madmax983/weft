@@ -1,0 +1,31 @@
+// Plan stage R0z Z6 (the review of Z6, round 3): the shape of t16 (a copy arm performs
+// through the capability of the outer `Run`), and a closure that holds a reference to `v`
+// runs in the body of an arm closure. Before the root fix of the round (`call_landings` takes
+// only the handlers whose clauses the call can run), the run gave that reference to the
+// parameter `g` of each clause that it could reach, and the facts gave a false W0301 at
+// `print(r)`. With the fix the dispatch has full facts.
+effect Run { fn run(g: fn()) }
+
+fn outer(t: bool) {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(g) { g()
+        resume(()) } } in {
+        let r = &v[0]
+        let rv = &v
+        let ff = || print(rv.len())
+        let k1 = || { ff()
+            run(|| print(1)) }
+
+        handle Run { fn run(g) { print(v.len())
+            resume(()) } } in {
+            let kb = || run(|| print(2))
+
+            let k = kb
+            if t { k = k1 }
+            k()
+        }
+        print(r)
+    }
+}
+fn main() { outer(false) }

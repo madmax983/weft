@@ -923,7 +923,10 @@ fn places_of(body: &weft_ir::Body) -> Vec<Place> {
                                 op(o, &mut out);
                             }
                         }
-                        Rvalue::Ref(p) | Rvalue::Len(p) | Rvalue::Discriminant(p) => {
+                        Rvalue::Ref(p)
+                        | Rvalue::Len(p)
+                        | Rvalue::Discriminant(p)
+                        | Rvalue::ClosureIs(p, _) => {
                             out.push(p.clone());
                         }
                         Rvalue::Iter(_) => {}

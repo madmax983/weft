@@ -1,0 +1,15 @@
+// Review Z6: the clause of `Sw` gives `k` a new closure only if `t`. The first value
+// of `k` pushes to `v` while `r` lives. With t false the run of `k` pushes: a fault at
+// the read of `r`. The analysis must keep the first value at the run.
+effect Sw { fn sw() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let t = false
+    let k = || v.push(2)
+    handle Sw { fn sw() { if t { k = || print(0) }
+        resume(()) } } in { sw() }
+    let r = &v[0]
+    k()
+    print(r)
+}

@@ -139,6 +139,29 @@ the counts.
   the census of Z7 on a loaded machine (182 s with main, 263 s with Z7).
 - The open-old entry `R0h-STAYS` goes.
 
+## Z6 (as built)
+
+- Z6 closed 10 rows of tier 1 (rows 62 to 71; 47 to 37 fallbacks of the census rows):
+  the run of the local gets a dispatch (a test of the closure for each group, and a copy
+  of the closure body in each arm, `docs/plan/core-ir.md`, "Z6 as built"). `u03`, `u05`,
+  `u06`, `u07` and `u10` (oldmiss) are rejected in scope (W0301 at the read and at the
+  run of the kept value); `u11`, `a01_two_paths_ok` and `a04_two_closures_ok` are in scope
+  with no error; `a01_two_paths_bad` and `a04_two_closures_bad` are rejected in scope
+  (W0301, as the old pipeline). `u10` needs Part B: the pre-scan gives the call of
+  `do_sw` a copy, so the clause of `Sw` has one direct perform (the form of `u13`).
+- Rows 72 and 73 (`a03_put_fns`) stay: Part C (a write through a reference into a local
+  of the way, the field that `put_fns` writes) is cut. `a03_put_fns_bad` keeps the
+  fallback, which rejects it (W0301); `a03_put_fns_ok` keeps the fallback, clean.
+- Tier 1: 128 fallbacks of 5708 files (main 106 of 5607). Also `fixes/r0z3/a1_other_maker`
+  (both twins) leaves the fallback; of the 101 new files the refusal probes keep it (the
+  forms of R-JOIN, R-ROW, R-LOOP and the walk), and the probes of the review for the root
+  fix of round 3 are in scope.
+- The root fix of round 3 (`analysis::clause::call_landings` takes the handlers of
+  `run_handlers`): a run of a function value that runs no clause gives nothing to the
+  parameters of a clause. It removes a false W0301 of main in scope (the forms with one
+  value of the review); no row of the census and no other row of the tiers changes.
+- Tier 2 has no row of the stage: 22 fallbacks, as main.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -232,18 +255,18 @@ the counts.
 | 59 | `fixes/r0k/rv_p12_c2_task_after_perform_ok.wf` | D1 | D1b (clean twin) | clean | no fault | clean | no | Z5 (closed) |
 | 60 | `fixes/r0k/rv_p04_c2_multi.wf` | C2>D5 | a `multi` clause runs the value between two `resume`s; the copy brings in a row that only the analysis finds | clean | fault | oldmiss | no | Z7 (closed) |
 | 61 | `fixes/r0k/rv_p04_c2_multi_ok.wf` | C2>D5 | as rv_p04 (clean twin) | clean | no fault | clean | no | Z7 (closed) |
-| 62 | `fixes/r0k2/a04_two_closures_bad.wf` | D3 | two closures can reach the local (static copy refused) | W0301 | fault | rejected | yes | Z6 |
-| 63 | `fixes/r0k2/a04_two_closures_ok.wf` | D3 | two closures (clean twin) | clean | no fault | clean | yes | Z6 |
-| 64 | `fixes/r0k2/u03_callee_reassigns_via_clause.wf` | C2 | two values at the run node: a clause of another handler gives `k` a second closure | clean | fault | oldmiss | yes | Z6 |
-| 65 | `fixes/r0k2/u05_scope_body.wf` | C2 | two values at the run node: a scope body gives `k` a second closure | clean | fault | oldmiss | yes | Z6 |
-| 66 | `fixes/r0k2/u06_handled_body.wf` | C2 | two values at the run node: a nested handled body gives `k` a second closure | clean | fault | oldmiss | yes | Z6 |
-| 67 | `fixes/r0k2/u07_if_branch.wf` | C2 | two values at the run node: an `if` branch gives `k` a second closure | clean | fault | oldmiss | yes | Z6 |
-| 68 | `fixes/r0k2/u10_clause_of_inner.wf` | C2 | two values at the run node: a clause that a perform of a callee runs gives `k` a second closure | clean | fault | oldmiss | yes | Z6 |
-| 69 | `fixes/r0k2/u11_clause_harmless_then.wf` | C2 | two values at the run node: a clause gives `k` a harmless closure (clean twin of the u family) | clean | no fault | clean | yes | Z6 |
-| 70 | `fixes/r0kb2/a01_two_paths_bad.wf` | C2 | form 2 with two values: `mk` gives back one of two closures | W0301 | fault | rejected | yes | Z6 |
-| 71 | `fixes/r0kb2/a01_two_paths_ok.wf` | C2 | form 2 with two values (clean twin) | clean | no fault | clean | yes | Z6 |
-| 72 | `fixes/r0kb2/a03_put_fns_bad.wf` | C2 | a borrow of the local of the way: `put_fns` writes the field before the run | W0301 | fault | rejected | yes | Z6 |
-| 73 | `fixes/r0kb2/a03_put_fns_ok.wf` | C2 | a borrow of the local of the way (clean twin) | clean | no fault | clean | yes | Z6 |
+| 62 | `fixes/r0k2/a04_two_closures_bad.wf` | D3 | two closures can reach the local (static copy refused) | W0301 | fault | rejected | no | Z6 (closed) |
+| 63 | `fixes/r0k2/a04_two_closures_ok.wf` | D3 | two closures (clean twin) | clean | no fault | clean | no | Z6 (closed) |
+| 64 | `fixes/r0k2/u03_callee_reassigns_via_clause.wf` | C2 | two values at the run node: a clause of another handler gives `k` a second closure | clean | fault | oldmiss | no | Z6 (closed) |
+| 65 | `fixes/r0k2/u05_scope_body.wf` | C2 | two values at the run node: a scope body gives `k` a second closure | clean | fault | oldmiss | no | Z6 (closed) |
+| 66 | `fixes/r0k2/u06_handled_body.wf` | C2 | two values at the run node: a nested handled body gives `k` a second closure | clean | fault | oldmiss | no | Z6 (closed) |
+| 67 | `fixes/r0k2/u07_if_branch.wf` | C2 | two values at the run node: an `if` branch gives `k` a second closure | clean | fault | oldmiss | no | Z6 (closed) |
+| 68 | `fixes/r0k2/u10_clause_of_inner.wf` | C2 | two values at the run node: a clause that a perform of a callee runs gives `k` a second closure | clean | fault | oldmiss | no | Z6 (closed) |
+| 69 | `fixes/r0k2/u11_clause_harmless_then.wf` | C2 | two values at the run node: a clause gives `k` a harmless closure (clean twin of the u family) | clean | no fault | clean | no | Z6 (closed) |
+| 70 | `fixes/r0kb2/a01_two_paths_bad.wf` | C2 | form 2 with two values: `mk` gives back one of two closures | W0301 | fault | rejected | no | Z6 (closed) |
+| 71 | `fixes/r0kb2/a01_two_paths_ok.wf` | C2 | form 2 with two values (clean twin) | clean | no fault | clean | no | Z6 (closed) |
+| 72 | `fixes/r0kb2/a03_put_fns_bad.wf` | C2 | a borrow of the local of the way: `put_fns` writes the field before the run | W0301 | fault | rejected | yes | Z6 (open: part C is cut; a later stage) |
+| 73 | `fixes/r0kb2/a03_put_fns_ok.wf` | C2 | a borrow of the local of the way (clean twin) | clean | no fault | clean | yes | Z6 (open: part C is cut; a later stage) |
 | 74 | `fixes/r0kc/c03_two_runs_bad.wf` | D1 | D1a refusal: two runs | W0301 | fault | rejected | yes | Z4 |
 | 75 | `fixes/r0kc/c03_two_runs_ok.wf` | D1 | D1a refusal: two runs (clean twin) | clean | no fault | clean | yes | Z4 |
 | 76 | `fixes/r0kc/c05_perform_between_bad.wf` | D1 | D1a refusal: a perform between the make and the run | W0301 | fault | rejected | yes | Z4 |

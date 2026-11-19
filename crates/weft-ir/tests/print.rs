@@ -265,6 +265,10 @@ fn each_statement_and_terminator_kind_prints() {
         (Rvalue::Len(deref(1, vec![])), "Len((*_1))"),
         (Rvalue::Discriminant(pl(4)), "Discriminant(_4)"),
         (
+            Rvalue::ClosureIs(pl(5), vec![ClosureId(0), ClosureId(2)]),
+            "ClosureIs(_5, [c0, c2])",
+        ),
+        (
             Rvalue::Concat(vec![Operand::Const(Const::Str("n=".to_string())), a()]),
             "Concat(const \"n=\", copy _2)",
         ),

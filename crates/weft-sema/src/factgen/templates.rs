@@ -1254,7 +1254,9 @@ pub fn assign(
             let (f, _) = kernel::borrow(&a, &al.handles);
             em.apply(n, f);
         }
-        Rvalue::Len(q) => {
+        // The test of a dispatch (plan stage R0z Z6) reads the closure value:
+        // it reads its code, not its captures.
+        Rvalue::Len(q) | Rvalue::ClosureIs(q, _) => {
             let (a, _) = em.access(st, q, true)?;
             em.apply(n, kernel::read(&a));
         }

@@ -1,5 +1,7 @@
 // Stage R0k-a2: `k` gets one of two closures, so its run gets no copy of
-// the closure body, and the D3 form keeps the old pipeline.
+// the closure body, and the D3 form keeps the old pipeline. Plan stage R0z
+// Z6: the run gets a dispatch, a copy of each closure body after a test of
+// the closure, and the `ir` pipeline gives W0301.
 struct C { v: Vec<u64> }
 effect Get { fn get() -> fn() }
 fn pick(b: bool) -> bool { b }

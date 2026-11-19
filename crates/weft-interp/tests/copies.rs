@@ -37,6 +37,7 @@ fn probes() -> Vec<PathBuf> {
         fixes.join("r0k3"),
         fixes.join("r0kb1"),
         fixes.join("r0kb2"),
+        fixes.join("r0z6"),
         here.join("tests/copies"),
     ] {
         let Ok(rd) = fs::read_dir(&dir) else {
@@ -82,6 +83,8 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
     // The probes with a copy region that reads a capture through its
     // environment local (stage R0k-b2).
     let mut env_locals = 0;
+    // The probes with a dispatch (plan stage R0z Z6).
+    let mut dispatches = 0;
     for p in probes() {
         let src = fs::read_to_string(&p).unwrap();
         if !src.contains("fn main") {
@@ -109,6 +112,9 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
         {
             env_locals += 1;
         }
+        if inst.dispatches > 0 {
+            dispatches += 1;
+        }
         if p.parent().is_some_and(|d| d.ends_with("copies")) {
             local += 1;
         }
@@ -124,6 +130,7 @@ fn the_copies_of_the_callees_do_not_change_the_runs() {
         env_locals >= 10,
         "only {env_locals} probes have a copy region with an environment local"
     );
+    assert!(dispatches >= 20, "only {dispatches} probes have a dispatch");
 }
 
 /// The copy regions of `fixes/r0k3/h02_made_closure_row` and

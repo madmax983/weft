@@ -121,6 +121,11 @@ pub struct RunOptions {
     /// than the one that it copies, so the check at the entry of the region
     /// (the run sees the copied closure) fails. Off by default.
     pub wrong_closure_in_copies: bool,
+    /// A mutation for the tests of the fact oracle (plan stage R0z Z6): the
+    /// first two arms of each dispatch of the program of the fact oracle test
+    /// the closures of each other, so a run takes the arm of another closure,
+    /// and the check at the entry of its region fails. Off by default.
+    pub wrong_arm_in_dispatch: bool,
 }
 
 impl Default for RunOptions {
@@ -139,6 +144,7 @@ impl Default for RunOptions {
             ir_trace: false,
             site_henv_in_copies: false,
             wrong_closure_in_copies: false,
+            wrong_arm_in_dispatch: false,
         }
     }
 }
@@ -340,6 +346,9 @@ fn runtime<'a>(
             if opts.site_henv_in_copies {
                 built.program.regions.clear();
             }
+            if opts.wrong_arm_in_dispatch {
+                swap_arms(&mut built.program);
+            }
             if opts.wrong_closure_in_copies {
                 let n = built.program.closures.len();
                 for r in &mut built.program.regions {
@@ -536,6 +545,41 @@ fn run_tests_with(rt: &Runtime<'_>, opts: &RunOptions) -> Vec<TestOutcome> {
         });
     }
     out
+}
+
+/// The mutation [`RunOptions::wrong_arm_in_dispatch`]: the first two arms of
+/// each dispatch test the closures of each other (the record and the
+/// `ClosureIs` of each test).
+fn swap_arms(p: &mut weft_ir::Program) {
+    for di in 0..p.dispatches.len() {
+        let Some(d) = p.dispatches.get_mut(di) else {
+            continue;
+        };
+        let (Some(a0), Some(a1)) = (d.arms.first().cloned(), d.arms.get(1).cloned()) else {
+            continue;
+        };
+        let body = d.body;
+        if let Some(x) = d.arms.get_mut(0) {
+            x.closures.clone_from(&a1.closures);
+        }
+        if let Some(x) = d.arms.get_mut(1) {
+            x.closures.clone_from(&a0.closures);
+        }
+        for (test, cs) in [(a0.test, &a1.closures), (a1.test, &a0.closures)] {
+            let stmt = p
+                .bodies
+                .get_mut(body.index())
+                .and_then(|b| b.blocks.get_mut(test.index()))
+                .and_then(|blk| blk.stmts.last_mut());
+            if let Some(weft_ir::Stmt {
+                kind: weft_ir::StmtKind::Assign(_, weft_ir::Rvalue::ClosureIs(_, x)),
+                ..
+            }) = stmt
+            {
+                x.clone_from(cs);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

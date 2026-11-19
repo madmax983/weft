@@ -1,0 +1,21 @@
+// Review Z6, open question 1: two perform nodes of `run` on the two branches of an `if`
+// in a loop. The push of `v` comes first in each turn, so each kept value is made after
+// the last push. The facts of the clause join the parameter over the two nodes
+// (issue #79): at the second node the value of the first node (made in the turn before,
+// before the push) is a value of the parameter. Clean: the program prints 5.
+effect Run { fn run(g: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let keep = || print(0)
+    let i = 0
+    handle Run { fn run(g) { keep = g
+        resume(()) } } in {
+        while i < 2 {
+            v.push(2)
+            if i == 0 { run(|| print(v[0])) } else { run(|| print(5)) }
+            i = i + 1
+        }
+    }
+    keep()
+}

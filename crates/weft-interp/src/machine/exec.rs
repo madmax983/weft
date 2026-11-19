@@ -954,6 +954,16 @@ impl super::Machine<'_, '_> {
                 };
                 self.push(Value::Int(i64::from(tag)))?;
             }
+            Op::ClosureIs(codes) => {
+                let (p, _) = self.pop_loc()?;
+                self.heap.log_read(&p);
+                let yes = match self.hget(&p)? {
+                    Value::Closure(c) => codes.contains(&c.code),
+                    Value::Moved => return Err(self.fault("a value is used after it was moved")),
+                    _ => false,
+                };
+                self.push(Value::Bool(yes))?;
+            }
             Op::JumpTable { arms, otherwise } => {
                 let v = self.pop()?;
                 let key = match self.deref_value(v)? {
