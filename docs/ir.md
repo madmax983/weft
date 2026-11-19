@@ -4506,6 +4506,91 @@ As built (plan stage R0z Z5, a `resume` in a scope body of a clause; `clause::re
   change after the `join` is W0405 (`fixes/r0z5/e1_handle_given_ok`; the old pipeline gives
   the same W0405).
 
+As built (plan stage R0z Z7, a run of a function value that can resume more than once in
+a clause; `factgen::infer_rows`, `frames::ClauseDynRows`, `analysis::code_row`):
+
+- The form. A run node of a clause (or of a body that splices into it) whose applied
+  summary is `multi` (`clause::Handlers::dyn_rows`) is a row that only the analysis finds.
+  The nodes that run the clause get their re-entry edges before the analysis (R0k-c2, from
+  `frames::row_multi`). Before Z7 such a row was pending (`analysis::static_row`, the
+  reason D5 of the census).
+- A value that can resume more than once (the value performs a `multi` operation of a
+  handler of a caller, through a callee too, or code of a caller that the function itself
+  does not know). The run of the analysis that finds the row notes it
+  (`frames::note_clause_dyn_row`), and the fixpoint of the summaries runs again with the
+  node as a row of its clause before the analysis (`frames::ClauseDynRows`:
+  `frames::clause_rows`, `frames::row_multi_nodes` and `analysis::static_row` read it).
+  Then the node gets the re-entry of R0k-c2 as a static row: the node that runs the clause
+  waits at the operation (a `pre` row: a `Copy` node with an edge from each `Return` of the
+  function, and edges to the `FrameEnd` nodes of its aborts), or the `handle` gets the
+  `ROW` copy (a `post` row); the row gets its `Copy` node from the `Return`s, and the run
+  of the facts of the clause runs again from it with the heap of the `Return`s
+  (`row_heap`). A run adds rows only. After `DYN_ROW_RUNS` (4) runs the last one stays,
+  with its pending rows; a run with a body that the fact generator does not support stays
+  too (the program leaves the scope, or goes to rule G, so the rows stay pending). The
+  notes of a run that does not stay (the pending constructs, the errors of Z1, the
+  escapes) go. Each emit has its own rows, by the body ids of its program (the program,
+  and the program with the copies of R0k-a). The fact oracle makes the same runs
+  (`components_of`), so its facts are the facts of the check.
+- A run of a parameter of the clause (code of a caller for a value of the interface: the
+  clause does not know the value, and `unknown::code_of_caller` is `multi` in a program
+  with a `multi` operation). The run of the function runs the clause with the values that
+  the nodes that run it give (`clause::run_clause`, `post_run`). If that run finds no row
+  at the node (no `row_heap`, and no pending row there, `frames::clause_dyn_found`), no
+  such value can resume more than once there: the node is no row of the clause
+  (`analysis::run_rows`), and its `multi_at` of code of a caller goes
+  (`templates::emit_apps`). A row that the facts know before the analysis, or a node where
+  a summary that is not code of a caller for a value of the interface is `multi`
+  (`real_rows`), stays. Before Z7 the `multi_at` of such a run at `Post` put the rest of
+  the function into the region of the `resume` (D-COPY-WAIT with no handler), so the
+  `resume` freed the locals of the function: a false W0301 (`fixes/r0z7/a1_between_ok`,
+  `p1_param_ok`); and a `once` continuation or a linear local across such a run was a
+  false W0503 (`r2/oracle/fp3/W0503_p345`).
+- The copy of the frame of the value (review round 2 of Z7). The `Copy` node of a row of
+  form a gets the variable "the copy of the frame that `g` runs" (D-ROW-MID,
+  `handlers::copy_node`), as a run of a known closure does: it points into the places that
+  the value uses at the run (its environment), binds at `Ret` and is used at `Copy`. So a
+  change of the environment after the run (`v.clear()` after the `handle`) is W0301 at the
+  re-entry (`fixes/r0z7/c4_capture_outer_bad`). Before, such a value that a clause gets
+  from a perform and runs had no use at the re-entry: a HOLE.
+- Refusal of review round 3 (`analysis::env_can_hold_refs`,
+  `frames::refuse_clause_dyn_row`): a row of form a stays pending if a function value that
+  the node runs, or gives to its callee, can hold references in its environment (a closure
+  with a capture by reference, or of a type that holds a reference or a function value; a
+  value that the analysis does not know). The copy of the frame of such a value at the
+  re-entry points into each place below the references of the environment (a wildcard), so
+  a change of such a place after the run is a false W0301
+  (`fixes/r0z7/t3_capture_v_push_after_ok`, `s5_capture_known_ok`); main gives the same
+  false W0301 for a row of a call of a known closure (issue #79). In the facts of a clause
+  a parameter of the clause does not count: the run of the function decides with the
+  values of the performs. The copy of the frame stays on the rows that stay (a safety
+  net).
+- Refusal of review round 4 (the same rule, `analysis::env_can_hold_refs`; the probes
+  `fixes/r0z7/m1_clause_ref_arg_ok`, `m2_clause_local_ref_ok`, `m3_ret_ref_ok`): an
+  argument of the run that can hold references (a reference, or a value whose type holds a
+  reference or a function value) keeps the row pending too. The copy of the frame of the
+  value holds the argument across the operation, and a change below it after the run was a
+  false W0301 ("run : gets v[], and it can mutate through it"). The bad twins (`v.clear()`
+  after the `handle`) fall back, as on main (open-old `R0z7-ARG-SHADOW`). A row that gives
+  the callee a function value (`twice(g)` in `fixes/r0z7/r1_repeats_*`) falls back by this
+  rule too.
+- Refusal (the reviews of Z7, `factgen::arg_shadow_gap`): a row of form a stays pending if
+  (a) it can hold references across the operation (a clause on the way has a parameter
+  that holds a reference, or the node runs a function value or gives a function value or a
+  value with references to a callee), and (b) the function (or a body that splices into
+  it, not a clause) can wait at a `multi` operation of a handler of a caller by itself: at
+  a node that the facts know before the analysis, or at a run of a function value (a local
+  closure, a value). With the re-entry, the shadow variable of the parameter (R0k-c2 fix
+  1) or the copy of the frame of the value gets the changes that the re-entry of the
+  function runs again before the node that runs the clause: a false W0301
+  (`fixes/r0z7/z1_reentry_assign_ok`, `z3_value_noreentry_ok`, `g1_splice_closure_ok`,
+  `g3_closure_outside_ok`). Main gives the same false W0301 for a static row of the clause
+  (issue #79), and keeps it.
+- Open: a clause that gives the value to another clause whose handler is outside its own
+  (`fixes/r0z7/o1_other_clause_*`): the facts of the first clause run the second clause and
+  find its row, which is not in the chain of the first clause, so the program stays
+  pending.
+
 ### 6.6 The analysis
 
 The analysis gives the abstract values that the templates read. It replaces the abstract

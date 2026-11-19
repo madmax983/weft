@@ -1,0 +1,19 @@
+// Plan stage R0z Z7 (the form of tier 2 `r2/oracle/runs/m1/p1669`): the
+// clause runs its parameter `f` before each `resume`. The value does not
+// resume more than once. The first `resume` runs the rest of the handled
+// body, which clears `v`. Then the clause runs `f` again, and `f` reads `r`,
+// which points into `v`: W0301.
+effect Run { multi fn run(n: u64, f: fn() -> u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let total = handle Run { fn run(n, f) { let a = resume(n + f())
+        resume(a + f()) } } in {
+        let x = run(1) { print(r)
+            10 }
+        v.clear()
+        x
+    }
+    print(total)
+}

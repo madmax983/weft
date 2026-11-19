@@ -310,14 +310,30 @@ fn run_rows(
         let mut own = Vec::new();
         let mut below = Vec::new();
         for r in rows {
+            // A run of a parameter of the clause where the run of the
+            // function, with the values that the nodes that run the clause
+            // give, finds no row (plan stage R0z Z7, [`code_row`]): no row.
+            let in_clause = crate::factgen::handlers::clause_chain(p, r.0).is_some();
+            if clause
+                && crate::factgen::handlers::splice_root(p, r.0) == body
+                && code_row(p, cx.tys, cx.sums, cx.hx, (r.0, r.1))
+            {
+                continue;
+            }
             // A node of a clause that only the analysis finds (a run of a
             // function value that can resume more than once,
             // `clause::Handlers::dyn_rows`): the facts have no re-entry of
             // the nodes that run the clause for it (they come from the
-            // nodes of `frames::row_multi` before the analysis). Not in
-            // scope.
-            let in_clause = crate::factgen::handlers::clause_chain(p, r.0).is_some();
+            // nodes of `frames::row_multi` before the analysis). This run is
+            // pending. The fact generator then runs the analysis of the
+            // program again with the node as a row of its clause (plan stage
+            // R0z Z7, `crate::factgen::frames::ClauseDynRows`), and in that
+            // run it is a row before the analysis.
             if in_clause && !static_row(cx, r.0, r.1) {
+                crate::factgen::frames::note_clause_dyn_row(r.0, r.1);
+                if env_can_hold_refs(cx, (r.0, r.1), &r.3, clause) {
+                    crate::factgen::frames::refuse_clause_dyn_row(r.0, r.1);
+                }
                 note_row_pending();
                 return Ok(states);
             }
@@ -404,15 +420,153 @@ fn run_rows(
     ))
 }
 
+/// True if a function value that the run node `at` runs, or gives to its
+/// callee, can hold references in its environment, in the state `st` at the
+/// node, or if an argument of the run can hold references (plan stage R0z
+/// Z7, review rounds 3 and 4).
+///
+/// Then the copy of the frame of the value at the re-entry of the row
+/// (`crate::factgen::handlers::copy_node`) points into each place below the
+/// references of the environment (a wildcard), and a change of such a place
+/// after the run gives a false W0301 (`fixes/r0z7/t3_capture_v_push_after_ok`;
+/// main gives the same W0301 for a row of a call of a known closure, issue
+/// #79). So such a row stays pending (`crate::factgen::frames::
+/// refuse_clause_dyn_row`). A value that the analysis does not know (code of
+/// a caller, a capture, the result of a run) counts as one that can, and so
+/// does a node with no function value in the state. In the run of the facts
+/// of a clause (`clause`), a parameter of the clause does not count: the run
+/// of the function decides with the values that the performs give.
+fn env_can_hold_refs(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    st: &State,
+    clause: bool,
+) -> bool {
+    let p = cx.p;
+    let Some(t) = p
+        .body(body)
+        .and_then(|b| b.blocks.get(block.index()))
+        .map(|blk| blk.term.kind.clone())
+    else {
+        return true;
+    };
+    let weft_ir::TermKind::Call { callee, args, .. } = &t else {
+        return true;
+    };
+    // An argument that is a reference, or whose type holds a reference or a
+    // function value, flows into the run too (the copy of the frame of the
+    // value holds it: `fixes/r0z7/m1_clause_ref_arg_ok`).
+    let tys0 = &*cx.tys;
+    let arg_refs = args.iter().any(|a| match a {
+        weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) => {
+            !q.proj.is_empty()
+                || p.body(body).and_then(|b| b.local(q.local)).is_none_or(|l| {
+                    crate::analysis::sig::is_ref(tys0, l.ty)
+                        || crate::analysis::sig::holds_refs(tys0, l.ty)
+                        || matches!(tys0.try_get(l.ty), Some(weft_ir::Ty::Fn(_)))
+                })
+        }
+        weft_ir::Operand::Const(_) => false,
+    });
+    if arg_refs {
+        return true;
+    }
+    let mut ops: Vec<&weft_ir::Operand> = args.iter().collect();
+    if let weft_ir::Callee::Value(f) = callee {
+        ops.push(f);
+    }
+    let mut fns: Vec<FnVal> = Vec::new();
+    for o in ops {
+        match transfer::operand(cx, body, st, o) {
+            Ok(v) => fns.extend(v.flat().fns.iter().cloned()),
+            Err(_) => return true,
+        }
+    }
+    if fns.is_empty() {
+        return true;
+    }
+    let tys = &*cx.tys;
+    fns.iter().any(|f| match f {
+        FnVal::Item(..) => false,
+        FnVal::Closure(c) | FnVal::Made(c) => p.closures.get(c.index()).is_none_or(|d| {
+            d.captures.iter().any(|cap| {
+                cap.mode == weft_ir::CaptureMode::ByRef
+                    || !cap.source.proj.is_empty()
+                    || p.body(d.maker)
+                        .and_then(|m| m.local(cap.source.local))
+                        .is_none_or(|l| {
+                            crate::analysis::sig::is_ref(tys, l.ty)
+                                || crate::analysis::sig::holds_refs(tys, l.ty)
+                                || matches!(tys.try_get(l.ty), Some(weft_ir::Ty::Fn(_)))
+                        })
+            })
+        }),
+        // In the facts of a clause a parameter holds the values that the
+        // nodes that run the clause give: the run of the function sees them
+        // at the same node.
+        FnVal::Param(_) | FnVal::ParamResult(_) => !clause,
+        _ => true,
+    })
+}
+
 /// True if the terminator of block `block` of body `body` is a node of
 /// `crate::factgen::frames::row_multi` (a row that the facts know before the
-/// analysis).
+/// analysis), or a run node of a clause that an earlier run of the analysis
+/// found (`crate::factgen::frames::ClauseDynRows`, plan stage R0z Z7).
 fn static_row(cx: &Cx<'_>, body: BodyId, block: BlockId) -> bool {
-    cx.p.body(body)
-        .and_then(|b| b.blocks.get(block.index()))
-        .is_some_and(|blk| {
-            crate::factgen::frames::row_multi(cx.p, cx.tys, cx.sums, body, &blk.term.kind)
-        })
+    static_row_of(cx.p, cx.tys, cx.sums, body, block)
+}
+
+/// [`static_row`] with the parts of the context.
+fn static_row_of(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    sums: &Summaries,
+    body: BodyId,
+    block: BlockId,
+) -> bool {
+    crate::factgen::frames::clause_dyn_row(body, block)
+        || p.body(body)
+            .and_then(|b| b.blocks.get(block.index()))
+            .is_some_and(|blk| {
+                crate::factgen::frames::row_multi(p, tys, sums, body, &blk.term.kind)
+            })
+}
+
+/// True if node `at` of a clause body (or of a body that splices into it)
+/// is a run node that only the facts of the clause find as a node that can
+/// resume more than once, and only as code of a caller for a value of the
+/// interface (plan stage R0z Z7).
+///
+/// The values of the interface of the clause are its parameters. The nodes
+/// that run the clause give their values: the run of the body that has the
+/// handler runs the clause with these values (`clause::run_clause`,
+/// `clause::post_run`). If that run finds no row at the node (no heap of
+/// `clause::Handlers::row_heap`, and the run did not note the node as a
+/// pending row, `crate::factgen::frames::clause_dyn_found`), no value that a
+/// node gives there can
+/// resume more than once. So the node is no row of the clause and no
+/// `multi` point, as for a run of a known value. A node that the facts know
+/// as a row before the analysis ([`static_row`]), or where a summary of a
+/// value that is not of the interface can resume more than once
+/// (`clause::Handlers::real_rows`), stays a row.
+pub(crate) fn code_row(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    sums: &Summaries,
+    hx: &clause::Handlers,
+    at: (BodyId, BlockId),
+) -> bool {
+    let cb = crate::factgen::handlers::splice_root(p, at.0);
+    let Some(weft_ir::BodyKind::Clause(h, _)) = p.body(cb).map(|b| &b.kind) else {
+        return false;
+    };
+    let ran = hx.info(*h).is_some_and(|i| i.seeds.contains_key(&cb));
+    ran && hx.dyn_rows.contains(&at)
+        && !hx.real_rows.contains(&at)
+        && !hx.row_heap.contains_key(&at)
+        && !crate::factgen::frames::clause_dyn_found(at.0, at.1)
+        && !static_row_of(p, tys, sums, at.0, at.1)
 }
 
 /// Notes a node that can wait at a `multi` operation of a handler of a

@@ -10683,15 +10683,6 @@ reason = "stage R0j (tier 2, a mutant of corpus 114): the program comes into sco
 stage = "R0j"
 
 [[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/fixes/r0k/rv_p04_c2_multi.wf",
-]
-finding = "R0h-STAYS"
-reason = "stage R0k (probes of the design review of R0k; from stage R0k-a the other probes of the review get call-site copies and the `ir` pipeline rejects them, class `fixed`): a form of C2 that keeps the old pipeline, and the old pipeline misses the fault. `rv_p04_c2_multi`: the copy brings in a `multi` operation of a handler of a caller in a clause (D5, no full facts), so the program keeps the fallback (R0k-a as built; plan stage R0z Z7). `rv_p07_d3_in_closure` gets the copy of the closure body at its run node in stage R0k-a2 (class `fixed`). From plan stage R0z Z5, `rv_p12_c2_task_after_perform` and `fixes/r0h/c2_task` (the other entry of this finding, which goes) are rejected in scope (W0405 at the `resume` in the scope body of the clause, with the copy of the callee at the call: class `fixed`)"
-stage = "R0k"
-
-[[entry]]
 class = "changed"
 files = [
     "tests/gate/probes/fixes/r0h/d3f_returned.wf",
@@ -10915,10 +10906,9 @@ stage = "R0k"
 class = "moved"
 files = [
     "tests/gate/probes/r2/oracle/probes/i5_nested_multi.wf",
-    "tests/gate/probes/r3/redteam/p/e2_spared.wf",
 ]
 codes = ["W0602"]
-reason = "stage R0k-c2 (C8): the clause of `Ask` performs `pick` of a local `multi` handler before its `resume`. Before the stage the `ir` pipeline rejected the program with the weak form (no re-entry of the clause); with the re-entry of the clause the linear value is live across the `resume` of the clause, which can abort, so W0602 is at the `resume` (line 7 in `i5_nested_multi`, 38 in `e2_spared`) and not at the perform of `ask`. The codes do not change; both pipelines reject the programs"
+reason = "stage R0k-c2 (C8): the clause of `Ask` performs `pick` of a local `multi` handler before its `resume`. Before the stage the `ir` pipeline rejected the program with the weak form (no re-entry of the clause); with the re-entry of the clause the linear value is live across the `resume` of the clause, which can abort, so W0602 is at the `resume` (line 7 in `i5_nested_multi`, 38 in `e2_spared`) and not at the perform of `ask`. The codes do not change; both pipelines reject the programs. From plan stage R0z Z7 `e2_spared` is `changed` (the W0503 of a run of a parameter of a clause, an entry below)"
 stage = "R0k"
 
 [[entry]]
@@ -11339,3 +11329,92 @@ files = [
 reason = "class F19-SIG-PINS (plan stage R0z Z5: a `resume` in a scope body of a clause is a resume point, and the program comes into scope): the clause spawns a task in its scope; the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`), and the part `tasks` of the old inference (the function values that a later task can run) has no IR part (as `verify/partb/p/c10_clause_task`, a task of a clause)"
 stage = "R0z"
 
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/203_clause_value_rows.wf",
+    "tests/gate/probes/fixes/r0z7/a1_between_bad.wf",
+    "tests/gate/probes/fixes/r0z7/p1_param_bad.wf",
+]
+codes = ["W0301"]
+reason = "plan stage R0z Z7: a run of a function value that can resume more than once in a clause gets the re-entry of the clause frame (`value_multi`, `value_after_resume` of the corpus program: W0301 at the second run of the rest of the clause; the old pipeline misses these faults, which the probes `fixes/r0z7/d1_value_multi_bad` and `d2_post_multi_bad` show with a `main`; the old pipeline gives only the W0503 of `once_after`, line 44, which the `ir` pipeline gives too). `a1_between_bad` and `p1_param_bad`: the clause runs its parameter between two `resume`s, and the rest of the handled body clears `v` before the second run reads `r`; the old pipeline gives one W0301 at the run of the closure, the `ir` pipeline gives W0301 at the `resume` and at the run in the clause. Both pipelines reject each program; ev.sh: the two probes fault (both-reject); the corpus program has no `main`"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/r3/redteam/p/e2_spared.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/or4_v1.wf",
+    "r3/redteam/p/e2_spared.wf",
+    "verify/s5/R2c: effects, continuations, on abort and drops/p/or4_v1.wf",
+]
+codes = ["W0503"]
+reason = "plan stage R0z Z7: a run of a parameter of a clause where the run of the function, with the values that the nodes that run the clause give, finds no row is no row and no `multi` point (`analysis::code_row`). The only value that the perform gives cannot resume more than once: `|| fail(\"x\")` in `clause_runs_arg` of `e2_spared` (`fail` does not resume), `|| ask()` in `op_closure_param` of `or4_v1` (the clause of `Ask` does not resume). So the `ir` pipeline does not give the W0503 of the continuation of the clause and of the linear local across the perform there (the old pipeline and main give them from the type of the parameter; the markers of `e2_spared` expect only W0602 there). Both pipelines reject each program with their other errors (`e2_spared`: W0602, and W0503 at the `multi` operation `choose`; `or4_v1`: W0302, W0502, W0602, and W0503 at line 40, where the clause runs a closure that performs `choose`). `e2_spared` has no `main`; `or4_v1` faults (a value used after a move), both-reject"
+stage = "R0z"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r2/oracle/fp3/W0503_p345.wf",
+    "tests/gate/probes/r2/oracle/fp3/W0503_p7979.wf",
+    "r2/oracle/fp3/W0503_p345.wf",
+    "r2/oracle/fp3/W0503_p7979.wf",
+    "r2/oracle/runs/m1/p345.wf",
+    "r3/oracle/runs/m3a/p6185.wf",
+]
+reason = "plan stage R0z Z7: the clause of `Run` runs its parameter `f` before its `resume`, and the only perform gives `{ 10 }`, which cannot resume more than once (the only `multi` operation of the program is `Pair.put`: `p345` and its copies have no perform of it, and in `p6185` its performs run before the `handle` of `Run`, in the handled body of a local handler of `Pair`). The run of `main` runs the clause with that value and finds no row, so the run of `f` in the clause is no `multi` point (`analysis::code_row`), and the `once` continuation of `run` is not live across a node that can resume more than once. The old pipeline (and main) give W0503 from the type of the parameter (a function type with no row): a false positive of the old pipeline, as the `lost-clean` entry of `fp/W0503_p1580` (`multi` in a declaration alone gives no run again). `p7979` and the tier-2 file `m1/p345` are the same text; tier 2 `m3a/p6185` has the same clause and perform (and the tier-2 row `p1669`, the clause of a `multi` operation, the same form with no W0503)"
+signed_by = "stage R0z Z7 (author check, not reviewed): the program runs with no fault and no error with the oracle on the ast and the ir engines (seeds 1 to 8, 1, 2 and 4 workers); ev.sh nofault; each program has one perform of `run`, and its value is the closure `{ 10 }`"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "task_runs", "op_fns", "repeats"]
+files = [
+    "tests/gate/probes/fixes/r0k/rv_p04_c2_multi.wf",
+    "tests/gate/probes/fixes/r0k/rv_p04_c2_multi_ok.wf",
+    "tests/gate/probes/fixes/r0z7/k1_copy_bad.wf",
+    "tests/gate/probes/fixes/r0z7/k1_copy_ok.wf",
+    "tests/gate/probes/fixes/r0z7/k2_copy_between_bad.wf",
+    "tests/gate/probes/fixes/r0z7/k2_copy_between_ok.wf",
+]
+reason = "stage R0k-a (the weak C2 summaries; plan stage R0z Z7: the programs come into scope with the copies of the callees): the callee (`f`, `w`) gives a function value to the `multi` operation `run` of its row. Its `ir` summary has the weak form of R0h: the clause is code of a caller that runs the value (`WeakRowOps`), an unknown function value, so `sig::to_effect_sig` gives `multi`, and the parts `op_fns`, `task_runs` and `repeats` of the old inference come from its own lowering of the perform. No call that a local handler serves applies the summary: each such call has a copy of the callee (`Instantiated::weak_ok`). No check of the `ir` pipeline reads these parts from the signature"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "reaches", "reach_repeats"]
+files = ["tests/gate/probes/fixes/r0z7/o1_other_clause_bad.wf"]
+reason = "plan stage R0z Z7: the program is pending (the facts of the clause of `Run` run the clause of `Go` and find its row, which is not in the chain of the clause of `Run`), and the `ir` pipeline rejects it (W0301), so it is in scope by the pending rule of stage R0g. The analysis of the pending construct stops, so the summaries of `f` and `main` do not have the part `multi` of the run of `g` in the clause of `Go`; the old inference gives `multi` (and `reaches`, `reach_repeats` of the stored function value). The program is rejected, so no caller uses these summaries"
+stage = "R0z"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "r3/oracle/runs/g3a/p4418.wf",
+    "r3/oracle/runs/g3p/p41452.wf",
+    "r3/oracle/runs/g3p/p46889.wf",
+    "r3/oracle/runs/m3b/p20192.wf",
+]
+reason = "plan stage R0z Z7 (tier 2, generated programs): the clause of the non-`multi` operation `run` runs its parameter `f` and then resumes (`handle Run { fn run(f) { f(); resume(()) } } in { run(|| ...) }`; in `p20192` the clause also spawns `f` in a scope before its `resume`), and each perform gives a closure that performs no `multi` operation (the program declares the `multi` operation `pick`, and no value that reaches `f` performs it). The run of the function runs the clause with that value and finds no row, so the run of `f` is no `multi` point (`analysis::code_row`), and the `once` continuation of `run` is not live across a node that can resume more than once. Main gave only these W0503 (the old pipeline gives them from the type of the parameter), so the program goes from `changed` to `lost-clean`. The other codes of the old pipeline (W0405 in `p4418` and `p20192`, W0312 in `p41452` and `p46889`, W0602 in `p46889`) are codes that main does not give either (the class of these rows was `changed` with main)"
+signed_by = "stage R0z Z7 (author check, not reviewed): each program runs with no fault and no error with the oracle on the ast and the ir engines (seeds 1 to 8, 1, 2 and 4 workers); ev.sh nofault with Z7 (FP-IR with main)"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0z7/z1_reentry_assign_bad.wf",
+    "tests/gate/probes/fixes/r0z7/z3_value_noreentry_bad.wf",
+    "tests/gate/probes/fixes/r0z7/g1_splice_closure_bad.wf",
+    "tests/gate/probes/fixes/r0z7/g3_closure_outside_bad.wf",
+    "tests/gate/probes/fixes/r0z7/c4_capture_outer_bad.wf",
+    "tests/gate/probes/fixes/r0z7/t3_capture_v_push_after_bad.wf",
+    "tests/gate/probes/fixes/r0z7/s5_capture_known_bad.wf",
+    "tests/gate/probes/fixes/r0z7/m1_clause_ref_arg_bad.wf",
+    "tests/gate/probes/fixes/r0z7/m2_clause_local_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z7/m3_ret_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z7/r1_repeats_bad.wf",
+]
+finding = "R0z7-ARG-SHADOW"
+reason = "plan stage R0z Z7, the reviews of Z7: a row of a clause that only the analysis finds (form a) stays pending when the row can hold references across the operation (a clause on the way has a parameter that holds a reference, or the node runs a function value) and the function can wait at a `multi` operation of a handler of a caller by itself, at a static row or at a run of a function value (`g1`, `g3`: a local closure that performs `pick`; `factgen::arg_shadow_gap`). From review round 3 a row stays pending too when the environment of a value that the node runs can hold references (`analysis::env_can_hold_refs`: `c4`, `t3`, `s5`), because the copy of the frame of the value at the re-entry gives a false W0301 on the clean twins (main gives the same for a known closure, issue #79). From review round 4 an argument of the run that can hold references (a reference, or a value whose type holds a reference or a function value) counts too (`m1`, `m2`, `m3`; `r1_repeats_bad` gives the function value `g` to `twice`). With the re-entry the shadow variable of the parameter (stage R0k-c2 fix 1) gets the changes that the re-entry of the function runs again before the node that runs the clause, so the clean twins `z1_reentry_assign_ok` and `z3_value_noreentry_ok` would get a false W0301 (main gives the same false W0301 for a static row of the clause, `z2_static_analog_ok` of the review, issue #79). So these programs keep the fallback, as with main, and the old pipeline misses the fault (a read of a cleared `Vec` in a later run of the clause)"
+stage = "R0z"

@@ -3387,4 +3387,102 @@ mod r0kc2 {
                 && f.cfg_edge.iter().any(|(a, b)| b == c && posts.contains(a))
         }));
     }
+
+    /// Plan stage R0z Z7: the clause of `Run` runs `g`, and `g` performs the
+    /// `multi` operation `pick` of a handler of a caller of `f` (a row that
+    /// only the analysis finds). The perform of `run` in the handled body
+    /// runs the clause, so it gets a `Copy` node with an edge from each
+    /// `Return` of `f`. The program is in scope.
+    #[test]
+    fn a_run_of_a_value_that_resumes_more_than_once_in_a_clause_gets_the_reentry() {
+        for name in ["d1_value_multi_bad.wf", "d1_value_multi_ok.wf"] {
+            let (fallback, pending, f) = facts(&probe("r0z7", name), "f");
+            assert_eq!((fallback, pending), (None, None), "{name}");
+            let returns = nodes(&f, "return");
+            let copies: Vec<NodeId> = nodes(&f, "perform copy")
+                .into_iter()
+                .filter(|c| f.node(*c).label == "run")
+                .collect();
+            assert!(
+                copies.iter().any(|c| f
+                    .cfg_edge
+                    .iter()
+                    .any(|(a, b)| b == c && returns.contains(a))),
+                "{name}: the perform of `run` has no re-entry"
+            );
+        }
+    }
+
+    /// Plan stage R0z Z7: a row after the `resume` of the clause (the run of
+    /// `g` after `resume`): the `handle` gets a `Copy` node of copy `ROW`
+    /// with an edge from each `Return` of `f`.
+    #[test]
+    fn a_run_of_a_value_after_the_resume_gives_the_handle_a_row_copy() {
+        let (fallback, pending, f) = facts(&probe("r0z7", "d2_post_multi_ok.wf"), "f");
+        assert_eq!((fallback, pending), (None, None));
+        let returns = nodes(&f, "return");
+        let copies = nodes(&f, "handle row copy");
+        assert!(
+            copies.iter().any(|c| f
+                .cfg_edge
+                .iter()
+                .any(|(a, b)| b == c && returns.contains(a))),
+            "the `handle` has no row copy"
+        );
+    }
+
+    /// Plan stage R0z Z7: the clause runs its parameter `f`, and the value
+    /// that the perform gives cannot resume more than once. The run of the
+    /// function runs the clause with that value and finds no row, so the
+    /// run of `f` in the clause is no row and no `multi` point: the program
+    /// is in scope, and no node of `main` is a `multi` point.
+    #[test]
+    fn a_run_of_a_parameter_of_a_clause_that_does_not_resume_twice_is_no_row() {
+        let (fallback, pending, f) = facts(&probe("r0z7", "p1_param_ok.wf"), "main");
+        assert_eq!((fallback, pending), (None, None));
+        assert!(f.multi_at.is_empty(), "{:?}", f.multi_at);
+    }
+
+    /// Plan stage R0z Z7, the reviews of Z7: a row that only the analysis
+    /// finds stays pending when a clause on the way has a reference
+    /// parameter and the function can wait at a `multi` operation of a
+    /// handler of a caller by itself (`factgen::arg_shadow_gap`), or when
+    /// the environment of the value that the node runs can hold references
+    /// (`analysis::env_can_hold_refs`, round 3): the shadow variable of the
+    /// parameter or the copy of the frame of the value would give a false
+    /// W0301. The program keeps the fallback, as before the stage.
+    #[test]
+    fn a_dynamic_row_with_a_reference_parameter_and_a_row_of_the_function_stays_pending() {
+        for name in [
+            "z1_reentry_assign_ok.wf",
+            "z3_value_noreentry_ok.wf",
+            "g1_splice_closure_ok.wf",
+            "g3_closure_outside_ok.wf",
+            "c4_capture_outer_bad.wf",
+            "t3_capture_v_push_after_ok.wf",
+            "s5_capture_known_ok.wf",
+        ] {
+            let src = probe("r0z7", name);
+            let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+            let file = weft_syntax::parse_file(&src).unwrap_or_else(|e| panic!("{}", e.message));
+            let units = vec![
+                prelude,
+                weft_sema::Unit {
+                    name: String::new(),
+                    file,
+                    is_std: false,
+                },
+            ];
+            let a = weft_sema::analyze(&units, weft_sema::Options::default());
+            let s = a.ir_scope.clone().expect("a scope");
+            let why = s
+                .fallback
+                .or_else(|| s.pending.map(|p| p.reason))
+                .unwrap_or_default();
+            assert!(
+                why.contains("a `multi` operation of a handler of a caller in a clause"),
+                "{name}: {why}"
+            );
+        }
+    }
 }

@@ -1,0 +1,21 @@
+// Plan stage R0z Z7 (review round 3): the bad twin of s5. `c` reads the
+// captured `r`, which points into `v`, after `pick`, and `f` clears `v`
+// after the `handle`. A later `resume` of `pick` reads `r` after the clear:
+// a fault. The row stays pending, so the program keeps the fallback, and the
+// old pipeline misses the fault.
+effect Pick { multi fn pick() -> u64 }
+effect Run { multi fn run() }
+fn f(v: &Vec<u64>) / Pick, mut(v) {
+    let r = &v[0]
+    let c = || { print(pick())
+        print(r) }
+    handle Run { fn run() { c()
+        resume(()) } } in { run() }
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(1)
+        resume(2) } } in { f(&v) }
+}

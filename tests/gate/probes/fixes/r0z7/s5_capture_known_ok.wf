@@ -1,0 +1,21 @@
+// Plan stage R0z Z7 (review round 3): the clause runs the closure `c`,
+// which it captures from `f`. `c` performs `pick`, then reads `w.len()`
+// through the captured `w = &v`. The `Vec` stays, so no fault. The
+// environment of `c` holds a reference, so the row stays pending, and the
+// program keeps the fallback (a refusal probe).
+effect Pick { multi fn pick() -> u64 }
+effect Run { multi fn run() }
+fn f(v: &Vec<u64>) / Pick, mut(v) {
+    let w = &v
+    let c = || { print(pick())
+        print(w.len()) }
+    handle Run { fn run() { c()
+        resume(()) } } in { run() }
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(1)
+        resume(2) } } in { f(&v) }
+}

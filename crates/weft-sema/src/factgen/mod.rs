@@ -167,7 +167,8 @@ pub struct EachOut {
 pub fn emit_each(input: &Input<'_>, facts: &mut [FnFacts], first: bool) -> EachOut {
     let mut out = EachOut::default();
     let _ = crate::analysis::clause::take_pending_escapes();
-    let mut inf = crate::analysis::callgraph::infer(input.analysis, input.built, None);
+    let rows = frames::ClauseDynRows::enter();
+    let mut inf = infer_rows(input.analysis, input.built, &rows);
     for (i, e) in input.built.entries.iter().enumerate() {
         let Outcome::Built(entry) = e.outcome else {
             continue;
@@ -258,6 +259,145 @@ pub fn emit_each(input: &Input<'_>, facts: &mut [FnFacts], first: bool) -> EachO
     }
     input.effects.borrow_mut().extend(inf.effects);
     out
+}
+
+/// The most runs of the analysis of a program in [`infer_rows`].
+const DYN_ROW_RUNS: usize = 4;
+
+/// The fixpoint of the summaries (`crate::analysis::callgraph::infer`), with
+/// the run nodes of clauses that can resume more than once (plan stage R0z
+/// Z7).
+///
+/// The analysis finds such a node (`clause::Handlers::dyn_rows`) only after
+/// the facts of the nodes that run the clause have their re-entry edges
+/// (stage R0k-c2), so the node is pending (`analysis::static_row`). Then
+/// the analysis of the program runs again with the node as a row of its
+/// clause ([`frames::ClauseDynRows`]): the nodes that run the clause get
+/// the re-entry, and the re-entry edges of the clause come from the
+/// `Return`s of the function, as for a row that the facts know before the
+/// analysis. Each run adds rows only, so the runs stop. After
+/// [`DYN_ROW_RUNS`] runs the last one stays, with its pending nodes. A run
+/// with a body that the fact generator does not support stays too.
+fn infer_rows(
+    a: &Analysis,
+    built: &Built,
+    rows: &frames::ClauseDynRows,
+) -> crate::analysis::callgraph::Inference {
+    // The constructs with no full facts that the caller noted before: they
+    // stay, in their order.
+    let before = crate::analysis::clause::take_pending();
+    let mut inf = crate::analysis::callgraph::infer(a, built, None);
+    for _ in 1..DYN_ROW_RUNS {
+        let mut found = frames::take_clause_dyn_found();
+        found.retain(|&(b, k)| !arg_shadow_gap(built, &inf.sums, (b, k)));
+        // A body that the fact generator does not support takes the program
+        // out of scope (or to rule G), so the rows stay pending, as before
+        // the stage: another run costs time and changes no result in scope.
+        if inf.facts.values().any(Result::is_err) || !rows.add(&found) {
+            break;
+        }
+        // The notes of the run that does not stay.
+        let _ = crate::analysis::clause::take_pending();
+        let _ = crate::analysis::clause::take_errors();
+        let _ = crate::analysis::clause::take_pending_escapes();
+        inf = crate::analysis::callgraph::infer(a, built, None);
+    }
+    let _ = frames::take_clause_dyn_found();
+    let now = crate::analysis::clause::take_pending();
+    for u in before.into_iter().chain(now) {
+        crate::analysis::clause::note_pending(u);
+    }
+    inf
+}
+
+/// True if a row that only the analysis finds at block `k` of body `b` (a
+/// clause, or a body inside a clause) keeps the pending rule
+/// ([`infer_rows`], plan stage R0z Z7, the reviews of Z7).
+///
+/// (a) The row can hold references across the operation: a clause on the
+/// way has a parameter that holds a reference, or the node runs a function
+/// value or gives the callee a function value or a value that holds a
+/// reference (the copy of the frame of the value holds the references of
+/// its environment). (b) The function (or closure) below the clauses can
+/// wait at a `multi` operation of a handler of a caller by itself, at a
+/// node that the facts know before the analysis or at a run of a function
+/// value (a local closure, a value), which can perform such an operation.
+///
+/// Then the re-entry of the function runs again the code before the node
+/// that runs the clause, and its changes reach the shadow variable of the
+/// parameter (stage R0k-c2 fix 1) or the copy of the frame of the value:
+/// a false W0301 (`fixes/r0z7/z1_reentry_assign_ok`, `z3_value_noreentry_ok`,
+/// `g1_splice_closure_ok`, `g3_closure_outside_ok`, `c5_capture_own_row_ok`).
+/// Main gives the same false W0301 for a static row of the clause (issue
+/// #79). The row stays pending, so such a program keeps the weak form, as
+/// before the stage.
+fn arg_shadow_gap(
+    built: &Built,
+    sums: &crate::analysis::Summaries,
+    (b, k): (weft_ir::BodyId, weft_ir::BlockId),
+) -> bool {
+    let p = &built.program;
+    let tys = &built.tys;
+    let Some(chain) = handlers::clause_chain(p, b) else {
+        return false;
+    };
+    let holds = |t: weft_ir::TyId| {
+        crate::analysis::sig::is_ref(tys, t)
+            || crate::analysis::sig::holds_refs(tys, t)
+            || matches!(tys.try_get(t), Some(weft_ir::Ty::Fn(_)))
+    };
+    let ref_param = chain.iter().any(|&cb| {
+        p.body(cb).is_some_and(|x| {
+            matches!(x.kind, weft_ir::BodyKind::Clause(..))
+                && x.params.iter().any(|&l| {
+                    x.local(l).is_some_and(|d| {
+                        crate::analysis::sig::is_ref(tys, d.ty)
+                            || crate::analysis::sig::byval_refs(tys, d.ty)
+                    })
+                })
+        })
+    });
+    let env_refs = p.body(b).is_some_and(|x| {
+        let op_ty = |o: &weft_ir::Operand| match o {
+            weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q) if q.proj.is_empty() => {
+                x.local(q.local).map(|d| d.ty)
+            }
+            _ => None,
+        };
+        x.blocks
+            .get(k.index())
+            .is_some_and(|blk| match &blk.term.kind {
+                weft_ir::TermKind::Call { callee, args, .. } => {
+                    matches!(callee, weft_ir::Callee::Value(_))
+                        || args.iter().any(|a| op_ty(a).is_none_or(holds))
+                }
+                _ => false,
+            })
+    });
+    if !ref_param && !env_refs {
+        return false;
+    }
+    let Some(&root) = chain.last() else {
+        return false;
+    };
+    // A node of the function or of a body that splices into it (not a
+    // clause) that can wait at a `multi` operation of a caller by itself.
+    p.bodies.iter().enumerate().any(|(i, x)| {
+        let sb = weft_ir::BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        handlers::splice_root(p, sb) == root
+            && handlers::clause_chain(p, sb).is_none()
+            && x.blocks.iter().any(|blk| {
+                !blk.cleanup
+                    && (matches!(
+                        blk.term.kind,
+                        weft_ir::TermKind::Call {
+                            callee: weft_ir::Callee::Value(_),
+                            ..
+                        }
+                    ) || (frames::row_multi(p, tys, sums, sb, &blk.term.kind)
+                        && !frames::runs_row_clause(p, tys, sums, sb, &blk.term.kind)))
+            })
+    })
 }
 
 /// W0701 (`docs/ir.md` 6.8): a public function with no stated row whose
@@ -2840,7 +2980,10 @@ pub fn components_built(
 
 /// The components of [`components`].
 fn components_of(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
-    let inf = crate::analysis::callgraph::infer(a, built, None);
+    // The run nodes of clauses that can resume more than once, as in
+    // `emit_each` (plan stage R0z Z7): the facts are the facts of the check.
+    let rows = frames::ClauseDynRows::enter();
+    let inf = infer_rows(a, built, &rows);
     let mut facts: Vec<FnFacts> = a.decls.iter().map(seed).collect();
     let mut tables = Vec::new();
     for (i, e) in built.entries.iter().enumerate() {
@@ -3724,8 +3867,13 @@ fn emit_block(
         // D-ROW-MID of the third review of group D) gets the copy of the
         // frame too. An unknown function value does not (corpus 102,
         // `bump`).
+        // A row of a clause that only the analysis finds (plan stage R0z
+        // Z7, `frames::ClauseDynRows`) gets it too: the value comes from the
+        // nodes that run the clause, and the frame of the value holds the
+        // references of its environment across the operation.
         let known = local.is_none()
             && (frames::row_multi(em.p, em.tys, em.sums, bid, &blk.term.kind)
+                || frames::clause_dyn_row(bid, block)
                 || (em.hx.dyn_rows.contains(&(bid, block))
                     && frames::runs_closure(em.p, bid, &blk.term.kind)));
         handlers::copy_node(

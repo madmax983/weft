@@ -1,0 +1,20 @@
+// Plan stage R0z Z7: the clause keeps `g` in a local, resumes, then runs
+// the local. The value performs `pick`, and the handler in `main` resumes
+// two times. The second run of the rest of the clause reads `r` after the
+// rest of `f` cleared `v`: W0301.
+effect Pick { multi fn pick() -> u64 }
+effect Run { multi fn run(g: fn()) }
+fn f(v: &Vec<u64>) / Pick, mut(v) {
+    let r = &v[0]
+    handle Run { fn run(g) { let k = g
+        resume(())
+        k()
+        print(r) } } in { run(|| print(pick())) }
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(1)
+        resume(2) } } in { f(&v) }
+}

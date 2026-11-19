@@ -934,7 +934,9 @@ fn the_rows_of_clauses_stay_with_the_old_pipeline() {
     // From stage R0g a program with a row in a clause is in scope if the
     // `ir` pipeline rejects it (W0503 for the `once` continuation, or W0502),
     // and else it falls back (`clause_after_m.wf`: the facts of the `ir`
-    // pipeline give no error there).
+    // pipeline give no error there). Plan stage R0z Z7 keeps the row of the
+    // run of `m` pending: `f` runs a function value by itself (`g`), and the
+    // value `m` can hold references (`factgen::arg_shadow_gap`).
     c15_rejects("clause_m.wf", &[("W0503", 6)]);
     c15_rejects("clause_after.wf", &[("W0502", 12), ("W0503", 12)]);
     c15_fallback("clause_after_m.wf", clause);
