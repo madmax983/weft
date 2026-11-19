@@ -2637,17 +2637,23 @@ As built (plan stage R0z Z6, dispatches; `factgen/instantiate.rs`, `Inst::dispat
   a function value of the site, a run of a value that performs the operation through a
   capture of the capability of H, or of a value that the walk does not know): the facts
   of the clause join its parameter over the nodes (issue #79; two dispatches one after
-  the other). R-REF (round 2): in the handled body of H (and the bodies inside it but
-  those of the dispatch) a function value runs whose value can hold a reference (a
-  `ByRef` or `Kont` capture, a capture whose type is or holds a reference or a function
-  value, or a value that the walk does not know), or a callee gets a function value of
-  the site. After that run the facts of the perform give the clause the places below
-  that reference (main gives the same false W0301 for a region with one value). A run of
-  a parameter of a clause that no node can run does not count. The root of this gap is
-  in the facts of a perform after such a run, in main too; this stage does not change
-  those facts. R-ROW also refuses a run
+  the other). R-REF, a refusal of rounds 1 and 2 for a false W0301 after a run of a
+  function value that holds a reference, is gone: round 3 found its root in the facts
+  and fixed it (below). R-ROW also refuses a run
   in the handled body of a local handler of an effect with a `multi` operation (a later
   `resume` runs the dispatch again; the fact oracle failed A5 there).
+- The root fix of round 3 of the review (`analysis::clause::call_landings`, also for
+  programs that main checks in scope). The values that a call gives to the clauses of
+  the local handlers that it aborts to came from each handler that the call can reach
+  (`call_handlers`), not only from those whose clauses it can run (`run_handlers`, the
+  filter of `call_clauses`). So a run of a closure that holds a reference, and that runs
+  no clause, gave that reference (and an unknown value) to a function-typed parameter of
+  each such clause (`run_clause`, the seeds of the clause), and the facts of a run of
+  that parameter in the clause lent its places at each node that runs the clause: a false
+  W0301. `call_landings` now takes `run_handlers`. The other users of `call_handlers`
+  stay: they run in the analysis before the filter is known (`back_places`, `sigma`,
+  the guard of the weak form), or they only ask if a clause can run, and a larger set
+  there is only less precise.
 - R-LOOP: no dispatch at a run in a loop (a cycle of its body, or of a body around it
   through the terminator that runs it) if a copy arm gives a function value or a
   reference to an operation. The facts of a clause that keeps such a value join the value

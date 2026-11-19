@@ -1,9 +1,9 @@
-// Plan stage R0z Z6 (a refusal, R-REF; the review of Z6, round 2): the shape of t16 (a copy
-// arm performs through the capability of the outer `Run`), and a function value whose value
-// can hold a reference runs in the handled body of the outer `Run` (a closure made before the
-// `handle`, a copy of a reference, a closure of a callee). After that run the facts of the
-// perform of the copy give the clause the places below the reference, a false W0301 that main
-// gives for the region with one value. No dispatch: the program keeps the fallback.
+// Plan stage R0z Z6 (the review of Z6, round 2): the shape of t16, and a function value that
+// holds a reference runs in the handled body of the outer `Run` (a closure made before the
+// `handle`, a copy of a reference, a closure of a callee). Round 2 refused the dispatch
+// (R-REF); with the root fix of round 3 (`clause::call_landings`) it is in scope, and its facts
+// have no false W0301.
+// The bad twin: the inner clause clears `v`; rejected (W0301).
 effect Run { fn run(g: fn()) }
 
 fn outer(t: bool) {

@@ -152,10 +152,14 @@ the counts.
 - Rows 72 and 73 (`a03_put_fns`) stay: Part C (a write through a reference into a local
   of the way, the field that `put_fns` writes) is cut. `a03_put_fns_bad` keeps the
   fallback, which rejects it (W0301); `a03_put_fns_ok` keeps the fallback, clean.
-- Tier 1: 145 fallbacks of 5693 files (main 106 of 5607). Also `fixes/r0z3/a1_other_maker`
-  (both twins) leaves the fallback; 51 of the 86 new files keep it (refusal probes, also
-  the 36 `rev1_*` and `rev2_*` probes of rounds 1 and 2 of the review: R-JOIN, R-REF,
-  R-ROW).
+- Tier 1: 128 fallbacks of 5708 files (main 106 of 5607). Also `fixes/r0z3/a1_other_maker`
+  (both twins) leaves the fallback; of the 101 new files the refusal probes keep it (the
+  forms of R-JOIN, R-ROW, R-LOOP and the walk), and the probes of the review for the root
+  fix of round 3 are in scope.
+- The root fix of round 3 (`analysis::clause::call_landings` takes the handlers of
+  `run_handlers`): a run of a function value that runs no clause gives nothing to the
+  parameters of a clause. It removes a false W0301 of main in scope (the forms with one
+  value of the review); no row of the census and no other row of the tiers changes.
 - Tier 2 has no row of the stage: 22 fallbacks, as main.
 
 ## Columns

@@ -1,9 +1,7 @@
-// Plan stage R0z Z6 (a refusal, R-REF; the review of Z6, round 2): the shape of t16 (a copy
-// arm performs through the capability of the outer `Run`), and a function value whose value
-// can hold a reference runs in the handled body of the outer `Run` (a closure made before the
-// `handle`, a copy of a reference, a closure of a callee). After that run the facts of the
-// perform of the copy give the clause the places below the reference, a false W0301 that main
-// gives for the region with one value. No dispatch: the program keeps the fallback.
+// Plan stage R0z Z6 (the review of Z6, round 2): the shape of t16, and `ff = mk(&v)`, a
+// closure that a callee makes, runs in the handled body of the outer `Run`. The walk does not
+// know the value of `ff`, so R-JOIN refuses the dispatch (an unknown value can run the clause):
+// the program keeps the fallback, as with main.
 effect Run { fn run(g: fn()) }
 fn mk(w: &Vec<i64>) -> fn() { || print(w.len()) }
 fn outer(t: bool) {

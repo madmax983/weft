@@ -2848,35 +2848,48 @@ mod r0z6 {
         assert!(instantiate(&b).is_none_or(|i| i.built.program.dispatches.is_empty()));
     }
 
-    /// The refusals of rounds 1 and 2 of the review of Z6: R-JOIN (two
-    /// dispatches one after the other give values to the clause of one
-    /// operation), R-REF (a run of a function value that can hold a reference
-    /// in the handled body of the handler of a copy arm), and R-ROW for a run in
-    /// the handled body of a local handler of a `multi` operation. No dispatch. The targets keep theirs
+    /// The refusals of the review of Z6: R-JOIN (two dispatches one after the
+    /// other give values to the clause of one operation; a run of a value that
+    /// the walk does not know, `rev2_b05`), and R-ROW for a run in the handled
+    /// body of a local handler of a `multi` operation. No dispatch. The targets keep theirs
     /// (`a_run_with_closures_of_two_origins_gets_a_dispatch`).
     #[test]
     fn a_dispatch_is_refused_for_the_forms_of_the_review() {
         for name in [
             "rev1_fp_d06_unrolled_j3_ok.wf",
-            "rev1_fp_m6_dispatch_ok.wf",
-            "rev1_fp_v1_ff_outer_ok.wf",
-            "rev1_fp_v5_ff_after_ok.wf",
             "rev1_r01_local_multi_bad.wf",
             "rev1_r11_resume_ref_ok.wf",
             "rev1_r14_outer_first_bad.wf",
-            "rev2_b01_ff_before_handle_ok.wf",
-            "rev2_b02_ref_local_capture_ok.wf",
             "rev2_b05_mkff_callee_ok.wf",
-            "rev2_b12_ff_before_run_after_ok.wf",
-            "rev2_b13_ff_in_outer_fn_run_in_hb_ok.wf",
-            "rev2_b19_param_cond_ok.wf",
-            "rev2_b20_other_type_ok.wf",
         ] {
             let (_, b) = built(&probe("fixes/r0z6", name));
             assert!(
                 instantiate(&b).is_none_or(|i| i.built.program.dispatches.is_empty()),
                 "{name}"
             );
+        }
+    }
+
+    /// The root fix of round 3 of the review of Z6: a run of a function value
+    /// that holds a reference, and that runs no clause, gives nothing to the
+    /// parameters of a clause (`clause::call_landings` takes the handlers of
+    /// `clause::run_handlers`). So the forms that rounds 1 and 2 refused (R-REF)
+    /// get a dispatch with full facts (`weft-check`, `ir_handlers.rs`: no error
+    /// there, and none in the forms with one value, where main gave a false
+    /// W0301).
+    #[test]
+    fn a_run_that_runs_no_clause_gives_nothing_to_the_clause_parameters() {
+        for name in [
+            "rev1_fp_m6_dispatch_ok.wf",
+            "rev1_fp_v1_ff_outer_ok.wf",
+            "rev2_b01_ff_before_handle_ok.wf",
+            "rev2_b19_param_cond_ok.wf",
+            "rev3_h1_ff_in_arm_ok.wf",
+            "rev3_h4_ff_in_other_arm_ok.wf",
+        ] {
+            let (a, b, weak) = copied("fixes/r0z6", name);
+            assert_eq!(b.program.dispatches.len(), 1, "{name}");
+            assert!(comps(&a, &b, weak).is_ok(), "{name}: no full facts");
         }
     }
 

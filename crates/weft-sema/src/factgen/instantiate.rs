@@ -1321,34 +1321,29 @@ impl Inst<'_> {
         true
     }
 
-    /// The refusals R-JOIN and R-REF of a copy arm of a dispatch (plan stage
-    /// R0z Z6, rounds 1 and 2 of the review). `all` is each closure of the
-    /// dispatch: the code of their bodies (and of the bodies inside them) is the
-    /// node of the dispatch, at the run at block `k` of body `b`. Each operation
-    /// with a function value or a reference that the code of the closure `decl`
+    /// The refusal R-JOIN of a copy arm of a dispatch (plan stage R0z Z6,
+    /// rounds 1 to 3 of the review). `all` is each closure of the dispatch: the
+    /// code of their bodies (and of the bodies inside them) is the node of the
+    /// dispatch, at the run at block `k` of body `b`. For each operation with a
+    /// function value or a reference that the code of the closure `decl`
     /// performs through a captured capability of a local handler H (a `Cap`
-    /// capture) is checked. In the handled body of H (and in each body inside
-    /// it but those of the dispatch):
+    /// capture), the dispatch is refused if another node can run the clause of
+    /// the operation: a perform of the operation through the capability of H
+    /// (in any body), or in the handled body of H (and in each body inside it
+    /// but those of the dispatch) a perform of the effect through the row, a
+    /// call of a callee whose row has the effect (`Needs::row`) or that gets a
+    /// function value of the site ([`Inst::fn_runs_values`]), or a run of a
+    /// function value whose value can perform the operation through a capture
+    /// of the capability of H, or whose value the walk does not know (also a
+    /// leaf that a callee gives back). The facts of the clause join its
+    /// parameter over the nodes, and the value of one node reaches the changes
+    /// after the other one (the false W0301 of issue #79). A run of a parameter
+    /// of a clause that no node can run does not count
+    /// ([`Inst::clause_param_runs_nowhere`]).
     ///
-    /// - R-JOIN: another node can run the clause of the operation: a perform
-    ///   of the operation through the capability of H (in any body), a perform of
-    ///   the effect through the row, a call of a callee that can perform the
-    ///   effect (`Needs::row`) or that gets a function value of the site
-    ///   ([`Inst::fn_runs_values`]), or a run of a function value
-    ///   whose value can perform it through a capture of the capability of H, or
-    ///   whose value the walk does not know. The facts of the clause join its
-    ///   parameter over the nodes, and the value of one node reaches the changes
-    ///   after the other one (the false W0301 of issue #79).
-    /// - R-REF: a run of a function value whose value can hold a reference (a
-    ///   capture of a reference, of a type that holds one or a function value, a
-    ///   `ByRef` capture, or a value that the walk does not know), or a call of a
-    ///   callee that can run a function value. After such a run the facts of the
-    ///   perform of the copy give the clause the places below that reference
-    ///   ("run: gets v.., and it can mutate through it"): a false W0301 that main
-    ///   gives for a region with one value.
-    ///
-    /// A run of a parameter of a clause that no node can run does not count
-    /// ([`Inst::clause_runs_nowhere`]).
+    /// The refusal R-REF of rounds 1 and 2 is gone: its false W0301 came from
+    /// `clause::call_landings`, which gave the references of a run that runs no
+    /// clause to the parameters of each clause it could reach (round 3).
     fn arm_join_refused(
         &self,
         decl: &weft_ir::ClosureDecl,
@@ -1470,19 +1465,21 @@ impl Inst<'_> {
                                         ..
                                     }) => Some(vec![closure]),
                                     Some(_) => None,
+                                    // A leaf that a callee gives back refuses
+                                    // (the review of Z6, round 3, N3).
                                     None => self
                                         .walk_set((id, kid), id, v.local, 0, None, None)
-                                        .map(|set| {
+                                        .and_then(|set| {
                                             set.leaves
                                                 .iter()
-                                                .filter_map(|l| match l.walk.source {
+                                                .map(|l| match l.walk.source {
                                                     Source::Made { closure, .. } => Some(closure),
                                                     Source::Call { .. } => None,
                                                 })
                                                 .collect()
                                         }),
                                 };
-                            // An unknown value can do each of it (R-JOIN, R-REF).
+                            // An unknown value can run the clause (R-JOIN).
                             let Some(closures) = closures else {
                                 return true;
                             };
@@ -1490,9 +1487,7 @@ impl Inst<'_> {
                                 .iter()
                                 .filter_map(|c| self.p.closures.get(c.index()))
                                 .collect();
-                            if decls.len() != closures.len()
-                                || decls.iter().any(|c| to_h(c) || self.closure_holds_refs(c))
-                            {
+                            if decls.len() != closures.len() || decls.iter().any(|c| to_h(c)) {
                                 return true;
                             }
                         }
@@ -1504,26 +1499,8 @@ impl Inst<'_> {
         false
     }
 
-    /// True if a value of closure `c` can hold a reference (plan stage R0z Z6,
-    /// R-REF): a `ByRef` capture, a `Kont` capture, or a `Kept` or `ByMove`
-    /// capture whose type is a reference, holds one, or holds a function value.
-    fn closure_holds_refs(&self, c: &weft_ir::ClosureDecl) -> bool {
-        c.captures.iter().any(|x| match x.mode {
-            weft_ir::CaptureMode::Cap => false,
-            weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kont => true,
-            _ => {
-                let ty = super::alpha::place_ty(&self.p, &mut self.tys.clone(), c.maker, &x.source);
-                ty.is_none_or(|t| {
-                    crate::analysis::sig::is_ref(&self.tys, t)
-                        || crate::analysis::sig::holds_refs(&self.tys, t)
-                        || crate::props::ir_has_fns(&self.tys, t)
-                })
-            }
-        })
-    }
-
     /// True if the call of function `g` in body `x` with the arguments `args`
-    /// can run a function value of the site (plan stage R0z Z6, R-REF): an
+    /// can run a function value of the site (plan stage R0z Z6, R-JOIN): an
     /// argument is a function value or holds one (a place with no type counts).
     /// A closure that the callee makes and runs itself is a part of its summary,
     /// not a run of the site (`z6rev2/b/b03`).
@@ -2614,7 +2591,7 @@ impl Inst<'_> {
             let killable = self.killable(set.owner, (b, k), &mine, &set.writes);
             match self.plan_run((b, k), moves, main, also, true) {
                 Ok(plan) => {
-                    // The refusals R-JOIN and R-REF of the review of plan stage
+                    // The refusal R-JOIN of the review of plan stage
                     // R0z Z6 ([`Inst::arm_join_refused`]).
                     let decl = self.p.closures.get(plan.closure.index())?;
                     if self.arm_join_refused(decl, (b, k), &all) {

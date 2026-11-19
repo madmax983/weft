@@ -1,8 +1,9 @@
-// Plan stage R0z Z6 (a refusal, R-REF; the review of Z6, round 1, B2): a copy arm performs
-// `run` through the capability of the outer `Run`, and a closure with a `ByRef` capture of
-// `v` is made in its handled body. The facts of the perform give the clause the places below
-// that reference ("run: gets v.."), a false W0301 that main gives for the region with one
-// value. No dispatch: the program keeps the fallback.
+// Plan stage R0z Z6 (the review of Z6, round 1, B2): the shape of t16 (a copy arm performs
+// through the capability of the outer `Run`), and a closure that holds a reference to `v`
+// runs in its handled body. The first build gave a false W0301 at `print(r)`; round 1 added a
+// refusal (R-REF). Round 3 found the root (`clause::call_landings` gave the reference of a run
+// that runs no clause to the parameter of each clause it could reach) and fixed it, so R-REF
+// went: the dispatch is in scope with no error.
 effect Run { fn run(g: fn()) }
 fn outer(t: bool) {
     let v = Vec.new()

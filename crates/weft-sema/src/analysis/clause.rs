@@ -3143,7 +3143,12 @@ pub fn call_landings(
 ) -> Result<Vec<(HandlerId, Tree)>, AlphaError> {
     let p = cx.p;
     let mut out = Vec::new();
-    let hs = call_handlers(cx, body, t);
+    // Only the handlers whose clauses the call can run ([`run_handlers`], as
+    // the clause runs of [`call_clauses`]): a run of a function value that runs
+    // no clause gives no values to the parameters of a clause (plan stage R0z
+    // Z6, the review: else the run of a closure that holds a reference gave
+    // that reference to a function-typed parameter of each reachable clause).
+    let hs = run_handlers(cx, body, block, t);
     if hs.is_empty() {
         return Ok(out);
     }

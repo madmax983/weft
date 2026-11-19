@@ -5881,24 +5881,20 @@ Z6 as built (dispatch copies: a run of a local with closures of two or more orig
     value set has a closure that performs it so). `fp_d06_unrolled_j3_ok` (two dispatches
     one after the other, the form j3 with no loop) got 2xW0301; main gives the same for
     the form with one value (`fp_d07`, issue #79).
-  - R-REF (B2): `fp_m6`, `fp_v1`, `fp_v5`, `fp_h09` (the shape of `t16` with
-    `ff = || print(v.len())` run in the handled body of the outer `Run`) got W0301
-    ("run: gets v.., and it can mutate through it"); main gives the same for a region
-    with one value (`fp_m5`), and the form without the run of the closure is clean
-    (`s/m8`). Round 2 of the review (`weft-work/z6rev2/`) found that the trigger is the
-    run, not the make site or the capture mode: a closure made before the `handle`, a
-    copy of a reference (`let rv = &v`), a closure of a callee (`b01`, `b02`, `b05`,
-    `b12`, `b13`, `b19`, `b20`; main gives the same FP for the one-value forms). So R-REF
-    refuses a run in the handled body of H (but in the bodies of the dispatch) of a
-    function value whose value can hold a reference (a value that the walk does not know
-    counts), and a callee that gets a function value of the site. A run of a parameter of
-    a clause that no node can run does not count (the inner clause of `a01`). A callee
-    that makes and runs its own closure does not count (`b03` stays in scope). The root
-    is in the facts of a perform after such a run; I did not find it in this stage, and
-    the refusal does not change the facts of main. Round 2 also made R-JOIN safer: a run
-    whose value the walk does not know counts as another node, and so do a perform of the
-    effect through the row and a callee whose row has the effect or that gets a function
-    value of the site.
+  - R-REF (B2), and its removal. `fp_m6`, `fp_v1`, `fp_v5`, `fp_h09` (the shape of
+    `t16` with `ff = || print(v.len())` run in the handled body of the outer `Run`) got
+    W0301 ("run: gets v.., and it can mutate through it"); main gives the same for a
+    region with one value (`fp_m5`). Rounds 1 and 2 refused the form (R-REF, by the make
+    site, then by the run). Round 3 (`weft-work/z6rev3/`) found the root: the values that a
+    call gives to the clauses of the handlers that it aborts to (`clause::call_landings`)
+    came from each handler that the call can reach, not only from those whose clauses it
+    can run (`clause::run_handlers`). So a run of `ff`, which runs no clause, gave `v..`
+    and an unknown value to the parameter `g` of the clause of the outer `Run`, and the
+    facts of `g()` in the clause lent `v..` at each node that runs the clause. With
+    `call_landings` on `run_handlers` the false W0301 goes, also in main's forms with one
+    value, and R-REF is removed: each probe that it refused is in scope with no error,
+    and each bad twin is rejected. The other users of `call_handlers` stay (they run in
+    the analysis before the filter is known, or only ask if a clause can run).
   - R-ROW, wider (N1): a run in the handled body of a local handler of an effect with a
     `multi` operation (or in a body that splices into it). The fact oracle failed A5 on
     a dispatch after a `multi` perform there (`r01` to `r05`, `r11`, `r13`, `r14`); the
@@ -5970,16 +5966,18 @@ Z6 as built (dispatch copies: a run of a local with closures of two or more orig
   (no `a01`), `ir_handlers::a_call_with_no_copy_keeps_the_old_pipeline` (`two_closures`
   is in scope: W0301 at line 15). No test is relaxed.
 - Gates (release binaries `z6/bin/weft-z6`, `weft-gate-z6`; main: the reports of Z7,
-  `z7/g1/`). Tier 1: 0 blockers (5693 programs with the 86 new files; 4243 same, 30 open,
-  407 fixed, 1 new-fp, 0 lost-fault, 159 lost-clean, 147 moved, 706 changed; the first
+  `z7/g1/`). Tier 1: 0 blockers (5708 programs with the 101 new files; 4257 same, 30 open,
+  408 fixed, 1 new-fp, 0 lost-fault, 159 lost-clean, 147 moved, 706 changed; the first
   build, 5657: 4207 same and the other counts the same; main, 5607:
   4173 same, 31 open, 391 fixed, 1 new-fp, 0 lost-fault, 159 lost-clean, 147 moved, 705
   changed). Against main only these rows change: `u03`, `u05`, `u06`, `u07`, `u10` and
   `a1_other_maker_bad` go from `open` to `fixed`; of the new files the 11 bad twins in
   scope are `fixed`, the 5 refusal probes `t08_bad`, `t09b_bad`, `t11_bad`, `t14_bad`,
   `t20_bad` are `open` (open-old `R0z6-STAYS`), the corpus program is `changed`, and the
-  others are `same` (the 23 `rev1_*` and 13 `rev2_*` probes of the review fall back, as
-  with main). The
+  others are `same` but `rev3_e11_dispatch_then_z7_bad` (`fixed`: the root fix of round 3
+  brings it into scope). The fact oracle of tier 1 after the root fix: 0 failures (1607
+  pass, 8 faults, 22 timeouts). No row of main changes its class or its codes in tier 1
+  or tier 2 by the root fix (the gates show only the rows of the stage). The
   fact oracle of tier 1: 0 failures (1585 pass, 8 faults, 22 timeouts; the first build
   1586 and 21; Z7: 1564 pass). Sigdiff tier 1: 0 rows with no entry (one new `sig` entry: the
   programs that leave the fallback lose the `raises`, `reaches` of the old inference, and
@@ -5992,11 +5990,17 @@ Z6 as built (dispatch copies: a run of a local with closures of two or more orig
   `changed` here with its entry of main; 7 time-outs of the 60 s limit (Z7 8). The time of
   `check` on `big/all` and `all_2` on a quiet machine: 33.8 s and 181 s with main, 33.7 s
   and 183 s with Z6.
-- ev.sh (`weft-work/ev.sh`; main `z6/ev/ev-main3.tsv`, Z6 `z6/ev/ev-z63.tsv`; 3078 rows:
-  the all-set of Z7, `fixes/r0z5`, `fixes/r0z7`, `fixes/r0z6`, the review probes
-  `z7rev1/p`, `z7rev1/ok`, `z7rev2/p`, `z7rev3/p`, `mychk/p`, `z6rev/p`, all of
-  `z6rev1/` and `z6rev2/`, and the corpus program): HOLE 18 to 18 (the same rows, older
-  than the stage), no new HOLE. FP-IR 298 to 303: the corpus program (no `main`),
+- ev.sh (`weft-work/ev.sh`; main `z6/ev/ev-main4.tsv`, Z6 `z6/ev/ev-z64.tsv`; 3130 rows:
+  the all-set of Z7, `fixes/r0z5`, `fixes/r0z7`, `fixes/r0z6`, `tests/programs`, the
+  review probes `z7rev1/p`, `z7rev1/ok`, `z7rev2/p`, `z7rev3/p`, `mychk/p`, `z6rev/p`,
+  all of `z6rev1/`, `z6rev2/` and `z6rev3/`): HOLE 18 to 18 (the same rows, older than
+  the stage), no new HOLE. The rows in scope on main whose codes change: 8, each a false
+  W0301 of main that the root fix removes (FP-IR to nofault: `z6rev1/p/fp_m5`, `s/m5`,
+  `z6rev2/b/b01`, `b02`, `b12_one_value_main`, `z6rev3/a/h1`, `h22_one_value_main`,
+  `rc/ov`). FP-IR 302 to 310: the new FP-IR rows on clean programs are the accepted
+  value-dependent rows (below and `z6rev3/j/j3_both_arms_h_ok`); the others are bad
+  twins that the old pipeline rejects too (fb-reject to FP-IR: no fault in the run of
+  the oracle) and the corpus program (no `main`),
   `z6rev1/b/pb02_partb_noset_bad` (the old pipeline rejects it too, fb-reject), and
   `z6rev1/f/f05_dangling_capture_ok`, the one row that goes from nofault to FP-IR: its
   first closure keeps `q`, and a branch whose condition is true at run time gives `k` the
@@ -6011,16 +6015,18 @@ Z6 as built (dispatch copies: a run of a local with closures of two or more orig
   `Vec`) and `z6rev1/s/v2` go back to the fallback (clean, as with main), besides the
   blocker probes; `z6rev1/s/v3` and `z6rev2/c/c06` come into scope (correct).
 - The census (`check --reasons` on each file, `weft-work/z6/census/`; main: the census of
-  Z7, `z7/census/t1-z7r5.tsv`, `t2-z7r5.tsv`): tier 1 145 fallbacks of 5693 files (main 106
+  Z7, `z7/census/t1-z7r5.tsv`, `t2-z7r5.tsv`): tier 1 128 fallbacks of 5708 files (main 106
   of 5607). 12 rows leave the fallback: the 10 census rows of the stage and the pair
-  `a1_other_maker`; the 36 `rev1_*` and `rev2_*` probes of the review keep it; of the other 50 new
+  `a1_other_maker`; of the probes of the review, the forms of R-JOIN and R-ROW (and
+  `rev2_b05`, a closure of a callee) keep it, and the forms of R-REF are in scope after the
+  root fix; of the other 50 new
   files, 15 keep the fallback (the refusal probes `t08`,
   `t09b`, `t11`, `t12`, `t13`, `t14`, `t20` in pairs, and `t10_once_bad`). The census
   rows: 47 to 37. Tier 2: 22 fallbacks, as main, and no row changes its reason (two
   programs of the scale tests, `ring_effects_2000` and `h8000`, were time-outs of the 150
   s limit on a loaded machine; each one takes 89 s and 172 s with Z6, 87 s and 164 s with
   main, and is in scope with both).
-- Ledger (no entry for the `rev1_*` probes: each is `same`): `R0k2-NESTED` (the u family) and `R0z3-OTHER-MAKER` go (each row is `fixed`);
+- Ledger (the probes of the review are `same`, but `rev3_e11_dispatch_then_z7_bad`, `fixed`; a second `sig` entry for four probes that the root fix brings into scope): `R0k2-NESTED` (the u family) and `R0z3-OTHER-MAKER` go (each row is `fixed`);
   new: open-old `R0z6-STAYS` (the five refusal probes whose bad twins the old pipeline
   misses), `changed` for the corpus program, one `sig` entry. No `lost-clean` row.
 - What stays open: Part C (`a03_put_fns`: a write through a reference into a local of the
