@@ -1,0 +1,26 @@
+// Z4 review (bad, R-INNER escape): a closure made in g's handled body performs g's op through its
+// capability before the resume point (no row needed). g's clause does not resume, so g's handled body
+// ends with no resume of h. The test: R-INNER must see function values that capture g's capability.
+// The program is clean (the rest never runs, `keep` stays a reference into `u`): the name `bad` only marks the escape.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Other { fn other() { print(2) } } in {
+                let f = || other()
+                let k = || resume(())
+                f()
+                k()
+            }
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

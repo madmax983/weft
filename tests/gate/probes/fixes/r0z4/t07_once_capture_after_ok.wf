@@ -1,0 +1,19 @@
+// Plan stage R0z Z4 (ok, refusal R-AFTER): the closure of a `once` continuation moves a captured value after its resume.
+// The facts move the whole environment local of a kont region at its resume, so the region is refused:
+// the program keeps the fallback.
+effect Tick { fn tick() }
+effect Ask { fn ask() -> u64 }
+fn take(w: Vec<u64>) { print(w.len()) }
+fn main() {
+    handle Ask { fn ask() { resume(1) } } in {
+        handle Tick { fn tick() {
+                let w: Vec<u64> = Vec.new()
+                let k = || { resume(()); take(w) }
+                let y = ask()
+                k()
+            } } in {
+            tick()
+            print(2)
+        }
+    }
+}

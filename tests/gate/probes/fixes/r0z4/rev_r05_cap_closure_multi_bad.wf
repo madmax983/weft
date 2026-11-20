@@ -1,0 +1,29 @@
+// Z4 review (bad, R-ROW-K escape): as r05 ok, and the clause clears `v` after its two runs while the rest
+// keeps `keep = &v[0]`. The read of `keep` after the handle reads a freed cell.
+effect Choice { multi fn choose() -> bool }
+effect Tick { multi fn tick() }
+fn run(v: &Vec<u64>, f: fn() -> bool) / mut(v) {
+    let u: Vec<u64> = Vec.new()
+    u.push(7)
+    let keep = &u[0]
+    handle Tick {
+        fn tick() {
+            let k = || resume(())
+            k()
+            k()
+            v.clear()
+        }
+    } in {
+        tick()
+        let c = f()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        run(&v, || choose())
+    }
+}

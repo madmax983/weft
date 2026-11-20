@@ -1,0 +1,14 @@
+// Direct twin of f01_once_after_capture_ok.wf: a direct resume.
+// Z4 review (ok, R-AFTER): a `once` closure reads another capture after its resume.
+effect Tick { fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+            let c = Vec.new()
+            c.push(4)
+            resume(())
+            print(c.len())
+        } } in {
+        tick()
+        print(1)
+    }
+}

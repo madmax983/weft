@@ -378,6 +378,13 @@ struct Inst<'a> {
     kont: bool,
     /// The closures whose one run got a copy of their body in that mode.
     covered: BTreeSet<ClosureId>,
+    /// The plan of a kont region is made now (plan stage R0z Z4,
+    /// [`Inst::kont_region`]): [`Inst::plan_run`] reads the `Kont` capture
+    /// through the environment local of the region.
+    kont_region: std::cell::Cell<bool>,
+    /// The program is a binary whose `main` the runtime starts (R-SITE of
+    /// the kont regions, [`instantiate_kont_for`]).
+    binary: bool,
     /// The copy of a closure body whose make goes away gets no `Mention` of
     /// the closure value at its entry (the value is not made).
     skip_mention: bool,
@@ -511,6 +518,10 @@ struct RunPlan {
     moves: bool,
     /// The number of blocks of the closure body and of the bodies inside it.
     size: usize,
+    /// A kont region (plan stage R0z Z4, [`Inst::kont_region`]): the index of
+    /// the `Kont` capture that the region reads through its environment
+    /// local ([`weft_ir::CopyRegion::kont`]).
+    kont: Option<u32>,
 }
 
 /// Why [`Inst::plan_run`] gives no plan.
@@ -983,7 +994,8 @@ impl Inst<'_> {
         if decl.once && !self.once_ok(decl) {
             return Err(NoPlan::No);
         }
-        let mut region = arm || maker != b || made.is_none() || !also.is_empty() || moves;
+        let kont = self.kont_region.get();
+        let mut region = kont || arm || maker != b || made.is_none() || !also.is_empty() || moves;
         let cb = self.p.body(decl.body).ok_or(NoPlan::No)?;
         let envl = *cb.params.first().ok_or(NoPlan::No)?;
         let inner = inner_bodies(&self.p, decl.body);
@@ -1006,6 +1018,9 @@ impl Inst<'_> {
                 // only a `Cap` capture through a place of the site; it reads
                 // each other capture through the environment local.
                 let direct = match &w.source {
+                    // A kont region reads the `Kont` capture through its
+                    // environment local (plan stage R0z Z4).
+                    Source::Made { .. } if kont && cap.mode == weft_ir::CaptureMode::Kont => false,
                     Source::Made { .. }
                         if (also.is_empty() && !arm) || cap.mode == weft_ir::CaptureMode::Cap =>
                     {
@@ -1051,7 +1066,9 @@ impl Inst<'_> {
                 return Err(NoPlan::No);
             }
         }
-        if !self.served(decl, &inner, region, run_env) {
+        // A kont region is the copy for its `resume` (plan stage R0z Z4), not
+        // for a served operation.
+        if !kont && !self.served(decl, &inner, region, run_env) {
             return Err(NoPlan::No);
         }
         if region
@@ -1088,6 +1105,7 @@ impl Inst<'_> {
             also,
             moves,
             size,
+            kont: None,
         })
     }
 
@@ -1184,6 +1202,11 @@ impl Inst<'_> {
             };
             match cap.mode {
                 weft_ir::CaptureMode::Cap => true,
+                // The `Kont` capture of a kont region (plan stage R0z Z4): the
+                // `resume` of the region moves it out of the cell.
+                weft_ir::CaptureMode::Kont if self.kont_region.get() => {
+                    kont_reads_only(cb, envl, field)
+                }
                 weft_ir::CaptureMode::ByMove | weft_ir::CaptureMode::Kept => {
                     let mut tys = self.tys.clone();
                     crate::factgen::alpha::capture_ty(&self.p, &mut tys, cid, field).is_some_and(
@@ -1884,6 +1907,11 @@ impl Inst<'_> {
         let Ok(field) = u32::try_from(ci) else {
             return false;
         };
+        // The `Kont` capture of a kont region (plan stage R0z Z4): only the
+        // `resume`s of the closure body name it.
+        if cap.mode == weft_ir::CaptureMode::Kont {
+            return self.kont_region.get() && kont_reads_only(cb, envl, field);
+        }
         // The body of a `once` closure can move a capture (plan stage R0z
         // Z3, parts d and e): the run moves the value of the closure.
         let reads = if decl.once {
@@ -2023,7 +2051,15 @@ impl Inst<'_> {
                 .filter(|(y, _, _)| *y == x)
                 .map(|&(_, k, i)| (k, i))
                 .collect();
-            match single_value_but(body, at, except, &skip)? {
+            // A kont region (plan stage R0z Z4): a shared borrow of a local of
+            // a function type cannot change its value (no place is below a
+            // function value), so it is not a write of the way.
+            let borrow_ok = self.kont_region.get()
+                && body
+                    .local(at)
+                    .and_then(|d| self.tys.try_get(d.ty))
+                    .is_some_and(|t| matches!(t, weft_ir::Ty::Fn(_)));
+            match single_value_but_borrow(body, at, except, &skip, borrow_ok)? {
                 One::Closure(blk, si, c) => {
                     if !path.is_empty() {
                         return None;
@@ -3543,6 +3579,224 @@ impl Inst<'_> {
         })
     }
 
+    /// The plan of a kont region at block `k` of body `b` (plan stage R0z Z4,
+    /// `docs/ir.md` 6.1, "As built (plan stage R0z Z4)"): the call runs a
+    /// value that this activation of a clause made, and the closure resumes
+    /// the continuation of that clause. The copy is a copy region that reads
+    /// each capture through its environment local, the `Kont` capture too:
+    /// the `resume` of the closure body is a `Resume` of `e.i` in the clause,
+    /// a resume point of the clause. The make stays, so the program with the
+    /// copy runs the same code. `None` (the run keeps the summary, which notes
+    /// `KONT_CAPTURED`) for each refusal:
+    ///
+    /// - R-WAY: the static way ([`Inst::walk_from`]) does not give one closure
+    ///   that the program makes, or it goes through a parameter of a clause
+    ///   (`Walk::jumped`: another activation can give the value).
+    /// - R-MAKER: the run node or the maker is not the clause body itself (in
+    ///   a scope body of the clause the summary oracle A3 fails, issue #96; a
+    ///   resume point in a handled body inside the clause is not built). The
+    ///   guard of the activation is `nested_writes_but` of the walk: no body
+    ///   inside the owner of a local of the way writes it.
+    /// - The closure has one `Kont` capture, and its source is the
+    ///   continuation local of that clause.
+    /// - R-NESTED: a body inside the closure body resumes the continuation.
+    /// - R-ROW-K: a handler of the program other than the handler of the
+    ///   clause has a `multi` operation. A `multi` resume of such a handler
+    ///   can copy a frame that holds the closure value, and the IR engine
+    ///   keeps the old continuation record in the copy (issue #94).
+    /// - R-A5: a `multi` continuation and another handler in the program: the
+    ///   fact oracle fails A5 at a copy of a `multi` resume whose rest runs a
+    ///   clause of an outer local handler (issue #95).
+    /// - R-SITE: the handler of the clause has a `multi` operation, and its
+    ///   `handle` is not in the `main` of a binary (or `main` has parameters,
+    ///   or code names it): a second instance of
+    ///   the same static handler can be live (recursion, a nested run through
+    ///   a function value), and R-ROW-K and R-A5 see static handlers only.
+    /// - R-REC: the `handle` of the handler of the clause (`once` or `multi`)
+    ///   is in a function that can run again while it runs
+    ///   ([`Inst::reentrant`]: a direct recursion, a function value that names
+    ///   it or a function that reaches it, a closure body that calls such a
+    ///   function): the clause of an inner instance can perform the effect of
+    ///   the outer instance of the same static handler (the clause oracle A5
+    ///   fails, issue #97).
+    /// - R-AFTER: a `once` continuation, and the closure body names its
+    ///   environment after the `resume` (the facts move the whole environment
+    ///   local at the `resume`: `alpha` of `e.i` is the root of `e`).
+    /// - The rules of a copy region ([`Inst::plan_run`]).
+    fn kont_region(&self, b: BodyId, k: BlockId) -> Option<RunPlan> {
+        let body = self.p.body(b)?;
+        // R-MAKER: the run node is in the clause body itself (not in a scope
+        // body of it: the summary oracle A3 fails there, issue #96).
+        if !matches!(body.kind, BodyKind::Clause(..)) {
+            return None;
+        }
+        let cb = b;
+        let TermKind::Call {
+            callee: Callee::Value(op @ (Operand::Copy(q) | Operand::Move(q))),
+            caps: CapArgs::Lexical(_),
+            unwind: Some(_),
+            ..
+        } = &body.block(k)?.term.kind
+        else {
+            return None;
+        };
+        if !q.is_local() {
+            return None;
+        }
+        let moves = matches!(op, Operand::Move(_));
+        let except = moves.then_some((k, usize::MAX));
+        self.kont_region.set(true);
+        let plan = self.kont_region_with(b, k, cb, q.local, (moves, except));
+        self.kont_region.set(false);
+        plan
+    }
+
+    /// [`Inst::kont_region`] with the flag of the kont mode set.
+    fn kont_region_with(
+        &self,
+        b: BodyId,
+        k: BlockId,
+        cb: BodyId,
+        l: LocalId,
+        (moves, except): (bool, Option<(BlockId, usize)>),
+    ) -> Option<RunPlan> {
+        let w = self.walk_from(b, l, except)?;
+        if w.jumped {
+            return None;
+        }
+        let Source::Made {
+            body: m,
+            closure: c,
+            ..
+        } = w.source
+        else {
+            return None;
+        };
+        let decl = self.p.closures.get(c.index())?;
+        if decl.maker != m || m != cb {
+            return None;
+        }
+        let konts: Vec<usize> = decl
+            .captures
+            .iter()
+            .enumerate()
+            .filter(|(_, x)| x.mode == weft_ir::CaptureMode::Kont)
+            .map(|(i, _)| i)
+            .collect();
+        let [ki] = konts.as_slice() else {
+            return None;
+        };
+        let (h, kcb, multi) = crate::analysis::clause::kont_handler(
+            &self.p,
+            decl.maker,
+            &decl.captures.get(*ki)?.source,
+        )?;
+        if kcb != cb {
+            return None;
+        }
+        // R-NESTED.
+        for ib in inner_bodies(&self.p, decl.body) {
+            let x = self.p.body(ib)?;
+            if x.blocks
+                .iter()
+                .any(|blk| matches!(blk.term.kind, TermKind::Resume { .. }))
+            {
+                return None;
+            }
+        }
+        // R-ROW-K and R-A5 (first cut: by handler, in the whole program).
+        let others = self
+            .p
+            .handlers
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != h.index());
+        let mut others = others.peekable();
+        if multi && others.peek().is_some() {
+            return None;
+        }
+        if others.any(|(_, d)| d.multi) {
+            return None;
+        }
+        // R-SITE (the review of Z4, round 1): a handler of a `multi` effect
+        // runs its `handle` only in `main`. R-ROW-K and R-A5 compare static
+        // handlers, so they do not see a second instance of the same handler:
+        // a `multi` resume of the outer instance copies the clause frame of
+        // the inner one, which holds the closure value (issue #94).
+        if self.p.handlers.get(h.index()).is_none_or(|d| d.multi)
+            && !(self.binary && once_site(&self.p, h))
+        {
+            return None;
+        }
+        // R-REC (the review of Z4, round 3): for each handler, `once` or
+        // `multi`, no kont region if its `handle` is in a function that can
+        // call itself. A clause of an inner instance can perform the effect
+        // of the handler, which reaches the outer instance of the same static
+        // handler, and the clause oracle A5 fails there (issue #97).
+        let site_fn = self
+            .p
+            .handlers
+            .get(h.index())
+            .and_then(|d| top_fn(&self.p, d.site));
+        if site_fn.is_some_and(|f| self.reentrant(f)) {
+            return None;
+        }
+        // R-AFTER.
+        let cbody = self.p.body(decl.body)?;
+        let envl = *cbody.params.first()?;
+        if !multi && names_after_resume(cbody, envl) {
+            return None;
+        }
+        let ki = u32::try_from(*ki).ok()?;
+        let mut plan = self.plan_run((b, k), moves, w, Vec::new(), false).ok()?;
+        if !plan.region || !plan.env_caps.contains(&(ki as usize)) {
+            return None;
+        }
+        plan.kont = Some(ki);
+        Some(plan)
+    }
+
+    /// True if function `f` can run again while a run of it is live (R-REC
+    /// of the kont regions, plan stage R0z Z4): `f` can call itself through
+    /// direct calls ([`Needs::recursive`]); or a function value of the
+    /// program names `f` or a function that reaches `f` through direct calls
+    /// (code that `f` runs can run that value: the review of Z4, `v1`, `v2`);
+    /// or a closure body calls such a function (a closure can go into the
+    /// code that `f` runs: the shape `r05` of round 1 of the review).
+    fn reentrant(&self, f: FnId) -> bool {
+        if self.needs.recursive(f) {
+            return true;
+        }
+        // `f` and each function that reaches `f` through direct calls.
+        let mut reach: BTreeSet<FnId> = BTreeSet::from([f]);
+        loop {
+            let more: Vec<FnId> = self
+                .needs
+                .calls
+                .iter()
+                .filter(|(g, cs)| !reach.contains(g) && cs.iter().any(|c| reach.contains(c)))
+                .map(|(g, _)| *g)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            reach.extend(more);
+        }
+        self.p.bodies.iter().enumerate().any(|(i, b)| {
+            let named = body_operands(b).iter().any(
+                |o| matches!(o, Operand::Const(weft_ir::Const::Fn(g, _)) if reach.contains(g)),
+            );
+            let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+            let calls = || {
+                b.blocks.iter().any(|blk| {
+                    matches!(&blk.term.kind,
+                        TermKind::Call { callee: Callee::Fn(g, _), .. } if reach.contains(g))
+                })
+            };
+            named || (in_closure(&self.p, id) && calls())
+        })
+    }
+
     /// Removes the statements `at` (block, index) of body `b`: the make of a
     /// closure with a `once` continuation and the steps of its chain
     /// ([`KontPlan::removals`]).
@@ -4555,6 +4809,7 @@ impl Inst<'_> {
                 env_local: copy_env,
                 env_fns: r.env_fns.clone(),
                 also: r.also.clone(),
+                kont: r.kont,
             });
             // The way of a value that the copy moves goes through the new
             // local.
@@ -4790,7 +5045,7 @@ pub fn instantiate(built: &Built) -> Option<Instantiated> {
 
 /// [`instantiate`] with the bounds `bounds`.
 pub fn instantiate_with(built: &Built, bounds: Bounds) -> Option<Instantiated> {
-    instantiate_mode(built, bounds, false)
+    instantiate_mode(built, bounds, false, false)
 }
 
 /// The copies of stage R0k-c1 (`docs/ir.md` 6.1).
@@ -4799,12 +5054,28 @@ pub fn instantiate_with(built: &Built, bounds: Bounds) -> Option<Instantiated> {
 /// clause gets a copy of its body at its one run in the clause (D1a), also
 /// in the copy of a callee that gets the closure (D1c). Then the `resume` is
 /// a resume point of the clause. `None` if no copy is made.
+///
+/// The program is a binary whose `main` the runtime starts (R-SITE of the
+/// kont regions, plan stage R0z Z4). For another program use
+/// [`instantiate_kont_for`].
 pub fn instantiate_kont(built: &Built) -> Option<Instantiated> {
-    instantiate_mode(built, Bounds::default(), true)
+    instantiate_kont_for(built, true)
+}
+
+/// [`instantiate_kont`]; `binary` is true if the program is a binary whose
+/// `main` the runtime starts (not a library: code outside the program can
+/// call the `main` of a library many times).
+pub fn instantiate_kont_for(built: &Built, binary: bool) -> Option<Instantiated> {
+    instantiate_mode(built, Bounds::default(), true, binary)
 }
 
 /// [`instantiate_with`], or [`instantiate_kont`] with `kont`.
-fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instantiated> {
+fn instantiate_mode(
+    built: &Built,
+    bounds: Bounds,
+    kont: bool,
+    binary: bool,
+) -> Option<Instantiated> {
     let orig = &built.program;
     let needs = Needs::of(orig, &built.tys);
     let mut inst = Inst {
@@ -4822,6 +5093,8 @@ fn instantiate_mode(built: &Built, bounds: Bounds, kont: bool) -> Option<Instant
         body_sites: BTreeMap::new(),
         kont,
         covered: BTreeSet::new(),
+        kont_region: std::cell::Cell::new(false),
+        binary,
         skip_mention: false,
         run_plan: None,
         regions: 0,
@@ -4890,6 +5163,15 @@ fn sweep(inst: &mut Inst<'_>) {
                     Some(_) => None,
                     None => {
                         plan = inst.kont_copy(b, blk);
+                        if plan.is_none() {
+                            // A kont region (plan stage R0z Z4): the copies of
+                            // R0k-c1 stay for the forms that they cover.
+                            inst.run_plan = inst.kont_region(b, blk);
+                            plan = inst.run_plan.as_ref().map(|x| KontPlan {
+                                closure: x.closure,
+                                removals: Vec::new(),
+                            });
+                        }
                         plan.as_ref().map(|x| What::Closure(x.closure))
                     }
                 }
@@ -4984,7 +5266,7 @@ fn finish_inst(mut inst: Inst<'_>, orig: &Program, built: &Built) -> Option<Inst
     let sole: BTreeSet<ClosureId> = inst
         .chains
         .iter()
-        .filter(|(c, ch)| sole_runs(&inst.p, &inst.tys, **c, ch))
+        .filter(|(c, ch)| sole_runs(&inst.p, &inst.tys, **c, ch, inst.kont))
         .map(|(c, _)| *c)
         .collect();
     for r in &mut inst.p.regions {
@@ -5610,6 +5892,18 @@ fn single_value_but(
     except: Option<(BlockId, usize)>,
     skip: &BTreeSet<(BlockId, usize)>,
 ) -> Option<One> {
+    single_value_but_borrow(body, l, except, skip, false)
+}
+
+/// [`single_value_but`]; with `borrow_ok`, a reference `x = &l` to the whole
+/// local is not a use of the way (a kont region, plan stage R0z Z4).
+fn single_value_but_borrow(
+    body: &Body,
+    l: LocalId,
+    except: Option<(BlockId, usize)>,
+    skip: &BTreeSet<(BlockId, usize)>,
+    borrow_ok: bool,
+) -> Option<One> {
     if !matches!(
         body.local_kind(l)?,
         LocalKind::User | LocalKind::Temp(_) | LocalKind::Return
@@ -5658,7 +5952,9 @@ fn single_value_but(
                     _ => None,
                 };
             }
-            if stmt_borrows_or_moves(st, l) && except != Some((id, si)) {
+            let shared = borrow_ok
+                && matches!(&st.kind, StmtKind::Assign(_, Rvalue::Ref(q)) if *q == Place::local(l));
+            if stmt_borrows_or_moves(st, l) && except != Some((id, si)) && !shared {
                 return None;
             }
         }
@@ -6004,7 +6300,7 @@ fn nested_writes_but(
 ///
 /// A place of a local of a way whose type holds no function value (a part
 /// of an aggregate, as `b.n`) reads no closure (plan stage R0z Z3, part c).
-fn sole_runs(p: &Program, tys: &TyTable, c: ClosureId, chain: &BTreeSet<Link>) -> bool {
+fn sole_runs(p: &Program, tys: &TyTable, c: ClosureId, chain: &BTreeSet<Link>, kont: bool) -> bool {
     let locals: BTreeSet<(BodyId, LocalId)> = chain
         .iter()
         .filter_map(|x| match x {
@@ -6065,6 +6361,15 @@ fn sole_runs(p: &Program, tys: &TyTable, c: ClosureId, chain: &BTreeSet<Link>) -
                     // The test of a dispatch reads the code of the value, and
                     // it does not run it (plan stage R0z Z6).
                     StmtKind::Assign(q, Rvalue::Discriminant(_) | Rvalue::ClosureIs(..)) => {
+                        !named(id, q)
+                    }
+                    // A shared borrow of a whole local of the way in the kont
+                    // mode (plan stage R0z Z4, the walk of `Inst::kont_region`):
+                    // a reference to a function value cannot run it (W0105)
+                    // or change it.
+                    StmtKind::Assign(q, Rvalue::Ref(r))
+                        if kont && r.proj.is_empty() && locals.contains(&(id, r.local)) =>
+                    {
                         !named(id, q)
                     }
                     StmtKind::Assign(q, rv) => {
@@ -6441,6 +6746,142 @@ fn kont_closure(p: &Program, b: BodyId, l: LocalId) -> Option<KontChain> {
         }
     }
     None
+}
+
+/// True if body `b` is a closure body or a body inside one (plan stage R0z
+/// Z4, R-REC).
+fn in_closure(p: &Program, b: BodyId) -> bool {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = p.body(at) else {
+            return false;
+        };
+        match (x.kind, x.parent) {
+            (BodyKind::Closure(_), _) => return true,
+            (_, Some(up)) => at = up,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The function whose body holds body `b`: the parent chain of `b` up to a
+/// body of kind `Fn` (plan stage R0z Z4, R-REC). `None` for a test body.
+fn top_fn(p: &Program, b: BodyId) -> Option<FnId> {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let x = p.body(at)?;
+        match (x.kind, x.parent) {
+            (BodyKind::Fn(f), _) => return Some(f),
+            (_, Some(up)) => at = up,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// True if the `handle` of handler `h` runs at most once at a time (plan
+/// stage R0z Z4, R-SITE): its site is the body of `main`, or a scope body of
+/// it through scope bodies only, `main` has no parameters, and no code names
+/// `main` (no call of it and no value of it). Then no second instance of `h`
+/// is live while one runs: a new run of the site needs a new run of `main`.
+/// The caller also asks for a binary: code outside a library can call its
+/// `main` many times.
+fn once_site(p: &Program, h: HandlerId) -> bool {
+    let Some(d) = p.handlers.get(h.index()) else {
+        return false;
+    };
+    let mut at = d.site;
+    for _ in 0..=p.bodies.len() {
+        let Some(x) = p.body(at) else {
+            return false;
+        };
+        match x.kind {
+            BodyKind::Scope(_) => match x.parent {
+                Some(up) => at = up,
+                None => return false,
+            },
+            BodyKind::Fn(f) => {
+                let main = p
+                    .fns
+                    .get(f.index())
+                    .is_some_and(|fd| fd.name == "main" && fd.params.is_empty());
+                if !main {
+                    return false;
+                }
+                let named = p.bodies.iter().any(|b| {
+                    b.blocks.iter().any(|blk| {
+                        matches!(&blk.term.kind, TermKind::Call { callee: Callee::Fn(g, _), .. } if *g == f)
+                    }) || body_operands(b)
+                        .iter()
+                        .any(|o| matches!(o, Operand::Const(weft_ir::Const::Fn(g, _)) if *g == f))
+                });
+                return !named;
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// True if body `b` names field `k` of its environment local `l` only as the
+/// continuation of a `Resume` (plan stage R0z Z4), and at least once.
+fn kont_reads_only(b: &Body, l: LocalId, k: u32) -> bool {
+    let whole = Place {
+        local: l,
+        proj: vec![Proj::Field(weft_ir::FieldIdx(k))],
+    };
+    let at_k = |q: &Place| q.local == l && q.proj.first() == whole.proj.first();
+    let named = body_places(b).iter().filter(|q| at_k(q)).count();
+    let resumes = b
+        .blocks
+        .iter()
+        .filter(|blk| matches!(&blk.term.kind, TermKind::Resume { kont, .. } if *kont == whole))
+        .count();
+    resumes > 0 && named == resumes
+}
+
+/// True if a statement or a terminator after a `Resume` of body `b` (on a
+/// path from its next block or its cleanup block) names the local `l`, but
+/// `Live`, `Dead` and the drops of a cleanup block (plan stage R0z Z4,
+/// R-AFTER).
+fn names_after_resume(b: &Body, l: LocalId) -> bool {
+    let mut seen = vec![false; b.blocks.len()];
+    let mut work: Vec<BlockId> = b
+        .blocks
+        .iter()
+        .filter_map(|blk| match &blk.term.kind {
+            TermKind::Resume { .. } => Some(blk.term.kind.successors()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    while let Some(x) = work.pop() {
+        match seen.get_mut(x.index()) {
+            Some(s) if !*s => *s = true,
+            _ => continue,
+        }
+        let Some(blk) = b.block(x) else { continue };
+        for st in &blk.stmts {
+            if matches!(st.kind, StmtKind::Live(_) | StmtKind::Dead(_))
+                || (blk.cleanup && matches!(st.kind, StmtKind::UnwindValue(..)))
+            {
+                continue;
+            }
+            let mut out = Vec::new();
+            stmt_places(st, &mut out);
+            if out.iter().any(|q| q.local == l) {
+                return true;
+            }
+        }
+        let mut out = Vec::new();
+        term_places(&blk.term.kind, &mut out);
+        if out.iter().any(|q| q.local == l) {
+            return true;
+        }
+        work.extend(blk.term.kind.successors());
+    }
+    false
 }
 
 /// The number of reads of local `l` in body `body`: each statement or

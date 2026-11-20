@@ -1,0 +1,14 @@
+// Direct twin of a02_capture_after_resume_ok.wf: a direct resume. The rest clears `w` (bad).
+// Z4 review (ok): as a02 bad, but the rest does not free `w`.
+effect Tick { fn tick(r: &u64) }
+fn main() {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            resume(())
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        w.clear()
+    }
+}

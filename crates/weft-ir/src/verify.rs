@@ -1571,6 +1571,29 @@ impl<'a> Cx<'a> {
         }
     }
 
+    /// V21 (plan stage R0z Z4): place `p` of a `Resume` at block `b` is the
+    /// `Kont` field of the environment local of the kont region that holds
+    /// `b`: a local of kind `CopyEnv(c)`, the `env_local` of the region, one
+    /// `Field(i)` projection with `i` the `kont` of the region, and capture
+    /// `i` of `c` of mode `Kont`.
+    fn region_kont(&self, b: BlockId, p: &Place) -> bool {
+        let [Proj::Field(k)] = p.proj.as_slice() else {
+            return false;
+        };
+        let Some(r) = self.p.region_of(self.id, b) else {
+            return false;
+        };
+        r.env_local == Some(p.local)
+            && r.kont == Some(k.0)
+            && self.body.local_kind(p.local) == Some(LocalKind::CopyEnv(r.closure))
+            && self
+                .p
+                .closures
+                .get(r.closure.index())
+                .and_then(|d| d.captures.get(k.index()))
+                .is_some_and(|c| c.mode == CaptureMode::Kont)
+    }
+
     /// Returns the capture mode of place `p` if it is field `k` of the environment of
     /// this closure body (`env.k`), or of a view of the environment of a closure
     /// around this body (`u.k`).
@@ -1681,6 +1704,7 @@ impl<'a> Cx<'a> {
                         }
                     } else {
                         self.env_field(kont) == Some(CaptureMode::Kont)
+                            || self.region_kont(id, kont)
                     };
                     if !ok {
                         self.push(Rule::BadKont, Some(id), Some(kont.local));

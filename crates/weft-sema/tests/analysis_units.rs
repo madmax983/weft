@@ -3119,25 +3119,34 @@ mod kont_copies {
         assert!(resumes_own(&inst.built.program), "no resume of the clause");
     }
 
-    /// Each refusal of the probes: two runs, a perform between the make and
-    /// the run, a call that can abort between them, a borrow of the closure
-    /// value, a make in a body inside the clause, a field on the chain.
+    /// The refusal probes of stage R0k-c1. Two runs, a perform between the
+    /// make and the run, a call that can abort between them, a borrow of the
+    /// closure value and a field on the chain get a kont region from plan
+    /// stage R0z Z4 (`r0z4::`). A make and a run in a handled body inside the
+    /// clause get no copy (a resume point in a handled body inside the clause
+    /// is not built).
     #[test]
     fn the_probes_of_a_refusal_get_no_copy() {
+        for name in ["c08_nested_ok.wf", "c08_nested_bad.wf"] {
+            assert!(copies(&probe(name)).is_none(), "{name}: a copy");
+        }
         for name in [
             "c03_two_runs_ok.wf",
             "c05_perform_between_ok.wf",
             "c06_call_between_ok.wf",
             "c07_use_after_ok.wf",
-            "c08_nested_ok.wf",
             "c09_field_ok.wf",
         ] {
-            assert!(copies(&probe(name)).is_none(), "{name}: a copy");
+            let inst = copies(&probe(name)).unwrap_or_else(|| panic!("{name}: no copy"));
+            assert!(
+                inst.built.program.regions.iter().any(|r| r.kont.is_some()),
+                "{name}: no kont region"
+            );
         }
     }
 
     /// The continuation is named again after the make (a `resume` of the
-    /// clause after the run): no copy.
+    /// clause after the run): no copy of stage R0k-c1.
     #[test]
     fn a_continuation_named_after_the_make_refuses_the_copy() {
         let src = "effect Tick { multi fn tick() }
@@ -3149,7 +3158,14 @@ fn main() {
     } } in { tick() }
 }
 ";
-        assert!(copies(src).is_none());
+        // No copy of stage R0k-c1; the run gets a kont region of plan stage
+        // R0z Z4 (the `resume` of the clause is another resume point).
+        assert!(copies(src).is_some_and(|i| i
+            .built
+            .program
+            .regions
+            .iter()
+            .all(|r| r.kont.is_some())));
     }
 
     /// A body inside the clause names a local of the chain (it runs the
@@ -3183,7 +3199,8 @@ fn main() / async {
         assert!(copies(src).is_none());
     }
 
-    /// A path from the make that does not reach the run (a branch): no copy.
+    /// A path from the make that does not reach the run (a branch): no copy
+    /// of stage R0k-c1.
     #[test]
     fn a_path_from_the_make_that_misses_the_run_refuses_the_copy() {
         let src = "effect Tick { fn tick(b: bool) }
@@ -3194,7 +3211,10 @@ fn main() {
     } } in { tick(true) }
 }
 ";
-        assert!(copies(src).is_none());
+        // No copy of stage R0k-c1 (its make would go); the run gets a kont
+        // region of plan stage R0z Z4, which keeps the make.
+        let inst = copies(src).expect("a kont region");
+        assert!(inst.built.program.regions.iter().all(|r| r.kont.is_some()));
     }
 
     /// The program with the copies is the view that the check takes if the
@@ -3208,13 +3228,270 @@ fn main() {
             .and_then(|s| s.pending.as_ref())
             .expect("pending");
         assert!(p.copy.is_some(), "no view of the copies");
-        let (a, _) = built(&probe("c03_two_runs_ok.wf"));
+        let (a, _) = built(&probe("c08_nested_ok.wf"));
         let p = a
             .ir_scope
             .as_ref()
             .and_then(|s| s.pending.as_ref())
             .expect("pending");
         assert!(p.copy.is_none(), "a view of the copies");
+    }
+}
+
+/// Plan stage R0z Z4: a run of a closure that resumes the continuation of the
+/// clause that made it gets a kont region (`instantiate::Inst::kont_region`),
+/// a copy region that reads the `Kont` capture through its environment local.
+mod r0z4 {
+    use weft_ir::verify::{verify_program, Rule};
+    use weft_ir::{LocalKind, TermKind};
+    use weft_sema::factgen::instantiate::{instantiate_kont, Instantiated};
+
+    /// The analysis of `src` and its IR.
+    fn built(src: &str) -> (weft_sema::Analysis, weft_sema::irbuild::Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The text of probe `name` of `tests/gate/probes/fixes/dir`.
+    fn probe(dir: &str, name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes")
+            .join(dir)
+            .join(name);
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    }
+
+    /// The copies of the kont mode of `src`, if a closure got one.
+    fn copies(src: &str) -> Option<Instantiated> {
+        let (_, b) = built(src);
+        instantiate_kont(&b).filter(|i| !i.covered.is_empty())
+    }
+
+    /// True if the program of `src` has a kont region.
+    fn has_region(src: &str) -> bool {
+        copies(src).is_some_and(|i| i.built.program.regions.iter().any(|r| r.kont.is_some()))
+    }
+
+    /// True if the old pipeline checks the clean program `src`: the scope of
+    /// the `ir` pipeline has a fallback, or a pending construct with no view
+    /// of the copies (`factgen::Pending::copy`).
+    fn falls_back(src: &str) -> bool {
+        let (a, _) = built(src);
+        a.ir_scope.as_ref().is_none_or(|s| {
+            s.fallback.is_some() || s.pending.as_ref().is_some_and(|p| p.copy.is_none())
+        })
+    }
+
+    /// The forms of the targets: two runs, a perform or a call between the
+    /// make and the run, a borrow of the value, a field, a path with no run,
+    /// code around the `resume`. Each run gets a kont region whose `Resume`
+    /// reads field `kont` of the environment local, the program verifies, and
+    /// the `ir` pipeline checks the program.
+    #[test]
+    fn a_run_of_a_continuation_closure_gets_a_kont_region() {
+        let mut names: Vec<(&str, &str)> = Vec::new();
+        for n in [
+            "c03_two_runs",
+            "c05_perform_between",
+            "c06_call_between",
+            "c07_use_after",
+            "c09_field",
+        ] {
+            names.push(("r0kc", n));
+        }
+        for n in [
+            "t01_abort_between",
+            "t03_branch",
+            "t05_post_code",
+            "t06_clause_ref",
+        ] {
+            names.push(("r0z4", n));
+        }
+        for (dir, n) in names {
+            for twin in ["ok", "bad"] {
+                let name = format!("{n}_{twin}.wf");
+                let src = probe(dir, &name);
+                let inst = copies(&src).unwrap_or_else(|| panic!("{name}: no copy"));
+                let p = &inst.built.program;
+                let regions: Vec<_> = p.regions.iter().filter(|r| r.kont.is_some()).collect();
+                assert!(!regions.is_empty(), "{name}: no kont region");
+                for r in &regions {
+                    let e = r
+                        .env_local
+                        .unwrap_or_else(|| panic!("{name}: no environment local"));
+                    let body = p.body(r.body).unwrap_or_else(|| panic!("no body"));
+                    assert_eq!(body.local_kind(e), Some(LocalKind::CopyEnv(r.closure)));
+                    let resumes = r.blocks.iter().filter(|k| {
+                        matches!(&body.blocks[k.index()].term.kind,
+                            TermKind::Resume { kont, .. } if kont.local == e)
+                    });
+                    assert!(resumes.count() > 0, "{name}: no resume of the environment");
+                }
+                // V16 does not hold for a cleanup chain that starts in a block
+                // of a copy in a clause (stage R0k-c1, `finish_inst`).
+                assert!(
+                    verify_program(p, &inst.built.tys)
+                        .iter()
+                        .all(|x| x.rule == Rule::UnwindOrder || x.rule == Rule::KontNotFirst),
+                    "{name}: {:?}",
+                    verify_program(p, &inst.built.tys)
+                );
+                if twin == "ok" {
+                    assert!(!falls_back(&src), "{name}");
+                }
+            }
+        }
+    }
+
+    /// V21: a `Resume` of a field of the environment local of a region that
+    /// is not a kont region breaks `BadKont`.
+    #[test]
+    fn a_resume_of_the_environment_of_another_region_breaks_bad_kont() {
+        let inst = copies(&probe("r0kc", "c05_perform_between_ok.wf")).expect("a copy");
+        let mut p = inst.built.program.clone();
+        for r in &mut p.regions {
+            r.kont = None;
+        }
+        assert!(verify_program(&p, &inst.built.tys)
+            .iter()
+            .any(|x| x.rule == Rule::BadKont));
+    }
+
+    /// Each refusal keeps the fallback: R-WAY (a value through a parameter of
+    /// the clause, a `Vec`, two origins), R-MAKER (the maker is a closure
+    /// inside the clause), R-NESTED (a body inside the closure resumes),
+    /// R-ROW-K (another handler of a `multi` operation: in the clause, in the
+    /// rest of the handled body, through a callee, through a closure with a
+    /// captured capability, and an outer handler of the same effect), R-A5 (a
+    /// `multi` continuation and another handler), R-SITE (a second instance
+    /// of the same handler by recursion: the review of Z4, round 1), R-MAKER
+    /// in a scope body of the clause (the review of Z4, round 2), R-AFTER
+    /// (a `once` closure that moves a capture after its `resume`).
+    #[test]
+    fn the_refusals_of_a_kont_region_keep_the_fallback() {
+        for name in [
+            "rev_w01_vec_ok.wf",
+            "rev_w03_two_origins_ok.wf",
+            "rev_w04_resume_value_param_ok.wf",
+            "rev_m01_maker_closure_ok.wf",
+            "rev_n01_nested_closure_ok.wf",
+            "rev_n02_nested_handle_ok.wf",
+            "rev_r01_clause_multi_ok.wf",
+            "rev_r02_rest_multi_ok.wf",
+            "rev_r04_rest_callee_row_ok.wf",
+            "rev_r05_cap_closure_multi_ok.wf",
+            "rev_r05_cap_closure_multi_bad.wf",
+            "rev_r06_same_effect_outer_ok.wf",
+            "rev_j2_rest_ref_outer_op_ok.wf",
+            "t02_multi_row_ok.wf",
+            "t07_once_capture_after_ok.wf",
+            "rev1_r03_recursive_rest_ok.wf",
+            "rev1_r03_recursive_rest_bad.wf",
+            "rev1_r04_recursive_a5_ok.wf",
+            "rev2_oc09_scope_run_ok.wf",
+            "rev2_oc10_scope_make_ok.wf",
+            "rev2_sc_k_scope_then_run_ok.wf",
+        ] {
+            let src = probe("r0z4", name);
+            // In `m01`, `n01` and `n02` the copy of stage R0k-c1 of the outer
+            // closure can put a make and a run into the clause, and that run
+            // can get a kont region; the program keeps the fallback (the body
+            // of the outer closure is not covered).
+            // In `rev2_sc_k` the second run is in the clause body and gets a
+            // region; the run in the scope body gets none, so the program
+            // keeps the fallback.
+            let via_copy = ["rev_m01", "rev_n01", "rev_n02", "rev2_sc_k"]
+                .iter()
+                .any(|x| name.starts_with(x));
+            assert!(via_copy || !has_region(&src), "{name}: a kont region");
+            if name.ends_with("_ok.wf") {
+                assert!(falls_back(&src), "{name}: no fallback");
+            }
+        }
+    }
+
+    /// R-REC (the review of Z4, round 3, and the check of 29b6877): a `once`
+    /// handler whose `handle` is in a function that runs again while it runs:
+    /// a direct recursion (`rev3_*`), a function value that names it (`v1`),
+    /// a callee that runs a function value of it (`v2`), a closure that calls
+    /// it (`v3`). The clause of an inner instance performs the
+    /// effect of the handler, which goes to the outer instance; the clause
+    /// oracle A5 fails there (issue #97). No kont region, and the clean
+    /// programs keep the fallback.
+    #[test]
+    fn a_handle_in_a_recursive_function_gets_no_kont_region() {
+        for name in [
+            "rev3_o03_once_rec_region_ok.wf",
+            "rev3_o03_once_rec_region_bad.wf",
+            "rev3_o06_once_rec_outer_n2_ok.wf",
+            "rev3_o06_once_rec_outer_n2_bad.wf",
+            "rev3_o09_rec_n3_ok.wf",
+            "rev4_v1_fnval_ok.wf",
+            "rev4_v1_fnval_bad.wf",
+            "rev4_v2_helper_ok.wf",
+            "rev4_v2_helper_bad.wf",
+            "rev4_v3_closure_ok.wf",
+        ] {
+            let src = probe("r0z4", name);
+            assert!(!has_region(&src), "{name}: a kont region");
+            if name.ends_with("_ok.wf") {
+                assert!(falls_back(&src), "{name}: no fallback");
+            }
+        }
+    }
+
+    /// R-SITE in a library (the review of Z4, round 2): code outside the
+    /// program can run the `main` of a library many times, so its `handle`
+    /// can have two live instances. The marker `// weft: library` keeps the
+    /// fallback.
+    #[test]
+    fn a_handle_in_the_main_of_a_library_gets_no_kont_region() {
+        let src = probe("r0z4", "rev2_l01_library_main_ok.wf");
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(&src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::from_markers(&src));
+        let s = a.ir_scope.as_ref().expect("a scope");
+        assert!(s.fallback.is_some() || s.pending.as_ref().is_some_and(|p| p.copy.is_none()));
+    }
+
+    /// R-SITE with no direct recursion (the review of Z4, round 1): `install`
+    /// holds the handler, and it runs inside the handled body of another run
+    /// of `install` through a function value. No kont region (the program is
+    /// rejected with W0314 by both pipelines).
+    #[test]
+    fn a_handle_that_can_run_again_while_it_runs_gets_no_kont_region() {
+        let src = probe("r0z4", "rev1_r05_nested_install_ok.wf");
+        assert!(!has_region(&src));
+    }
+
+    /// A `multi` continuation whose clause is the only handler, and whose
+    /// second activation resumes while the first waits (`q3`): the `multi`
+    /// operations of the handler of the clause do not copy the clause frame,
+    /// so the region is not refused.
+    #[test]
+    fn the_own_multi_operations_of_the_handler_do_not_refuse_the_region() {
+        let src = probe("r0z4", "rev_q3_own_multi_ok.wf");
+        assert!(has_region(&src));
+        assert!(!falls_back(&src));
     }
 }
 

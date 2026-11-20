@@ -1,0 +1,27 @@
+// R-A5 escape: the outer local handler of #95 is the outer instance of h itself (recursion).
+// Two runs of a `multi` closure; the rest gives a reference of the handled body to `look` of
+// the outer instance (through a function value), whose clause reads it.
+effect E { multi fn tick(), fn look(r: &u64) }
+fn run(n: u64, f: fn(&u64)) {
+    handle E {
+        fn tick() {
+            let k = || resume(())
+            k()
+            k()
+        }
+        fn look(r: &u64) { print(r + 0); resume(()) }
+    } in {
+        if n > 0 {
+            run(n - 1, |r: &u64| look(r))
+        } else {
+            let w = Vec.new()
+            w.push(3)
+            tick()
+            f(&w[0])
+            print(w.len())
+        }
+    }
+}
+fn main() {
+    run(1, |r: &u64| print(r + 1))
+}

@@ -1,0 +1,17 @@
+// Z4 review (Part B, Q5): the clause resumes inside the handled body of a local `Fail` handler g.
+// The rest of the handled body of h performs `fail`. Which handler gets it: g, or the outer one?
+effect Peek { fn peek() }
+fn rest() / fail { fail("from the rest") }
+fn main() {
+    handle Fail { fn fail(m) { print("outer {m}") } } in {
+        handle Peek {
+            fn peek() {
+                handle Fail { fn fail(m) { print("inner {m}") } } in { resume(()) }
+                print("after the inner handle")
+            }
+        } in {
+            peek()
+            rest()
+        }
+    }
+}

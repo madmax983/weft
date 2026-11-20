@@ -1,0 +1,19 @@
+// Plan stage R0z Z4 (ok): the clause holds a reference into a local of the handled body across the run
+// of its closure. The rest of the handled body frees the local; the clause does not read the reference after the run.
+// The fact oracle checks the reference of the clause frame across the region (A4).
+struct Entity { hp: u64 }
+effect Peek { fn peek(e: &Entity) }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    handle Ask { fn ask() { resume(1) } } in {
+        handle Peek { fn peek(e) {
+                print(e.hp)
+                let k = || resume(())
+                let y = ask()
+                k()
+            } } in {
+            let local = Entity { hp: 3 }
+            peek(&local)
+        }
+    }
+}

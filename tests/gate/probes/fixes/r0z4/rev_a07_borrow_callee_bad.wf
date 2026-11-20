@@ -1,0 +1,21 @@
+// Z4 review (bad): the clause runs k, then gives a borrow of k to a callee that runs it again; the clause clears `v` after.
+effect Tick { multi fn tick() }
+fn twice(f: &fn()) { f() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let k = || resume(())
+            let r = &k
+            k()
+            twice(r)
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

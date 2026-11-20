@@ -1,0 +1,18 @@
+// Direct twin of j3 (two direct resumes).
+// Z4 review (ok, #79 join): the clause takes a function value; two runs of k, and the clause runs
+// its parameter after each run.
+effect Tick { multi fn tick(f: fn()) }
+fn main() {
+    let w = Vec.new()
+    w.push(5)
+    let r = &w[0]
+    handle Tick { fn tick(f: fn()) {
+            resume(())
+            f()
+            resume(())
+            f()
+        } } in {
+        tick(|| print(r + 1))
+        print(w.len())
+    }
+}

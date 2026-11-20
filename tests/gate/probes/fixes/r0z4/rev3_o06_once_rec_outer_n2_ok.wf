@@ -1,0 +1,26 @@
+// z4rev3 (ok): once h installed by recursion; the inner clause performs tick (the outer instance) in its closure before the resume; clear after.
+effect Tick { fn tick() }
+fn run(n: u64) {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let k = || {
+                if n > 0 { tick() }
+                resume(())
+            }
+            let y = 1
+            k()
+            let z = v.len()
+        } } in {
+        if n > 0 { run(n - 1) }
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}
+fn main() {
+    handle Tick { fn tick() { resume(()) } } in { run(2) }
+}

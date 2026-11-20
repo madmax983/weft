@@ -1,0 +1,10 @@
+// Z4 review (bad): a `once` closure runs in a loop: the second run uses a moved value.
+effect Tick { fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+            let k = || resume(())
+            for i in 0..2 { k() }
+        } } in {
+        tick()
+    }
+}

@@ -1,4 +1,4 @@
-// Plan stage R0k-c1 (bad): the closure runs two times: no copy, the program keeps the fallback.
+// Plan stage R0k-c1 (bad): the closure runs two times: no copy of R0k-c1. Plan stage R0z Z4 gives the run a kont region, and the `ir` pipeline checks the program.
 // The clause clears `v` after the handled body took `keep = &v[0]`:
 // the read of `keep` after the `handle` is a read of a freed cell (W0301).
 effect Tick { multi fn tick() }

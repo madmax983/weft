@@ -1,0 +1,12 @@
+// Plan stage R0z Z4 (ok): one path of the clause runs the closure; the other path does not resume.
+effect Tick { fn tick(b: bool) -> u64 }
+fn main() {
+    let r = handle Tick { fn tick(b) {
+            let k = || resume(1)
+            if b { k() } else { 7 }
+        } } in {
+        let a = tick(true)
+        a + 1
+    }
+    print(r)
+}

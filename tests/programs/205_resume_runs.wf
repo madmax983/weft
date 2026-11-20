@@ -1,0 +1,86 @@
+// Plan stage R0z Z4: a run of a closure that resumes the continuation of the
+// clause that made it is a resume point of the clause. The run gets a kont
+// region: a copy of the closure body that reads the continuation through the
+// environment local of the region. The probes `tests/gate/probes/fixes/r0z4/`
+// run these forms with `main`, and the forms with a `multi` continuation (a
+// program with another handler of a `multi` operation keeps its fallback).
+effect Once { fn once() }
+effect Ask { fn ask() -> u64 }
+
+// A perform lies between the make and the run of a `once` continuation.
+fn perform_between() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Ask { fn ask() { resume(1) } } in {
+        handle Once { fn once() {
+                let k = || resume(())
+                let y = ask()
+                k()
+                v.clear()
+            } } in {
+            once()
+            keep = &v[0]
+        }
+    }
+    print(keep + 1)   //~ W0301
+}
+
+// The clause borrows the closure value before the run.
+fn borrow_before() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Once { fn once() {
+            let k = || resume(())
+            let r = &k
+            k()
+            v.clear()
+        } } in {
+        once()
+        keep = &v[0]
+    }
+    print(keep + 1)   //~ W0301
+}
+
+// A `print` lies between the make and the run.
+fn print_between() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Once { fn once() {
+            let k = || resume(())
+            print(0)
+            k()
+            v.clear()
+        } } in {
+        once()
+        keep = &v[0]
+    }
+    print(keep + 1)   //~ W0301
+}
+
+// The clean form: the clause does not clear `v`; one path does not run the
+// closure.
+fn clean(b: bool) {
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Ask { fn ask() {
+            let k = || resume(2)
+            if b { k() } else { 7 }
+        } } in {
+        let a = ask()
+        a + v[0]
+    }
+    print(r)
+}
+
+fn main() {
+    clean(true)
+}

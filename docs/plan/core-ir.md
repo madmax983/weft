@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L + S, Z8 M, Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M, Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -4580,7 +4580,7 @@ The clean rows (the precision work; tier 1 41, tier 2 16):
 | Z5 D1b | The region of a `resume` in a scope body starts at the resume node, and each task of the scope that is active there stays active at each node of the region (the rest of the handled body) up to the end of the scope. So a task footprint conflicts with the rest of the handled body (W0405). | M (done: "Z5 as built"; the facts give the region at the `resume`; TC through the copies of R0k-a) | 2 / 2 / 0 | 0 | the region (6.5) and the window of a task (R0k-d2) meet; a `multi` continuation runs the region more than once |
 | Z7 D5 rows of the analysis | A run of a function value that can resume more than once in a clause (`clause::Handlers::dyn_rows`) gets the re-entry of R0k-c2 at the node that runs the clause, from the summary of the value (its `repeats` and `multi` parts), also in the copies of R0k-a. | M (done: "Z7 as built"; the analysis runs again with the row as a row of its clause; a run of a parameter of the clause that the run of the function finds no row for is no row) | 1 / 1 / 0 | 1 / 0 / 0 | `static_row` runs on the copies too |
 | Z6 dispatch copies | The probe run of the B1 note (`run_values`) gives the set of values at each run node. A set of known closures gets a dispatch: a test of the closure identity and one copy region for each closure (a new rvalue `ClosureIs(c)` or a switch terminator; the verifier, both engines, the fact oracle). A set with `Unknown` keeps the summary. | L (done but part C: "Z6 as built"; the set is the static way, not a probe run; `ClosureIs` and the `Switch` of a `bool`; `a03_put_fns` stays open) | 4 / 5 / 3 | 0 | the exactness of the probe states (B1 note, (a) to (c)); the block bound of the copies |
-| Z4 D1 resume points | The design of the R0k design note: each run node whose value set holds a closure with a `Kont` capture of the current activation of a clause is a resume node of that clause (the region of the R0k-c1 copies, with no copy). With one value it is a resume; with more values, or a value from a field or a `Vec`, it is a join of a run that resumes and a run that does not. Two runs of a `once` continuation are W0501. A callee that runs the value gets a summary part "resumes its parameter". Z4b: `sim.run` and `with_timeout` run their block at the call node on this task, so a `resume` in the block is a resume at that node (with the abort edge of the deadline). | L (+ S for Z4b) | 8 / 0 / 6 (+ 2 / 0 / 0) | 2 / 0 / 2 (+ 2 / 0 / 0) | a resume region that starts in a callee; the `multi` re-entry of R0k-c2 with a resume at a run node; the fact oracle must see the resume at a closure run |
+| Z4 D1 resume points | The design of the R0k design note: each run node whose value set holds a closure with a `Kont` capture of the current activation of a clause is a resume node of that clause (the region of the R0k-c1 copies, with no copy). With one value it is a resume; with more values, or a value from a field or a `Vec`, it is a join of a run that resumes and a run that does not. Two runs of a `once` continuation are W0501. A callee that runs the value gets a summary part "resumes its parameter". Z4b: `sim.run` and `with_timeout` run their block at the call node on this task, so a `resume` in the block is a resume at that node (with the abort edge of the deadline). | L (+ S for Z4b; done but Part B, Part C and Z4b: "Z4 as built"; the copy is a kont region, a copy region that reads the continuation through its environment local, not a run node with no copy; the summary part "resumes its parameter" is not needed) | 8 / 0 / 6 (+ 2 / 0 / 0) | 2 / 0 / 2 (+ 2 / 0 / 0) | a resume region that starts in a callee; the `multi` re-entry of R0k-c2 with a resume at a run node; the fact oracle must see the resume at a closure run |
 | Z8 handler environment leftovers | (a) A value through a `resume` (g2_lexical): the result of a perform whose clause resumes with one closure that the clause makes is a step of the way (the maker is the clause, with its environment). (b) D4 for a `multi` continuation (d02): a write after each node that runs a clause, on each path to the end of the handled body, is a strong update (each run of the rest ends at that end). (c) A closure body that no node runs gives no pending escape (p2515, `Program::never_runs`). | M (S + S + M) | 2 / 0 / 0 | 2 / 0 / 0 | (b) and the copies of the frames at a re-entry |
 | Z9b E4 window | The window of R0k-d2 for a spawn in a closure body on the scope of the body around it: the writes in the closure body and in the bodies that the window can call, up to the end of that scope. | S-M | 1 / 0 / 0 | 0 | the task can outlive the closure body |
 | Z9a E2 | The design of the R0k-d3 design check: a second node of the run in the task region after the first (a cycle for a loop), the split of `templates::task_start`, the task facts of the second node, a cover of the fact oracle for a second run. | M-L | 3 / 0 / 2 | 2 / 0 / 2 | `i9_kept_write` (old W0405, no fault) can become `lost-clean`: a signed entry |
@@ -4599,7 +4599,7 @@ come before the stages with clean rows only; then the gain for each size):
 | 5 | Z5 D1b (done: 4 rows of tier 1 close, 53 to 49; "Z5 as built") | as above | 4 (46) | 0 (23) | M | k04, rv_p12, c2_task; a `multi` twin | the ledger entry `R0h-STAYS` goes (it keeps only `rv_p04`, Z7) |
 | 6 | Z7 D5 rows of the analysis (done: 2 rows of tier 1 close, 49 to 47; 1 row of tier 2, 23 to 22; "Z7 as built") | as above | 2 (44) | 1 (22) | M | rv_p04 and its twin; `p1669` | the copies with a re-entry; the ledger entry `R0h-STAYS` goes |
 | 7 | Z6 dispatch copies (done but part C: 10 rows of tier 1 close, 47 to 37; "Z6 as built") | as above | 12 (32) | 0 (22) | L | the u family, a01, a03, a04; a run node with an `Unknown` value (no copy); `copies.rs` with a dispatch | a design review first (as R0k-b1') |
-| 8 | Z4 D1 resume points, Z4b runtime runs | as above | 16 (16) | 6 (16) | L + S | the r0kc twins; fd2_v2, fd2_v3; rr3_v19, rr3_v20; `kont_copies` (the copies stay for the forms that they cover) | a design review first |
+| 8 | Z4 D1 resume points, Z4b runtime runs (done but Part B, Part C and Z4b: 10 rows of tier 1 close, 37 to 27; 1 row of tier 2, 22 to 21; "Z4 as built") | as above | 16 (16) | 6 (16) | L + S | the r0kc twins; fd2_v2, fd2_v3; rr3_v19, rr3_v20; `kont_copies` (the copies stay for the forms that they cover) | a design review first |
 | 9 | Z8 handler environment leftovers | as above | 2 (14) | 2 (14) | M | g2_lexical, d02 and twins; `p2515` | low |
 | 10 | Z9b E4 window | as above | 1 (13) | 0 (14) | S-M | s4 and its bad twin; `scope.rs` | low |
 | 11 | Z9a E2 | as above | 5 (8) | 4 (10) | M-L | j01, c09, s8, i9, s9; `scope.rs` | `lost-clean` of i9 |
@@ -4635,9 +4635,12 @@ tiers (tier 1: 1 row of the about 1790 probes that `old` accepts, and 2 rows are
 - Z4 (L): the six clean r0kc twins (refusal probes; a test change as for Z6), and
   `fd2_v2_closure_resume`, `fd2_v3_vec_of_closures` (both tiers; review probes): a signed
   `new-fp` entry.
+  (Z4 is built but Part B, Part C and Z4b: the clean twins c03, c05, c06, c07 and c09 are in
+  scope; `c08_nested_ok`, `fd2_v2` and `fd2_v3` keep the fallback: "Z4 as built".)
 - Z4b (S): `rr3_v19_sim_run_closure`, `rr3_v20_with_timeout` (both tiers): a language rule
   is possible for `sim.run` (W0314: the rest of the handled body would run under the root
   handlers of `sim.run`), but not for `with_timeout`; build Z4b.
+  (Z4b is not built in Z4: both rows keep the fallback, clean, as the old pipeline gives.)
 - Z9a and Z9c (M-L, L): tier 1 `j01_again_ok`, `j03_nested_ok`, `j04_value_ok`,
   `j07_run_ok`, `s3_nested_closure_ok`, `a13_ok`, `c09_cc_during_ok`,
   `s8_steal_fnparam`, `c16_c2_nested_ok`, `Core_S2/probes/crash/c10`; tier 2 `s8`, `c10`,
@@ -6044,6 +6047,156 @@ Z6 as built (dispatch copies: a run of a local with closures of two or more orig
   fallback. The two agree on each probe, and the fact oracle fails a run that takes a dead
   arm (the mutation). A wrong cut would be a hole of the same kind as a wrong value set of
   a run node of main, which the pipeline trusts already.
+
+Z4 as built (D1 resume points: a kont region at a run of a continuation closure; `docs/ir.md`
+6.1, "As built (plan stage R0z Z4)" and V21; the design note and its review:
+`weft-work/z4/design.md`, `weft-work/z4rev/`; binaries `z4/bin/weft-z4`, `weft-gate-z4`;
+main is bed1331, `z4/base/weft-main`; the probes: `tests/gate/probes/fixes/r0z4/`):
+
+- The design review (GO WITH CHANGES, 12 changes). The form is a copy (form 3 of the note),
+  not a run node with no copy: in the mode of R0k-c1, a run that the copy of R0k-c1 refuses
+  gets a kont region (`Inst::kont_region`), a copy region of R0k-b1' and R0k-b2 that reads
+  each capture through its environment local `e`, also the `Kont` capture `i`. The
+  `resume` of the closure body is `Resume { kont: e.i }` in the clause, a resume point of
+  the clause; the make stays, so the program with the copy runs the same code (also for a
+  `once` continuation, a perform or a call between the make and the run, a borrow of the
+  value, a field, two runs, a path with no run, code around the `resume`).
+  `weft_ir::CopyRegion::kont`, V21 (the rule `BadKont` accepts `e.i` of a kont region),
+  `clause::kont_handler` (the second form, `region_kont`). The summary part "resumes its
+  parameter" is not built: the copies of R0k-a cover each callee that runs the value.
+- The way: the walk of R0k-b1' with a refusal of a step through a parameter of a clause
+  (`Walk::jumped`, review `w04`), and a shared borrow of a local of a function type that
+  is not a use of the way (`c07`; the walk takes it only for a kont region, and `sole_runs`
+  takes it in the whole kont mode of R0k-c1, for each way: sound, because a reference to a
+  function value cannot run it, W0105, and cannot change it, `r = ...` gives `r` a new
+  value, W0102). The guard of the activation is `nested_writes_but` (not the extent rule).
+  R-MAKER: the run node and the maker are the clause body itself. A region in a scope body
+  of the clause (the first build took the scope bodies of Z5) failed the summary oracle A3
+  (round 2 of the review of Z4: `rev2_oc09`, `rev2_oc10`, `rev2_sc_k`; an old gap of the
+  resume points of Z5 in a scope body, which the direct `resume` of main shows, issue #96).
+- The refusals (first cuts, each by its cause): R-ROW-K (a handler of the program other
+  than the handler of the clause has a `multi` operation; a `multi` resume of it can copy a
+  frame that holds the closure value, and the IR engine keeps the old continuation record,
+  issue #94; the review probes `r01`, `r02`, `r04`, `r05`, `r06`, and `t02`); R-A5 (a `multi`
+  continuation and another handler in the program; the A5 failure of the fact oracle of
+  main, issue #95; `j2`, `o01`); R-AFTER (a `once` continuation and a read of the
+  environment after the `resume`: α of `e.i` is the root of `e`; `t07`); R-WAY, R-MAKER,
+  R-NESTED and the rules of each copy region. The `multi` operations of the handler of the
+  clause itself copy no clause frame (`q3` is in scope). R-ROW-K and R-A5 work by static
+  handler (`HandlerId`): they do not see a second instance of the same handler. So R-SITE
+  (round 1 of the review of Z4, its blocker): a handler of a `multi` effect gets a kont
+  region only if the program is a binary (not a library: code outside the program can run
+  the `main` of a library many times; round 2, `rev2_l01`), its `handle` is in `main` (or
+  in a scope body of it), `main` has no parameters, and no code names `main`; then no
+  second instance of the handler is live while one runs. Without it, a
+  recursive `run` that installs the handler again (`rev1_r03_recursive_rest_ok`,
+  `rev1_r04_recursive_a5_ok`) or a nested run of `install` through a function value
+  (`rev1_r05_nested_install_ok`) came into scope, and the fact oracle failed: the `multi`
+  resume of the outer instance copies the clause frame of the inner one, which holds the
+  closure value (issue #94), or A4 failed (the old gap of `r04d`). R-SITE keeps its
+  conditions for a handler of a `multi` effect only. R-REC (round 3 of the review, its
+  blocker) covers each handler, `once` or `multi`: no kont region if the `handle` of the
+  handler is in a function that can run again while it runs (`Inst::reentrant` of the
+  function that holds the site: a direct recursion, `Needs::recursive`; a function value
+  of the program that names it or a function that reaches it through direct calls; a
+  closure body that calls such a function). The first form took direct recursion only;
+  the check of the commit found a recursion through a function value (`rev4_v1_fnval`,
+  `let g = run; g(n - 1)`) and through a callee that runs one (`rev4_v2_helper`,
+  `apply(run, n - 1)`), which came into scope and failed A5. The handles of the targets:
+  `main` (c03 to c09), and functions that only `main` calls or that nothing calls
+  (`p5750`, `205_resume_runs`); none is named as a value or called from a closure. A `once` handler of a recursive `run` whose clause performs the effect of
+  the handler (it goes to the outer instance of the same static handler) came into scope,
+  and the clause oracle A5 failed (`rev3_o03`, `rev3_o06_n2`, `rev3_o09`); the direct
+  `resume` and the copy of R0k-c1 of main fail the same way (an old gap, issue #97). R-A5 counts the static
+  handlers of the program only, not the runtime handlers: a `multi` resume can copy a
+  `Frame::Timeout` or `Frame::Sim` marker in the copied rest (a `perform` inside
+  `with_timeout` or `sim.run` in the handled body, the review probes `s06`, `s07`: in
+  scope, the fact oracle passes, the engines agree).
+- The fact oracle: the `Resume` of a region is an op of the clause frame, so A4 checks the
+  clause frame across the region (the mutation `no_resume_region` fails A4 on
+  `t06_clause_ref_ok`), and a clause frame resumes only the continuation of its own
+  activation (the new check "fact oracle (kont region)").
+- Not built (cut; each row keeps the fallback, with no hole): Part B (a resume point in a
+  handled body inside the clause: `c08` twins, tier 2 `p7154`); Part C (a `multi` re-entry
+  of a kont region and a value in a `Vec`: `fd2_v2`, `fd2_v3`, which need the engine fix of
+  issue #94 and Z3 part b); Z4b (the runtime runs of `sim.run` and `with_timeout`:
+  `rr3_v19`, `rr3_v20`, both tiers); a dispatch in the kont mode.
+- The targets: `c03`, `c05`, `c06`, `c07`, `c09` (census rows 74 to 81, 84, 85): each bad
+  twin is rejected in scope (W0301 at the line of the old pipeline), each clean twin is in
+  scope with no error; tier 2 `m3a/p5750` is rejected in scope (W0301 at line 81, as the
+  old pipeline). The corpus program `tests/programs/205_resume_runs.wf` and its IR text.
+- Probes `tests/gate/probes/fixes/r0z4/`: `t01` to `t07` (bad and clean twins, refusal probes
+  `t02`, `t07`) and the review probes `rev_*` (the probes of `weft-work/z4rev/p` but `o01` and
+  `d_j2`, which fail A5 on main, issue #95). Tests: `analysis_units` `r0z4::` (the regions of
+  the targets, V21, the refusals, `q3`), `kont_copies::` (the refusal probes of R0k-c1 that
+  get a kont region now), `fact_oracle.rs` (the probes of `fixes/r0kc` and `fixes/r0z4` pass;
+  the mutation fails A4). The probes of round 1 of the review: `rev1_r03` (bad and clean
+  twins), `rev1_r03d_direct_ok` (the direct `resume`, in scope on main), `rev1_r04`,
+  `rev1_r05`; `r04d_direct_ok` of the review is not a probe of tier 1 (it fails A4 on main,
+  an old gap). The probes of round 2: `rev2_oc09`, `rev2_oc10`, `rev2_sc_k` (bad and clean
+  twins: R-MAKER), `rev2_l01_library_main_ok` (R-SITE in a library); the direct twins of the
+  review (`d_once_scope_resume_ok`, `sc_d_scope_then_run_ok`) are not probes of tier 1 (they
+  fail A3 on main, issue #96). The probes of round 3: `rev3_o03_once_rec_region` and
+  `rev3_o06_once_rec_outer_n2` (bad and clean twins), `rev3_o09_rec_n3_ok` (R-REC); and of the check of the commit: `rev4_v1_fnval`,
+  `rev4_v2_helper` (bad and clean twins), `rev4_v3_closure_ok`; the
+  direct twin `d_o03_direct_ok` and `o06c_copy_n2_ok` of the review are not probes of
+  tier 1 (they fail A5 on main, issue #97).
+- Gates (release binaries `z4/bin/weft-z4`, `weft-gate-z4`; main: the reports of Z6). Tier 1:
+  0 blockers (5822 programs with the 114 new files; 4363 same, 31 open, 410 fixed, 1
+  new-fp, 0 lost-fault, 159 lost-clean, 148 moved, 710 changed; Z6: 5708, 4257 same, 30 open, 408
+  fixed, 1 new-fp, 159 lost-clean, 147 moved, 706 changed). Against main only new files
+  change the counts: the two direct-resume twins `rev_d_a05_bad` and `rev_d_c03_bad` are
+  `fixed` (the old pipeline misses them, the `ir` pipeline of main rejects them), the
+  type-error probes `rev_a06`, `rev_a07` are `changed` (W0105, as main), `rev_w04` is `moved`
+  (W0313 at another line, as main; a ledger entry), `rev1_r05` is `changed` (W0314, as
+  main; a ledger entry), `rev2_l01` is `open` (open-old `R0z4-LIBRARY-MAIN`: it keeps the
+  fallback; the fault is an artifact of the runner, which runs the `main` of the library
+  with no function value). The rows of the targets stay `same`
+  (W0301 at the line of the old pipeline). The fact oracle of tier 1: 0 failures (1641 pass,
+  8 faults, 22 timeouts; Z6 1607 pass). Sigdiff tier 1: 0 rows with no entry (one new `sig`
+  entry: `c09_field` and four new probes). The interpreter sources change (the check of the
+  fact oracle at a `resume`), so the oracle caches of tier 1 (both engines, committed) and
+  of tier 2 (the `ir` engine) ran again.
+  Tier 2 (3 workers): 0 blockers (57393; 39869 same, 6 open, 92 fixed, 12 new-fp, 0
+  lost-fault, 3487 lost-clean, 1859 moved, 12068 changed: the counts of Z6); 54704 programs
+  in scope (Z6 54703: `m3a/p5750` comes into scope, rejected as before); 7 time-outs.
+- ev.sh (`weft-work/ev.sh`; main `z4/ev/ev-main.tsv`, `ev-main-new.tsv` and
+  `ev-main-new3.tsv`, `ev-main-new4.tsv`, `ev-main-new5.tsv`, Z4 `z4/ev/ev-z4e.tsv`; 3788
+  rows: the all-set of Z6, `fixes/r0kc`, `fixes/r0g`, `fixes/r0z4`, `mychk6`, `mychk4/p`,
+  `z4/p`, `z4rev/p`, `z4rev1/p`, all of `z4rev2/p` and `z4rev3/p`, the
+  directory `R2c`, `p5750`, `p7154`): HOLE 18 to 18 (the same rows, older than the stage),
+  no new HOLE, no new FP-IR on a clean program. 84 rows go from held to both-reject (the
+  bad twins in scope, and rows of the reviews that fault), 116 clean rows come into scope
+  with no error (the wide R-REC keeps `z4rev3/p/o07b_nested_region_ok` and
+  `o07c_nested_between_ok`, nested installs through function values, in the fallback, as
+  main), `z4rev1/p/m06_copy_chain_ok` goes from fb-reject to nofault (a false W0502
+  of the old pipeline), and 8 rows go from fb-reject to FP-IR (each one rejected by the old
+  pipeline too, with no fault in the runs of the oracle): five probes of round 2 of the
+  review (`mc01_two_closures_bad`, `my03_flip_first_bad`, `t01_multi_param_ref_bad`,
+  `t02_multi_param_in_closure` bad and ok: value-dependent, or a twin that is not clean, the
+  review says), `z4rev3/p/d02_drop_cont_multi_bad` (W0301 in both pipelines, no fault in the
+  run), and `p5750` (its W0301 is in a function that `main` does not call),
+  `tests/programs/205_resume_runs.wf` (no fault in `main`); No row in scope on main changes its
+  codes, and no row goes back to the fallback. `fo.sh` (the fact oracle and the memory
+  oracle, three configurations) on each of the 210 rows that leave the fallback: no failure
+  of the fact oracle (122 pass in each configuration; the other 88 fault only in the memory
+  oracle, or stop at an index out of bounds: the bad twins, and rows of the reviews that
+  fault).
+- The census (`check --reasons`, `weft-work/z4/census/`; main: the census of Z6,
+  `z6/census/t1-z6d.tsv`, `t2-z6d.tsv`): tier 1 173 fallbacks of 5822 files (main 128 of
+  5708): the 10 census rows of the stage leave it, and 55 of the 114 new files keep it (the
+  refusal probes of R-ROW-K, R-A5, R-AFTER, R-WAY, R-MAKER, R-NESTED, and the probes of
+  Part B and Z4b, which are not built). The census rows: 37 to 27.
+  Tier 2 (the 29 rows that keep the fallback or time out in the census of Z6): 22 to 21
+  fallbacks (`m3a/p5750` leaves it); no row in scope on main can change, because a kont
+  region is made only for a program whose constructs with no full facts are all
+  `KONT_CAPTURED` and whose facts without the copies find no error.
+- What I am least sure of: R-ROW-K, R-A5, R-SITE and R-REC are first cuts over the whole program
+  (a handler of another `multi` operation anywhere, any other handler for a `multi`
+  continuation, a `handle` of a `multi` effect outside `main`); they are wide, and they hold
+  only while issues #94 and #95 are open. The
+  check "fact oracle (kont region)" assumes that a clause frame is the frame just above its
+  `Frame::Clause` marker.
 
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):

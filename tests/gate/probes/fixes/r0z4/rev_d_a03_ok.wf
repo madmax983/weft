@@ -1,0 +1,18 @@
+// Direct twin of a03_loop_runs_ok.wf: a direct resume in the loop.
+// Z4 review (ok): a `multi` closure runs in a loop in the clause.
+effect Tick { multi fn tick() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            for i in 0..2 { resume(()) }
+            print(v.len())
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

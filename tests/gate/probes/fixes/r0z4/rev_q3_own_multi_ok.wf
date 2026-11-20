@@ -1,0 +1,24 @@
+// Z4 review (ok, Q3): the rest of the handled body performs h's own `multi` op again while the first
+// activation waits in its closure run. The second activation resumes two times. The first activation
+// holds k (a `ByRef` capture of its local `c`, and the `Kont` capture). If a resume of the second
+// activation copied the frame of the first, the engines would differ.
+effect Tick { multi fn tick() -> u64 }
+fn main() {
+    let n = handle Tick { fn tick() {
+            let c: Vec<u64> = Vec.new()
+            let k = |x: u64| {
+                let r = resume(x)
+                c.push(r)
+                r + 100
+            }
+            let a = k(1)
+            let b = k(2)
+            print(c)
+            a + b
+        } } in {
+        let x = tick()
+        let y = tick()
+        x * 10 + y
+    }
+    print(n)
+}

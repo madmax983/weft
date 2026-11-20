@@ -1,0 +1,22 @@
+// Z4 review (ok, Part B, #94): g is a local `multi` handler; its op runs after the resume point and
+// resumes two times, so the frame of g's handled body (with k and its `ByRef` capture of `c`) is copied.
+effect Tick { multi fn tick() }
+effect Pick { multi fn pick() -> bool }
+fn main() {
+    handle Tick { fn tick() {
+            handle Pick { fn pick() { resume(true); resume(false) } } in {
+                let c: Vec<u64> = Vec.new()
+                let k = || {
+                    resume(())
+                    print(c.len())
+                }
+                k()
+                let b = pick()
+                c.push(1)
+                k()
+            }
+        } } in {
+        tick()
+        print(9)
+    }
+}

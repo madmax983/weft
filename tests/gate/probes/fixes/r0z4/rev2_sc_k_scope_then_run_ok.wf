@@ -1,0 +1,18 @@
+// R2 sc (k: k = kont closure, d = direct resume; ok): multi; a run in a scope body, then post code, then a second run.
+effect Tick { multi fn tick() }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Tick { fn tick() {
+            let k = || resume(())
+            scope { s =>
+                k()
+            }
+            print(v.len())
+            k()
+        } } in {
+        let r = &v[0]
+        tick()
+        print(r + 1)
+    }
+}

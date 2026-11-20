@@ -1,0 +1,19 @@
+// Z4 review (ok, Z4b + Part B): with_timeout in the handled body of a local `Fail` handler of the
+// clause. The deadline cuts the rest (it sleeps); the local handler gets the timeout, and the clause
+// goes on with no resume value.
+effect Ask { fn ask() -> u64 }
+fn main() / clock {
+    let r = handle Ask {
+        fn ask() {
+            handle Fail { fn fail(m) { print("cut: {m}"); 7 } } in {
+                with_timeout(5.ms) { resume(1) }
+            }
+        }
+    } in {
+        let a = ask()
+        sleep(10.ms)
+        print("slept")
+        a + 1
+    }
+    print(r)
+}

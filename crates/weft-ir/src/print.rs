@@ -160,7 +160,7 @@ impl<'a> Printer<'a> {
             let bs: Vec<String> = r.blocks.iter().map(|b| format!("bb{}", b.0)).collect();
             let _ = writeln!(
                 out,
-                "region r{i}: body b{}, entry bb{}, env e{}, value {}, closure c{}{}{}{}, blocks [{}]",
+                "region r{i}: body b{}, entry bb{}, env e{}, value {}, closure c{}{}{}{}{}, blocks [{}]",
                 r.body.0,
                 r.entry.0,
                 r.env.0,
@@ -176,6 +176,7 @@ impl<'a> Printer<'a> {
                 r.env_local
                     .map(|l| format!(", env local _{}", l.0))
                     .unwrap_or_default(),
+                r.kont.map(|k| format!(", kont {k}")).unwrap_or_default(),
                 bs.join(", ")
             );
         }

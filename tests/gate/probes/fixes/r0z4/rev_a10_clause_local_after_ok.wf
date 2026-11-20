@@ -1,0 +1,18 @@
+// Z4 review (ok): the closure reads a local of the clause by reference before and after its resume.
+effect Tick { multi fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+            let c = Vec.new()
+            c.push(3)
+            let k = || {
+                print(c.len())
+                resume(())
+                print(c.len())
+            }
+            k()
+            k()
+        } } in {
+        tick()
+        print(9)
+    }
+}

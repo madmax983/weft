@@ -1,0 +1,16 @@
+// Z4 review (ok, R-AFTER): a `once` closure reads another capture after its resume.
+effect Tick { fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+            let c = Vec.new()
+            c.push(4)
+            let k = || {
+                resume(())
+                print(c.len())
+            }
+            k()
+        } } in {
+        tick()
+        print(1)
+    }
+}

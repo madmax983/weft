@@ -1,0 +1,14 @@
+// Z4 review (ok, R-NESTED): a handled body inside k resumes the continuation.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            let k = || {
+                handle Other { fn other() { resume(()) } } in { resume(()) }
+            }
+            k()
+        } } in {
+        tick()
+        print(1)
+    }
+}

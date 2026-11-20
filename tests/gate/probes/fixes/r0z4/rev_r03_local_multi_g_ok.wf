@@ -1,0 +1,21 @@
+// Z4 review (ok): Part B shape. The make and the runs are in the handled body of a local `multi` handler g
+// inside the clause. After the first run, g's handled body performs g's `multi` op, so g's handled
+// body frame (with the closure value) is copied. The second run of k must resume the continuation of the copy.
+effect Tick { multi fn tick() -> u64 }
+effect Pick { multi fn pick() -> bool }
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    let n = handle Tick { fn tick() {
+            handle Pick { fn pick() { resume(true); resume(false) } } in {
+                let k = |x: u64| resume(x)
+                let b = pick()
+                if b { k(1) } else { k(2) }
+            }
+        } } in {
+        let a = tick()
+        out.push(a)
+        a
+    }
+    print(out)
+    print(n)
+}

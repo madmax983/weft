@@ -1,0 +1,15 @@
+// Z4 review (ok, R-WAY): the closure goes through a `Vec` (a heap slot); no `multi` op of another handler.
+effect Tick { multi fn tick() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Tick { fn tick() {
+            let vs: Vec<fn()> = Vec.new()
+            vs.push(|| resume(()))
+            let k = vs[0]
+            k()
+        } } in {
+        tick()
+        print(v.len())
+    }
+}

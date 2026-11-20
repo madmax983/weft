@@ -1,0 +1,27 @@
+// R-ROW-K escape with no direct recursion: `install` holds h; main runs install inside the
+// handled body of another run of install through a function value. The inner rest performs
+// `choose` of the outer instance through a captured capability (issue #94).
+effect E { multi fn get() -> u64, multi fn choose() -> bool }
+fn install(body: fn(fn() -> u64, fn() -> bool)) {
+    handle E {
+        fn get() {
+            let k = |x: u64| resume(x)
+            k(1)
+            k(2)
+        }
+        fn choose() { resume(true); resume(false) }
+    } in {
+        body(|| get(), || choose())
+    }
+}
+fn main() {
+    install(|g: fn() -> u64, c: fn() -> bool| {
+        install(|g2: fn() -> u64, c2: fn() -> bool| {
+            let w: Vec<u64> = Vec.new()
+            let x = g2()
+            let b = c()
+            w.push(if b { x } else { x + 10 })
+            print(w)
+        })
+    })
+}
