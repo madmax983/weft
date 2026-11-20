@@ -1,0 +1,19 @@
+// Plan stage R0z Z8, part (c).
+// f1 goes to an outer local in the first run of the handled body. In the
+// second run, g runs it: the handler of the first run ended.
+effect Note { fn note(x: u64) }
+fn main() {
+    let keep = || print(0)
+    let i = 0
+    while i < 2 {
+        handle Note { fn note(x) { print(x); resume(()) } } in {
+            if i == 0 {
+                keep = || note(5)
+            } else {
+                let g = || { keep() }
+                g()
+            }
+        }
+        i += 1
+    }
+}

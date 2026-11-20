@@ -1,0 +1,24 @@
+// weft: library
+// Plan stage R0z Z8, part (a).
+// Library mode: a public function gets a function value from its caller,
+// and the inner clause gives back that value or its own closure. The
+// handled body gives the value back to the caller.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+pub fn go(g: fn()) -> fn() {
+    handle GN {
+        fn get() { resume(g) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            f()
+            f
+        }
+    }
+}

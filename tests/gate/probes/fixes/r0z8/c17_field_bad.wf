@@ -1,0 +1,13 @@
+// Plan stage R0z Z8, part (c).
+// g runs f1, which is in a struct field. g goes to an outer local.
+effect Note { fn note(x: u64) }
+struct S { f: fn() }
+fn main() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let s = S { f: || note(5) }
+        let g = || { let k = s.f; k() }
+        keep = g
+    }
+    keep()
+}

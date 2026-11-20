@@ -1,0 +1,16 @@
+// Plan stage R0z Z8, part (c).
+// The closure g runs f1 through `twice`. A callee keeps g in a struct that
+// the handled body runs.
+effect Note { fn note(x: u64) }
+struct Box1 { f: fn() }
+fn twice(f: fn()) { f(); f() }
+fn wrap(f: fn()) -> Box1 { Box1 { f: f } }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let f1 = || note(5)
+        let g = || { twice(f1) }
+        let b = wrap(g)
+        let k = b.f
+        k()
+    }
+}

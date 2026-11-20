@@ -1,0 +1,14 @@
+// Plan stage R0z Z8, part (c).
+// g runs f1. The clause of an outer handler keeps g and runs it after its
+// `resume`, when the handled body of `Note` has ended.
+effect Note { fn note(x: u64) }
+effect Give { fn give(f: fn()) }
+fn main() {
+    handle Give { fn give(f) { resume(()); f() } } in {
+        handle Note { fn note(x) { print(x); resume(()) } } in {
+            let f1 = || note(5)
+            let g = || { f1() }
+            give(g)
+        }
+    }
+}

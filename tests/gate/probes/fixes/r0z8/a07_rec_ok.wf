@@ -1,0 +1,25 @@
+// Plan stage R0z Z8, part (a).
+// A recursive function installs the inner handler. Each level runs the
+// closure that its inner clause gives back.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+fn level(n: u64) / GN {
+    handle GN {
+        fn get() { resume(|| note(n)) }
+        fn note(x) { print("inner", x); resume(()) }
+    } in {
+        let f = get()
+        f()
+        if n > 0 { level(n - 1) }
+    }
+}
+fn main() {
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        level(2)
+    }
+}

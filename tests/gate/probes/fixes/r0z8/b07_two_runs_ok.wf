@@ -1,0 +1,15 @@
+// Plan stage R0z Z8, part (b).
+// Two nodes run the `multi` clause; a write follows each of them.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || log("y")
+        f()
+        f = || print(1)
+    }
+    f()
+}

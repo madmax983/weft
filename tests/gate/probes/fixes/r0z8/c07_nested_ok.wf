@@ -1,0 +1,14 @@
+// Plan stage R0z Z8, part (c).
+// The closure g runs f1. An inner handler of the same effect is active
+// where g runs; f1 performs to the outer handler (lexical).
+effect Note { fn note(x: u64) }
+fn main() {
+    handle Note { fn note(x) { print("outer", x); resume(()) } } in {
+        let f1 = || note(5)
+        let g = || { f1() }
+        handle Note { fn note(x) { print("inner", x); resume(()) } } in {
+            g()
+            note(1)
+        }
+    }
+}

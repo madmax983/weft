@@ -1,0 +1,19 @@
+// Plan stage R0z Z8, part (b).
+// An outer `multi` handler runs the rest of its handled body two times.
+// `f` is a local of the outer handled body; the inner `multi` handler sees
+// a write of `f` after each run of its clause.
+effect Log { multi fn log(msg: String) }
+effect P { multi fn pick() -> bool }
+fn main() {
+    handle P { fn pick() { resume(true); resume(false) } } in {
+        let f = || print(0)
+        handle Log { fn log(m) { resume(())
+            resume(()) } } in {
+            f = || log("x")
+            f()
+            let b = pick()
+            f = || print(1)
+        }
+        f()
+    }
+}

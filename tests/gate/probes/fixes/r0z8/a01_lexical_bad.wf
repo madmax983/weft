@@ -1,0 +1,25 @@
+// Plan stage R0z Z8, part (a).
+// The closure that the inner clause gives back performs `note` of the
+// outer handler. The handled body keeps it in a local of `main`, and `main`
+// runs it after the outer `handle`.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+fn main() {
+    let keep = || print(0)
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            f()
+            keep = f
+        }
+    }
+    keep()
+}

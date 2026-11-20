@@ -1,0 +1,14 @@
+// Plan stage R0z Z8, part (c).
+// A recursive function installs the handler. Each level makes f1 and g;
+// g runs f1, and the next level gets g as a function value and runs it.
+effect Note { fn tell(x: u64) }
+fn go(n: u64, k: fn()) {
+    handle Note { fn tell(x) { print(x); resume(()) } } in {
+        let f1 = || tell(n)
+        let g = || { f1() }
+        k()
+        g()
+        if n > 0 { go(n - 1, g) }
+    }
+}
+fn main() { go(2, || print(0)) }

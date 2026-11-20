@@ -1,0 +1,12 @@
+// Plan stage R0z Z8, part (c).
+// The closure g runs f1. The handled body gives g back, and main runs it
+// after the `handle`.
+effect Note { fn note(x: u64) }
+fn main() {
+    let h = handle Note { fn note(x) { print(x); resume(()) } } in {
+        let f1 = || note(5)
+        let g = || { f1() }
+        g
+    }
+    h()
+}

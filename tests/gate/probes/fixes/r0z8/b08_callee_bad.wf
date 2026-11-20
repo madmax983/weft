@@ -1,0 +1,16 @@
+// Plan stage R0z Z8, part (b).
+// A callee runs `f`, which performs the `multi` operation. No write follows
+// on one path.
+effect Log { multi fn log(msg: String) }
+fn run(g: fn()) { g() }
+fn main() {
+    let c = false
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        run(f)
+        if c { f = || print(1) }
+    }
+    f()
+}

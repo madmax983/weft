@@ -1,0 +1,23 @@
+// Plan stage R0z Z8, part (a).
+// The form of g2_lexical: a closure that a clause of the inner handler
+// makes performs `note` of the outer handler (handlers are lexical). The
+// handled body runs it while the inner handler is active.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+fn main() {
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            f()
+            note(2)
+        }
+    }
+}

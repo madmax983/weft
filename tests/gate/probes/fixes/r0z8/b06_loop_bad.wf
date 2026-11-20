@@ -1,0 +1,19 @@
+// Plan stage R0z Z8, part (b).
+// A loop in the handled body: a `break` after the run of `f` skips the
+// new value, so `f` keeps the closure that performs `log`.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    let i = 0
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        while i < 2 {
+            f = || log("x")
+            f()
+            if i == 0 { break }
+            f = || print(1)
+            i += 1
+        }
+    }
+    f()
+}

@@ -1,0 +1,22 @@
+// Plan stage R0z Z8, part (a).
+// The inner handler has no clause for `note`: it passes `note` on to
+// the outer handler. The closure of the inner clause performs `note` of the
+// outer handler too.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+effect G2 { fn get() -> fn() }
+fn main() {
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle G2 {
+            fn get() { resume(|| note(1)) }
+        } in {
+            let f = G2.get()
+            f()
+        }
+    }
+}

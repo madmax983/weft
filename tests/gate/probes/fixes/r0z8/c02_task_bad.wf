@@ -1,0 +1,13 @@
+// Plan stage R0z Z8, part (c).
+// The closure g runs f1, which performs `Note`. A task runs g: the task has
+// no handler of `Note`.
+effect Note { fn note(x: u64) }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let f1 = || note(5)
+        let g = || { f1() }
+        scope { s =>
+            s.spawn(|| g())
+        }
+    }
+}

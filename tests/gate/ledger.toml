@@ -11498,3 +11498,64 @@ files = [
 finding = "R0z4-LIBRARY-MAIN"
 reason = "plan stage R0z Z4 (a probe of round 2 of the review, R-SITE in a library): a library whose `pub fn main(f)` holds the `handle` of a `multi` effect. The run of the closure gets no kont region (R-SITE needs a binary and a `main` with no parameters), so the program keeps the D1 fallback, as with main, and both pipelines accept it. The fault of the gate is an artifact of the runner: it runs `main` with no function value (\"this value cannot be called\"); the program is clean"
 stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/206_handler_env_leftovers.wf",
+]
+codes = ["W0301"]
+reason = "plan stage R0z Z8: the corpus program of the stage. Both pipelines give W0313 at lines 38, 69 and 91 (a closure that performs leaves its handler through a local of the function). The old pipeline also gives W0301 at line 96 (the run of `keep` after the `handle`; the marker `old:`); the `ir` pipeline gives the W0313 only, as for the other escapes of a closure of a local handler"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z8/a06_callee_bad.wf",
+    "tests/gate/probes/fixes/r0z8/b01_stop_once_bad.wf",
+    "tests/gate/probes/fixes/r0z8/b05_stop_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c01_vec_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c04_ret_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c05_callee_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c09_rec_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c10_two_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c16_fnparam_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c18_deep_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c21_rec_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c24_lib_bad.wf",
+]
+codes = ["W0204", "W0301", "W0313", "W0701", "W0805"]
+reason = "plan stage R0z Z8: bad twins of the probes of the stage. Each one faults (a closure performs with no handler), and both pipelines reject it with W0313 at the `handle` that the closure leaves. The old pipeline also gives W0301 (the run of the kept closure after the end of its handler) or W0204, and gives W0313 at a second line in `a06` (the callee `take`); the `ir` pipeline gives W0313 two times at the `handle` of `b01`, `b05` (the local `f` keeps the closure, and the body gives it to a clause), and W0805 or W0701 for the row of a function that the closure performs through (`c09`, `c21`, `c24`)"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0z8/a12_outer_keep_bad.wf",
+]
+finding = "R0z8-OUTER-KEEP"
+reason = "plan stage R0z Z8 (a probe of part a): the inner handler has no clause for `keep`, so the outer clause of `keep` gets the closure that the inner clause gave back, and runs it after its `resume`, when the outer handled body has ended. The program keeps the fallback (a capability that leaves its handler), as with main, and the old pipeline misses the fault: an old hole of the old pipeline (issue #78)"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "named", "raises", "reaches", "ret", "ret_refs"]
+files = [
+    "tests/gate/probes/fixes/r0z8/c09_rec_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c20_timeout_ok.wf",
+    "tests/gate/probes/fixes/r0z8/c21_rec_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c24_lib_bad.wf",
+    "tests/programs/206_handler_env_leftovers.wf",
+]
+reason = "plan stage R0z Z8: the programs leave the fallback, so their signatures are those of the `ir` inference. `c09`, `c21`, `c24` (rejected by both pipelines): the function gives back a closure that performs `Note` through the capability of its own local handler, and the `ir` inference names `Note` in the row (the old inference gives no effect: it reads the escape as a W0313 only). `c20`: the block of `with_timeout` is not `Async` in the `ir` inference, and the failure of the deadline is in the row (`Fail`), not a `raises`. `206`: the old inference marks the functions of the corpus program `multi` (a `multi` operation of the program), and the `ir` inference finds no `multi` point of a handler of a caller"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "op_fns", "repeats", "task_runs"]
+files = [
+    "tests/gate/probes/fixes/r0z8/c25_dead_closure_bad.wf",
+    "tests/gate/probes/fixes/r0z8/c26_dead_capture_bad.wf",
+]
+reason = "plan stage R0z Z8 (R-DEAD, the review of Z8, round 2): the form of `z7rev1/p/k4_two` with an unrelated dead closure (`c26`: a closure that code runs captures it). The callees `w` and `w2` give a function value to `run` through their row, and their calls have copies (stage R0k-a), so their summaries have the weak C2 form (`multi`, `op_fns`, `task_runs`, `repeats`), as for `fixes/r0k/rv_p04_c2_multi` and the probes `k1`, `k2` of Z7; the old inference does not mark them `multi`"
+stage = "R0z"

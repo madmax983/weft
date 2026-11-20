@@ -1,0 +1,16 @@
+// Plan stage R0z Z8, part (b).
+// The bad twin of d02_multi_weak: a `multi` continuation, and the rest of
+// the handled body gives `f` a new value on one path only. `f` can keep the
+// closure that performs `log`, and `main` runs it after the `handle`.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let c = false
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        if c { f = || print(1) }
+    }
+    f()
+}

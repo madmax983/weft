@@ -1,0 +1,16 @@
+// Plan stage R0z Z8, part (b).
+// Two nodes run the `multi` clause. The second one runs a closure that
+// performs `log`, and no write follows it: `f` keeps that closure, and
+// `main` runs it after the `handle`.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || log("y")
+        f()
+    }
+    f()
+}

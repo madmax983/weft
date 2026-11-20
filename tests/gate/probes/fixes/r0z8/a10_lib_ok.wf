@@ -1,0 +1,21 @@
+// weft: library
+// Plan stage R0z Z8, part (a).
+// Library mode: the form of g2_lexical in a public function.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+pub fn go() {
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            f()
+        }
+    }
+}

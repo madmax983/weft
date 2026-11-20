@@ -1233,6 +1233,8 @@ fn flow_refs(
 /// What [`main`] needs to know about the call besides σ.
 #[derive(Clone, Debug)]
 pub struct Site<'a> {
+    /// The body of the run node.
+    pub body: BodyId,
     /// The name of the callee, for the argument sites.
     pub callee: &'a str,
     /// The span of each argument.
@@ -1414,14 +1416,29 @@ pub fn main(
             // R0d): the closure body performs through its own capture, so
             // its summary does, and the node that runs it runs the clause.
             CapIface::Cap(k) => {
+                let mut maker = false;
                 let mut own: Vec<u32> = s
                     .captures
                     .get(k as usize)
                     .into_iter()
                     .flatten()
-                    .filter_map(|&q| super::clause::env_cap_of(cx.p, cx.facts, cx.roots, q))
-                    .map(|(_, j)| j)
+                    .filter_map(|&q| {
+                        super::clause::env_cap_of(cx.p, cx.facts, cx.roots, q)
+                            .map(|(_, j)| j)
+                            .or_else(|| {
+                                let j = super::clause::maker_cap_of(
+                                    cx.p, cx.facts, cx.roots, site.body, q,
+                                );
+                                maker |= j.is_some();
+                                j
+                            })
+                    })
                     .collect();
+                // A capture of a capability of the maker (plan stage R0z Z8,
+                // part c): its clause runs are `maker` runs (R-DEAD).
+                if maker && !own.is_empty() {
+                    cx.hx.maker_cap_nodes.insert(n);
+                }
                 own.sort_unstable();
                 own.dedup();
                 for j in own {

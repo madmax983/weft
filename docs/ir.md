@@ -3617,6 +3617,11 @@ after a `resume`):
   site joins its value at the resume point, as before (the weak update). The strong update
   lets the escape check see that a closure that performs through the handler does not
   stay in the local (`fixes/r0g/d4_reassigned_ok`).
+- As built (plan stage R0z Z8): the strong update applies to a `multi` continuation too.
+  Each run of the rest (also a re-entry) starts after a node that runs a clause and ends
+  at the end of the handled body, and a re-entry copies the frames of the handled body and
+  of its callees, not the cell of a local of the site. A `multi` continuation in a program
+  with another handler (any handler of the program) keeps the weak update (the clause oracle A5, issue #95).
 
 As built (plan stage R0h: function values and references across operations):
 

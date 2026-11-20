@@ -1,0 +1,10 @@
+// Plan stage R0z Z8, part (c).
+// g runs f1, which performs `tell`. `with_timeout` runs a block that runs g.
+effect Note { fn tell(x: u64) }
+fn main() {
+    handle Note { fn tell(x) { print(x); resume(()) } } in {
+        let f1 = || tell(5)
+        let g = || { f1() }
+        let r = with_timeout(10.ms) { g() }
+    }
+}

@@ -1,0 +1,13 @@
+// Plan stage R0z Z8, part (c).
+// g runs f1. A function of the program gets g and gives it back, and main
+// runs it after the `handle`.
+effect Note { fn note(x: u64) }
+fn pass(f: fn()) -> fn() { f }
+fn main() {
+    let h = handle Note { fn note(x) { print(x); resume(()) } } in {
+        let f1 = || note(5)
+        let g = || { f1() }
+        pass(g)
+    }
+    h()
+}
