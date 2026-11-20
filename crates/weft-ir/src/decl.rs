@@ -130,6 +130,13 @@ pub struct CopyRegion {
     /// [`CopyRegion::env_local`], so its code is the code of a run of each of
     /// them. Empty if the value is always [`CopyRegion::closure`].
     pub also: Vec<ClosureId>,
+    /// A kont region (plan stage R0z Z4): the index of the `Kont` capture of
+    /// [`CopyRegion::closure`] that the region reads through
+    /// [`CopyRegion::env_local`]. The `resume` of the closure body is a
+    /// `Resume` of that field of the environment local in the region: a
+    /// resume point of the clause that made the closure. `None` for another
+    /// region.
+    pub kont: Option<u32>,
 }
 
 impl CopyRegion {

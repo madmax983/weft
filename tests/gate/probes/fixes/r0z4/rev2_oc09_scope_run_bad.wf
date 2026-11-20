@@ -1,0 +1,22 @@
+// R2 c09_scope_run once (bad).
+effect Tick { fn tick() }
+struct Holder { f: fn(), n: u64 }
+fn helper(w: &Vec<i64>) { print(w.len()) }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let k = || resume(())
+            scope { s =>
+                k()
+            }
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

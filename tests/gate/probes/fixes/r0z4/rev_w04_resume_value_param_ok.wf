@@ -1,0 +1,21 @@
+// Z4 review (ok, R-WAY): activation 1 of the clause gives its closure k1 to the handled body as the
+// resume value; the handled body gives it back to activation 2 as the argument. Activation 2 runs it:
+// that resumes the continuation of activation 1, not of activation 2. Same maker body, other activation.
+effect Tick { multi fn tick(f: fn() -> u64) -> fn() -> u64 }
+fn zero() -> u64 { 0 }
+fn main() {
+    let w: Vec<u64> = Vec.new()
+    let n = handle Tick { fn tick(f: fn() -> u64) {
+            let a = f()
+            let k = || { let g = resume(zero); 7 }
+            resume(k)
+        } } in {
+        let g = tick(zero)
+        w.push(1)
+        let h = tick(g)
+        w.push(2)
+        print(w)
+        g
+    }
+    print(w)
+}

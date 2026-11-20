@@ -1,0 +1,13 @@
+// Z4 review (ok, Z4b): sim.run; the clause reads its reference parameter after the block. (`w` is outside the handled body.)
+effect Tick { fn tick(r: &u64) }
+fn main() / clock {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        print(w.len())
+    }
+}

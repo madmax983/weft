@@ -1461,7 +1461,7 @@ fn a_copy_region_that_runs_with_the_handlers_of_the_run_node_fails_a5() {
 #[test]
 fn the_probes_of_the_copy_regions_pass_the_fact_oracle() {
     let mut checked = 0;
-    for d in ["r0kb1", "r0k3", "r0kb2", "r0z6"] {
+    for d in ["r0kb1", "r0k3", "r0kb2", "r0z6", "r0kc", "r0z4"] {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/gate/probes/fixes")
             .join(d);
@@ -1556,4 +1556,35 @@ fn a_dispatch_whose_arms_test_other_closures_fails_the_fact_oracle() {
             "{name}: {m}"
         );
     }
+}
+
+/// Removes the `lends_mut` and `releases_at` facts at the `resume` nodes:
+/// the region of the rest of the handled body.
+fn no_resume_region(f: &mut FnFacts) {
+    let resume: Vec<bool> = f.nodes.iter().map(|n| n.kind == "resume").collect();
+    let keep = |n: weft_facts::NodeId| !resume.get(n.index()).copied().unwrap_or(false);
+    f.lends_mut.retain(|&(n, _)| keep(n));
+    f.releases_at.retain(|&(n, _)| keep(n));
+}
+
+/// A4 at a kont region (plan stage R0z Z4), the mutation. The `Resume` of the
+/// region is a terminator of the clause body, so the clause frame waits there
+/// while the rest of the handled body runs, and A4 checks each reference of
+/// the clause frame across the region. In `t06_clause_ref_ok` the parameter
+/// `e` of the clause points into a local of the handled body, which the rest
+/// frees. With no region at the `resume` nodes the oracle fails A4.
+#[test]
+fn a_kont_region_with_no_region_of_its_resume_fails_a4() {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0z4")
+        .join("t06_clause_ref_ok.wf");
+    let c = check(&fs::read_to_string(&p).unwrap());
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(r.is_ok(), "{:?}", r.err().map(|e| e.message));
+    let m = match run_main_with_facts(&c, &opts(), no_resume_region) {
+        Ok(_) => panic!("the facts with no region at the resume pass"),
+        Err(e) => e.message,
+    };
+    assert!(m.contains("A4"), "{m}");
 }

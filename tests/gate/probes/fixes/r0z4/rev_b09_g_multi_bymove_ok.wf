@@ -1,0 +1,23 @@
+// Z4 review (ok, Part B, #94): g is a local `multi` handler inside the clause. k moves its capture `s`
+// (a `ByMove` cell of the closure value). g's op runs between the make and the run and resumes two
+// times: each copy of g's handled body runs k once. The cell of `s` must be a cell of each copy.
+effect Tick { fn tick() }
+effect Pick { multi fn pick() -> bool }
+fn take(s: Vec<u64>) { print(s.len()) }
+fn main() {
+    handle Tick { fn tick() {
+            handle Pick { fn pick() { resume(true); resume(false) } } in {
+                let s: Vec<u64> = Vec.new()
+                s.push(1)
+                let k = || {
+                    take(s)
+                    resume(())
+                }
+                let b = pick()
+                k()
+            }
+        } } in {
+        tick()
+        print(9)
+    }
+}

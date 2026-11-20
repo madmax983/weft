@@ -1,0 +1,11 @@
+// Plan stage R0z Z4 (ok): a closure of a `once` continuation runs one time on each path.
+effect Tick { fn tick(b: bool) }
+fn main() {
+    handle Tick { fn tick(b) {
+            let k = || resume(())
+            if b { k() } else { k() }
+        } } in {
+        tick(true)
+        print(1)
+    }
+}

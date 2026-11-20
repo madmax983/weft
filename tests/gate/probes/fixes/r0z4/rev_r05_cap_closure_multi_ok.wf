@@ -1,0 +1,25 @@
+// Z4 review (ok, R-ROW-K escape): the function of the handle has no `Choice` in its row, but the rest of
+// the handled body runs a closure that performs `choose` through a captured capability. The copy of the
+// frames at `choose` copies the clause frame while it waits at its first run of k.
+effect Choice { multi fn choose() -> bool }
+effect Tick { multi fn tick() }
+fn run(f: fn() -> bool) {
+    let w: Vec<u64> = Vec.new()
+    handle Tick {
+        fn tick() {
+            let k = || resume(())
+            k()
+            k()
+        }
+    } in {
+        tick()
+        let c = f()
+        w.push(if c { 1 } else { 2 })
+        print(w)
+    }
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        run(|| choose())
+    }
+}

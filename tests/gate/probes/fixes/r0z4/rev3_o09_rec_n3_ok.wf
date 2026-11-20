@@ -1,0 +1,24 @@
+// z4rev3 (ok): o03 with the depth 3 and the perform in the closure body before the resume (no statement between).
+effect Tick { fn tick() }
+fn run(n: u64) {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            if n > 0 { tick() }
+            let k = || resume(())
+            let w = 0
+            k()
+            let z = v.len()
+        } } in {
+        if n > 0 { run(n - 1) }
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}
+fn main() {
+    handle Tick { fn tick() { resume(()) } } in { run(3) }
+}

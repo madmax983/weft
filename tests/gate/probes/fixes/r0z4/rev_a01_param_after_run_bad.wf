@@ -1,0 +1,14 @@
+// Z4 review (bad): the clause reads its reference parameter after the run; the rest clears `w` (outside the handled body).
+effect Tick { fn tick(r: &u64) }
+fn main() {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            let k = || resume(())
+            k()
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        w.clear()
+    }
+}

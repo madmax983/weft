@@ -1,0 +1,19 @@
+// Z4 review (bad): the clause runs the closure through a shared borrow `r`; the clause clears `v` after.
+effect Tick { multi fn tick() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let k = || resume(())
+            let r = &k
+            r()
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

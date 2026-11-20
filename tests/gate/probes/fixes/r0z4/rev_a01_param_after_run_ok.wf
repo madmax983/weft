@@ -1,0 +1,14 @@
+// Z4 review (ok): as a01 bad, but the rest does not free `w`. (`w` is outside the handled body.)
+effect Tick { fn tick(r: &u64) }
+fn main() {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            let k = || resume(())
+            k()
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        print(w.len())
+    }
+}

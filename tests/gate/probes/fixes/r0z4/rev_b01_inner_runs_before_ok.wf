@@ -1,0 +1,15 @@
+// Z4 review (ok, R-INNER): the handled body of g performs g's op before the resume point.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                let k = || resume(())
+                other()
+                k()
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

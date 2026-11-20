@@ -1,0 +1,18 @@
+// Z4 review (ok, R-INNER escape): k itself performs g's op before its resume (a `Cap` capture of g).
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { print(2) } } in {
+                let k = || {
+                    other()
+                    resume(())
+                }
+                k()
+            }
+            print(3)
+        } } in {
+        tick()
+        print(1)
+    }
+}

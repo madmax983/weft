@@ -1,0 +1,31 @@
+// The bad twin of r03: the inner clause clears `v` after its two runs of k, while
+// `keep = &v[0]` of the rest is live after the `handle` (W0301).
+effect E { multi fn get() -> u64, multi fn choose() -> bool }
+fn run(n: u64, f: fn() -> bool) {
+    let u: Vec<u64> = Vec.new()
+    u.push(7)
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle E {
+        fn get() {
+            let k = |x: u64| resume(x)
+            k(1)
+            k(2)
+            v.clear()
+        }
+        fn choose() { resume(true); resume(false) }
+    } in {
+        if n > 0 {
+            run(n - 1, || choose())
+        } else {
+            let x = get()
+            let c = f()
+            keep = &v[0]
+        }
+    }
+    print(keep + 1)
+}
+fn main() {
+    run(1, || true)
+}

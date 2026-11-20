@@ -1,0 +1,13 @@
+// Z4 review (ok, R-WAY): the closure goes through a callee that gives it back (a `Source::Call` leaf).
+effect Tick { multi fn tick() }
+fn id(f: fn()) -> fn() { f }
+fn main() {
+    handle Tick { fn tick() {
+            let k = || resume(())
+            let k2 = id(k)
+            k2()
+        } } in {
+        tick()
+        print(1)
+    }
+}

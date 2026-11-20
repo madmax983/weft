@@ -1,0 +1,18 @@
+// Z4 review (bad): a `multi` closure runs in a loop in the clause; the clause clears `v` after.
+effect Tick { multi fn tick() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            let k = || resume(())
+            for i in 0..2 { k() }
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

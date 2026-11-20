@@ -1,0 +1,19 @@
+// Z4 review (ok, #79 join): two runs of a `multi` closure; the rest gives a reference of the handled
+// body to an operation of an outer clause that reads it.
+effect Tick { multi fn tick() }
+effect Look { fn look(r: &u64) }
+fn main() {
+    handle Look { fn look(r: &u64) { print(r + 0); resume(()) } } in {
+        handle Tick { fn tick() {
+                let k = || resume(())
+                k()
+                k()
+            } } in {
+            let w = Vec.new()
+            w.push(3)
+            tick()
+            look(&w[0])
+            print(w.len())
+        }
+    }
+}

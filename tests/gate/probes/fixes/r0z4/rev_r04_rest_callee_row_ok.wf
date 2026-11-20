@@ -1,0 +1,23 @@
+// Z4 review (ok, R-ROW-K (b)): the rest of the handled body calls a function that performs a `multi`
+// op of a handler of a caller (through the row).
+effect Choice { multi fn choose() -> bool }
+effect Tick { multi fn tick() }
+fn pickit() -> bool / Choice { choose() }
+fn run() / Choice {
+    let w: Vec<u64> = Vec.new()
+    handle Tick {
+        fn tick() {
+            let k = || resume(())
+            k()
+            k()
+        }
+    } in {
+        tick()
+        let c = pickit()
+        w.push(if c { 1 } else { 2 })
+        print(w)
+    }
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in run()
+}

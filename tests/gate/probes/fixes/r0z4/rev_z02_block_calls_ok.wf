@@ -1,0 +1,14 @@
+// Z4 review (ok, not a resumer): the block calls a function before its resume.
+effect Ask { fn ask() -> u64 }
+fn note() { print("note") }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            with_timeout(50.ms) { note(); resume(1) }
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

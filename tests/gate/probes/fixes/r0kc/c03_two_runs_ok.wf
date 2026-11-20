@@ -1,4 +1,4 @@
-// Plan stage R0k-c1 (ok): the closure runs two times: no copy, the program keeps the fallback.
+// Plan stage R0k-c1 (ok): the closure runs two times: no copy of R0k-c1. Plan stage R0z Z4 gives the run a kont region, and the `ir` pipeline checks the program.
 // The clean twin: the clause does not clear `v`.
 effect Tick { multi fn tick() }
 fn main() {

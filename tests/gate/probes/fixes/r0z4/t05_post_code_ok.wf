@@ -1,0 +1,15 @@
+// Plan stage R0z Z4 (ok): the closure has code before and after its resume, and it runs two times.
+effect Tick { multi fn tick() -> u64 }
+fn main() {
+    let w: Vec<u64> = Vec.new()
+    handle Tick { fn tick() {
+            let k = |x: u64| { print(x); let y = resume(x); print(y); y }
+            let a = k(1)
+            k(a)
+        } } in {
+        let t = tick()
+        w.push(t)
+        t + 1
+    }
+    print(w)
+}

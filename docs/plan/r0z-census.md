@@ -162,6 +162,26 @@ the counts.
   value of the review); no row of the census and no other row of the tiers changes.
 - Tier 2 has no row of the stage: 22 fallbacks, as main.
 
+## Z4 (as built)
+
+- Z4 closed 10 rows of tier 1 (rows 74 to 81, 84 and 85; 37 to 27 fallbacks of the census
+  rows): the run of the closure gets a kont region (a copy region that reads the
+  continuation of the clause through its environment local, so the `resume` of the closure
+  is a resume point of the clause; `docs/plan/core-ir.md`, "Z4 as built"). The bad twins of
+  `c03`, `c05`, `c06`, `c07` and `c09` are rejected in scope (W0301, as the old pipeline);
+  the clean twins are in scope with no error.
+- Tier 2: row 23 (`m3a/p5750`) is rejected in scope (W0301 at line 81, as the old pipeline);
+  22 to 21 fallbacks.
+- The rows that stay: 82 and 83 (`c08_nested`) and tier 2 row 24 (`m3a/p7154`): a resume
+  point in a handled body inside the clause (Part B) is not built; 86 and 87 (`fd2_v2`,
+  `fd2_v3`, both tiers): a `multi` operation of another handler (R-ROW-K, the IR engine
+  keeps the old continuation record in a copied frame, issue #94) and a value in a `Vec`
+  (Z3 part b); 88 and 89 (`rr3_v19`, `rr3_v20`, both tiers): the runtime runs of Z4b are
+  not built. Each keeps the fallback: the old pipeline rejects the bad ones, so no hole.
+- Tier 1: 173 fallbacks of 5822 files (main 128 of 5708): the 10 rows above leave it, and
+  55 of the 114 new files keep it (the refusal probes of `fixes/r0z4`, and its probes of
+  Part B and Z4b). Tier 2: 21 fallbacks (main 22).
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -267,18 +287,18 @@ the counts.
 | 71 | `fixes/r0kb2/a01_two_paths_ok.wf` | C2 | form 2 with two values (clean twin) | clean | no fault | clean | no | Z6 (closed) |
 | 72 | `fixes/r0kb2/a03_put_fns_bad.wf` | C2 | a borrow of the local of the way: `put_fns` writes the field before the run | W0301 | fault | rejected | yes | Z6 (open: part C is cut; a later stage) |
 | 73 | `fixes/r0kb2/a03_put_fns_ok.wf` | C2 | a borrow of the local of the way (clean twin) | clean | no fault | clean | yes | Z6 (open: part C is cut; a later stage) |
-| 74 | `fixes/r0kc/c03_two_runs_bad.wf` | D1 | D1a refusal: two runs | W0301 | fault | rejected | yes | Z4 |
-| 75 | `fixes/r0kc/c03_two_runs_ok.wf` | D1 | D1a refusal: two runs (clean twin) | clean | no fault | clean | yes | Z4 |
-| 76 | `fixes/r0kc/c05_perform_between_bad.wf` | D1 | D1a refusal: a perform between the make and the run | W0301 | fault | rejected | yes | Z4 |
-| 77 | `fixes/r0kc/c05_perform_between_ok.wf` | D1 | D1a refusal: a perform between (clean twin) | clean | no fault | clean | yes | Z4 |
-| 78 | `fixes/r0kc/c06_call_between_bad.wf` | D1 | D1a refusal: a call between the make and the run | W0301 | fault | rejected | yes | Z4 |
-| 79 | `fixes/r0kc/c06_call_between_ok.wf` | D1 | D1a refusal: a call between (clean twin) | clean | no fault | clean | yes | Z4 |
-| 80 | `fixes/r0kc/c07_use_after_bad.wf` | D1 | D1a refusal: a borrow of the closure value | W0301 | fault | rejected | yes | Z4 |
-| 81 | `fixes/r0kc/c07_use_after_ok.wf` | D1 | D1a refusal: a borrow (clean twin) | clean | no fault | clean | yes | Z4 |
+| 74 | `fixes/r0kc/c03_two_runs_bad.wf` | D1 | D1a refusal: two runs | W0301 | fault | rejected | yes | Z4 (closed) |
+| 75 | `fixes/r0kc/c03_two_runs_ok.wf` | D1 | D1a refusal: two runs (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
+| 76 | `fixes/r0kc/c05_perform_between_bad.wf` | D1 | D1a refusal: a perform between the make and the run | W0301 | fault | rejected | yes | Z4 (closed) |
+| 77 | `fixes/r0kc/c05_perform_between_ok.wf` | D1 | D1a refusal: a perform between (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
+| 78 | `fixes/r0kc/c06_call_between_bad.wf` | D1 | D1a refusal: a call between the make and the run | W0301 | fault | rejected | yes | Z4 (closed) |
+| 79 | `fixes/r0kc/c06_call_between_ok.wf` | D1 | D1a refusal: a call between (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
+| 80 | `fixes/r0kc/c07_use_after_bad.wf` | D1 | D1a refusal: a borrow of the closure value | W0301 | fault | rejected | yes | Z4 (closed) |
+| 81 | `fixes/r0kc/c07_use_after_ok.wf` | D1 | D1a refusal: a borrow (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
 | 82 | `fixes/r0kc/c08_nested_bad.wf` | D1 | D1a refusal: a body inside the clause makes and runs the closure | W0301 | fault | rejected | yes | Z4 |
 | 83 | `fixes/r0kc/c08_nested_ok.wf` | D1 | D1a refusal: a body inside the clause (clean twin) | clean | no fault | clean | yes | Z4 |
-| 84 | `fixes/r0kc/c09_field_bad.wf` | D1 | D1a refusal: the closure goes through a field | W0301 | fault | rejected | yes | Z4 |
-| 85 | `fixes/r0kc/c09_field_ok.wf` | D1 | D1a refusal: a field (clean twin) | clean | no fault | clean | yes | Z4 |
+| 84 | `fixes/r0kc/c09_field_bad.wf` | D1 | D1a refusal: the closure goes through a field | W0301 | fault | rejected | yes | Z4 (closed) |
+| 85 | `fixes/r0kc/c09_field_ok.wf` | D1 | D1a refusal: a field (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
 | 86 | `verify/s5/R2c: .../p/fd2_v2_closure_resume.wf` | D1 | D1a in a `multi` clause: a perform between, two runs | clean | no fault | clean | no | Z4 |
 | 87 | `verify/s5/R2c: .../p/fd2_v3_vec_of_closures.wf` | D1 | D1a through a `Vec` (heap slot), a perform between | clean | no fault | clean | no | Z4 |
 | 88 | `verify/s5/R2c: .../p/rr3_v19_sim_run_closure.wf` | D1 | runtime run: `resume` in the block of `sim.run` | clean | no fault | clean | no | Z4b |
@@ -356,7 +376,7 @@ The other 35 rows of tier 2:
 | 20 | `verify/s5/S5c/mut/progs/m01766_85_op_args.wf` | C2>D1 | as m00982 | W0313, 12xW0314 | no `main` | rejected | no | Z1-G (closed) |
 | 21 | `verify/s5/S5c/mut/progs/m02309_85_op_args.wf` | C2>D1 | as m00982 | W0313, 9xW0314 | no `main` | rejected | no | Z1-G (closed) |
 | 22 | `r2/oracle/runs/m1/p1669.wf` | D5 | a `multi` clause runs its parameter: a row that only the analysis finds | clean | no fault | clean | no | Z7 (closed) |
-| 23 | `r3/oracle/runs/m3a/p5750.wf` | D1 | D1a refusal: a call (`print(r)`) between the make and the run | W0301 | no fault | rejected | no | Z4 |
+| 23 | `r3/oracle/runs/m3a/p5750.wf` | D1 | D1a refusal: a call (`print(r)`) between the make and the run | W0301 | no fault | rejected | no | Z4 (closed) |
 | 24 | `r3/oracle/runs/m3a/p7154.wf` | D1 | D1a refusal: a call (`Box.new`) between, a `resume` in a nested handled body | W0301 | no fault | rejected | no | Z4 |
 | 25 | `r2/oracle/runs/g2/p2515.wf` | esc | closures that capture a capability in a block of a closure body that no node runs | clean | no fault | clean | no | Z8 |
 | 26 | `r2/oracle/runs/m2/p7046.wf` | E2 | a task runs `run_both(f1, f1)` | clean | no fault | clean | no | Z9a |

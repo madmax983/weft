@@ -1,0 +1,14 @@
+// Z4 review (ok, R-RT-TASK): with_timeout; the rest of the handled body starts a task in a scope.
+effect Ask { fn ask() -> u64 }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            with_timeout(50.ms) { resume(1) }
+        }
+    } in {
+        let a = ask()
+        scope { s => s.spawn(|| print("task")) }
+        a + 1
+    }
+    print(r)
+}

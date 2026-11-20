@@ -1067,7 +1067,7 @@ pub fn captured_handlers(p: &Program, tys: &weft_ir::TyTable) -> Vec<HandlerId> 
 /// environment of a closure).
 pub fn kont_handler(p: &Program, body: BodyId, place: &Place) -> Option<(HandlerId, BodyId, bool)> {
     if !place.proj.is_empty() {
-        return None;
+        return region_kont(p, body, place);
     }
     let (ob, ol) = crate::factgen::alpha::owner_local(p, body, place.local).ok()?;
     let b = p.body(ob)?;
@@ -1075,6 +1075,36 @@ pub fn kont_handler(p: &Program, body: BodyId, place: &Place) -> Option<(Handler
         (BodyKind::Clause(h, _), Some((k, multi))) if k == ol => Some((h, ob, multi)),
         _ => None,
     }
+}
+
+/// The handler, the clause body and the mode of the continuation that place
+/// `e.i` of body `body` holds, if `e` is the environment local of a kont
+/// region (plan stage R0z Z4, `weft_ir::CopyRegion::kont`): capture `i` of
+/// the closure of the region is its `Kont` capture, and its source is the
+/// continuation local of the clause that made the closure (the walk of the
+/// region gives a value that this activation of the clause made, so the cell
+/// holds the continuation of this activation).
+fn region_kont(p: &Program, body: BodyId, place: &Place) -> Option<(HandlerId, BodyId, bool)> {
+    let [weft_ir::Proj::Field(i)] = place.proj.as_slice() else {
+        return None;
+    };
+    let b = p.body(body)?;
+    let LocalKind::CopyEnv(c) = b.local_kind(place.local)? else {
+        return None;
+    };
+    let r = p
+        .regions
+        .iter()
+        .find(|r| r.body == body && r.env_local == Some(place.local))?;
+    if r.closure != c || r.kont != Some(i.0) {
+        return None;
+    }
+    let d = p.closures.get(c.index())?;
+    let cap = d.captures.get(i.index())?;
+    if cap.mode != weft_ir::CaptureMode::Kont {
+        return None;
+    }
+    kont_handler(p, d.maker, &cap.source)
 }
 
 /// The clause body above body `b` through scope bodies only (plan stage R0z

@@ -1,0 +1,14 @@
+// Z4 review (ok, R-NESTED): a closure inside k resumes the continuation.
+effect Tick { multi fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+            let k = || {
+                let j = || resume(())
+                j()
+            }
+            k()
+        } } in {
+        tick()
+        print(1)
+    }
+}

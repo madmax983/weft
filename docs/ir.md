@@ -99,7 +99,7 @@ source ──parse──► AST (an ExprId on each expression)
        ──resolve + typeck──► THIR: final types, callees, effect identities, argument
                              order, implicit dereferences, integer types
        ──build──► IR: bodies, blocks, locals, cleanup chains (no places, no rows)
-       ──verify──► V1 to V20
+       ──verify──► V1 to V21
        ──analyze──► for each body: abstract states (places, function values, tasks, init)
                     for each SCC of the call graph: summaries and effect rows
        ──emit──► FnFacts (schema unchanged) ──► checker and spec (unchanged) ──► diagnostics
@@ -582,6 +582,7 @@ to V17; the others need the type table.
 | V18 | Each `Return` has the origin of the expression whose value it returns. | W0204 spans |
 | V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. (Plan stage R0k-b2.) The environment local of a region is a local of kind `CopyEnv` of the closure of the region, and the value of the region is a whole local; a `CopyEnv` local that no region of its body names breaks V14, and so does its `Live` or `Dead`; a move below it breaks V14 (`EnvMove`), but in a region of a `once` closure (plan stage R0z Z3). | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
 | V20 | (Plan stage R0z Z6.) Each dispatch (`Program::dispatches`, 6.1) has two arms or more; its value is a whole local of its body (an upvar local has no `Live`, so the rule asks for none); the groups are not empty, do not meet, and name closures with distinct bodies (distinct code units) and one `once` flag. The last statement of each test block is `g = ClosureIs(value, group)` and its terminator is `switch g -> [1: entry, otherwise: next]` (the next test, or the miss block after the last arm). The miss block has only `Dead` statements (the end of the result of the last test, as each successor of a test has) and `Unreachable`. The one edge into an arm entry is from its test; a plain arm ends with a call of the value; the region of a copy arm copies the closures of the group, and its value is the value of the dispatch or the local of a `once` move of it. Each `ClosureIs` of the program is the test of an arm. | the interpreter tests the code of the closure value (8.4) |
+| V21 | (Plan stage R0z Z4.) The continuation of a `Resume` is a `Kont` local of a clause, an upvar local of a continuation type, a `Kont` field of a closure environment (V11), or the `Kont` field of the environment local of a kont region: a local of kind `CopyEnv(c)` that is the `env_local` of the region that holds the block, one `Field(i)` projection, `i` the `kont` of the region, and capture `i` of `c` of mode `Kont`. Else the rule `BadKont` breaks. | the interpreter reads the continuation from the cell of the closure value (8.4) |
 
 ---
 ## 5. Lowering rules: typed tree to IR
@@ -2700,6 +2701,59 @@ As built (plan stage R0z Z6, dispatches; `factgen/instantiate.rs`, `Inst::dispat
   only on a tested edge. With the fact oracle, a run that comes to the miss block faults
   ("fact oracle (dispatch)"), a run into a dead arm fails trace conformance (no edge), and
   the closure check of `PushHenv` holds at each copy arm.
+
+As built (plan stage R0z Z4, kont regions; `factgen/instantiate.rs`, `Inst::kont_region`):
+
+- The form. In the mode of R0k-c1 (`instantiate_kont`), a run `call (op l)(args)` in a
+  clause body (not in a scope body of it, R-MAKER below) that the copy of
+  R0k-c1 refuses gets a kont region when the static way of `l` gives a closure `c` that
+  this activation of the clause made, and `c` resumes the continuation of the clause. The
+  region (`weft_ir::CopyRegion`, `kont = Some(i)`) is a copy region of R0k-b1' and R0k-b2:
+  it reads each capture of `c` through its environment local `e`, also the `Kont`
+  capture `i`, so the `resume` of the body of `c` is `Resume { kont: e.i }` in the
+  clause body. The make stays. So the copy runs the same code as the original program
+  also for a `once` continuation, a perform or a call between the make and the run, a
+  borrow of the value, a field, two runs, and a path with no run.
+- The facts. `clause::kont_handler` gives the handler, the clause and the mode of the
+  continuation of `e.i` (the source of capture `i` is the continuation local of the clause).
+  So the `Resume` of the region is a resume point of the clause, with each rule of a
+  resume point (6.5: the `pre` and `post` parts, the region of the rest of the handled
+  body, the strong update of D4, the rows). The body of `c` is covered
+  (`clause::KontCovered`): each other run of `c` applies its summary, which notes
+  `KONT_CAPTURED`, so the program keeps the fallback.
+- The way. The walk of R0k-b1' (`Inst::walk_from`) with two changes: a step through a
+  parameter of a clause (`Walk::jumped`) refuses (another activation can give the
+  value), and a shared borrow `x = &l` of a local of a function type is not a use of the
+  way (a reference to a function value cannot change or run it). The guard of the
+  activation is `nested_writes_but` of the walk: no body inside the owner of a local of the
+  way writes it. The run node and the maker of `c` are in the clause body itself (in a
+  scope body of the clause the summary oracle A3 fails at the resume point, issue #96).
+- The refusals (the run keeps the summary): R-WAY (no one closure of the program, or a
+  step through a clause parameter); R-MAKER (the run node or the maker is not the clause
+  body itself); R-NESTED (a body inside the closure body resumes); R-ROW-K (a handler of the
+  program other than the handler of the clause has a `multi` operation: a `multi` resume
+  of it can copy a frame that holds the closure value, and the IR engine keeps the old
+  continuation record in the copy, issue #94); R-A5 (a `multi` continuation and another
+  handler in the program: the fact oracle fails A5 at a copy of a `multi` resume whose rest
+  runs a clause of an outer local handler, issue #95); R-SITE (R-ROW-K and R-A5 compare
+  static handlers, so a handler of a `multi` effect gets a region only if the program is
+  a binary, its `handle` is in `main` or in a scope body of it, `main` has no parameters,
+  and no code names `main`: no second instance of the handler is live while one runs); R-REC (for each handler, `once` or `multi`: its
+  `handle` is in a function that can run again while it runs: a direct recursion, a
+  function value that names it or a function that reaches it, a closure body that calls
+  such a function; the clause of an inner instance can
+  perform the effect of the outer instance of the same static handler, and the clause
+  oracle A5 fails there, issue #97); R-AFTER (a `once` continuation, and
+  the closure body names its environment after the `resume`: the facts move the whole
+  environment local at the `resume`, because α of `e.i` is the root of `e`); and the rules
+  of each copy region.
+- The fact oracle runs the program with the region: the `Resume` is an op of the clause
+  frame, so the clause frame waits there (A4) and A5 sees the clause run. New: with the
+  fact oracle on, a clause frame resumes only the continuation of its own activation
+  ("fact oracle (kont region)").
+- Not built: a resume point in a handled body inside the clause (Part B of the design),
+  the runtime runs of `sim.run` and `with_timeout` (Z4b), a dispatch in the mode of
+  R0k-c1, a `multi` re-entry of a kont region.
 
 ### 6.2 Nodes and phases
 

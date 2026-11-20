@@ -161,6 +161,20 @@ impl super::Machine<'_, '_> {
     /// Resumes a continuation with a value.
     pub(crate) fn resume(&mut self, k: ContId, args: Vec<Value>) -> R<Flow> {
         let v = args.into_iter().next().unwrap_or_default();
+        // The fact oracle (plan stage R0z Z4): a clause frame resumes only the
+        // continuation of its own activation. The `Resume` of a kont region
+        // reads the continuation from the cell of a closure value, and the
+        // facts take it as the continuation of the clause that runs it.
+        if self.facts.is_some() {
+            let frames = self.tasks.get(self.cur).map(|t| t.frames.as_slice());
+            if let Some([.., Frame::Clause { cont }, Frame::Code(_)]) = frames {
+                if *cont != k {
+                    return Err(self.fault(
+                        "fact oracle (kont region): a clause frame resumes a continuation that is not the continuation of its activation",
+                    ));
+                }
+            }
+        }
         let Some(rec) = self.conts.get_mut(k) else {
             return Err(self.fault("internal: bad continuation"));
         };

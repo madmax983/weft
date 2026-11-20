@@ -1,0 +1,23 @@
+// Z4 review (ok, R-INNER by cause): a closure made in g's handled body performs g's op through its
+// capability before the resume point. The clean twin: g's clause does not clear `v`.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()); print(v.len()) } } in {
+                let f = || other()
+                let k = || resume(())
+                f()
+                k()
+            }
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

@@ -1,0 +1,14 @@
+// Z4 review (ok, R-MAKER): the maker of k is a closure body inside the clause, and k runs there.
+effect Tick { multi fn tick() }
+fn main() {
+    handle Tick { fn tick() {
+            let outer = || {
+                let k = || resume(())
+                k()
+            }
+            outer()
+        } } in {
+        tick()
+        print(1)
+    }
+}

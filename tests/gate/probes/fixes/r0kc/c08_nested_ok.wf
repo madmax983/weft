@@ -1,4 +1,4 @@
-// Plan stage R0k-c1 (ok): a body inside the clause (a handled body) makes and runs the closure: no copy, the program keeps the fallback.
+// Plan stage R0k-c1 (ok): a body inside the clause (a handled body) makes and runs the closure: no copy, the program keeps the fallback (plan stage R0z Z4: a resume point in a handled body inside the clause is not built).
 // The clean twin: the clause does not clear `v`.
 effect Tick { fn tick() }
 effect Other { fn other() }

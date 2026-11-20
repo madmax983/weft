@@ -1,0 +1,24 @@
+// Z4 review (ok, R-ROW-K escape): the outer handler is of the same effect as h (`Tick`). The rest of the
+// handled body of h runs a closure that performs `tick` through the capability of the outer handler.
+// That `multi` op is of a handler other than h: the copy of the frames copies the clause frame of h.
+effect Tick { multi fn tick() -> bool }
+fn run(f: fn() -> bool) {
+    let w: Vec<u64> = Vec.new()
+    handle Tick {
+        fn tick() {
+            let k = |x: bool| resume(x)
+            k(true)
+            k(false)
+        }
+    } in {
+        let a = tick()
+        let c = f()
+        w.push(if c { 1 } else { 2 })
+        print(w)
+    }
+}
+fn main() {
+    handle Tick { fn tick() { resume(true); resume(false) } } in {
+        run(|| tick())
+    }
+}

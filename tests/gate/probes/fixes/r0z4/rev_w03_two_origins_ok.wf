@@ -1,0 +1,11 @@
+// Z4 review (ok, R-WAY / Part D): the value at the run is one of two closures; each resumes.
+effect Ask { multi fn ask(b: bool) -> u64 }
+fn main() {
+    let n = handle Ask { fn ask(b: bool) {
+            let k = if b { |x: u64| resume(x) } else { |x: u64| resume(x + 1) }
+            k(1)
+        } } in {
+        ask(true) + ask(false)
+    }
+    print(n)
+}

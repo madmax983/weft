@@ -1,0 +1,17 @@
+// Direct twin of j1 (two direct resumes).
+// Z4 review (bad, #79 join): a `multi` clause with a reference parameter into a local outside the
+// handled body runs k two times and reads the parameter after each run; the rest clears `w`.
+effect Tick { multi fn tick(r: &u64) }
+fn main() {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            resume(())
+            print(r + 1)
+            resume(())
+            print(r + 2)
+        } } in {
+        tick(&w[0])
+        w.clear()
+    }
+}

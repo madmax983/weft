@@ -3023,7 +3023,7 @@ pub fn components_built(
     // A `resume` of a captured continuation: the copies of stage R0k-c1, as
     // `run` makes them (`kont_view`).
     if u.reason == crate::analysis::clause::KONT_CAPTURED {
-        let Some(inst) = instantiate::instantiate_kont(&built) else {
+        let Some(inst) = instantiate::instantiate_kont_for(&built, binary_main(a)) else {
             return (built, first);
         };
         let covered: std::collections::BTreeSet<weft_ir::BodyId> = inst
@@ -5026,6 +5026,15 @@ fn copy_reasons(why: &str) -> bool {
         || why.ends_with(handlers::SCOPE_RESUME_AGAIN)
 }
 
+/// True if the program of `a` is a binary whose `main` the runtime starts:
+/// a body that the runtime starts is a function, not a test, and it is not
+/// in a library (plan stage R0z Z4, R-SITE of the kont regions).
+fn binary_main(a: &Analysis) -> bool {
+    a.decls
+        .iter()
+        .any(|d| d.started && !d.library && d.func.is_some())
+}
+
 /// The facts of the program `built` with the copies of stage R0k-c1
 /// (`instantiate::instantiate_kont`), if they have no construct with no full
 /// facts ([`Pending::copy`]).
@@ -5036,7 +5045,7 @@ fn kont_view(
     no_runtime: bool,
     kept: Vec<Diagnostic>,
 ) -> Option<Box<IrFacts>> {
-    let inst = instantiate::instantiate_kont(built)?;
+    let inst = instantiate::instantiate_kont_for(built, binary_main(a))?;
     let covered: std::collections::BTreeSet<weft_ir::BodyId> = inst
         .covered
         .iter()

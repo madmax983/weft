@@ -1,0 +1,20 @@
+// weft: library
+// R2 l01 (ok): a library whose `pub fn main` holds the multi handle and runs a function value of
+// the caller in the handled body; a caller can run `main` again from that function value.
+effect E { multi fn get() -> u64, multi fn choose() -> bool }
+pub fn main(f: fn() -> bool) {
+    let w: Vec<u64> = Vec.new()
+    handle E {
+        fn get() {
+            let k = |x: u64| resume(x)
+            k(1)
+            k(2)
+        }
+        fn choose() { resume(true); resume(false) }
+    } in {
+        let x = get()
+        let c = f()
+        w.push(if c { x } else { x + 10 })
+        print(w)
+    }
+}

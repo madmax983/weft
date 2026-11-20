@@ -1,0 +1,16 @@
+// Z4 review (ok): an outer `fail` between the make and the run aborts the clause; `once` closure dropped on the unwind.
+effect Tick { fn tick() }
+effect Fail { fn fail() -> u64 }
+fn main() {
+    let r = handle Fail { fn fail() { 0 } } in {
+        handle Tick { fn tick() {
+                let k = || resume(())
+                let y = fail()
+                k()
+            } } in {
+            tick()
+        }
+        1
+    }
+    print(r)
+}

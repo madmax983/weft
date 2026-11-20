@@ -11457,3 +11457,44 @@ files = [
 ]
 reason = "plan stage R0z Z6 (the review of Z6, round 3): with the root fix of `clause::call_landings` these programs leave the fallback with a dispatch, so their signatures are those of the `ir` inference. `rev1_fp_h09`: the local `Fail` handler handles each failure, so `outer` and `main` do not have `Fail` in their rows (the old inference names it). `rev1_fp_m10`: no `raises`, `reaches` of the worst case of the kept value, as for the other dispatch probes. `rev3_e11`: the `multi` operation is handled in `main` itself (the re-entry of Z7), so `main` is not `multi`; the old inference marks it `multi`"
 stage = "R0z"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/r0z4/rev_w04_resume_value_param_ok.wf",
+]
+codes = ["W0313"]
+reason = "plan stage R0z Z4 (a probe of the design review, R-WAY): activation 1 of the clause gives its closure `k` to the handled body as the `resume` value. Both pipelines reject the program with W0313 (a `resume` gives the handled computation a closure that resumes a continuation): the old pipeline at the `resume(k)` (line 11), the `ir` pipeline at the clause (line 8), as with main. The kont walk refuses the step through the clause parameter, so the run of the value in activation 2 gets no kont region"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["multi", "named", "raises", "reach_repeats", "reaches"]
+files = [
+    "tests/gate/probes/fixes/r0kc/c09_field_bad.wf",
+    "tests/gate/probes/fixes/r0kc/c09_field_ok.wf",
+    "tests/gate/probes/fixes/r0z4/rev_a07_borrow_callee_bad.wf",
+    "tests/gate/probes/fixes/r0z4/rev_a07_borrow_callee_ok.wf",
+    "tests/gate/probes/fixes/r0z4/rev_w04_resume_value_param_ok.wf",
+    "tests/gate/probes/fixes/r0z4/rev1_r05_nested_install_ok.wf",
+]
+reason = "plan stage R0z Z4: the signatures of `main` are those of the `ir` inference. `rev1_r05` (rejected by both pipelines, as with main): `main` runs `install` with a `multi` effect inside the body of another run, so the `ir` inference gives `multi`. `c09_field` leaves the D1 fallback with a kont region: `main` handles the `multi` effect `Tick` and performs no operation of it, so the `ir` inference gives no `reaches` and no `multi`; the old inference gives `multi` from the worst case of the run of the closure that resumes. `rev_w04` (W0313 in both pipelines, as with main) has the same parts. `rev_a07` has a type error (W0105, a call through a reference to a function value): the `ir` inference of `main` takes the worst case of its declaration (`named`, `raises`, `multi`), as for each program with a `typeck` error"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z4/rev1_r05_nested_install_ok.wf",
+]
+codes = ["W0313", "W0314"]
+reason = "plan stage R0z Z4 (a probe of round 1 of the review, R-SITE): `install` holds a handler of a `multi` effect, and it runs inside the handled body of another run of `install` through a function value. Both pipelines reject the program, as with main: W0314 at line 14 (a task of `body` performs through a handler of this task); the old pipeline also gives W0313 at line 6. The run of the closure gets no kont region (its `handle` is not in `main`)"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/r0z4/rev2_l01_library_main_ok.wf",
+]
+finding = "R0z4-LIBRARY-MAIN"
+reason = "plan stage R0z Z4 (a probe of round 2 of the review, R-SITE in a library): a library whose `pub fn main(f)` holds the `handle` of a `multi` effect. The run of the closure gets no kont region (R-SITE needs a binary and a `main` with no parameters), so the program keeps the D1 fallback, as with main, and both pipelines accept it. The fault of the gate is an artifact of the runner: it runs `main` with no function value (\"this value cannot be called\"); the program is clean"
+stage = "R0z"

@@ -1,0 +1,29 @@
+// R-ROW-K escape (rest form): one static handler h, installed two times by recursion. The
+// clause of the inner instance runs k two times (a kont region). The rest of the inner
+// handled body performs `choose` of the OUTER instance of h (the same handler) through a
+// function value. The outer `choose` resumes two times and copies the inner clause frame,
+// which holds k (issue #94).
+effect E { multi fn get() -> u64, multi fn choose() -> bool }
+fn run(n: u64, f: fn() -> bool) {
+    let w: Vec<u64> = Vec.new()
+    handle E {
+        fn get() {
+            let k = |x: u64| resume(x)
+            k(1)
+            k(2)
+        }
+        fn choose() { resume(true); resume(false) }
+    } in {
+        if n > 0 {
+            run(n - 1, || choose())
+        } else {
+            let x = get()
+            let c = f()
+            w.push(if c { x } else { x + 10 })
+            print(w)
+        }
+    }
+}
+fn main() {
+    run(1, || true)
+}

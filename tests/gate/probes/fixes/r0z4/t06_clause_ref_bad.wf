@@ -1,0 +1,18 @@
+// Plan stage R0z Z4 (bad): as t06_clause_ref_ok, but the clause reads the reference after the run of its closure.
+// The rest of the handled body freed the local: a read of a freed cell (W0301).
+struct Entity { hp: u64 }
+effect Peek { fn peek(e: &Entity) }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    handle Ask { fn ask() { resume(1) } } in {
+        handle Peek { fn peek(e) {
+                let k = || resume(())
+                let y = ask()
+                k()
+                print(e.hp)
+            } } in {
+            let local = Entity { hp: 3 }
+            peek(&local)
+        }
+    }
+}

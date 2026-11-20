@@ -1,0 +1,27 @@
+// Z4 review (ok, R-ROW-K (b)): the rest of the handled body performs a `multi` op of an outer handler
+// while the clause waits at its first run of k. The copy of the frames copies the clause frame, and the
+// second run of k in the copy must resume the record of the copy.
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn run() -> u64 / Choice {
+    let w: Vec<u64> = Vec.new()
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            let a = k(1)
+            let b = k(2)
+            a * 10 + b
+        }
+    } in {
+        let x = pick()
+        let c = choose()
+        w.push(x)
+        print(w)
+        if c { x } else { x + 4 }
+    }
+}
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(run())
+    print(out)
+}
