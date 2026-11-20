@@ -1,0 +1,15 @@
+// Plan stage R0z Z8, part (b).
+// A `multi` clause gives `f` a new value between its two `resume`s. The
+// second run of the rest gives `f` a new value again.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        f = || print(7)
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}

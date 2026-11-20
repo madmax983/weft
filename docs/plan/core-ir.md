@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M, Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M, Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -4581,7 +4581,7 @@ The clean rows (the precision work; tier 1 41, tier 2 16):
 | Z7 D5 rows of the analysis | A run of a function value that can resume more than once in a clause (`clause::Handlers::dyn_rows`) gets the re-entry of R0k-c2 at the node that runs the clause, from the summary of the value (its `repeats` and `multi` parts), also in the copies of R0k-a. | M (done: "Z7 as built"; the analysis runs again with the row as a row of its clause; a run of a parameter of the clause that the run of the function finds no row for is no row) | 1 / 1 / 0 | 1 / 0 / 0 | `static_row` runs on the copies too |
 | Z6 dispatch copies | The probe run of the B1 note (`run_values`) gives the set of values at each run node. A set of known closures gets a dispatch: a test of the closure identity and one copy region for each closure (a new rvalue `ClosureIs(c)` or a switch terminator; the verifier, both engines, the fact oracle). A set with `Unknown` keeps the summary. | L (done but part C: "Z6 as built"; the set is the static way, not a probe run; `ClosureIs` and the `Switch` of a `bool`; `a03_put_fns` stays open) | 4 / 5 / 3 | 0 | the exactness of the probe states (B1 note, (a) to (c)); the block bound of the copies |
 | Z4 D1 resume points | The design of the R0k design note: each run node whose value set holds a closure with a `Kont` capture of the current activation of a clause is a resume node of that clause (the region of the R0k-c1 copies, with no copy). With one value it is a resume; with more values, or a value from a field or a `Vec`, it is a join of a run that resumes and a run that does not. Two runs of a `once` continuation are W0501. A callee that runs the value gets a summary part "resumes its parameter". Z4b: `sim.run` and `with_timeout` run their block at the call node on this task, so a `resume` in the block is a resume at that node (with the abort edge of the deadline). | L (+ S for Z4b; done but Part B, Part C and Z4b: "Z4 as built"; the copy is a kont region, a copy region that reads the continuation through its environment local, not a run node with no copy; the summary part "resumes its parameter" is not needed) | 8 / 0 / 6 (+ 2 / 0 / 0) | 2 / 0 / 2 (+ 2 / 0 / 0) | a resume region that starts in a callee; the `multi` re-entry of R0k-c2 with a resume at a run node; the fact oracle must see the resume at a closure run |
-| Z8 handler environment leftovers | (a) A value through a `resume` (g2_lexical): the result of a perform whose clause resumes with one closure that the clause makes is a step of the way (the maker is the clause, with its environment). (b) D4 for a `multi` continuation (d02): a write after each node that runs a clause, on each path to the end of the handled body, is a strong update (each run of the rest ends at that end). (c) A closure body that no node runs gives no pending escape (p2515, `Program::never_runs`). | M (S + S + M) | 2 / 0 / 0 | 2 / 0 / 0 | (b) and the copies of the frames at a re-entry |
+| Z8 handler environment leftovers | (a) A value through a `resume` (g2_lexical): the result of a perform whose clause resumes with one closure that the clause makes is a step of the way (the maker is the clause, with its environment). (b) D4 for a `multi` continuation (d02): a write after each node that runs a clause, on each path to the end of the handled body, is a strong update (each run of the rest ends at that end). (c) A closure body that no node runs gives no pending escape (p2515, `Program::never_runs`). | M (S + S + M; done: "Z8 as built"; the cause of (c) is not `never_runs`: a closure body runs a closure of its maker that performs through a capability that both capture) | 2 / 0 / 0 | 2 / 0 / 0 | (b) and the copies of the frames at a re-entry |
 | Z9b E4 window | The window of R0k-d2 for a spawn in a closure body on the scope of the body around it: the writes in the closure body and in the bodies that the window can call, up to the end of that scope. | S-M | 1 / 0 / 0 | 0 | the task can outlive the closure body |
 | Z9a E2 | The design of the R0k-d3 design check: a second node of the run in the task region after the first (a cycle for a loop), the split of `templates::task_start`, the task facts of the second node, a cover of the fact oracle for a second run. | M-L | 3 / 0 / 2 | 2 / 0 / 2 | `i9_kept_write` (old W0405, no fault) can become `lost-clean`: a signed entry |
 | Z9c tasks of the values of the interface | R0e fix 2 and `VALUE_TASKS` as one design (R0k-d3): a summary part for the tasks of the values of the interface (the window and the footprint of the code that runs with them), its application at the run node, the proofs and the summary oracle. F18 for a plain task run: a task of a callee in `sim.run` or in a closure that the callee runs ends before the callee returns (`sim.run` waits for its tasks), so it gets the `TaskHow` of a scope of the callee. c16: the run of the inner closure in the facts of the maker. c10: a recursive callee gets its fixpoint summary, not the task run of the worst case (stage Z0 checks the cause). | L | 7 / 0 / 1 | 3 / 0 / 3 | the largest design of the plan, with proofs; three tier-2 rows (W0312, W0405, W0312, no fault) can become `lost-clean` |
@@ -4600,7 +4600,7 @@ come before the stages with clean rows only; then the gain for each size):
 | 6 | Z7 D5 rows of the analysis (done: 2 rows of tier 1 close, 49 to 47; 1 row of tier 2, 23 to 22; "Z7 as built") | as above | 2 (44) | 1 (22) | M | rv_p04 and its twin; `p1669` | the copies with a re-entry; the ledger entry `R0h-STAYS` goes |
 | 7 | Z6 dispatch copies (done but part C: 10 rows of tier 1 close, 47 to 37; "Z6 as built") | as above | 12 (32) | 0 (22) | L | the u family, a01, a03, a04; a run node with an `Unknown` value (no copy); `copies.rs` with a dispatch | a design review first (as R0k-b1') |
 | 8 | Z4 D1 resume points, Z4b runtime runs (done but Part B, Part C and Z4b: 10 rows of tier 1 close, 37 to 27; 1 row of tier 2, 22 to 21; "Z4 as built") | as above | 16 (16) | 6 (16) | L + S | the r0kc twins; fd2_v2, fd2_v3; rr3_v19, rr3_v20; `kont_copies` (the copies stay for the forms that they cover) | a design review first |
-| 9 | Z8 handler environment leftovers | as above | 2 (14) | 2 (14) | M | g2_lexical, d02 and twins; `p2515` | low |
+| 9 | Z8 handler environment leftovers (done: 2 rows of tier 1 close, 27 to 25; 2 rows of tier 2, 21 to 19; "Z8 as built") | as above | 2 (14) | 2 (14) | M | g2_lexical, d02 and twins; `p2515` | low |
 | 10 | Z9b E4 window | as above | 1 (13) | 0 (14) | S-M | s4 and its bad twin; `scope.rs` | low |
 | 11 | Z9a E2 | as above | 5 (8) | 4 (10) | M-L | j01, c09, s8, i9, s9; `scope.rs` | `lost-clean` of i9 |
 | 12 | Z9c tasks of the values of the interface | as above | 8 (0) | 6 (4) | L | j03, j04, s3, a13, c16, c10, j07_ok; the summary oracle; proofs | a design review first; the largest risk of the plan |
@@ -6197,6 +6197,227 @@ main is bed1331, `z4/base/weft-main`; the probes: `tests/gate/probes/fixes/r0z4/
   only while issues #94 and #95 are open. The
   check "fact oracle (kont region)" assumes that a clause frame is the frame just above its
   `Frame::Clause` marker.
+
+Z8 as built (the handler environment leftovers: a closure of a clause that performs to the
+outer handler, the strong update after a `multi` resume, a closure body that runs a closure
+of its maker; the work files: `weft-work/z8/` outside the repository, binaries
+`z8/bin/weft-z8`, `weft-gate-z8`; main is 47e2dc6, `z8/base/weft-main`, `weft-gate-main`,
+the binaries of Z4; the probes: `tests/gate/probes/fixes/r0z8/`):
+
+- The reasons on main (`check --reasons` with `z8/base/weft-main`). `g2_lexical`: the run
+  `f()` of the closure that the inner clause gives back is a call of a function value that
+  runs the clauses of both handlers of `GN` (the run of a value of the effect, HENV-SHADOW),
+  and the clause `get` of the inner handler gives back a closure (`GIVES_BACK`, D3: the
+  value can race, `transfer::can_race`). `d02_multi_weak`: D4, the weak update after a
+  `multi` resume, so the closure in `f` seems to run after its `handle` (a pending escape).
+  `p2515`: a pending escape too, but its cause is not a closure body that no node runs
+  (`Program::never_runs`, the guess of the plan): the closure `g2` runs `twice(f1)`, and
+  `f1`, a closure of the same maker, performs through the capability of the handled body.
+  The analysis of the body of `g2` sees the capture of `f1` as the capability local of the
+  maker, the node in the closure body runs no clause of the handler
+  (`clause::run_handlers` is empty there), so `transfer::check_cap_apps` notes a pending
+  escape that no W0313 confirms. The block `if true { let f3 = .. }` of `p2515` plays no
+  part: `fixes/r0z8/c13_plain_ok` (`let g = || { f1() }; g()`) falls back on main.
+- Part (a), a value through a `resume` (`clause::call_performs`): a perform through capture
+  `k` of a known closure goes to the handler of the capture (`capture_handler`) and to the
+  handlers that it passes operations on to (`serving_all`), not to another handler of the
+  same effect. So the run `f()` in `g2_lexical` runs no clause of the inner handler (the
+  closure that the inner clause makes captures the outer capability: a clause runs outside
+  its handler), the rule of R0k-a gives the node `no_clause` for the inner handler, and the
+  given-back rule of R0h does not apply there. This is a smaller form than the plan said (no
+  step of the way through the result of a perform): the value of `f` is already the known
+  closure (the clause runs at the perform, and its `resume` value is the result).
+- Part (b), D4 for a `multi` continuation (`clause::resume_with`, `must_written`): the strong
+  update of R0k-d1 now applies to a `multi` continuation too. After a `resume` the rest of the
+  handled body has run once more to its end. Each run of the rest, also a re-entry, starts
+  after a node that runs a clause, and `must_written` needs a write after each such node on
+  each path to the end. A re-entry copies the frames of the handled body and of its callees,
+  not the cell of a local of the site (the upvar locals that `must_written` takes): the
+  probe `weft-work/z8/t/m1.wf` shows it on both engines (`x` of the site keeps its value
+  across the two runs, `y` of the handled body starts again). The state between two
+  `resume`s of the clause is the state after the first one, and the re-entry seeds from it
+  (`again`), so a write of the clause between the `resume`s is seen by the second run.
+- Part (c), a closure body that runs a closure of its maker (`clause::maker_cap_of`): a
+  capture place of the value that the node runs is a whole capability local of the maker of
+  the closure body of the node, and the closure body captures that local too (`Cap`; a
+  closure that runs a function value captures the capabilities of its environment). Then
+  the perform is a perform through that capture of the closure body, as R0d does for a
+  capture of a capture (`env_cap_of`): `check_cap_apps` notes no pending escape, and
+  `apply::main` adds the perform to `cap_performs` of the closure body (`Site::body`, a new
+  field), so its summary performs through its capture, and the node that runs it runs the
+  clause (or W0313 rejects it when it leaves the handler, as for a closure that performs
+  directly). Both captures copy one capability local of one activation of the maker; a
+  closure of another activation that reaches the local of the way leaves its handler
+  first (W0313, `c03_outer_bad`).
+- Refusals (each by its cause; the rows keep the result of main):
+  R-A5-MULTI (`resume_with`): a `multi` continuation in a program with another handler
+  (any handler of the program, `Program::handlers`, not only a local one) keeps the weak
+  update. This costs precision (`weft-work/z8rev1/p/b_unrelated_ok.wf`). The rest of the handled body can run a clause of the other
+  handler from the `resume`, and the facts of the `resume` do not have it: the clause oracle
+  A5 fails on main too for such a program in scope (issue #95; `weft-work/z8/t2/fo3.wf`,
+  `fo4.wf`). The first build had `b09_nested_ok` in scope, and A5 failed.
+  R-CAPS (`call_performs`): the rule of part (a) only for a closure whose captures are all
+  capabilities. A closure that a clause makes with a capture of a local of the clause fails
+  the summary oracle A3 at its run (a read of the capture that the run node does not have;
+  an old gap, also on main for a program in scope, `weft-work/z8/t2/fo1.wf`). The first
+  build had `a03_capture_ok` in scope, and A3 failed.
+  R-DEAD (`handlers::Region::starts`, `clause::ClauseRun::maker`; review round 2 of Z8, its
+  blocker): a run of a clause in a closure body through a capture of a capability of its
+  maker (part c) is no node that runs a closure, and if no node of the handled body runs a
+  closure that runs the clause (a closure that no code runs, or one that runs outside the
+  handler), the run is a run outside the handler: a pending escape, as main notes it in
+  `transfer::check_cap_apps` (W0313 or W0314 must reject the program, `emit`). Without the
+  refusal such a run mapped to no node of the handled body (`REST_NOT_FOUND`, pending, which
+  no W0313 confirms), so the view of the program with the copies of the callees went
+  pending where main had it in scope (its pending escape was confirmed by a W0314 of
+  another function). The review probe `weft-work/z8rev2/p/y3_print.wf` (the form of
+  `z7rev1/p/k4_two` and an unrelated function with a dead closure; also `y_dead_k4_two`,
+  `y4_scope`) then fell back, and the old pipeline misses its fault: a lost fault. A first
+  fix, a test that the value of the closure is never read, missed a dead closure whose value
+  is copied, stored, given to a callee or captured (`let k = d`, the probes
+  `weft-work/z8/p/r2/s1` to `s6`). With R-DEAD each of these rows has the codes of main
+  again (W0301 and W0314, in scope), and so do the rows of the tiers whose view with the
+  copies went pending (tier 2 `S5c/mut/m01944_66_cap_paths`, `m02506_62_cap_escape`, and
+  `verify/partb/S3/p/rt16`). `z8rev2/p/x_dead_a03_loop_write_bad` (a fault that main sends
+  to the old pipeline, which misses it) is rejected in scope (W0301). The probes
+  `fixes/r0z8/c25_dead_closure_bad` (rejected in scope), `c25_dead_closure_ok` (the
+  fallback, as main) and `c26_dead_capture_bad` (a closure that code runs captures the dead
+  closure).
+  `GIVES_BACK` stays for a `multi` operation that gives a closure back (`a05_multi_ok`).
+- The targets close: `verify/partb/p/g2_lexical` (tier 1 row 91, and its copy in tier 2),
+  `fixes/r0kd1/d02_multi_weak` (row 90) and tier 2 `r2/oracle/runs/g2/p2515` (tier 2 row 25)
+  are in scope with no error (the old pipeline accepts each one; no fault). Census rows:
+  tier 1 27 to 25, tier 2 21 to 19. `fixes/r0kb2/q01_85_after_resume_bad` (row 25) stays:
+  the closure of `Note` goes into the clause of `Run` through a call of a function value
+  (`c(|| note(2))`), not through the result of a perform, so it is not the form of part
+  (a); the old pipeline rejects it (W0313), so no hole.
+- Probes `tests/gate/probes/fixes/r0z8/` (72 files; a prefix for each part): part (a)
+  `a01_lexical` (bad and ok), `a02_two_values` (a local that holds the closure of the clause
+  or a closure of the inner handler: the inner handler stays, so the clean twin keeps the
+  fallback), `a03_capture` (R-CAPS), `a04_get_again_ok`, `a05_multi_ok` (`GIVES_BACK`),
+  `a06_callee`, `a07_rec_ok` (a recursive function installs the inner handler: it keeps the
+  fallback, as main), `a08_task_bad`, `a09_vec_ok`, `a10_lib_ok` (library mode),
+  `a11_param_bad`, `a12_inner_keep_ok`, `a12_outer_keep_bad` (open-old, below),
+  `a13_passes_on_ok`; part (b) `b01_stop_once_bad`, `b02_multi_weak_bad` (the bad twin of
+  `d02`), `b03_between_ok` (a write of the clause between its two `resume`s), `b04` to `b14`
+  (a run of the value after each `resume`, a clause that does not resume, a loop and a
+  `break`, two nodes that run the clause, a callee, an outer `multi` handler (R-A5-MULTI), a
+  scope, a closure that runs the clause, a resume through a closure, a write in the clause
+  between the runs, recursion); part (c) `c01` to `c24` (a `Vec`, a task, an outer local of
+  another activation, a result, a struct of a callee, a clause of the handler, a nested
+  handler of the effect, the form of `p2515`, recursion, two arms, a `multi` handled body,
+  a clause of an outer handler before and after its `resume`, a field, two levels of
+  closures, `sim.run`, `with_timeout`, a scope body and its task, a function parameter,
+  library mode). Each bad twin faults (the oracle), and the `ir` pipeline rejects each one
+  that is in scope; each clean twin is in scope with no error, but the refusal probes
+  (`a02_two_values_ok`, `a03_capture_ok`, `a05_multi_ok`, `a07_rec_ok`, `b09_nested_ok`)
+  and `c15_after_resume_bad` (another reason). The corpus program
+  `tests/programs/206_handler_env_leftovers.wf` with `//~` markers (an `old:` W0301 that only
+  the old pipeline gives) and its IR text. Tests: `analysis_units` `r0z8::` (the clean
+  forms in scope with no error, the bad twins rejected with W0313, the refusals,
+  `GIVES_BACK` of a `multi` operation) and `r0kd1::` (the test of the weak update of a
+  `multi` continuation now asserts the strong update of `d02_multi_weak` and its twin),
+  `fact_oracle.rs` (each probe of `fixes/r0z8` that the `ir` pipeline accepts passes the
+  fact oracle).
+- Gates (release binaries `z8/bin/weft-z8`, `weft-gate-z8`; main: the reports of Z4). Tier 1:
+  0 blockers (5892 programs with the 70 new files; 4418 same, 32 open, 411 fixed, 1 new-fp,
+  0 lost-fault, 159 lost-clean, 148 moved, 723 changed; Z4: 5822, 4363 same, 31 open, 410
+  fixed, 1 new-fp, 159 lost-clean, 148 moved, 710 changed). Only new files change the counts:
+  `a08_task_bad` is `fixed` (the old pipeline misses the W0314 of a task that runs the
+  closure of the clause), `a12_outer_keep_bad` is `open` (open-old, below), 12 bad twins and
+  the corpus program are `changed` (W0313 in both pipelines, with other W0301, W0204, W0805
+  or W0701; ledger entries), the others are `same`. The first run of the gate had 15
+  blockers, each a new file: these entries, and `b07_two_runs_bad`, which was not bad (the
+  last write before the second node gave `f` a clean closure; both binaries give W0313 there,
+  a precision gap of the weak update after the first node, issue #79), so the probe now
+  writes a closure that performs after the second node. The `ir` records of
+  `weft-gate snapshot --tier 1 --facts ir` against main: no file of main changes its
+  diagnostics; 60 files change their fact digest: 47 new files, `g2_lexical`, `d02_multi_weak`,
+  `verify/partb/p/g1_lexical` (part a: the run of the closure runs no clause of the inner
+  handler, in scope with no error on both), the kont regions of Z4 with a `multi`
+  continuation (`fixes/r0kc/c02_multi`, `c03_two_runs`, `c09_field`, bad and clean,
+  `fixes/r0z4/rev_d_c03` bad and clean, `t05_post_code_bad`: part b, the same codes), and
+  three programs that both pipelines reject with the same codes (`tests/programs/62_cap_escape`,
+  `partb/probes/h_escape`, `verify/partb/S3/p/rt16`). The fact oracle of tier 1: 0
+  failures (1674 pass, 8 faults, 22 timeouts; Z4 1641 pass). Sigdiff tier 1: 0 rows with no
+  entry (one new `sig` entry: `c09_rec_bad`, `c20_timeout_ok`, `c21_rec_bad`,
+  `c24_lib_bad`, the corpus program). The interpreter sources do not change, so the oracle
+  caches keep their keys (the new files ran).
+  Tier 2 (2 workers, the whole tier): 0 blockers (57393; 39869 same, 6 open, 92 fixed, 12
+  new-fp, 0 lost-fault, 3487 lost-clean, 1859 moved, 12068 changed: the counts of Z4); 54707
+  programs in scope (Z4 54704: `g2/p2515`, `verify/partb/p/g2_lexical` and
+  `fixes/r0kd1/d02_multi_weak` come into scope); 6 time-outs (Z4 7). One row changes its
+  codes against Z4 in round 1, in its class `changed`: the mutant
+  `verify/s5/S5c/mut/progs/m01944_66_cap_paths` (a `typeck` error, W0101; rejected by both
+  pipelines), whose dead closure `mut_c100 = || { h() }` made its view with the copies
+  pending (the form of R-DEAD). With R-DEAD no row changes against Z4.
+- Gates of review round 2 (R-DEAD; the same binaries, rebuilt): tier 1 0 blockers (5895
+  programs with the 3 new probes; 4419 same, 32 open, 413 fixed, 1 new-fp, 0 lost-fault, 159
+  lost-clean, 148 moved, 723 changed; `c25_dead_closure_bad` and `c26_dead_capture_bad` are
+  `fixed`: the old pipeline misses them; no other row changes against round 1), the fact
+  oracle of tier 1 0 failures (1674 pass), sigdiff 0 rows with no entry (the two new bad
+  probes have the `sig` entry of the weak C2 form, as `k1`, `k2` of Z7), the snapshot: no
+  file of main changes its diagnostics. Tier 2 (2 workers, the whole tier): 0 blockers, the
+  counts of Z4, 54707 programs in scope, 6 time-outs, and no row that changes against Z4.
+  ev.sh on 4589 rows (the 4533 rows below, `weft-work/z8rev2/p`, `weft-work/z8/p/r2`, the new
+  probes; main `z8/ev/evall4-main.tsv`, Z8 `z8/ev/evall-z8d.tsv`): HOLE 25 to 25 (the rows
+  of main), no new HOLE, no new FP-IR, no row in scope on main changes its codes; each
+  `y*` and `s*` probe of the review has the codes of main; `z8rev2/p/x_dead_a03_loop_write_bad`
+  goes from fb-miss to oldmiss (rejected in scope), `z8rev2/p/a_loop_ok` from fb-reject to
+  nofault (a false W0301 of the old pipeline). `fo.sh` on the 60 rows that leave the fallback
+  and on the probes of `fixes/r0z8`: no failure of the fact oracle (86 pass in each
+  configuration; `b09_nested_bad` fails A5 as on main, issue #95).
+- ev.sh of round 1 (`weft-work/ev.sh`; main `z8/ev/evall-main.tsv`, Z8 `z8/ev/evall-z8b.tsv`; 4533 rows:
+  the 3788 rows of Z4, `mychk4/p`, the probes of this stage in `weft-work/z8/p` and in
+  `fixes/r0z8`, the corpus program, the 616 `.wf` files of the tests of the crates, the
+  targets): HOLE 23 to 23 (the same rows, older than the stage), FP-IR 482 to 482, no new
+  HOLE and no new FP-IR. 56 rows change: 52 clean rows come into scope with no error
+  (nofault, the targets and the clean probes), 2 bad rows go from held to both-reject
+  (`a01_lexical_bad` in both directories), and 2 rows keep the fallback with another reason
+  (`c15_after_resume_bad`, held). No row in scope on main changes its codes or its verdict.
+  `fo.sh` (the fact oracle and the memory oracle, three configurations) on each of the 54
+  rows that leave the fallback and on each probe of `fixes/r0z8` that is in scope: no
+  failure of the fact oracle on a row that comes into scope (82 pass in each configuration;
+  the others fault in the memory oracle, the bad twins, or have no `main`).
+  `b09_nested_bad` (in scope on main, rejected) fails the clause oracle A5, as on main
+  (issue #95). The first build failed A3 on `a03_capture_ok` and A5 on `b09_nested_ok`: the
+  refusals R-CAPS and R-A5-MULTI.
+- The census (`check --reasons`, `weft-work/z8/census/`; main: the census of Z4,
+  `z4/census/t1-z4e.tsv`, and main on the 73 new files): tier 1 180 fallbacks of 5895 files
+  (main 211 of 5895: 173 of the 5822 files of Z4, and 38 of the new files): `d02_multi_weak`,
+  `g2_lexical` and 29 new files leave it; 9 new files keep it (the refusal probes
+  `a02_two_values_ok`, `a03_capture_ok`, `a05_multi_ok`, `a07_rec_ok`, `b09_nested_ok`,
+  `c25_dead_closure_ok` (R-DEAD), and
+  `a11_param_bad`, `a12_outer_keep_bad`, `c15_after_resume_bad`, which the old pipeline
+  checks as with main). The census rows: 27 to 25. Tier 2 (the 29 rows that keep the fallback
+  or time out in the census of Z4): 21 to 19 fallbacks (`g2/p2515` and
+  `verify/partb/p/g2_lexical` leave it); the 5 time-outs of the census of main stay.
+- Ledger: `changed` for the corpus program (W0301 of the old pipeline only) and for 12 bad
+  twins of `fixes/r0z8`; open-old `R0z8-OUTER-KEEP` (`a12_outer_keep_bad`: the inner handler
+  has no clause for `keep`, so the clause of the outer handler gets the closure and runs it
+  after its `resume`; the program keeps the fallback as with main, and the old pipeline
+  misses the fault, an old hole, issue #78); one `sig` entry.
+- Open (precision, issue #79): the dead-closure form of the plan (a closure body that no node
+  runs) is not built as a rule that closes rows: a dead closure body that runs a closure of
+  its maker keeps the pending escape of main (R-DEAD), and one that runs a closure of itself
+  (R0d) gives `REST_NOT_FOUND`, as main (`weft-work/z8/t2/dead1.wf`). The refusal probes keep the fallback: `a02_two_values_ok` (the
+  inner handler stays for a closure of the inner handled body), `a03_capture_ok` (R-CAPS),
+  `a05_multi_ok`, `a07_rec_ok` (`GIVES_BACK`), `b09_nested_ok` (R-A5-MULTI). The weak update
+  after the first of two nodes that run a `multi` or `once` clause gives a false W0313 if
+  only the second one has no write after it (`b07` before its fix).
+- Open (holes, issue #78): no new one. The 23 HOLE rows of ev.sh are the rows of main;
+  `a12_outer_keep_bad` keeps the fallback, where the old pipeline misses it, as with
+  main. `q01_85_after_resume_bad` stays (rejected by the old pipeline).
+- What I am least sure of: part (b) rests on the claim that a re-entry of a `multi`
+  continuation copies no cell of a local of the site. The engines show it for the probes
+  (`m1.wf`, both engines), and the refusal R-A5-MULTI keeps any program with a second
+  handler out (so an outer `multi` handler whose re-entry copies the frame of a site local
+  of the inner handler is not in the form). Part (a) trusts `capture_handler` as the static
+  handler of a `Cap` capture; a closure with only capability captures has no other way to
+  reach a handler of the effect but its row, which keeps the old rule. Part (c) trusts that
+  the closure body and the closure that it runs copy one capability local of one
+  activation of the maker; a closure that another activation made reaches the local of the
+  closure body only after it left its handler (W0313).
 
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):

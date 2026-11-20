@@ -1,0 +1,21 @@
+// Plan stage R0z Z8, part (c), R-DEAD (the review of Z8, round 2): the clean
+// twin. `main` runs `g`, which runs `f1`, a closure of its maker. The
+// function `other` makes a closure `d` that no code runs; `d` runs `f1` too.
+// The dead closure keeps the pending escape of main, so the program keeps
+// the fallback, as with main.
+effect Note { fn tell(x: u64) }
+effect DNote { fn dnote(x: u64) }
+fn main() {
+    handle Note { fn tell(x) { print(x); resume(()) } } in {
+        let f1 = || tell(5)
+        let g = || { f1() }
+        g()
+    }
+}
+fn other() {
+    handle DNote { fn dnote(x) { print(x); resume(()) } } in {
+        let f1 = || dnote(5)
+        let d = || { f1() }
+        print(1)
+    }
+}

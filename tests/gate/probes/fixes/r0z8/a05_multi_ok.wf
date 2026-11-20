@@ -1,0 +1,21 @@
+// Plan stage R0z Z8, part (a).
+// A `multi` operation gives the closure back: the fallback stays (the run
+// of the clause stops at its first `resume`).
+effect GN {
+    multi fn get() -> fn()
+    fn note(x: u64)
+}
+fn main() {
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)); resume(|| note(2)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            f()
+        }
+    }
+}

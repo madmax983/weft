@@ -1,0 +1,103 @@
+// Plan stage R0z Z8: three forms of the handler environment that the facts
+// of the `ir` pipeline now model. (a) A closure that a clause of an inner
+// handler makes performs to the outer handler (handlers are lexical), so
+// the run of the closure runs no clause of the inner handler. (b) After a
+// `resume` of a `multi` continuation, a local of the site that the rest of
+// the handled body writes after each run of a clause has only that value.
+// (c) A closure runs a closure of the same maker that performs through the
+// capability that both capture. The probes `tests/gate/probes/fixes/r0z8/`
+// run these forms with `main`.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+effect Log { multi fn log(msg: String) }
+effect Note { fn tell(x: u64) }
+
+// (a) The clause of the inner handler gives back a closure that performs
+// `note` of the outer handler.
+fn lexical() {
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            f()
+        }
+    }
+}
+
+// (a) The same closure goes to a local of the function, which runs it
+// after the outer `handle`.
+fn lexical_kept() {
+    let keep = || print(0)
+    handle GN {   //~ W0313
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            keep = f
+        }
+    }
+    keep()
+}
+
+// (b) A `multi` continuation: `f` gets a new value after the run of the
+// clause, so `f` does not perform `log` after the `handle`.
+fn multi_strong() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}
+
+// (b) The new value is on one path only.
+fn multi_weak(c: bool) {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())   //~ W0313
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        if c { f = || print(1) }
+    }
+    f()
+}
+
+// (c) `g` runs `f1`, and both capture the capability of `Note`.
+fn nested_closures() {
+    handle Note { fn tell(x) { print(x); resume(()) } } in {
+        let f1 = || tell(5)
+        let g = || { f1() }
+        g()
+    }
+}
+
+// (c) `g` goes to a local of the function, which runs it after the
+// `handle`.
+fn nested_closures_kept() {
+    let keep = || print(0)
+    handle Note { fn tell(x) { print(x); resume(()) } } in {   //~ W0313
+        let f1 = || tell(5)
+        let g = || { f1() }
+        keep = g
+    }
+    keep()   //~ old: W0301
+}
+
+fn main() {
+    lexical()
+    multi_strong()
+    nested_closures()
+}

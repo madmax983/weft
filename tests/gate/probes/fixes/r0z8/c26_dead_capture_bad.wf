@@ -1,0 +1,33 @@
+// Plan stage R0z Z8, part (c), R-DEAD (the review of Z8, round 2): the form of
+// `c25_dead_closure_bad`, where a closure `e` that `other` runs captures the
+// closure `d`, and no code runs `d`. The run of `f1` in `d` keeps the pending
+// escape of main.
+effect Pick { multi fn pick() -> u64 }
+effect Run { multi fn run(g: fn()) }
+fn w2(g: fn() / Pick) / Run, Pick { run(g) }
+fn w(g: fn() / Pick) / Run, Pick { w2(g) }
+fn f(v: &Vec<u64>) / Pick, mut(v) {
+    let r = &v[0]
+    handle Run { fn run(g) { g()
+        print(r)
+        resume(()) } } in { w(|| print(pick())) }
+    v.clear()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(1)
+        resume(2) } } in { f(&v) }
+}
+
+effect DNote { fn dnote(x: u64) }
+struct Hold { f: fn() }
+fn keep(f: fn()) { print(2) }
+fn other() {
+    handle DNote { fn dnote(x) { print(x); resume(()) } } in {
+        let f1 = || dnote(5)
+        let d = || { f1() }
+        let e = || { let z = d }
+        e()
+    }
+}

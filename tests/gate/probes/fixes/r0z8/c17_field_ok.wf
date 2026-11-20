@@ -1,0 +1,11 @@
+// Plan stage R0z Z8, part (c).
+// g runs f1, which is in a struct field. g runs in the handled body.
+effect Note { fn note(x: u64) }
+struct S { f: fn() }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let s = S { f: || note(5) }
+        let g = || { let k = s.f; k() }
+        g()
+    }
+}

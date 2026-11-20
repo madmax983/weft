@@ -1,0 +1,11 @@
+// Plan stage R0z Z8, part (c).
+// h runs g, which runs f1: two levels of closures.
+effect Note { fn note(x: u64) }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let f1 = || note(5)
+        let g = || { f1() }
+        let h = || { g() }
+        h()
+    }
+}

@@ -1488,6 +1488,36 @@ fn the_probes_of_the_copy_regions_pass_the_fact_oracle() {
     assert!(checked >= 8, "{checked}");
 }
 
+/// Each probe of plan stage R0z Z8 (`fixes/r0z8`: a closure of a clause that
+/// performs to the outer handler, the strong update after a `multi` resume, a
+/// closure body that runs a closure of its maker) that the `ir` pipeline
+/// accepts runs with no failure of the fact oracle.
+#[test]
+fn the_probes_of_the_handler_environment_leftovers_pass_the_fact_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z8");
+    let mut checked = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        let m = r
+            .as_ref()
+            .err()
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
+        assert!(
+            failure(&r).is_none() && !m.starts_with("clause oracle"),
+            "{}: {m}",
+            p.display()
+        );
+        checked += 1;
+    }
+    assert!(checked >= 20, "{checked}");
+}
+
 /// The closure identity of a copy region (plan stage R0k-b2), the mutation.
 /// A copy replaces the run by the body of one closure, so the facts of the
 /// region hold only for a run of that closure: at the entry of the region

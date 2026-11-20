@@ -1,0 +1,23 @@
+// Plan stage R0z Z8, part (a).
+// The local f holds the closure of the inner clause, or a closure of the
+// inner handled body that performs `note` of the inner handler.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+fn main() {
+    let c = true
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            if c { f = || note(3) }
+            f()
+        }
+    }
+}

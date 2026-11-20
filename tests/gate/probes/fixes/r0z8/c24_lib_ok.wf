@@ -1,0 +1,12 @@
+// weft: library
+// Plan stage R0z Z8, part (c).
+// Library mode: a public function runs g, which runs f1, and a function
+// value of the caller.
+effect Note { fn tell(x: u64) }
+pub fn run(k: fn()) {
+    handle Note { fn tell(x) { print(x); resume(()) } } in {
+        let f1 = || tell(5)
+        let g = || { f1(); k() }
+        g()
+    }
+}

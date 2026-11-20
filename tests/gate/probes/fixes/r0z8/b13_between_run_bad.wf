@@ -1,0 +1,12 @@
+// Plan stage R0z Z8, part (b).
+// A `multi` clause runs `f` between its two `resume`s; the rest of the
+// handled body gives `f` a closure that performs `log` again at its end.
+effect Log { multi fn log(msg: String) }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()); f(); resume(()) } } in {
+        f = || print(1)
+        log("a")
+        f = || log("x")
+    }
+}

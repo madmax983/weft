@@ -1,0 +1,15 @@
+// Plan stage R0z Z8, part (b).
+// A callee performs the `multi` operation: the node of the call runs the
+// clause, and a write follows it.
+effect Log { multi fn log(msg: String) }
+fn say() / Log { log("s") }
+fn main() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        say()
+        f = || print(1)
+    }
+    f()
+}

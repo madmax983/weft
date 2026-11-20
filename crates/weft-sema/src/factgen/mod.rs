@@ -2701,6 +2701,7 @@ fn merge_handlers(
     into.w0314_bodies.append(&mut from.w0314_bodies);
     into.cap_performs.append(&mut from.cap_performs);
     into.cap_callers.append(&mut from.cap_callers);
+    into.maker_cap_nodes.append(&mut from.maker_cap_nodes);
 }
 
 /// The bodies of each closure body of the component `comp` (stage R0d):

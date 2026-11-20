@@ -2594,6 +2594,7 @@ fn on_abort(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, f: weft_ir::F
     let name = decl.name.rsplit('.').next().unwrap_or(decl.name.as_str());
     let span = em.facts.node(n).span;
     let site = apply::Site {
+        body: em.body,
         callee: name,
         spans: vec![span],
         bases: vec![em.alpha(st, place)?.places],
@@ -3087,6 +3088,7 @@ pub fn call(
     }
     dup_moves(em, st, &args.iter().collect::<Vec<_>>(), at)?;
     let site = crate::analysis::apply::Site {
+        body: em.body,
         callee: &callee,
         spans: spans.clone(),
         bases: bases.clone(),
@@ -4843,6 +4845,7 @@ fn emit_apps(
         for (k, n) in n_runs.into_iter().flatten().enumerate() {
             let first = k == 0;
             let site = crate::analysis::apply::Site {
+                body: em.body,
                 callee: &app.name,
                 spans: spans.to_vec(),
                 bases: bases.to_vec(),
@@ -6357,6 +6360,7 @@ fn clause_run_in_closure(
         spares: None,
         ins: Vec::new(),
         given: None,
+        maker: false,
     });
     Ok(())
 }

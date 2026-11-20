@@ -193,6 +193,10 @@ pub struct Handlers {
     /// a caller through the handlers on the way (stage R0d): a `multi_at`
     /// row there stays a row of the summary of the closure.
     pub cap_callers: Vec<weft_facts::NodeId>,
+    /// The nodes of [`Self::cap_performs`] whose capture is a capture of a
+    /// capability of the maker of the closure body (plan stage R0z Z8, part
+    /// c, [`maker_cap_of`]): their runs of clauses are [`ClauseRun::maker`].
+    pub maker_cap_nodes: BTreeSet<weft_facts::NodeId>,
     /// The callee frames whose heap slots hold while the clauses that their
     /// calls run are running, with the body of the call, the innermost last
     /// (`run_clause`).
@@ -535,6 +539,11 @@ pub struct ClauseRun {
     /// given place of an argument has the callee root of its parameter: a
     /// change below it has that root in `call_mut`.
     pub given: Option<Vec<(weft_facts::PlaceId, u32)>>,
+    /// The run is in a closure body, through a capture of a capability of
+    /// the maker of the closure body (plan stage R0z Z8, part c,
+    /// [`Handlers::maker_cap_nodes`]). If no node of the handled body runs
+    /// the closure, it is a run outside the handler (R-DEAD).
+    pub maker: bool,
 }
 
 /// A handler whose handled body runs now.
@@ -1033,6 +1042,39 @@ pub fn env_cap_of(
         return None;
     };
     (decl.captures.get(*k as usize)?.mode == weft_ir::CaptureMode::Cap).then_some((cb, *k))
+}
+
+/// The index of the `Cap` capture of the closure that body `body` runs in
+/// (`crate::factgen::alpha::unit_closure`) that holds the capability of fact
+/// place `q` (plan stage R0z Z8).
+///
+/// `q` is a whole capability local of the maker of that closure, and the
+/// closure captures that local (a closure that runs a function value
+/// captures the capabilities of its environment). A closure that the maker
+/// made with the same local (a `Kept` capture of the closure) performs
+/// through the same capability, so a perform through it is a perform
+/// through this capture, as for [`env_cap_of`].
+pub fn maker_cap_of(
+    p: &Program,
+    facts: &weft_facts::FnFacts,
+    roots: &crate::factgen::alpha::Roots,
+    body: BodyId,
+    q: weft_facts::PlaceId,
+) -> Option<u32> {
+    let cb = crate::factgen::alpha::unit_closure(p, body)?;
+    let (_, decl) = p.closure_of(cb)?;
+    let ((mb, l), path) = roots.path_of(facts, q)?;
+    if !path.is_empty() || mb != decl.maker {
+        return None;
+    }
+    let kind = p.body(mb)?.locals.get(l.index())?.kind;
+    if !matches!(kind, weft_ir::LocalKind::Cap(_)) {
+        return None;
+    }
+    let k = decl.captures.iter().position(|c| {
+        c.mode == weft_ir::CaptureMode::Cap && c.source.local == l && c.source.proj.is_empty()
+    })?;
+    u32::try_from(k).ok()
 }
 
 /// The local handlers whose capability a closure of the program captures.
@@ -2267,10 +2309,20 @@ fn resume_with(
     }
     if let Some(ex) = exit {
         let mut after = ex.with_bodies_of(st, &|b| inside(p, b, cb));
-        // A `once` continuation: a local of the site that the rest of the
-        // handled body gives a whole value on each path has that value
-        // after the `resume` (a strong update, stage R0k-d1).
-        let strong = if multi {
+        // A local of the site that the rest of the handled body gives a
+        // whole value on each path has that value after the `resume` (a
+        // strong update, stage R0k-d1). A `multi` continuation too (plan
+        // stage R0z Z8): each run of the rest starts at a node that runs a
+        // clause and ends at the end of the handled body, and the local of
+        // the site is a cell that a re-entry does not copy (the copies of
+        // the frames are the frames of the handled body and of its
+        // callees). Refusal: a `multi` continuation in a program with
+        // another handler (any handler of the program, not only a local
+        // one) keeps the weak update. The rest of the
+        // handled body can run a clause of the other handler from the
+        // `resume`, and the facts of the `resume` do not have it (the clause
+        // oracle A5 of the fact oracle fails on main too, issue #95).
+        let strong = if multi && p.handlers.len() > 1 {
             BTreeSet::new()
         } else {
             must_written(cx, h)?
@@ -2285,10 +2337,13 @@ fn resume_with(
 /// gives a whole value on each path, after each node that runs a clause of
 /// `h` (stage R0k-d1, D4): the state keys of their upvar locals.
 ///
-/// After a `resume` of a `once` continuation the rest of the handled body
-/// has run once, to its end, and a value that the clause put into such a
-/// local before the `resume` is gone, so the value at the end of the
-/// handled body is the value. The set is empty (each local joins, the weak
+/// After a `resume` the rest of the handled body has run once more, to its
+/// end, and a value that the clause put into such a local before the
+/// `resume` is gone, so the value at the end of the handled body is the
+/// value. This is true for a `multi` continuation too (plan stage R0z Z8):
+/// each run of the rest (also a re-entry) starts after a node that runs a
+/// clause, and a re-entry copies the frames of the handled body, not the
+/// cell of a local of the site. The set is empty (each local joins, the weak
 /// update) if a body inside the handled body that is not a closure body
 /// runs a clause of `h`, or if no node of the handled body runs one. Only a
 /// whole `Assign` of the upvar local in the handled body itself counts as a
@@ -3452,11 +3507,45 @@ fn call_performs(
             if fns.is_empty() {
                 return Ok(true);
             }
+            // A perform through a capture of a known closure goes to the
+            // handler of the capture (and to the handlers that it passes
+            // operations on to), not to another handler of the same effect
+            // (plan stage R0z Z8: a closure that a clause of an inner
+            // handler makes performs to the outer handler, `g2_lexical`).
+            let p = cx.p;
+            let tys = &*cx.tys;
+            // Refusal: only a closure whose captures are all capabilities.
+            // A closure that a clause makes with a capture of a local of the
+            // clause fails the summary oracle A3 at its run (an old gap of
+            // the facts, also on main), so such a run keeps the old rule.
+            let only_caps = |c: weft_ir::ClosureId| {
+                p.closures.get(c.index()).is_some_and(|d| {
+                    d.captures
+                        .iter()
+                        .all(|x| x.mode == weft_ir::CaptureMode::Cap)
+                })
+            };
+            let to_h =
+                |c: Option<weft_ir::ClosureId>, pf: &super::summary::Perform| match (c, &pf.cap) {
+                    (Some(c), super::summary::CapIface::Cap(k)) if only_caps(c) => {
+                        capture_handler(p, c, *k)
+                            .is_none_or(|h2| serving_all(p, tys, h2).0.contains(&h))
+                    }
+                    _ => true,
+                };
             for g in &fns {
-                let sum = match g {
-                    super::FnVal::Closure(c) | super::FnVal::Made(c) => cx.sums.closure(*c).ok(),
-                    super::FnVal::Item(f, _) => cx.sums.get(*f).ok(),
-                    _ => None,
+                let (sum, c) = match g {
+                    super::FnVal::Closure(c) | super::FnVal::Made(c) => {
+                        (cx.sums.closure(*c).ok(), Some(*c))
+                    }
+                    super::FnVal::Item(f, _) => (cx.sums.get(*f).ok(), None),
+                    _ => (None, None),
+                };
+                let does = |s: &super::summary::Summary| {
+                    !s.runs.is_empty()
+                        || s.performs
+                            .iter()
+                            .any(|pf| pf.effect == effect && to_h(c, pf))
                 };
                 if sum.is_none_or(does) {
                     return Ok(true);

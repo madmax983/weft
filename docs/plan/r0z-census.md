@@ -182,6 +182,32 @@ the counts.
   55 of the 114 new files keep it (the refusal probes of `fixes/r0z4`, and its probes of
   Part B and Z4b). Tier 2: 21 fallbacks (main 22).
 
+## Z8 (as built)
+
+- Z8 closed 2 rows of tier 1 (rows 90 and 91; 27 to 25 fallbacks of the census rows) and 2
+  rows of tier 2 (row 25, `g2/p2515`, and the copy of row 91, `verify/partb/p/g2_lexical`; 21
+  to 19): `docs/plan/core-ir.md`, "Z8 as built". Each one is in scope with no error, as the
+  old pipeline.
+- Row 91 (`g2_lexical`, part a): the run of the closure that the inner clause gives back runs
+  no clause of the inner handler (the closure performs through its capture of the outer
+  capability), so the given-back rule of R0h does not apply there.
+- Row 90 (`d02_multi_weak`, part b): the strong update of R0k-d1 after a `resume` of a
+  `multi` continuation.
+- Tier 2 row 25 (`p2515`, part c): the cause is not a closure body that no node runs. The
+  closure `g2` runs `twice(f1)`, and `f1` performs through the capability of the handled
+  body, which `g2` captures too. The run in the closure body is a perform through that
+  capture of `g2` (as R0d for a capture of a capture).
+- Row 25 (`q01_85_after_resume_bad`) stays: the closure of `Note` goes into the clause of
+  `Run` through a call of a function value (`c(|| note(2))`), not through the result of a
+  perform; the old pipeline rejects it (W0313), so no hole.
+- Tier 1: 180 fallbacks of 5895 files (main 211 of 5895): the 2 rows above leave it, and 29
+  of the 73 new files (`fixes/r0z8`, the corpus program `206_handler_env_leftovers`); 9 new
+  files keep it (the refusal probes of the stage, R-DEAD among them, and three bad probes
+  that the old pipeline checks, as with main). Tier 2: 19 fallbacks (main 21).
+- Review round 2 (R-DEAD): a closure that no node runs and that runs a closure of its maker
+  keeps the pending escape of main, so no row in scope on main leaves the scope; the census
+  rows are as above.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -238,7 +264,7 @@ the counts.
 | 22 | `fixes/r0kb1/c11_c2_loop_instance_ok.wf` | C2 | extent rule (clean twin; the old W0313 is the language rule "not through a local outside it") | W0313 | no fault | rejected | yes | Z1-D (closed) |
 | 23 | `fixes/r0kb1/n04_loop_instance_bad.wf` | C2 | extent rule: as c11, a closure of the same function | W0301, W0313 | fault | rejected | yes | Z1-D (closed) |
 | 24 | `fixes/r0kb1/n04_loop_instance_ok.wf` | C2 | extent rule (clean twin; old W0313) | W0313 | no fault | rejected | yes | Z1-D (closed) |
-| 25 | `fixes/r0kb2/q01_85_after_resume_bad.wf` | C2>esc | the clause of `Run` runs a capability closure of `Note` after its `resume` (outside `Note`) | W0313 | fault | rejected | no | Z8 (open: Z1-D has no form for a value through a call of a function value) |
+| 25 | `fixes/r0kb2/q01_85_after_resume_bad.wf` | C2>esc | the clause of `Run` runs a capability closure of `Note` after its `resume` (outside `Note`) | W0313 | fault | rejected | no | Z8 (open: Z1-D has no form for a value through a call of a function value; not the form of Z8 part a, "Z8 (as built)") |
 | 26 | `verify/partb/p/a4_get_own.wf` | C2 | a closure that performs through `Get` goes to an operation of `Get` itself | W0313 | fault | rejected | no | Z1-D (closed) |
 | 27 | `verify/s5/S5a/x/p/e2b_e_job.wf` | C2>VT | forms 2 to 4 with a clause that spawns its argument (capability of `Note` to `Run`, `RunJ`) | 2xW0313, 5xW0314 | fault | rejected | no | Z1-G (closed; planned Z1-D) |
 | 28 | `verify/s5/S5a/x/p/e2b_e_mk_job.wf` | C2>VT | as e2b_e_job | 2xW0313, 5xW0314 | fault | rejected | no | Z1-G (closed; planned Z1-D) |
@@ -303,8 +329,8 @@ the counts.
 | 87 | `verify/s5/R2c: .../p/fd2_v3_vec_of_closures.wf` | D1 | D1a through a `Vec` (heap slot), a perform between | clean | no fault | clean | no | Z4 |
 | 88 | `verify/s5/R2c: .../p/rr3_v19_sim_run_closure.wf` | D1 | runtime run: `resume` in the block of `sim.run` | clean | no fault | clean | no | Z4b |
 | 89 | `verify/s5/R2c: .../p/rr3_v20_with_timeout.wf` | D1 | runtime run: `resume` in the block of `with_timeout` | clean | no fault | clean | no | Z4b |
-| 90 | `fixes/r0kd1/d02_multi_weak.wf` | esc | D4 multi: the update after a `multi` resume stays weak, so a closure seems to run outside its handler | clean | no fault | clean | yes | Z8 |
-| 91 | `verify/partb/p/g2_lexical.wf` | D3 | a value through a `resume`: the inner clause gives back a closure that performs to the outer handler | clean | no fault | clean | no | Z8 |
+| 90 | `fixes/r0kd1/d02_multi_weak.wf` | esc | D4 multi: the update after a `multi` resume stays weak, so a closure seems to run outside its handler | clean | no fault | clean | yes | Z8 (closed) |
+| 91 | `verify/partb/p/g2_lexical.wf` | D3 | a value through a `resume`: the inner clause gives back a closure that performs to the outer handler | clean | no fault | clean | no | Z8 (closed) |
 | 92 | `fixes/r0kd2/s4_spawn_in_closure_ok.wf` | E4 | a spawn in a closure on the scope of the outer body; two writes of `f` | clean | no fault | clean | yes | Z9b |
 | 93 | `fixes/r0f/c09_cc_during_ok.wf` | E2 | two values: code of a caller runs `f` once on the task (the c09 subset of R0k-d3) | clean | no fault | clean | no | Z9a |
 | 94 | `fixes/r0j/j01_again_ok.wf` | E2 | code of a caller runs `f` two times on the task | clean | no fault | clean | yes | Z9a |
@@ -378,7 +404,7 @@ The other 35 rows of tier 2:
 | 22 | `r2/oracle/runs/m1/p1669.wf` | D5 | a `multi` clause runs its parameter: a row that only the analysis finds | clean | no fault | clean | no | Z7 (closed) |
 | 23 | `r3/oracle/runs/m3a/p5750.wf` | D1 | D1a refusal: a call (`print(r)`) between the make and the run | W0301 | no fault | rejected | no | Z4 (closed) |
 | 24 | `r3/oracle/runs/m3a/p7154.wf` | D1 | D1a refusal: a call (`Box.new`) between, a `resume` in a nested handled body | W0301 | no fault | rejected | no | Z4 |
-| 25 | `r2/oracle/runs/g2/p2515.wf` | esc | closures that capture a capability in a block of a closure body that no node runs | clean | no fault | clean | no | Z8 |
+| 25 | `r2/oracle/runs/g2/p2515.wf` | esc | closures that capture a capability in a block of a closure body that no node runs (Z8: the cause is a closure body that runs a closure of its maker, `twice(f1)`) | clean | no fault | clean | no | Z8 (closed) |
 | 26 | `r2/oracle/runs/m2/p7046.wf` | E2 | a task runs `run_both(f1, f1)` | clean | no fault | clean | no | Z9a |
 | 27 | `r3/oracle/runs/g3b/p18574.wf` | VT | a function value runs a value of its arguments as a task | W0312 | no fault | rejected | no | Z9c |
 | 28 | `r3/oracle/runs/g4p/p25005.wf` | NESTED | a value of a callee runs a value as a task | W0405 | no fault | rejected | no | Z9c |

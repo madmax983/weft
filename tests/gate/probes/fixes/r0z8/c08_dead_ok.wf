@@ -1,0 +1,18 @@
+// Plan stage R0z Z8, part (c).
+// The form of the tier-2 row p2515: a closure g runs f1 through `twice`, and
+// a block of g makes a closure that no code runs.
+effect Note { fn note(x: u64) }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let f1 = || note(5)
+        let g = || {
+            twice(f1)
+            if true {
+                let f3 = || note(6)
+            }
+        }
+        g()
+        note(2)
+    }
+}

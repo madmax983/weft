@@ -1,0 +1,16 @@
+// Plan stage R0z Z8, part (b).
+// A recursive function installs a `multi` handler. Each level writes
+// `f` after the run of the clause.
+effect Log { multi fn log(msg: String) }
+fn go(n: u64) {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(())
+        resume(()) } } in {
+        f = || log("x")
+        f()
+        if n > 0 { go(n - 1) }
+        f = || print(n)
+    }
+    f()
+}
+fn main() { go(1) }

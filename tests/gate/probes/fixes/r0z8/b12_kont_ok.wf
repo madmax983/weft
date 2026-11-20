@@ -1,0 +1,15 @@
+// Plan stage R0z Z8, part (b).
+// The clause gives the handled body a closure that resumes the `multi`
+// continuation; the handled body runs it. A write of `f` follows the
+// node that runs the clause.
+effect K { multi fn get() -> u64 }
+fn main() {
+    let f = || print(0)
+    handle K { fn get() { resume(1)
+        resume(2) } } in {
+        f = || print(5)
+        let x = get()
+        f = || print(x)
+    }
+    f()
+}

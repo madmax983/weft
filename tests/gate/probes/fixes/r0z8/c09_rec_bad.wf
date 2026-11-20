@@ -1,0 +1,15 @@
+// Plan stage R0z Z8, part (c).
+// A recursive function makes the handler. The inner call gets f1 of the
+// outer frame and gives back g, which runs f1 after the inner `handle`.
+effect Note { fn note(x: u64) }
+fn go(n: u64, f: fn()) -> fn() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let f1 = || note(n)
+        let g = || { f1() }
+        if n == 0 { g } else { go(n - 1, g) }
+    }
+}
+fn main() {
+    let h = go(1, || print(0))
+    h()
+}

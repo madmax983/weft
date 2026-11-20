@@ -1,0 +1,15 @@
+// Plan stage R0z Z8, part (c).
+// A scope body in the handled body runs g on this task; a task of the
+// scope prints.
+effect Note { fn tell(x: u64) }
+fn main() {
+    handle Note { fn tell(x) { print(x); resume(()) } } in {
+        let f1 = || tell(5)
+        let g = || { f1() }
+        scope { s =>
+            let t = s.spawn(|| 1)
+            g()
+            print(t.join())
+        }
+    }
+}

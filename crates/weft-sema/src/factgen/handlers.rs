@@ -474,6 +474,7 @@ pub fn handle_post(
                 spares: spares.clone(),
                 ins: Vec::new(),
                 given: None,
+                maker: false,
             });
         }
     }
@@ -614,6 +615,7 @@ pub fn perform_local(
         spares: spared,
         ins,
         given: None,
+        maker: false,
     });
     if let Some(r) = nodes.ret {
         // A `multi` resume gives the perform the values of the later
@@ -702,6 +704,7 @@ fn check_in_places(
         .map(|a| super::templates::operand_span(em, a, at))
         .collect();
     let site = crate::analysis::apply::Site {
+        body: em.body,
         callee: &op.name,
         spans,
         bases: vec![Vec::new(); args.len()],
@@ -840,6 +843,7 @@ pub fn call_clauses(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind
                     spares: None,
                     ins: Vec::new(),
                     given: Some(gv.roots.clone()),
+                    maker: false,
                 });
             }
         }
@@ -933,6 +937,9 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
             hs.extend(clause::serving_all(p, em.tys, h).0);
         }
     }
+    // A capture of a capability of the maker (plan stage R0z Z8, part c):
+    // the runs of the clauses are `maker` runs (R-DEAD, `starts`).
+    let maker = em.hx.maker_cap_nodes.iter().any(at);
     hs.sort();
     hs.dedup();
     if hs.is_empty() {
@@ -969,6 +976,7 @@ fn captured_calls(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) 
                     spares: None,
                     ins: Vec::new(),
                     given: Some(gv.roots.clone()),
+                    maker,
                 });
             }
         }
@@ -4734,13 +4742,36 @@ impl Region<'_> {
                 // closure body (stage R0d) is the same: the node that runs
                 // the closure is a run of the clause.
                 None => {
+                    // The runs of a closure body through a capture of a
+                    // capability of its maker (plan stage R0z Z8, part c)
+                    // are no node that runs a closure.
                     let mut runs = self
                         .hx
                         .runs
                         .iter()
-                        .filter(|y| y.clause == c && y.given.is_some() && !self.in_w0314_task(y.at))
+                        .filter(|y| {
+                            y.clause == c
+                                && y.given.is_some()
+                                && !y.maker
+                                && !self.in_w0314_task(y.at)
+                        })
                         .peekable();
-                    if runs.peek().is_some() && !runs.any(|y| body.contains(&y.node)) {
+                    let some = runs.peek().is_some();
+                    let in_body = runs.any(|y| body.contains(&y.node));
+                    // R-DEAD (the review of Z8, round 2): such a run where
+                    // no node of the handled body runs a closure (a closure
+                    // that no code runs, or that runs outside the handler).
+                    // Main noted a run outside the handler there
+                    // (`transfer::check_cap_apps`): W0313 or W0314 must
+                    // reject the program (`emit`). The same here, not a
+                    // pending `REST_NOT_FOUND`.
+                    if x.maker {
+                        if !in_body {
+                            clause::note_pending_escape(x.handler, true);
+                        }
+                        continue;
+                    }
+                    if some && !in_body {
                         return None;
                     }
                 }

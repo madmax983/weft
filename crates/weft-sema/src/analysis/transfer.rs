@@ -2140,6 +2140,13 @@ fn check_cap_apps(
                 if super::clause::env_cap_of(cx.p, cx.facts, cx.roots, q).is_some() {
                     continue;
                 }
+                // A capability of the maker of the closure body of the node
+                // that the closure body captures too (plan stage R0z Z8): the
+                // node that runs the closure body runs the clause
+                // (`apply::main`).
+                if super::clause::maker_cap_of(cx.p, cx.facts, cx.roots, body, q).is_some() {
+                    continue;
+                }
                 let h = match cx.roots.role(cx.facts.place(q).root) {
                     Some(crate::factgen::alpha::Role::Local(key)) => {
                         match cx.p.body(key.0).map(|x| x.kind) {

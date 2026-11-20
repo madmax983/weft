@@ -1,0 +1,11 @@
+// Plan stage R0z Z8, part (c).
+// A callee gets g and runs it in the handled body.
+effect Note { fn tell(x: u64) }
+fn apply(f: fn()) { f() }
+fn main() {
+    handle Note { fn tell(x) { print(x); resume(()) } } in {
+        let f1 = || tell(5)
+        let g = || { apply(f1) }
+        apply(g)
+    }
+}

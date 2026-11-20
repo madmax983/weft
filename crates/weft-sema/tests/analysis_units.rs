@@ -3546,16 +3546,134 @@ mod r0kd1 {
         assert_eq!(scope("d01_strong_ok.wf"), (None, None));
     }
 
-    /// D4: a `multi` continuation keeps the weak update, so the escape of
-    /// the closure in `f` stays pending (the program falls back).
+    /// D4: a `multi` continuation gets the strong update too (plan stage
+    /// R0z Z8): no escape is pending and the program is in scope.
     #[test]
-    fn a_multi_continuation_keeps_the_weak_update() {
-        let (_, pending) = scope("d02_multi_weak.wf");
+    fn a_multi_continuation_gets_the_strong_update_too() {
+        assert_eq!(scope("d02_multi_weak.wf"), (None, None));
+        assert_eq!(scope("d02_multi_ok.wf"), (None, None));
+    }
+}
+
+/// Plan stage R0z Z8: the handler environment leftovers. (a) A closure that
+/// a clause of an inner handler makes performs to the outer handler; (b) the
+/// strong update after a `resume` of a `multi` continuation; (c) a closure
+/// that runs a closure of its maker that performs through a capability that
+/// both capture.
+mod r0z8 {
+    /// The analysis of probe `name` of `tests/gate/probes/fixes/r0z8`: the
+    /// reason of the fallback, the reason of the pending construct, and the
+    /// codes of the errors.
+    fn check(name: &str) -> (Option<String>, Option<String>, Vec<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z8")
+            .join(name);
+        let src =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let a = weft_sema::analyze_source(&src, weft_sema::Options::from_markers(&src))
+            .unwrap_or_else(|d| panic!("{name}: {}", d.message));
+        let s = a.ir_scope.clone().expect("a scope");
+        let codes = a.diags.iter().map(|d| format!("{:?}", d.code)).collect();
+        (s.fallback, s.pending.map(|p| p.reason), codes)
+    }
+
+    /// The clean probes of the three parts are in scope with no error.
+    #[test]
+    fn the_clean_forms_are_in_scope_with_no_error() {
+        for name in [
+            "a01_lexical_ok.wf",
+            "a04_get_again_ok.wf",
+            "a09_vec_ok.wf",
+            "a10_lib_ok.wf",
+            "b03_between_ok.wf",
+            "b06_loop_ok.wf",
+            "b07_two_runs_ok.wf",
+            "b08_callee_ok.wf",
+            "b11_closure_run_ok.wf",
+            "c01_vec_ok.wf",
+            "c05_callee_ok.wf",
+            "c07_nested_ok.wf",
+            "c08_dead_ok.wf",
+            "c11_multi_ok.wf",
+            "c13_plain_ok.wf",
+            "c17_field_ok.wf",
+            "c18_deep_ok.wf",
+        ] {
+            assert_eq!(check(name), (None, None, Vec::new()), "{name}");
+        }
+    }
+
+    /// The bad twins: the `ir` pipeline rejects each one with W0313 (the
+    /// closure leaves its handler).
+    #[test]
+    fn the_bad_twins_are_rejected() {
+        for name in [
+            "a01_lexical_bad.wf",
+            "b02_multi_weak_bad.wf",
+            "b06_loop_bad.wf",
+            "b07_two_runs_bad.wf",
+            "b08_callee_bad.wf",
+            "b09_nested_bad.wf",
+            "c01_vec_bad.wf",
+            "c04_ret_bad.wf",
+            "c10_two_bad.wf",
+            "c18_deep_bad.wf",
+        ] {
+            let (fallback, _, codes) = check(name);
+            assert!(fallback.is_none(), "{name}: {fallback:?}");
+            assert!(codes.iter().any(|c| c == "W0313"), "{name}: {codes:?}");
+        }
+    }
+
+    /// The refusals of the stage keep the fallback: (a) a closure of the
+    /// clause with a capture of a local of the clause (the summary oracle A3
+    /// fails at its run); (b) a `multi` continuation in a program with
+    /// another local handler (the clause oracle A5 fails, issue #95).
+    #[test]
+    fn the_refusals_keep_the_fallback() {
+        for name in ["a03_capture_ok.wf", "b09_nested_ok.wf"] {
+            let (fallback, pending, codes) = check(name);
+            assert!(codes.is_empty(), "{name}: {codes:?}");
+            assert!(fallback.is_some() || pending.is_some(), "{name}");
+        }
+    }
+
+    /// R-DEAD (the review of Z8, round 2): a closure that no code runs and
+    /// that runs a closure of its maker keeps the pending escape of main.
+    /// With the first rule of part (c) its run mapped to no node of the
+    /// handled body (`REST_NOT_FOUND`), and the view of `c25_dead_closure_bad`
+    /// with the copies of the callees went to the fallback (the old pipeline
+    /// misses its fault). `c26`: a closure that other code runs captures the
+    /// dead closure. The bad twin is in scope and rejected (W0314 of the
+    /// analysis; the check adds W0301, as main); the clean twin keeps the
+    /// fallback, as main.
+    #[test]
+    fn a_dead_closure_keeps_the_pending_escape() {
+        for name in ["c25_dead_closure_bad.wf", "c26_dead_capture_bad.wf"] {
+            let (fallback, _, codes) = check(name);
+            assert!(fallback.is_none(), "{name}: {fallback:?}");
+            assert!(codes.iter().any(|c| c == "W0314"), "{name}: {codes:?}");
+        }
+        let (fallback, pending, codes) = check("c25_dead_closure_ok.wf");
+        assert!(codes.is_empty(), "{codes:?}");
         assert!(
             pending
                 .as_deref()
                 .is_some_and(|r| r.contains("a capability that leaves its handler")),
-            "{pending:?}"
+            "{fallback:?} {pending:?}"
+        );
+    }
+
+    /// (a) A `multi` operation that gives the closure back keeps the
+    /// fallback: the run of the clause stops at its first `resume`.
+    #[test]
+    fn a_multi_operation_that_gives_a_closure_back_keeps_the_fallback() {
+        let (fallback, _, _) = check("a05_multi_ok.wf");
+        assert!(
+            fallback
+                .as_deref()
+                .is_some_and(|r| r.contains(weft_sema::analysis::clause::GIVES_BACK)),
+            "{fallback:?}"
         );
     }
 }
