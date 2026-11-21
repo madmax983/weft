@@ -1,0 +1,16 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A clause spawns on the scope of the site a task that runs `f` two times;
+// the handled body writes `c.k` while the task runs (W0405).
+effect Go { fn go() }
+struct C { k: u64 }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let c = C { k: 0 }
+    let f = || print(c.k)
+    scope { s =>
+        handle Go { fn go() { s.spawn(|| twice(f)); resume(()) } } in {
+            go()
+            c.k += 1
+        }
+    }
+}

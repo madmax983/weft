@@ -646,10 +646,18 @@ fn show(lines: &[String]) -> String {
 /// capture that `by_value` moves (class `closure-copy`, B12b): the old
 /// analysis moves a value that holds a function value when the body reads
 /// the function value, and the IR copies the function value. All of them are
-/// programs that the checker rejects. A new program in this list needs a
-/// review.
-const CLOSURE_COPY: [&str; 14] = [
+/// programs that the checker rejects, but `s9_steal_stored`: from plan stage
+/// R0z Z9a the `ir` pipeline checks it and accepts it (the IR engine runs it
+/// with no fault; the AST engine moves `fs` only with the `by_value` of the
+/// old analysis). `g07_stored_once_bad` and `g08_stored_once_twice_bad`
+/// (review round 1 of Z9a, B2): the element is a `once` closure, so the copy
+/// of the IR does not move it (an old gap of the IR); R-ONCE keeps the
+/// fallback, and the old pipeline rejects them (W0302). A new program in this
+/// list needs a review.
+const CLOSURE_COPY: [&str; 16] = [
     "tests/gate/probes/fixes/f12/run_results.wf",
+    "tests/gate/probes/fixes/r0z9a/g07_stored_once_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/g08_stored_once_twice_bad.wf",
     "tests/gate/probes/r2/redteam/p/zz_modes_vec.wf",
     "tests/gate/probes/r3/oracle/probes/s9_steal_stored.wf",
     "tests/gate/probes/r3/oracle/probes/sc4_vec_in_task.wf",

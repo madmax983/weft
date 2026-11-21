@@ -1,0 +1,15 @@
+// Plan stage R0z Z9a, review round 3 (R-MULTI: a run again that only the
+// re-entry of a `multi` operation makes; the rule of main stays).
+// A callee: its task runs param f after a multi perform: two runs (bad).
+effect Pick { multi fn pick() -> bool }
+fn mid(f: fn()) / async { scope { s => s.spawn(|| { handle Pick { fn pick() { resume(true); resume(false) } } in { let b = pick(); f() } }) } }
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let a: Option<&u64> = None
+    mid(|| {
+        match a { Some(y) => print(y), None => print(0) }
+        a = Some(&w[0])
+        w.push(2)
+    })
+}

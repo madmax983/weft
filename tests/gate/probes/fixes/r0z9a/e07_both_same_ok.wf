@@ -1,0 +1,10 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A task runs `run_both(f1, f1)`: the same value two times (tier 2 p7046).
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn main() {
+    let c = 0
+    let f1 = || print(c)
+    scope { s =>
+        s.spawn(|| run_both(f1, f1))
+    }
+}

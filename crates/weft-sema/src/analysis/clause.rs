@@ -218,6 +218,11 @@ pub struct Handlers {
     /// the runs of the spawn (plan stage F18, `super::tasks`): `ScopeWait`
     /// gives it to the `TaskResult` local of a spawn statement.
     pub task_values: BTreeMap<weft_ir::SpawnId, Tree>,
+    /// The blocks of the spawns whose task runs a value more than once
+    /// (an app with `again` and not `order`; plan stage R0z Z9a). The fact
+    /// generator gives such a spawn a second node of the run
+    /// (`crate::factgen::nodes::NodeTable::again_nodes`).
+    pub again_spawns: std::collections::BTreeSet<(BodyId, BlockId)>,
     /// The scopes that the scope operand of each spawn site with no scope
     /// of its own (`SpawnDecl::scope` is `None`) can be, a join over the
     /// runs of the spawn (stage R0e, `super::tasks::SiteScope`).

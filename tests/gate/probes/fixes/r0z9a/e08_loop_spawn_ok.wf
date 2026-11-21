@@ -1,0 +1,12 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A spawn in a loop; each task runs `f` two times.
+struct C { k: u64 }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let c = C { k: 0 }
+    let f = || print(c.k)
+    scope { s =>
+        for i in 0..3 { s.spawn(|| twice(f)) }
+    }
+    c.k += 1
+}

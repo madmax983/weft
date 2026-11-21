@@ -886,6 +886,31 @@ pub(super) fn operand_moves(
     }
 }
 
+/// The move of operand `op` at node `n`, with no read (the read is at an
+/// earlier node; plan stage R0z Z9a): as [`operand_moves`] with `moves`.
+///
+/// # Errors
+///
+/// The errors of α.
+fn operand_move_only(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand) -> R {
+    let q = match op {
+        Operand::Const(_) => return Ok(()),
+        Operand::Copy(q) | Operand::Move(q) => q,
+    };
+    let (_, al) = em.access(st, q, true)?;
+    let moves = match op {
+        Operand::Move(_) => {
+            let plain = em.place_ty(q).is_some_and(|t| !em.tys.not_copy(t));
+            !plain || once_read(em, st, q)?
+        }
+        _ => once_read(em, st, q)?,
+    };
+    if moves {
+        moved(em, n, st, q, &al)?;
+    }
+    Ok(())
+}
+
 /// Two operands of one node that move the same place (`(f, f)`,
 /// `pair(f, f)`, `(p.0, p.0)`, a capture of a closure body, the arguments of
 /// a perform; I-2 of the second review of group F, follow-up F20.3; I-8 of
@@ -4080,6 +4105,13 @@ struct TaskSlot {
     pub twice: bool,
     /// The callee can run the value more than once (`Run::many`).
     pub many: bool,
+    /// The tasks of the callee can run the value more than once on one path
+    /// (`Run::task_seq`).
+    pub seq: bool,
+    /// The callee only gives the value to code of a caller (`Run::via_only`;
+    /// true for a slot of a function value, whose callee the node does not
+    /// know).
+    pub via_only: bool,
     /// The callee is code of a caller (`TaskHow::foreign`).
     pub foreign: bool,
     /// The parameters whose values the callee runs while the task runs.
@@ -4130,6 +4162,8 @@ fn item_slots(
             thread: run.how.thread,
             twice: run.how.twice || code_twice,
             many: run.many,
+            seq: run.task_seq,
+            via_only: run.via_only,
             foreign: run.how.foreign,
             with: run.how.with.clone(),
             writes,
@@ -4161,6 +4195,8 @@ fn value_slots(apps: &[transfer::Applied], slots: &[u32]) -> Option<Vec<TaskSlot
                 thread: false,
                 twice: false,
                 many: false,
+                seq: false,
+                via_only: true,
                 foreign: false,
                 with: std::collections::BTreeSet::new(),
                 writes: Vec::new(),
@@ -4173,6 +4209,7 @@ fn value_slots(apps: &[transfer::Applied], slots: &[u32]) -> Option<Vec<TaskSlot
         x.thread |= how.thread;
         x.twice |= how.twice;
         x.many |= how.many;
+        x.seq |= how.seq;
         x.foreign |= how.foreign;
         x.with.extend(how.with.iter().copied());
         x.writes.extend(how.writes.iter().copied());
@@ -4252,7 +4289,28 @@ fn call_tasks(
         };
         let span_of = spans.get(slot.param as usize).copied().unwrap_or(at);
         let t = em.facts.add_task(kind, span_of);
-        em.facts.spawned_at.push((t, s));
+        // Review round 1 of plan stage R0z Z9a (B1): the callee can run the
+        // value more than once in one task, one run after the other
+        // (`Run::many`). The runs happen at the start node and again at the
+        // second start node, as `Main` and `Ret` of a call, so the effects of
+        // the first run reach the second one (W0301 of a reference that the
+        // first run ends). The task then starts at the second start node,
+        // after both runs; with `twice` it starts at both nodes (below).
+        // A foreign run (the worst way of code of a caller) is `many` by its
+        // `many` alone; such code runs the value again only if the node
+        // knows that it does (`Applied::via_twice`), as for W0502 below.
+        // Review round 2: only a run again on one path (`Run::seq`); a run on
+        // each of more than one exclusive path is one run (`if c { spawn(f) }
+        // else { f() }`). The count of `via_twice` adds the runs of each
+        // entry of `via` and of the other runs of the value, also on
+        // exclusive paths, so it counts only for a value that the callee only
+        // gives to code of a caller, or that it runs again on one path
+        // (`if c { spawn(f) } else { g(f) }` runs `f` one time).
+        let via_twice = slot.mine.iter().any(|a| a.via_twice);
+        let seq =
+            (slot.many && slot.seq && !slot.foreign) || (via_twice && (slot.via_only || slot.seq));
+        let first_start = if seq && !slot.twice { d } else { s };
+        em.facts.spawned_at.push((t, first_start));
         // The task can run while the call waits at an operation (follow-up
         // F19.5): a clause of a local handler, a handler of a caller.
         if em.in_task.is_none() {
@@ -4278,12 +4336,12 @@ fn call_tasks(
         );
         let at_s = CallNodes {
             main: s,
-            ret: None,
+            ret: seq.then_some(d),
             frame_end: nodes.frame_end,
             aborts: nodes.aborts.clone(),
             may_abort: false,
             values: Vec::new(),
-            local_code: true,
+            local_code: !seq,
         };
         em.in_task = Some((t, slot.thread));
         let frames = emit_apps(em, &at_s, st, block, &[], mine, at, &[], &[]);
@@ -5085,6 +5143,7 @@ fn emit_apps(
             // as a task (part `runs`, plan stage F19).
             if let Some((t, thread)) = em.in_task {
                 r.task = true;
+                r.in_task = true;
                 em.task_runs.push((t, r.param, r.capture, thread));
             } else {
                 // A run in a task of a scope of the maker (stage R0f).
@@ -5104,6 +5163,12 @@ fn emit_apps(
                     em.then_runs.push((r.param, r.capture));
                 }
             }
+            // Review round 3 of Z9a: a cycle that only the re-entry of a
+            // `multi` operation makes is no run again on one path here (the
+            // rule of main: one run).
+            let looped = cyclic && crate::analysis::summarize::in_loop(em.p, (em.body, block));
+            r.seq = (app.again && !app.order && app.seq) || cyclic;
+            r.seq_loop = (app.again && !app.order && app.seq_loop) || looped;
             em.runs.push((r, (app.again && !app.order) || cyclic));
             if app.code {
                 em.run_nodes.push(main);
@@ -6745,13 +6810,18 @@ fn at_or_below(facts: &FnFacts, inner: PlaceId, outer: PlaceId) -> bool {
 /// The handle binds (`rebound_at`, `points_into`), or a spawn statement
 /// gives its `TaskResult` local `rebound_at` and `empty_at`.
 ///
+/// Plan stage R0z Z9a: `again` is the second node of the run of a task that
+/// runs a value more than once ([`super::nodes::NodeTable::again_nodes`]).
+/// The run happens at `n` and again at `again`, and the task starts at
+/// `again` (`task_start`).
+///
 /// # Errors
 ///
 /// Returns [`AlphaError::Later`] for a task that performs through a
 /// capability of a local handler, and the errors of α.
 pub fn spawn(
     em: &mut Em<'_>,
-    (n, next): (NodeId, Option<NodeId>),
+    (n, again, next): (NodeId, Option<NodeId>, Option<NodeId>),
     st: &State,
     block: weft_ir::BlockId,
     (site, scope, task, dest): (weft_ir::SpawnId, &Operand, &Operand, Option<&Place>),
@@ -6761,7 +6831,7 @@ pub fn spawn(
     let body = em.body;
     operand(em, n, st, scope)?;
     unowned_spawn(em, site);
-    let (ret_ty, out_ret) = task_start(em, n, st, block, site, task, origin)?;
+    let (ret_ty, out_ret) = task_start(em, (n, again), st, block, site, task, origin)?;
     em.facts.escapes_at.push((n, ASYNC.to_string()));
     em.started.push(site.0);
     // The value after the spawn: the handle, or the `TaskResult` local.
@@ -6918,7 +6988,7 @@ pub fn fork(
             em.p.spawns
                 .get(site.index())
                 .map_or(origin, |d| d.origin.span);
-        task_start(em, n, st, block, *site, br, at)?;
+        task_start(em, (n, None), st, block, *site, br, at)?;
         tasks.extend(em.hx.task_ids.get(site).copied());
     }
     em.facts.escapes_at.push((main, "Par".to_string()));
@@ -7134,7 +7204,9 @@ fn w0314_bodies(em: &mut Em<'_>, fns: &std::collections::BTreeSet<FnVal>) {
 
 /// The start of the task of site `site` at node `n`: the run of the task
 /// operand `task` (a spawn, or a branch of a `fork`) in state `st`
-/// (`docs/ir.md` 6.4, plan stages F18 and F19).
+/// (`docs/ir.md` 6.4, plan stages F18 and F19). `again` is the second node
+/// of the run of a spawn whose task runs a value more than once (plan stage
+/// R0z Z9a): the value of the task moves and the task starts there.
 ///
 /// The operand moves; the run of the task body at `n` as a run of a
 /// closure with no arguments (`emit_apps`), whose changes and lends become
@@ -7152,7 +7224,7 @@ fn w0314_bodies(em: &mut Em<'_>, fns: &std::collections::BTreeSet<FnVal>) {
 /// not support yet, and the errors of α.
 fn task_start(
     em: &mut Em<'_>,
-    n: NodeId,
+    (n, again): (NodeId, Option<NodeId>),
     st: &State,
     block: weft_ir::BlockId,
     site: weft_ir::SpawnId,
@@ -7181,13 +7253,36 @@ fn task_start(
     // A late run (a value that the task body runs through a capture)
     // applies at `n`: the whole run of the task is at `n` (plan stage F19).
     // A run again (a value that runs another value more than once, OR3)
-    // needs a second node after the first run: a spawn has none.
-    // Plan stage R0j: the facts have no node for the second run, so the
-    // program is in scope only if the `ir` pipeline rejects it
+    // needs a second node after the first run.
+    // Plan stage R0z Z9a: a spawn whose task runs a value again has a second
+    // node of the run (`again`, [`super::nodes::NodeTable::again_nodes`]):
+    // the run happens at `n` and again at that node, so the effects of the
+    // first run reach the second one (the move of a `once` value, W0502; a
+    // reference that the first run ends, W0301). The task starts at the
+    // second node, after both runs: the code of the spawn is not code that
+    // runs while the task runs. See [`two_runs`] for the forms that keep the
+    // rule of R0j.
+    // Review round 2 of Z9a: only a run again on one path (`Applied::seq`);
+    // a value that the task runs on more than one exclusive path runs at most
+    // one time, so the run at `n` is exact.
+    let runs_again = out.apps.iter().any(|a| a.again && !a.order && a.seq);
+    let second = if runs_again && two_runs(em.p, em.tys, &out.apps) {
+        again
+    } else {
+        None
+    };
+    // Plan stage R0j: else the facts have no node for the second run, so
+    // the program is in scope only if the `ir` pipeline rejects it
     // (`Scope::pending`, the rule of stage R0g); the run at `n` stays.
-    if out.apps.iter().any(|a| a.again && !a.order) {
+    if runs_again && second.is_none() {
         pending(crate::irbuild::scope::Group::E, TASK_AGAIN);
     }
+    // The node where the task starts: the second node of the run, or `n` with
+    // one run (also a refusal: the facts of main, and the second node has no
+    // facts; review round 2 of Z9a, `o21_reassign_loop_ok`). The value of the
+    // task moves there too (a linear value that moves into the task:
+    // `abort_unhandled` reads the move at the node of `spawned_at`).
+    let start = second.unwrap_or(n);
     // A task runs the value that a shared cell (a `ByRef` or `Kept`
     // capture) holds when it runs: a variable that gets a new function value
     // after the spawn gives the task code that the run at `n` does not
@@ -7232,20 +7327,32 @@ fn task_start(
         }
     }
     let caller_code = out.apps.iter().any(|a| a.code);
-    operand_moves(em, n, st, task, false, true)?;
+    // The value of the task is read at `n`, with the first run (review round
+    // 3 of Z9a: a read at the second node is a read after the first run, a
+    // false W0301 of a reference that a one-time run of the task ends), and
+    // moves at the node where the task starts.
+    if start == n {
+        operand_moves(em, n, st, task, false, true)?;
+    } else {
+        operand_moves(em, n, st, task, false, false)?;
+        operand_move_only(em, start, st, task)?;
+    }
     let marks = (
         em.facts.mutates_at.len(),
         em.facts.lends_mut.len(),
         em.facts.reads_at.len(),
     );
+    // With a second node, no code of a local handler runs at the nodes of
+    // the spawn: the task runs on another stack (W0314 rejects a task that
+    // performs through a handler of this task).
     let nodes = CallNodes {
         main: n,
-        ret: None,
+        ret: second,
         frame_end: None,
         aborts: Vec::new(),
         may_abort: false,
         values: Vec::new(),
-        local_code: true,
+        local_code: second.is_none(),
     };
     let thread = em.p.spawns.get(site.index()).is_some_and(|d| d.fork);
     em.in_task = em.hx.task_ids.get(&site).map(|&t| (t, thread));
@@ -7254,7 +7361,18 @@ fn task_start(
     em.in_task = None;
     em.maker_site = None;
     let frames = frames?;
-    apps_at_ret(em, n, st, &out.apps, at)?;
+    // The `Ret` parts of a run that happens once go to `n`, and those of a
+    // run again to the second node (review round 3 of Z9a: else the one-time
+    // run of `cb` in `{ twice(f); cb() }` rebinds `a` after its own push).
+    match second {
+        Some(n2) => {
+            let (twice, once): (Vec<transfer::Applied>, Vec<transfer::Applied>) =
+                out.apps.iter().cloned().partition(|a| a.again && !a.order);
+            apps_at_ret(em, n, st, &once, at)?;
+            apps_at_ret(em, n2, st, &twice, at)?;
+        }
+        None => apps_at_ret(em, n, st, &out.apps, at)?,
+    }
     end_frames(em, &nodes, &frames);
     // The frame of the task ends where the task ends (a reference that the
     // task puts into a capture points into it: `zz_keep`, plan stage F19).
@@ -7262,7 +7380,7 @@ fn task_start(
         em.task_frames.extend(frames.iter().map(|&v| (t, v)));
     }
     if let Some(t) = em.hx.task_ids.get(&site).copied() {
-        em.facts.spawned_at.push((t, n));
+        em.facts.spawned_at.push((t, start));
         // A place of a caller (code of a caller, an operation of a caller)
         // and a local of a callee of the task are no places that the task
         // shares with the body (as the old lowering).
@@ -7289,17 +7407,19 @@ fn task_start(
                     )
             })
         };
+        // The facts of both nodes of the run (plan stage R0z Z9a).
+        let ours = |m: NodeId| m == n || Some(m) == second;
         let mut writes: Vec<PlaceId> = em.facts.mutates_at[marks.0..]
             .iter()
             .chain(&em.facts.lends_mut[marks.1..])
-            .filter(|(m, q)| *m == n && shared(*q))
+            .filter(|(m, q)| ours(*m) && shared(*q))
             .map(|(_, q)| *q)
             .collect();
         writes.sort();
         writes.dedup();
         let mut reads: Vec<PlaceId> = em.facts.reads_at[marks.2..]
             .iter()
-            .filter(|(m, q)| *m == n && shared(*q))
+            .filter(|(m, q)| ours(*m) && shared(*q))
             .map(|(_, q)| *q)
             .collect();
         reads.sort();
@@ -7328,6 +7448,114 @@ fn task_start(
         }
     }
     Ok((ret_ty, out.ret))
+}
+
+/// True if the facts of a spawn with two nodes of the run cover the runs
+/// `apps` of its task (plan stage R0z Z9a). The forms that keep the rule of
+/// R0j (the program is pending, `TASK_AGAIN`):
+///
+/// - R-INNER: a run starts a task in a scope of a maker (part `tasks`). A
+///   task that a run at `Main` starts would not start at the node of the
+///   task of the spawn, and the end of that task would end its writes
+///   (`task_ends`).
+/// - R-REBIND (review round 2 of Z9a): a `once` closure that runs again,
+///   and a run that gives a capture that can hold a function value a new
+///   whole value (part `rebinds`, or a whole change on some path): the second run can run the new value of the
+///   capture, which the state of the spawn does not have
+///   (`o21_reassign_loop_ok`: a loop runs a `once` `f`, then gives `f` a new
+///   closure).
+/// - R-ONCE (review round 1 of Z9a, B2): a run again of a `once` closure
+///   whose move does not reach the facts (no `once` and no `once_args`
+///   part: a value that the task body reads out of a container, as
+///   `let g = fs[0]; g()`). The first run does not move the value, so the
+///   second node gives no W0302 and no W0502 (an old gap of the closure
+///   body: `s8`, `s13` of the review).
+fn two_runs(p: &weft_ir::Program, tys: &mut TyTable, apps: &[transfer::Applied]) -> bool {
+    use crate::analysis::summary::IRoot;
+    let once = |a: &transfer::Applied| {
+        a.closure
+            .and_then(|c| p.closures.get(c.index()))
+            .is_some_and(|d| d.once)
+    };
+    // R-MULTI (review round 3): each run again on one path comes only from
+    // the re-entry of a `multi` operation (`Applied::seq_loop` false):
+    // `Cycles::rows_at` marks the blocks before the perform too, so the rule
+    // of main stays.
+    let again: Vec<&transfer::Applied> = apps
+        .iter()
+        .filter(|a| a.again && !a.order && a.seq)
+        .collect();
+    if !again.is_empty() && !again.iter().any(|a| a.seq_loop) {
+        return false;
+    }
+    // R-ORDER (review round 3): a value that runs one time, in either order
+    // with a run again (`again` with `order`: `{ twice(f); cb() }`). The
+    // run node applies it at both nodes (each order), so its own change at
+    // the first node ends a reference that it reads at the second one (a
+    // false W0301; a call has the same old gap).
+    if apps.iter().any(|a| a.again && a.order) {
+        return false;
+    }
+    // R-CODE (review round 3): a run again of code of a caller that gets a
+    // value of the body (`g(f)`: `Run::via`), or whose count the node knows
+    // only from that code (`via_twice`). The run node of the parameter in the
+    // body of such code has no accesses of the value that the callee gives
+    // (an old gap, `z9arev3/p/fo12`, `l8`), so the second run does not see
+    // what the first one ends.
+    if apps.iter().any(|a| {
+        a.again
+            && !a.order
+            && (a.via_twice
+                || a.run
+                    .as_ref()
+                    .is_some_and(|r| r.via_only || !r.via.is_empty()))
+    }) {
+        return false;
+    }
+    // R-ONCE.
+    if apps
+        .iter()
+        .any(|a| a.again && !a.order && once(a) && a.once.is_empty() && a.once_args.is_empty())
+    {
+        return false;
+    }
+    // R-REBIND: a `once` closure that runs again, and a whole change of a
+    // capture that can hold a function value (the new value of the capture is
+    // not the closure that the first run moved).
+    let once_again = apps.iter().any(|a| a.again && !a.order && a.seq && once(a));
+    for a in apps {
+        if !a.summary.tasks.is_empty() {
+            return false;
+        }
+        if !once_again {
+            continue;
+        }
+        let fn_var = |k: &crate::analysis::domain::Key| {
+            p.bodies
+                .get(k.0.index())
+                .and_then(|b| b.locals.get(k.1.index()))
+                .is_none_or(|d| crate::props::ir_has_fns(tys, d.ty))
+        };
+        if a.rebinds.iter().any(|(k, _)| fn_var(k)) {
+            return false;
+        }
+        for (ip, _) in &a.summary.muts {
+            let (IRoot::CaptureCell(k) | IRoot::Capture(k)) = ip.root else {
+                continue;
+            };
+            if !ip.steps.is_empty() {
+                continue;
+            }
+            let fns = a.closure.is_none_or(|c| {
+                super::alpha::capture_ty(p, tys, c, k)
+                    .is_none_or(|t| crate::props::ir_has_fns(tys, t))
+            });
+            if fns {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// The tasks of the component whose spawn site is in a body of a closure of

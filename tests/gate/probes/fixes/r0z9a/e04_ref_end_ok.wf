@@ -1,0 +1,12 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// The run of `f` on the task pushes into `v` and reads its length: no
+// reference lives across the runs.
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || { print(v.len()); v.push(2) }
+    scope { s =>
+        s.spawn(|| { f(); f() })
+    }
+    print(v.len())
+}

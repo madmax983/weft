@@ -180,7 +180,7 @@ pub fn summarize(
             }
         })
     };
-    let mut runs = runs_of(fv.runs, false, &run_place, ir.body(entry));
+    let mut runs = runs_of(ir, fv.runs, false, &run_place, ir.body(entry));
     for r in &mut runs {
         r.then = fv.then_runs.contains(&(r.param, r.capture));
     }
@@ -607,6 +607,7 @@ pub struct FnParts<'a> {
 /// with the interface places (`place`) that the run nodes give. With
 /// `closure`, the body is a closure body (its captures count).
 fn runs_of(
+    ir: &weft_ir::Program,
     runs: &[(crate::analysis::transfer::RunOf, bool)],
     closure: bool,
     place: &dyn Fn(PlaceId) -> Option<IPlace>,
@@ -659,6 +660,9 @@ fn runs_of(
             capture: r.capture,
             result: r.result,
             many: *many,
+            seq: false,
+            seq_loop: false,
+            task_seq: false,
             task: r.task,
             how: super::summary::TaskHow::default(),
             args,
@@ -679,7 +683,142 @@ fn runs_of(
         }
         super::sig::join_run(&mut out, &run);
     }
+    // A run again on one path (`Run::seq`, plan stage R0z Z9a, review round
+    // 2): a run node that runs the value again on one path, or two run nodes
+    // of the value on one path. Two run nodes on exclusive paths only are
+    // `many` with no `seq`.
+    for x in &mut out {
+        let mine: Vec<&crate::analysis::transfer::RunOf> = runs
+            .iter()
+            .map(|(r, _)| r)
+            .filter(|r| r.param == x.param && r.capture == x.capture && r.result == x.result)
+            .collect();
+        let mut sites: Vec<(weft_ir::BodyId, weft_ir::BlockId)> =
+            mine.iter().map(|r| (r.body, r.block)).collect();
+        sites.sort();
+        sites.dedup();
+        let sites_seq = one_path(ir, &sites);
+        x.seq = mine.iter().any(|r| r.seq) || sites_seq;
+        x.seq_loop = mine.iter().any(|r| r.seq_loop) || sites_seq;
+        let mut tasks: Vec<(weft_ir::BodyId, weft_ir::BlockId)> = mine
+            .iter()
+            .filter(|r| r.in_task)
+            .map(|r| (r.body, r.block))
+            .collect();
+        tasks.sort();
+        tasks.dedup();
+        // A task run and another run of the value on one path (a task, then
+        // a plain run: `scope { s => s.spawn(|| f()) }; f()`) count too.
+        x.task_seq = mine.iter().any(|r| r.in_task && r.seq_loop)
+            || one_path(ir, &tasks)
+            || (!tasks.is_empty() && sites_seq);
+    }
     out
+}
+
+/// True if one path runs two of the run sites `sites` (a body and the block
+/// of its run node), one after the other (plan stage R0z Z9a, review round
+/// 2). A site in a scope body or a handled body is at the block of its
+/// `scope` or `handle` in the body around it. A site whose place in the
+/// bodies the function does not find counts as a site on one path with each
+/// other site.
+fn one_path(ir: &weft_ir::Program, sites: &[(weft_ir::BodyId, weft_ir::BlockId)]) -> bool {
+    let chains: Vec<Option<Vec<(weft_ir::BodyId, weft_ir::BlockId)>>> =
+        sites.iter().map(|&x| site_chain(ir, x)).collect();
+    for (i, a) in chains.iter().enumerate() {
+        for b in chains.iter().skip(i + 1) {
+            let (Some(a), Some(b)) = (a, b) else {
+                return true;
+            };
+            // The innermost body that both chains reach.
+            let common = a.iter().find_map(|&(body, x)| {
+                b.iter()
+                    .find(|(c, _)| *c == body)
+                    .map(|&(_, y)| (body, x, y))
+            });
+            let Some((body, x, y)) = common else {
+                return true;
+            };
+            if x == y || reaches(ir, body, x, y) || reaches(ir, body, y, x) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True if a loop of the bodies runs the site `x` again.
+///
+/// A loop is a path of the body of the site from its block back to it, or
+/// of a body around it from the block of the `scope` or `handle` back to that
+/// block (plan stage R0z Z9a, review round 3). A site whose place the
+/// function does not find counts as in a loop. A re-entry of a `multi`
+/// operation is no loop here (`Cycles::rows_at` marks the blocks before the
+/// perform too): main applies one run there.
+pub fn in_loop(ir: &weft_ir::Program, x: (weft_ir::BodyId, weft_ir::BlockId)) -> bool {
+    site_chain(ir, x).is_none_or(|c| c.iter().any(|&(b, blk)| reaches(ir, b, blk, blk)))
+}
+
+/// The chain of a run site `x` up to its root body: the site, then the block
+/// of the `scope` or `handle` that runs each scope body or handled body on
+/// the way. The chain ends at a body of another kind (a function body, a
+/// closure body, a clause). `None` for a block that the function does not
+/// find.
+fn site_chain(
+    ir: &weft_ir::Program,
+    x: (weft_ir::BodyId, weft_ir::BlockId),
+) -> Option<Vec<(weft_ir::BodyId, weft_ir::BlockId)>> {
+    use weft_ir::{BodyKind, TermKind};
+    let mut out = vec![x];
+    let mut at = x.0;
+    for _ in 0..=ir.bodies.len() {
+        let b = ir.body(at)?;
+        let (Some(up), BodyKind::Handled(_) | BodyKind::Scope(_)) = (b.parent, b.kind) else {
+            return Some(out);
+        };
+        let site = ir.body(up)?;
+        let pos = site
+            .blocks
+            .iter()
+            .position(|blk| match (b.kind, &blk.term.kind) {
+                (BodyKind::Handled(h), TermKind::Handle { handler, .. }) => *handler == h,
+                (BodyKind::Scope(k), TermKind::Scope { scope, .. }) => *scope == k,
+                _ => false,
+            })?;
+        out.push((up, weft_ir::BlockId(u32::try_from(pos).ok()?)));
+        at = up;
+    }
+    None
+}
+
+/// True if a path of body `body` goes from the terminator of block `from` to
+/// block `to` (one edge or more).
+fn reaches(
+    ir: &weft_ir::Program,
+    body: weft_ir::BodyId,
+    from: weft_ir::BlockId,
+    to: weft_ir::BlockId,
+) -> bool {
+    let Some(b) = ir.body(body) else {
+        return true;
+    };
+    let next = |id: weft_ir::BlockId| -> Vec<weft_ir::BlockId> {
+        b.blocks
+            .get(id.index())
+            .map(|blk| blk.term.kind.successors())
+            .unwrap_or_default()
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut work = next(from);
+    while let Some(id) = work.pop() {
+        if id == to {
+            return true;
+        }
+        if seen.insert(id) {
+            work.extend(next(id));
+        }
+    }
+    false
 }
 
 /// True if a normal path of body `b` from its entry reaches a `Return`
@@ -1594,6 +1733,7 @@ pub fn closure(
     // The function values of the interface that the body runs: its captures
     // and its parameters (stage F12).
     out.runs = runs_of(
+        ir,
         runs,
         true,
         &|q| closure_place(ir, facts, roots, body, q, true).map(|x| x.0),

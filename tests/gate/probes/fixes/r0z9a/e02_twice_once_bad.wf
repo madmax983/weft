@@ -1,0 +1,12 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A task runs a `once` closure two times through `twice`.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || take(v)
+    scope { s =>
+        s.spawn(|| twice(f))
+    }
+}

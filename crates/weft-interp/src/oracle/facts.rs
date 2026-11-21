@@ -79,6 +79,17 @@
 //!   check is only for a clause with a resume point: a clause with none
 //!   aborts to its handler, and trace conformance checks the abort edge.
 //!
+//! - **The task cover (plan stage R0z Z9a).** A task whose spawn has a
+//!   second node of the run (a node of kind `spawn task`: the task runs a
+//!   value more than once) runs on its own stack, so A3 does not see the
+//!   frame of the spawn. The oracle names each access of the task with the
+//!   frame of the run of the body of the spawn (the innermost tracked frame
+//!   of the spawn). Each change of a place that the frame can name is in
+//!   `task_writes(T, _)` or in the changes of the nodes of the spawn, and
+//!   each read in the accesses of `T` or of these nodes. For a task that
+//!   runs code of a caller (`opaque(T)`), a place behind a parameter does not
+//!   count: the caller checks the value that it gives as a task.
+//!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
 //! buffer handle of an array and an access of a cell that the op frees need
@@ -151,6 +162,13 @@ pub struct FactReport {
     /// copied frame of a continuation), at each op of a callee; and each op
     /// of a frame that the oracle does not follow.
     pub summary_skipped: u64,
+    /// The checks of the task cover (plan stage R0z Z9a): an access of a
+    /// task whose spawn has a second node of the run, to a place that the
+    /// frame of the spawn can name.
+    pub task: u64,
+    /// The accesses of such a task that the task cover did not check: a
+    /// place that the frame of the spawn cannot name.
+    pub task_unnamed: u64,
     /// The checks of D4 that the oracle did not make: a frame that waits at
     /// a `handle` or at a `resume` unwinds, and no frame of its component
     /// unwound above it (plan stage F14).
@@ -488,9 +506,32 @@ pub struct FactOracle {
     /// The nodes where task `T` of component `ci` is active (the rules
     /// `active` of the spec), by `(ci, T)`.
     active: HashMap<(usize, TaskId), Vec<bool>>,
+    /// For each task of the run whose spawn has a second node of the run
+    /// (plan stage R0z Z9a): the task that spawned it, the frame of the run
+    /// of the body of the spawn, the task `T` of the facts and the nodes of
+    /// the spawn (the task cover).
+    covers: HashMap<usize, TaskCover>,
     /// What the run saw.
     pub report: FactReport,
 }
+
+/// What the task cover checks a task of the run with (plan stage R0z
+/// Z9a): see [`FactOracle::task_cover`].
+#[derive(Clone, Debug)]
+struct TaskCover {
+    /// The task of the run that spawned the task.
+    parent: usize,
+    /// The frame of the run of the body of the spawn (a tracked frame).
+    frame: u64,
+    /// The task of the facts.
+    task: TaskId,
+    /// The nodes of the spawn.
+    group: Vec<NodeId>,
+}
+
+/// The kind of the second node of the run of a spawn (plan stage R0z Z9a,
+/// `weft_sema::factgen::nodes::NodeTable::again_nodes`).
+const AGAIN_KIND: &str = "spawn task";
 
 /// The bit of the number of a frame of a scope body.
 ///
@@ -1053,6 +1094,7 @@ impl FactOracle {
             knows: HashMap::new(),
             instances: HashMap::new(),
             active: HashMap::new(),
+            covers: HashMap::new(),
             report,
         }
     }
@@ -1095,11 +1137,166 @@ impl FactOracle {
                 continue;
             };
             let run = self.activation.get(&uid).copied().unwrap_or(uid);
+            // A spawn with a second node of the run (plan stage R0z Z9a):
+            // the task cover checks the task with the frame of the run
+            // of the body of the spawn, the innermost such frame.
+            let group = comp.group(&fr.cur);
+            let again = group.iter().any(|n| {
+                comp.kind_of(*n) == AGAIN_KIND
+                    && comp
+                        .facts
+                        .spawned_at
+                        .iter()
+                        .any(|&(u, p)| u == *t && p == *n)
+            });
+            if again && self.frames.contains_key(&run) && !self.covers.contains_key(&child) {
+                self.covers.insert(
+                    child,
+                    TaskCover {
+                        parent,
+                        frame: run,
+                        task: *t,
+                        group,
+                    },
+                );
+            }
             let e = self.instances.entry((comp.unit, run, *t)).or_default();
             if !e.contains(&child) {
                 e.push(child);
             }
         }
+    }
+
+    /// The task and the frame that the task cover (plan stage R0z Z9a)
+    /// checks an op of task `task` with: the task that spawned it and the
+    /// frame of the run of the body of the spawn, if the spawn has a second
+    /// node of the run.
+    pub fn task_cover(&self, task: usize) -> Option<(usize, u64)> {
+        self.covers.get(&task).map(|c| (c.parent, c.frame))
+    }
+
+    /// The task cover (plan stage R0z Z9a): the accesses `events` of an
+    /// op of task `task`, whose spawn has a second node of the run. The
+    /// frame of the run of the body of the spawn (`code`, `slots`) names
+    /// each place. Each change of a place that it can name is in the writes
+    /// of the task (`task_writes`) or in the changes of the nodes of the
+    /// spawn (the run of the task stays there too), and each read in the
+    /// accesses of the task or in the accesses of these nodes. A move of the
+    /// value of a local of the frame at these nodes covers a change of its
+    /// cell.
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure.
+    pub fn check_task(
+        &mut self,
+        task: usize,
+        code: &Code,
+        slots: &[Option<CellId>],
+        heap: &Heap,
+        events: &[HeapEvent],
+    ) -> Result<(), String> {
+        let Some(cover) = self.covers.get(&task).cloned() else {
+            return Ok(());
+        };
+        let Some(ci) = self.frames.get(&cover.frame).map(|f| f.comp) else {
+            return Ok(());
+        };
+        for e in events {
+            let (place, kind) = match e {
+                HeapEvent::Read(p) => (p, "read"),
+                HeapEvent::Write(_, true) | HeapEvent::Deref(_) | HeapEvent::Free(_) => continue,
+                HeapEvent::Write(p, false) | HeapEvent::Take(p) => (p, "write"),
+            };
+            if heap
+                .slot(place.cell)
+                .is_ok_and(|x| x.kind == crate::heap::SlotKind::Free)
+            {
+                continue;
+            }
+            let Some((names, ty)) = self.name(
+                cover.frame,
+                code,
+                slots,
+                heap,
+                &Target::Place(place.clone()),
+            ) else {
+                self.report.task_unnamed += 1;
+                continue;
+            };
+            if kind == "read" && self.is_array(ci, ty) {
+                continue;
+            }
+            let Some(comp) = self.comps.get(ci) else {
+                return Ok(());
+            };
+            // Code of a caller that the task runs (`opaque(T)`): the caller
+            // checks the value that it gives as a task (part `runs`, plan
+            // stage F19), so a place behind a parameter of the body is not in
+            // the facts of the spawn. Such a name does not count.
+            let names: Vec<PlaceId> = if comp.facts.opaque.contains(&cover.task) {
+                names.into_iter().filter(|&q| !comp.in_params(q)).collect()
+            } else {
+                names
+            };
+            if names.is_empty() {
+                self.report.task_unnamed += 1;
+                continue;
+            }
+            self.report.task += 1;
+            let at = |rel: &Vec<Vec<PlaceId>>| -> Vec<PlaceId> {
+                cover
+                    .group
+                    .iter()
+                    .flat_map(|n| rel.get(n.index()).cloned().unwrap_or_default())
+                    .collect()
+            };
+            let of_task = |rel: &[(TaskId, PlaceId)]| -> Vec<PlaceId> {
+                rel.iter()
+                    .filter(|(t, _)| *t == cover.task)
+                    .map(|(_, q)| *q)
+                    .collect()
+            };
+            let mut cs = at(&comp.changes);
+            cs.extend(of_task(&comp.facts.task_writes));
+            let ok = if kind == "read" {
+                let mut rs = at(&comp.reads);
+                rs.extend(cs.iter().copied());
+                rs.extend(of_task(&comp.facts.task_reads));
+                names
+                    .iter()
+                    .any(|&q| rs.iter().any(|&m| comp.below(q, m) || comp.below(m, q)))
+            } else {
+                let moved = cell_local(code, slots, place.cell)
+                    .and_then(|l| comp.s_of.get(&l))
+                    .is_some_and(|v| {
+                        cover
+                            .group
+                            .iter()
+                            .any(|n| comp.moved.get(n.index()).is_some_and(|vs| vs.contains(v)))
+                    });
+                moved || names.iter().any(|&q| cs.iter().any(|&m| comp.below(q, m)))
+            };
+            if !ok {
+                let shown: Vec<String> = names
+                    .iter()
+                    .map(|&q| comp.facts.place(q).display.clone())
+                    .collect();
+                let nodes: Vec<String> = cover.group.iter().map(|&n| comp.node_text(n)).collect();
+                let rel = if kind == "read" {
+                    "`task_reads` or `reads_at`"
+                } else {
+                    "`task_writes`, `mutates_at` or `lends_mut`"
+                };
+                return Err(format!(
+                    "fact oracle (task cover): in `{}` at {}, the task makes a {kind} of `{}`, and the spawn has no {rel} that covers it",
+                    comp.facts.name,
+                    nodes.join(", "),
+                    shown.join("` or `"),
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The nodes of component `ci` where task `t` is active: the rules

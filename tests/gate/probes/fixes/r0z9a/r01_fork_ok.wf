@@ -1,0 +1,8 @@
+// Plan stage R0z Z9a: a refusal probe (the rule of R0j stays).
+// A branch of a `fork` runs `f` two times (R-FORK: the rule of R0j stays).
+fn twice(f: fn()) { f(); f() }
+fn main() / par {
+    let c = 1
+    let f = || print(c)
+    let _ = fork(|| twice(f), || print(2))
+}

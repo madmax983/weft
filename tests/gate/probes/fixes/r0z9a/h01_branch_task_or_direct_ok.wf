@@ -1,0 +1,14 @@
+// Plan stage R0z Z9a, review round 2 (a run on each of two exclusive paths is
+// one run: `Run::seq`, `Applied::seq`).
+// Clean: on each path the callee runs f one time (fp1_branch_task_or_direct).
+fn mid(c: bool, f: fn()) / async { if c { scope { s => s.spawn(|| f()) }; () } else { f() } }
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let a: Option<&u64> = None
+    mid(true, || {
+        match a { Some(y) => print(y), None => print(0) }
+        a = Some(&w[0])
+        w.push(2)
+    })
+}

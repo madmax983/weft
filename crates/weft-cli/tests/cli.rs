@@ -1053,7 +1053,9 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
     // with a task that runs a callback more than once (`nested_run.wf`)
     // falls back too (stage R0j: the `ir` pipeline checks such a program
     // only if it rejects it; until stage R0k-c2 this program had a `multi`
-    // operation of a handler of a caller in a clause, which is in scope now).
+    // operation of a handler of a caller in a clause, which is in scope now;
+    // from stage R0z Z9a a spawn has a second node of the run, so the task is
+    // a branch of a `fork`, which has none).
     let dir = scratch(
         "fallback",
         &[
@@ -1063,7 +1065,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
             ),
             (
                 "nested_run.wf",
-                "struct C { k: u64 }\nfn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) { scope { s => s.spawn(|| g(f)) }\n w.k += 1 }\nfn main() / async { let c = C { k: 0 }\n mid(|x| { x(); x() }, || print(c.k), &c) }\ntest \"again\" { let c = C { k: 0 }\n mid(|x| { x(); x() }, || print(c.k), &c) }\n",
+                "fn twice(f: fn()) { f(); f() }\nfn main() / par { let c = 1\n let f = || print(c)\n let _ = fork(|| twice(f), || print(2)) }\ntest \"again\" { let c = 1\n let f = || print(c)\n let _ = fork(|| twice(f), || print(2)) }\n",
             ),
         ],
     );
@@ -1256,13 +1258,14 @@ fn the_fact_oracle_and_the_ir_trace_write_notes() {
     );
     // A program that is not in scope (a task that runs a callback more than
     // once, a fallback of stage R0j; a `multi` operation of a handler of a
-    // caller in a clause is in scope from stage R0k-c2): the oracle checks
-    // nothing.
+    // caller in a clause is in scope from stage R0k-c2; from stage R0z Z9a
+    // the task is a branch of a `fork`, which has no second node of the run):
+    // the oracle checks nothing.
     let dir = scratch(
         "fact_oracle_out",
         &[(
             "again.wf",
-            "struct C { k: u64 }\nfn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) { scope { s => s.spawn(|| g(f)) }\n w.k += 1 }\nfn main() / async { let c = C { k: 0 }\n mid(|x| { x(); x() }, || print(c.k), &c) }\n",
+            "fn twice(f: fn()) { f(); f() }\nfn main() / par { let c = 1\n let f = || print(c)\n let _ = fork(|| twice(f), || print(2)) }\n",
         )],
     );
     let nested = format!("{dir}/again.wf");

@@ -11604,3 +11604,72 @@ files = [
 ]
 reason = "plan stage R0z Z9b: the programs come into scope (E4: a spawn in a closure, a task or a clause on the scope of the body around it, with no write of the variable in the window of the task), or are in scope through the pending rule and rejected (the bad twins, W0405). The function has the row of the old pipeline; the part `pins` (the pinned tasks of the body) comes from the summaries of the `ir` pipeline, as for the other task programs in scope (the entry of R0k-d2 for `s4_spawn_in_closure_bad`)"
 stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z9a/e01_loop_once_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/e02_twice_once_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/e04_ref_end_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/e06_stored_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/e09_closure_body_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/e10_clause_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/g05_param_code_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/h03_match_once_task_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/h04_reassign_loop_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/i04_once_beside_twice_bad.wf",
+    "tests/programs/208_task_runs_again.wf",
+]
+codes = ["W0301", "W0302", "W0403", "W0405", "W0502"]
+reason = "plan stage R0z Z9a: probes of a task that runs a value more than once (the spawn has a second node of the run). Both pipelines reject each one. A `once` closure that the task runs two times (`e01`, `e02`, `e09`, `e10`, the corpus program): both give W0502; the `ir` pipeline also gives W0302 at the same line (the closure body of the task moves the capture `f` at its first run and uses it again; main gives that W0302 too), and `e09` W0502 at the run of `go` too. `e04_ref_end_bad`: W0301 from both; the `ir` pipeline gives it at the spawn too (the second node of the run reads `r` after the first run pushed into `v`). `e06_stored_bad`: the scope body pushes into `fs` while the task reads it: the `ir` pipeline gives W0405 (the race of the oracle); the old pipeline gives W0302 (the `by_value` move of `fs` into the task closure, class `closure-copy` of `exports_parity.rs`). `g05_param_code_ref_bad` (review round 1, B1): both give the W0301 of the second run of `f` (code of a caller runs it two times on the task; the caller applies both runs); the old pipeline also gives W0405 and W0403 at the call of `mid` (the worst way of the task of code of a caller), which the clean twin with a read-only `f` does not get. `h03_match_once_task_bad` and `h04_reassign_loop_bad` (review round 2): the task runs the `once` closure two times on one path; the old pipeline gives W0502, and the `ir` pipeline gives the W0302 of the closure body of the task (and W0502 at the spawn for `h03`; `h04` keeps the fallback by R-REBIND, with the W0302 of the pending rule). `i04_once_beside_twice_bad` (review round 3, R-ORDER): the task runs `cb` two times on one path; both give W0301 at the spawn line, and the `ir` pipeline (the pending rule) gives a second W0301 there (the closure body of the task)"
+stage = "R0z"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/oracle/probes/i9_kept_write.wf",
+    "tests/gate/probes/fixes/r0z9a/e05_kept_ok.wf",
+]
+reason = "plan stage R0z Z9a: the task runs a kept callback `g` two times (`|| { g(); sleep(1.s); g() }`), and the block of `g` ends while the task runs. The old pipeline gives W0405 (the end of `g` while the task reads `g`). The capture of `g` is `Kept`: the task keeps the cell of `g` (`kept(T, root(g))`), so the end of the variable is no free for the task (the rule of the spec). Main sends the program to the old pipeline (`TASK_AGAIN`); with the second node of the run it is in scope with no error. The oracle runs it with no fault in each configuration, both engines (the plan says that `i9` can become `lost-clean`)"
+signed_by = "review agent, stage Z9a round 1 (independent)"
+stage = "R0z"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/oracle/probes/s9_steal_stored.wf",
+    "tests/gate/probes/fixes/r0z9a/e06_stored_ok.wf",
+]
+reason = "plan stage R0z Z9a: the task runs a callback that it copies out of a `Vec` (`let g = fs[0]; g()`) in a loop. The old pipeline gives W0302: its `by_value` table moves `fs` into the task closure, and the closures of the spawns in the loop use it again (class `closure-copy` of `exports_parity.rs`: the IR copies the function value and does not move `fs`). The IR engine runs the program with no fault (the gate oracle cache, each configuration); the AST engine faults only with the `by_value` table of the old analysis, which the `ir` pipeline does not make when the program is in scope. A twin with one run of the callback (no second run, `weft-work/z9a/t/s9_once.wf`) is in scope on main with no error: the same `lost-clean` form. With the second node of the run the program is in scope with no error"
+signed_by = "review agent, stage Z9a round 1 (independent)"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["muts", "pins"]
+files = [
+    "tests/gate/probes/fixes/r0z9a/e05_kept_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/e05_kept_ok.wf",
+    "tests/gate/probes/fixes/r0z9a/e16_closure_outer_bad.wf",
+    "tests/gate/probes/fixes/r0z9a/e16_closure_outer_ok.wf",
+    "tests/gate/probes/fixes/r0z9a/h04_reassign_loop_bad.wf",
+    "tests/gate/probes/r3/oracle/probes/i9_kept_write.wf",
+    "tests/gate/probes/r3/oracle/probes/s8_steal_fnparam.wf",
+    "tests/gate/probes/r3/oracle/probes/s9_steal_stored.wf",
+]
+reason = "plan stage R0z Z9a: the programs come into scope (E2: a task that runs a value more than once, with the second node of the run), or are in scope through the pending rule and rejected (`e05_kept_bad`, W0405). `muts` of `join_it`: class F19-SIG-MUTS (stage F19): a `join` of a handle in a parameter changes the place of the handle (C5 of the fact oracle), so the row has `mut(t)`. `pins` of `main`: the pinned tasks of the body come from the summaries of the `ir` pipeline (the task captures the kept callback `g`, whose cell is a nonportable `Kept` capture; `e16`: a closure spawns on the scope of the scope body, so its task is pinned, as for `w01_twice` of Z9b), as for the other task programs in scope (the entries of R0k-d2 and Z9b)"
+stage = "R0z"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/r0z9a/h02_par_or_inline_bad.wf"]
+codes = ["W0301"]
+reason = "plan stage R0z Z9a, review round 2: `run_maybe_par(true, f)` then `run_maybe_par(false, f)`: the second call reads `last` after the first one pushed into `xs` (a fault). Both pipelines give one W0301; the old pipeline at the first call (its worst way of the task), the `ir` pipeline at the second call, where the run reads the reference, as on main"
+stage = "R0z"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0z9a/h02_par_or_inline_ok.wf"]
+reason = "plan stage R0z Z9a, review round 2 (`z9arev2/p/fp14_par_or_inline_ok`): `run_maybe_par` runs `f` as a task on one path and as plain code on the other, and `main` calls it one time. The old pipeline gives W0301 (its worst way of the task of a parameter); main and Z9a check the program with the `ir` pipeline and accept it (one run on each path, `Run::seq`), and the oracle runs it with no fault, both engines. The `lost-clean` is the verdict of main too: Z9a does not change it"
+signed_by = "review agent, stage Z9a round 3 (independent)"
+stage = "R0z"

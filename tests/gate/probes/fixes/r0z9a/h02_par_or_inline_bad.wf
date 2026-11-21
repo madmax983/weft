@@ -1,0 +1,18 @@
+// Plan stage R0z Z9a, review round 2 (a run on each of two exclusive paths is
+// one run: `Run::seq`, `Applied::seq`).
+// Bad twin of fp14: the caller calls run_maybe_par two times (two runs of f).
+fn run_maybe_par(par: bool, f: fn()) / async {
+    if par { scope { s => s.spawn(f) }; () } else { f() }
+}
+fn main() / async {
+    let xs = Vec.new()
+    xs.push(1)
+    let last: Option<&u64> = None
+    let f = || {
+        match last { Some(y) => print(y), None => print(0) }
+        last = Some(&xs[0])
+        xs.push(2)
+    }
+    run_maybe_par(true, f)
+    run_maybe_par(false, f)
+}

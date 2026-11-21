@@ -986,6 +986,9 @@ pub fn emit_parts(
         table.row_reentry_edges(p, facts, entry, &new);
         hx = fresh_handlers(&mut hx);
     };
+    // The second node of the run of each spawn whose task runs a value more
+    // than once (plan stage R0z Z9a).
+    table.again_nodes(p, facts, &hx.again_spawns);
     // The dispatches of the component (plan stage R0z Z6), after the last
     // run of the analysis.
     dispatch_checks(p, &spliced, &hx, &known, &table, facts);
@@ -2059,6 +2062,7 @@ fn closure_summary(
         table.row_reentry_edges(p, &mut facts, cb, &new);
         hx = fresh_handlers(&mut hx);
     };
+    table.again_nodes(p, &mut facts, &hx.again_spawns);
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
     // The tasks that start and end in a run of the closure (stage R0e): a
@@ -2545,6 +2549,7 @@ fn emit_closure(
         out.table.row_reentry_edges(p, out.facts, cb, &new);
         hx = fresh_handlers(&mut hx);
     };
+    out.table.again_nodes(p, out.facts, &hx.again_spawns);
     hx.task_ids = cx.task_ids.clone();
     let mut em = templates::Em {
         p,
@@ -2878,6 +2883,7 @@ fn emit_clause(
         }
         crate::analysis::run(&mut acx, cb, init)?
     };
+    out.table.again_nodes(p, out.facts, &hx.again_spawns);
     let mut em = templates::Em {
         p,
         sema: &cx.a.program,
@@ -3812,9 +3818,15 @@ fn emit_block(
                 weft_ir::TermKind::Spawn { next, .. } => table.first(bid, next, NORMAL),
                 _ => None,
             };
+            // The second node of the run of a task that runs a value more
+            // than once (plan stage R0z Z9a).
+            let again = table.get(at(Phase::Task(1), NORMAL));
+            if let Some(a) = again {
+                em.holders.before(a, &st, em.facts);
+            }
             templates::spawn(
                 em,
-                (n, after),
+                (n, again, after),
                 &st,
                 block,
                 (*site, scope, task, dest.as_ref()),

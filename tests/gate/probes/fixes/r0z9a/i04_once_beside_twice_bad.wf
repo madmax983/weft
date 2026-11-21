@@ -1,0 +1,18 @@
+// Plan stage R0z Z9a, review round 3 (R-ORDER: a value that runs one time
+// beside a run again; the rule of R0j stays).
+// Z9a review round 3: y2g_twice_f_cb_bad (a harmless f runs again in the task, a form-A cb runs one time).
+fn twice(g: fn()) { g(); g() }
+fn one(g: fn()) { g() }
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let a: Option<&u64> = None
+    let n = 1
+    let f = || print(n)
+    let cb = || {
+        match a { Some(y) => print(y), None => print(0) }
+        a = Some(&w[0])
+        w.push(2)
+    }
+    scope { s => s.spawn(|| { twice(f); cb(); cb() }) }
+}

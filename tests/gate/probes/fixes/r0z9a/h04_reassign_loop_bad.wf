@@ -1,0 +1,9 @@
+// Plan stage R0z Z9a, review round 2: the bad twin of
+// `h04_reassign_loop_ok`: the loop runs the `once` `f` two times before it
+// gives `f` a new closure.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    let v = Vec.new()
+    let f = || take(v)
+    scope { s => s.spawn(|| { for j in 0..2 { f(); f(); f = || print(0) } }) }
+}

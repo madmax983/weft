@@ -4337,3 +4337,271 @@ mod r0kc2 {
         }
     }
 }
+
+/// Plan stage R0z Z9a (E2): a task that runs a value more than once. The
+/// spawn has a second node of the run (`NodeTable::again_nodes`): the run
+/// happens at `Main` and again at that node, and the task starts after it.
+/// The codes of the checker (W0502 and W0301 at the spawn) are in the corpus
+/// program `tests/programs/208_task_runs_again.wf` and in the probes of the
+/// gate.
+mod r0z9a {
+    /// The analysis of the probe at `path` of `tests/gate/probes`.
+    fn analysis(path: &str) -> weft_sema::Analysis {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(path);
+        let src = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        weft_sema::analyze_source(&src, weft_sema::Options::from_markers(&src))
+            .unwrap_or_else(|d| panic!("{path}: {}", d.message))
+    }
+
+    /// The reason of the fallback and the reason of the pending construct of
+    /// the probe at `path`.
+    fn check(path: &str) -> (Option<String>, Option<String>) {
+        let s = analysis(path).ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// True if the pending reason is the task that runs a value again.
+    fn again(p: Option<&str>) -> bool {
+        p.is_some_and(|r| r.contains("a task that runs a callback more than once"))
+    }
+
+    /// The clean forms, and the rows of the census of R0z, have full facts
+    /// (on main each one is pending with `TASK_AGAIN`), and the bad twins
+    /// too: the checker rejects them (the gate).
+    #[test]
+    fn the_forms_have_full_facts() {
+        let mut names: Vec<String> = [
+            "r3/oracle/probes/s8_steal_fnparam.wf",
+            "r3/oracle/probes/i9_kept_write.wf",
+            "r3/oracle/probes/s9_steal_stored.wf",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        for form in [
+            "e01_loop_once",
+            "e02_twice_once",
+            "e04_ref_end",
+            "e05_kept",
+            "e06_stored",
+            "e07_both_same",
+            "e08_loop_spawn",
+            "e10_clause",
+            "e11_linear",
+            "e12_join",
+            "e13_param",
+            "e14_write_twice",
+            "e15_clause_outer",
+            "e16_closure_outer",
+            "e17_loop_join",
+            "g01_param_twice_ref",
+            "g02_param_loop_ref",
+            "g03_method_param_ref",
+            "g04_sim_param_ref",
+            "g06_seq_tasks_ref",
+            "h01_branch_task_or_direct",
+            "h03_match_once_task",
+        ] {
+            for twin in ["ok", "bad"] {
+                names.push(format!("fixes/r0z9a/{form}_{twin}.wf"));
+            }
+        }
+        for name in &names {
+            assert_eq!(check(name), (None, None), "{name}");
+        }
+    }
+
+    /// The spawn of `main` has the second node of the run (kind `spawn
+    /// task`), and the task starts there, not at `Main`.
+    #[test]
+    fn the_task_starts_at_the_second_node_of_the_run() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z9a/e02_twice_once_ok.wf");
+        let src = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        // The `ir` view: the facts of the IR are the facts of the bodies.
+        let a = weft_sema::analyze_source(&src, opts)
+            .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+        assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+        let kind = |f: &weft_facts::FnFacts, n: weft_facts::NodeId| f.node(n).kind.clone();
+        let mut starts = Vec::new();
+        for b in &a.bodies {
+            for &(_, n) in &b.facts.spawned_at {
+                starts.push(kind(&b.facts, n));
+            }
+        }
+        assert_eq!(starts, ["spawn task"]);
+    }
+
+    /// The facts of the `ir` view of the probe at `path` of `fixes/r0z9a`.
+    fn ir_bodies(path: &str) -> Vec<weft_sema::BodyFacts> {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z9a")
+            .join(path);
+        let src = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        let a = weft_sema::analyze_source(&src, opts)
+            .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+        assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+        a.bodies
+    }
+
+    /// Review round 1 (B1): a callee runs its parameter two times in one task
+    /// (`Run::many`). The caller applies the run at the first task node and
+    /// again at the second one, and the task of the call starts at the
+    /// second task node, after both runs (with one run, at the first one).
+    #[test]
+    fn a_caller_applies_a_task_run_of_a_callee_two_times() {
+        let bodies = ir_bodies("g01_param_twice_ref_ok.wf");
+        let mut starts = 0;
+        for b in &bodies {
+            let f = &b.facts;
+            for &(_, n) in &f.spawned_at {
+                if f.node(n).kind != "call task" {
+                    continue;
+                }
+                starts += 1;
+                let after_task = f
+                    .cfg_edge
+                    .iter()
+                    .any(|&(m, x)| x == n && f.node(m).kind == "call task");
+                assert!(
+                    after_task,
+                    "the task of the call starts at its first task node"
+                );
+            }
+        }
+        assert_eq!(starts, 1);
+    }
+
+    /// Review round 2: a value that a body runs on each of two exclusive
+    /// paths runs at most one time (`Run::seq`, `Applied::seq`). The task of
+    /// the call of `mid` (`if c { spawn(|| f()) } else { f() }`) starts at its
+    /// first task node, and the spawn of `h03_match_once_task_ok` (a `once`
+    /// closure in each arm of a `match` in the task) has one node: the task
+    /// starts at `Main`.
+    #[test]
+    fn a_run_on_each_of_two_exclusive_paths_is_one_run() {
+        for b in &ir_bodies("h01_branch_task_or_direct_ok.wf") {
+            let f = &b.facts;
+            for &(_, n) in &f.spawned_at {
+                if f.node(n).kind != "call task" {
+                    continue;
+                }
+                let after_task = f
+                    .cfg_edge
+                    .iter()
+                    .any(|&(m, x)| x == n && f.node(m).kind == "call task");
+                assert!(
+                    !after_task,
+                    "the task of the call starts at its second task node"
+                );
+            }
+        }
+        let mut starts = Vec::new();
+        for b in &ir_bodies("h03_match_once_task_ok.wf") {
+            for &(_, n) in &b.facts.spawned_at {
+                starts.push(b.facts.node(n).kind.clone());
+            }
+        }
+        assert_eq!(starts, ["spawn"]);
+    }
+
+    /// Review round 3: the refusals R-CODE (code of a caller that gets a
+    /// value of the body runs it again on the task: `g(f)`, also the census
+    /// rows `j01_again_ok` and `c09_cc_during_ok`), R-ORDER (a value that runs
+    /// one time beside a run again) and R-MULTI (a run again that only the
+    /// re-entry of a `multi` operation makes) keep the rule of R0j.
+    #[test]
+    fn the_refusals_of_review_round_3_keep_the_rule_of_r0j() {
+        for name in [
+            "fixes/r0j/j01_again_ok.wf",
+            "fixes/r0f/c09_cc_during_ok.wf",
+            "fixes/r0z9a/e03_param_g_ok.wf",
+            "fixes/r0z9a/g05_param_code_ref_ok.wf",
+            "fixes/r0z9a/i01_code_ref_across_param_ok.wf",
+            "fixes/r0z9a/i03_task_multi_after_ok.wf",
+            "fixes/r0z9a/i04_once_beside_twice_ok.wf",
+        ] {
+            let (fallback, pending) = check(name);
+            assert_eq!(fallback, None, "{name}");
+            assert!(again(pending.as_deref()), "{name}: {pending:?}");
+        }
+    }
+
+    /// Review round 3 (R-MULTI at a call): a run before a perform of a local
+    /// `multi` operation is no run again (`Run::seq_loop`): the task of the
+    /// call of `mid` starts at its first task node, as on main.
+    #[test]
+    fn a_run_before_a_multi_perform_is_one_task_run_at_the_caller() {
+        for b in &ir_bodies("i02_multi_spawn_before_ok.wf") {
+            let f = &b.facts;
+            for &(_, n) in &f.spawned_at {
+                if f.node(n).kind != "call task" {
+                    continue;
+                }
+                let after_task = f
+                    .cfg_edge
+                    .iter()
+                    .any(|&(m, x)| x == n && f.node(m).kind == "call task");
+                assert!(
+                    !after_task,
+                    "the task of the call starts at its second task node"
+                );
+            }
+        }
+    }
+
+    /// Review round 2 (R-REBIND): a loop in the task runs a `once` `f`, then
+    /// gives `f` a new closure; the rule of R0j stays.
+    #[test]
+    fn a_once_value_that_the_task_gives_a_new_value_keeps_the_rule_of_r0j() {
+        let (fallback, pending) = check("fixes/r0z9a/h04_reassign_loop_ok.wf");
+        assert_eq!(fallback, None);
+        assert!(again(pending.as_deref()), "{pending:?}");
+    }
+
+    /// Review round 1 (B2, R-ONCE): the task body reads a `once` element of a
+    /// captured `Vec` and runs it again; the facts do not move the element,
+    /// so the rule of R0j stays. The twin with a callback that is not `once`
+    /// (`e06_stored_ok`) is in scope (`the_forms_have_full_facts`).
+    #[test]
+    fn a_once_element_that_the_task_runs_again_keeps_the_rule_of_r0j() {
+        for name in ["g07_stored_once_bad.wf", "g08_stored_once_twice_bad.wf"] {
+            let (fallback, pending) = check(&format!("fixes/r0z9a/{name}"));
+            assert_eq!(fallback, None, "{name}");
+            assert!(again(pending.as_deref()), "{name}: {pending:?}");
+        }
+    }
+
+    /// The refusals keep the rule of R0j (pending, `TASK_AGAIN`): a branch of
+    /// a `fork` (R-FORK: no second node) and a run that starts a task in a
+    /// scope of the maker (R-INNER).
+    #[test]
+    fn the_refusals_keep_the_rule_of_r0j() {
+        for name in ["r01_fork_ok.wf", "r02_inner_task_ok.wf"] {
+            let (fallback, pending) = check(&format!("fixes/r0z9a/{name}"));
+            assert_eq!(fallback, None, "{name}");
+            assert!(again(pending.as_deref()), "{name}: {pending:?}");
+        }
+    }
+
+    /// A closure body whose spawn runs a value again keeps the reason of a
+    /// later stage (`VALUE_TASKS`, Z9c), not `TASK_AGAIN`.
+    #[test]
+    fn a_spawn_in_a_closure_body_keeps_only_the_reason_of_z9c() {
+        for twin in ["ok", "bad"] {
+            let (_, pending) = check(&format!("fixes/r0z9a/e09_closure_body_{twin}.wf"));
+            let p = pending.unwrap_or_default();
+            assert!(p.contains("runs a value of its arguments as a task"), "{p}");
+        }
+    }
+}

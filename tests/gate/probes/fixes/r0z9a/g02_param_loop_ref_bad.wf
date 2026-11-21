@@ -1,0 +1,14 @@
+// Plan stage R0z Z9a, review round 1 (B1: a callee whose task runs its
+// parameter more than once; the caller applies both runs).
+// The task of run3 runs its parameter f in a loop.
+fn run3(f: fn()) / async { scope { s => s.spawn(|| { for i in 0..3 { f() } }) } }
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let a: Option<&u64> = None
+    run3(|| {
+        match a { Some(y) => print(y), None => print(0) }
+        a = Some(&w[0])
+        w.push(2)
+    })
+}

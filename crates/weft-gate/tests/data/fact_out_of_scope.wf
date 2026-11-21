@@ -1,15 +1,10 @@
 // Out of scope of the ir pipeline: a task that runs a callback more than once
 // (a fallback of stage R0j). A `multi` operation of a handler of a caller in a
-// clause is in scope from stage R0k-c2.
-struct C { k: u64 }
-fn mid(g: fn(fn()), f: fn(), w: &C) / async, mut(w) {
-    scope { s =>
-        s.spawn(|| g(f))
-    }
-    w.k += 1
-}
-fn main() / async {
-    let c = C { k: 0 }
-    mid(|x| { x(); x() }, || print(c.k), &c)
-    print(c.k)
+// clause is in scope from stage R0k-c2. From plan stage R0z Z9a a spawn has a
+// second node of the run, so the task is a branch of a `fork`, which has none.
+fn twice(f: fn()) { f(); f() }
+fn main() / par {
+    let c = 1
+    let f = || print(c)
+    let _ = fork(|| twice(f), || print(2))
 }

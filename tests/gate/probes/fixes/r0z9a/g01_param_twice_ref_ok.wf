@@ -1,0 +1,11 @@
+// Plan stage R0z Z9a, review round 1 (B1: a callee whose task runs its
+// parameter more than once; the caller applies both runs).
+// Clean twin of b4r: f reads v.len() and pushes v.
+fn twice(f: fn()) { f(); f() }
+fn run2(f: fn()) / async { scope { s => s.spawn(|| twice(f)) } }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    run2(|| { print(v.len()); v.push(2) })
+    print(v.len())
+}

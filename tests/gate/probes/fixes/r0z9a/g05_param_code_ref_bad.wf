@@ -1,0 +1,18 @@
+// Plan stage R0z Z9a, review round 1 (B1: a callee whose task runs its
+// parameter more than once; the caller applies both runs).
+// Code of a caller runs f two times on the task; run 2 reads the reference that run 1 ended.
+fn mid(g: fn(fn()), f: fn()) / async {
+    scope { s =>
+        s.spawn(|| g(f))
+    }
+}
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let a: Option<&u64> = None
+    mid(|x| { x(); x() }, || {
+        match a { Some(y) => print(y), None => print(0) }
+        a = Some(&w[0])
+        w.push(2)
+    })
+}

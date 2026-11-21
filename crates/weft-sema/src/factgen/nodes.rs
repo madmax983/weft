@@ -56,7 +56,9 @@ pub enum Phase {
     /// A node of the tasks of a terminator, between `Main` and `Ret` (plan
     /// stage F19): a branch of a `fork` after the first one, the join of
     /// the branches, or a node of a function value that a callee runs as a
-    /// task (`docs/ir.md` 6.7, OR7).
+    /// task (`docs/ir.md` 6.7, OR7). After `Main` of a `Spawn` whose task
+    /// runs a value more than once, the second node of the run (plan stage
+    /// R0z Z9a, [`NodeTable::again_nodes`]).
     Task(u32),
     /// Before `Main` of an assignment that moves a `Box` with a place field
     /// (follow-up F8.1): the old value of the destination goes away here, so
@@ -1127,6 +1129,58 @@ impl NodeTable {
                 facts.cfg_edge.push((x, c));
             }
             facts.cfg_edge.push((c, ret));
+        }
+    }
+
+    /// The second node of the run of each spawn of `spawns` whose task runs
+    /// a value more than once (plan stage R0z Z9a, `docs/ir.md` 6.4): a node
+    /// of [`Phase::Task`] `1` after `Main` of the `Spawn`, on each edge from
+    /// `Main`. The analysis finds these spawns
+    /// (`crate::analysis::clause::Handlers::again_spawns`), so the node comes
+    /// after the build of the table. A spawn with no `Main` node, or with the
+    /// node already, does not change.
+    pub fn again_nodes(
+        &mut self,
+        p: &Program,
+        facts: &mut FnFacts,
+        spawns: &BTreeSet<(BodyId, BlockId)>,
+    ) {
+        for &(body, block) in spawns {
+            let is_spawn = p
+                .bodies
+                .get(body.index())
+                .and_then(|b| b.blocks.get(block.index()))
+                .is_some_and(|blk| matches!(blk.term.kind, TermKind::Spawn { .. }));
+            if !is_spawn {
+                continue;
+            }
+            let at = |phase| NodeKey {
+                body,
+                block,
+                at: TERM,
+                phase,
+                dest: NORMAL,
+            };
+            if self.get(at(Phase::Task(1))).is_some() {
+                continue;
+            }
+            let Some(main) = self.get(at(Phase::Main)) else {
+                continue;
+            };
+            let m = facts.node(main).clone();
+            let kind = format!("{} {}", m.kind, Phase::Task(1).name());
+            let label = if m.label == m.kind {
+                kind.clone()
+            } else {
+                m.label.clone()
+            };
+            let n = self.node(facts, at(Phase::Task(1)), m.span, [&label, &kind, &m.at]);
+            for e in &mut facts.cfg_edge {
+                if e.0 == main {
+                    e.0 = n;
+                }
+            }
+            facts.cfg_edge.push((main, n));
         }
     }
 

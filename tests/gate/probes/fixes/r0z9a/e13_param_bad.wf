@@ -1,0 +1,11 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A callee spawns a task that runs its parameter two times; the caller
+// gives a `once` closure (W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn twice(f: fn()) { f(); f() }
+fn run2(f: fn()) / async { scope { s => s.spawn(|| twice(f)) } }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    run2(|| take(v))
+}
