@@ -1,0 +1,11 @@
+// Plan stage R0z Z9b (bad): `sim.run` runs `go` in the scope; the scope body
+// gives `f` a new value after it.
+fn main() / async, clock {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let go = || { s.spawn(|| f()); () }
+        sim.run(seed: 1) { go() }
+        f = || print(3)
+    }
+}

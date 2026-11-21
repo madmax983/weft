@@ -1,0 +1,11 @@
+// Plan stage R0z Z9b (clean): the closure `go` runs two times on the scope
+// of the body around it. The two writes of `f` are before the scope.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let go = || s.spawn(|| f())
+        go()
+        go()
+    }
+}

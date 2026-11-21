@@ -1,0 +1,14 @@
+// Plan stage R0z Z9b (bad): a callee runs `go` (its parameter); the scope
+// body gives `f` a new value after the call, while the task can run.
+fn app(g: fn()) {
+    g()
+    print(0)
+}
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        app(|| { s.spawn(|| f()); () })
+        f = || print(3)
+    }
+}

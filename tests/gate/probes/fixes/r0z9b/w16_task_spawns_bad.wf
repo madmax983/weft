@@ -1,0 +1,10 @@
+// Plan stage R0z Z9b (bad): a task spawns on its own scope; the scope body
+// gives `f` a new value while the inner task can run.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        s.spawn(|| { s.spawn(|| f()); () })
+        f = || print(3)
+    }
+}

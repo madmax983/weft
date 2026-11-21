@@ -1,0 +1,18 @@
+// Plan stage R0z Z9b (bad): a clause spawns on the scope around its handle;
+// the handled body gives `f` a new value after the perform.
+effect Op { fn op() }
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        handle Op {
+            fn op() {
+                s.spawn(|| f())
+                resume(())
+            }
+        } in {
+            op()
+            f = || print(3)
+        }
+    }
+}

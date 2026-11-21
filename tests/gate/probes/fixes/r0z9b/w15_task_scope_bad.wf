@@ -1,0 +1,16 @@
+// Plan stage R0z Z9b (bad): the scope is in a task of an outer scope, and
+// the outer scope body gives `f` a new value while the inner task can run.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s0 =>
+        s0.spawn(|| {
+            scope { s =>
+                let go = || s.spawn(|| f())
+                go()
+            }
+            ()
+        })
+        f = || print(3)
+    }
+}

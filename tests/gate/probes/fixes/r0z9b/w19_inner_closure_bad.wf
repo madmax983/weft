@@ -1,0 +1,15 @@
+// Plan stage R0z Z9b (bad): a closure of the scope body that `go` calls
+// gives `f` a new value after the spawn.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let set = || { f = || print(3) }
+        let go = || {
+            let t = s.spawn(|| f())
+            set()
+            t
+        }
+        go()
+    }
+}

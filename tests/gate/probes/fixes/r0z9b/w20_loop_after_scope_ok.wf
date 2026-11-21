@@ -1,0 +1,14 @@
+// Plan stage R0z Z9b (clean, refusal): a loop gives `f` a new value after
+// the scope. The tasks of the scope end with it, but a write on a path from
+// the end of the scope counts (a closure can go out of the scope), so the
+// program keeps the fallback.
+fn main() / async {
+    let f = || print(1)
+    for i in 0..2 {
+        scope { s =>
+            let go = || s.spawn(|| f())
+            go()
+        }
+        f = || print(i)
+    }
+}

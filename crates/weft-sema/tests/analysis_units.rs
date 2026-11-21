@@ -3726,12 +3726,131 @@ mod r0kd2 {
         assert!(late(pending.as_deref()), "{pending:?}");
     }
 
-    /// A spawn in a closure on the scope of the body around it: the task can
-    /// outlive the closure body, so each other write counts.
+    /// A spawn in a closure on the scope of the body around it (stage R0z
+    /// Z9b): the writes of the function around the scope before the scope
+    /// are out of the window, so the program is in scope. The bad twin gives
+    /// `f` a new value in the scope body: it stays late.
     #[test]
-    fn a_spawn_in_a_closure_on_an_outer_scope_stays_conservative() {
-        let (_, pending) = scope("s4_spawn_in_closure_ok.wf");
+    fn a_spawn_in_a_closure_on_an_outer_scope_has_a_window() {
+        assert_eq!(scope("s4_spawn_in_closure_ok.wf"), (None, None));
+        let (_, pending) = scope("s4_spawn_in_closure_bad.wf");
         assert!(late(pending.as_deref()), "{pending:?}");
+    }
+}
+
+/// Stage R0z Z9b: the window of a spawn in a body inside a scope body on the
+/// scope of that body (a closure, a task, a clause). The task can outlive the
+/// body of the spawn, up to the end of the scope. A write counts if it is in
+/// the scope body, in a body inside it, in another body, or in the function
+/// around the scope on a path from the end of the scope (a closure can go out
+/// of the scope). The writes of that function before the scope do not count.
+mod r0z9b {
+    /// The analysis of probe `name` of `tests/gate/probes/fixes/r0z9b`: the
+    /// reason of the fallback, the reason of the pending construct, and the
+    /// codes of the errors.
+    fn check(name: &str) -> (Option<String>, Option<String>, Vec<String>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z9b")
+            .join(name);
+        let src =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let a = weft_sema::analyze_source(&src, weft_sema::Options::from_markers(&src))
+            .unwrap_or_else(|d| panic!("{name}: {}", d.message));
+        let s = a.ir_scope.clone().expect("a scope");
+        let codes = a.diags.iter().map(|d| format!("{:?}", d.code)).collect();
+        (s.fallback, s.pending.map(|p| p.reason), codes)
+    }
+
+    /// True if the pending reason is the late task.
+    fn late(p: Option<&str>) -> bool {
+        p.is_some_and(|r| r.contains("a task that runs a function variable that gets a new value"))
+    }
+
+    /// The clean forms with no write in the window are in scope with no
+    /// error.
+    #[test]
+    fn the_clean_forms_are_in_scope_with_no_error() {
+        for name in [
+            "w01_twice_ok.wf",
+            "w03_stored_ok.wf",
+            "w05_in_task_ok.wf",
+            "w06_callee_ok.wf",
+            "w07_nested_ok.wf",
+            "w11_clause_spawn_ok.wf",
+            "w12_sim_ok.wf",
+            "w13_timeout_ok.wf",
+            "w14_rec_ok.wf",
+            "w16_task_spawns_ok.wf",
+        ] {
+            assert_eq!(check(name), (None, None, Vec::new()), "{name}");
+        }
+    }
+
+    /// The bad twins have a write in the window: the task stays late (the
+    /// check gives W0405: the probes of the gate).
+    #[test]
+    fn a_write_in_the_window_is_late() {
+        for name in [
+            "w01_twice_bad.wf",
+            "w03_stored_bad.wf",
+            "w04_escape_bad.wf",
+            "w05_in_task_bad.wf",
+            "w06_callee_bad.wf",
+            "w07_nested_bad.wf",
+            "w09_join_inside_bad.wf",
+            "w10_clause_scope_bad.wf",
+            "w11_clause_spawn_bad.wf",
+            "w12_sim_bad.wf",
+            "w13_timeout_bad.wf",
+            "w15_task_scope_bad.wf",
+            "w16_task_spawns_bad.wf",
+            "w18_loop_bad.wf",
+            "w19_inner_closure_bad.wf",
+        ] {
+            let (_, pending, _) = check(name);
+            assert!(late(pending.as_deref()), "{name}: {pending:?}");
+        }
+    }
+
+    /// R-ESCAPE (review round 2): a function value can leave the function
+    /// around the scope (its result, a field of its result, a `Vec`
+    /// parameter). A closure that spawns on the scope can then run after the
+    /// function returns, and its task runs in the caller, where the facts of
+    /// the function do not follow it. The old rule stays: two writes of `f`,
+    /// so the task is late (the pending rule; the old pipeline rejects the bad
+    /// probes). The clean twin returns a function value that does not spawn:
+    /// it keeps the fallback too.
+    #[test]
+    fn a_function_value_that_can_leave_the_parent_keeps_the_old_rule() {
+        for name in [
+            "x01_return_escape_bad.wf",
+            "x01_return_fn_ok.wf",
+            "x02_struct_return_bad.wf",
+            "x03_vec_param_bad.wf",
+        ] {
+            let (_, pending, _) = check(name);
+            assert!(late(pending.as_deref()), "{name}: {pending:?}");
+        }
+    }
+
+    /// The refusals: the window is not exact, so the old rule stays (two
+    /// writes: late). A write in the scope body before the closure; a
+    /// `join` in another body; a scope in a clause or in a closure; a write
+    /// in a loop after the scope.
+    #[test]
+    fn the_refusals_keep_the_old_rule() {
+        for name in [
+            "w02_before_make_ok.wf",
+            "w09_join_outside_ok.wf",
+            "w10_clause_scope_ok.wf",
+            "w15_task_scope_ok.wf",
+            "w17_closure_maker_ok.wf",
+            "w20_loop_after_scope_ok.wf",
+        ] {
+            let (_, pending, codes) = check(name);
+            assert!(codes.is_empty(), "{name}: {codes:?}");
+            assert!(late(pending.as_deref()), "{name}: {pending:?}");
+        }
     }
 }
 

@@ -1,0 +1,26 @@
+// Plan stage R0z Z9b (R-ESCAPE, bad): `mk` returns a closure that spawns
+// on the scope of `mk`. The caller runs it after `mk` returns, so the task
+// runs in the caller and changes `x.count` while the caller reads it. A
+// function value can leave `mk` (its result type), so the old rule stays.
+struct Stats { count: u64 }
+fn mk(x: &Stats) -> fn() / async {
+    let f = || print(1)
+    f = || x.count += 1
+    let g = || print(0)
+    scope { s =>
+        g = || { s.spawn(|| f()); () }
+    }
+    g
+}
+fn main() / async {
+    let x = Stats { count: 0 }
+    let g = mk(&x)
+    g()
+    let i = 0
+    while i < 50 {
+        print(x.count)
+        i += 1
+    }
+    scope { s2 => s2.spawn(|| print(7)) }
+    print(x.count)
+}

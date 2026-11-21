@@ -1,0 +1,19 @@
+// Plan stage R0z Z9b (clean, refusal): the scope is in a clause, and `go`
+// spawns on it. The body around the scope is a clause, so the old rule
+// stays (two writes of `f`: the fallback).
+effect Op { fn op() }
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    handle Op {
+        fn op() {
+            scope { s =>
+                let go = || s.spawn(|| f())
+                go()
+            }
+            resume(())
+        }
+    } in {
+        op()
+    }
+}
