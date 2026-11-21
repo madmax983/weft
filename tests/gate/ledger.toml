@@ -11559,3 +11559,48 @@ files = [
 ]
 reason = "plan stage R0z Z8 (R-DEAD, the review of Z8, round 2): the form of `z7rev1/p/k4_two` with an unrelated dead closure (`c26`: a closure that code runs captures it). The callees `w` and `w2` give a function value to `run` through their row, and their calls have copies (stage R0k-a), so their summaries have the weak C2 form (`multi`, `op_fns`, `task_runs`, `repeats`), as for `fixes/r0k/rv_p04_c2_multi` and the probes `k1`, `k2` of Z7; the old inference does not mark them `multi`"
 stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z9b/w01_twice_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w04_escape_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w04_escape_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w09_join_inside_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w18_loop_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w19_inner_closure_bad.wf",
+]
+codes = ["W0301", "W0405"]
+reason = "plan stage R0z Z9b: probes of the window of a spawn in a closure on the scope of the body around it. Both pipelines reject each one with W0405 (a write or the end of `f` while a task can read `f`); the lines differ. `w01`, `w09`, `w19`: the `ir` pipeline gives W0405 at a second line too (the first run of `go` or the call of `set`, which writes `f` while the task can run); `w18`: the old pipeline gives W0405 at the call of `go` in the loop too. `w04_escape_bad` and `w04_escape_ok`: a closure that spawns on the scope goes out of the scope; the old pipeline gives W0301 at its run after the scope, and the `ir` pipeline gives W0405 at the end of the scope instead. `w04_escape_ok` comes into scope with Z9b (no write of `f` after the scope), and its run is clean (the task does not run before `main` ends); main rejects it too (W0405 from both pipelines)"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "tests/gate/probes/fixes/r0kd2/s4_spawn_in_closure_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w01_twice_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w01_twice_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w03_stored_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w03_stored_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w04_escape_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w04_escape_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w06_callee_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w06_callee_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w07_nested_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w07_nested_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w09_join_inside_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w09_join_inside_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w10_clause_scope_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w12_sim_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w12_sim_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w13_timeout_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w13_timeout_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w14_rec_ok.wf",
+    "tests/gate/probes/fixes/r0z9b/w15_task_scope_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w18_loop_bad.wf",
+    "tests/gate/probes/fixes/r0z9b/w19_inner_closure_bad.wf",
+    "tests/programs/207_spawn_window.wf",
+]
+reason = "plan stage R0z Z9b: the programs come into scope (E4: a spawn in a closure, a task or a clause on the scope of the body around it, with no write of the variable in the window of the task), or are in scope through the pending rule and rejected (the bad twins, W0405). The function has the row of the old pipeline; the part `pins` (the pinned tasks of the body) comes from the summaries of the `ir` pipeline, as for the other task programs in scope (the entry of R0k-d2 for `s4_spawn_in_closure_bad`)"
+stage = "R0z"

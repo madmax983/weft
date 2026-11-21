@@ -1,0 +1,14 @@
+// Plan stage R0z Z9b (clean, refusal): `go` joins its task, so the write
+// after `go()` is after the task. Each write of the scope body counts (the
+// window does not stop at a `join` in another body): the fallback stays.
+fn main() / async {
+    let f = || print(1)
+    scope { s =>
+        let go = || {
+            let t = s.spawn(|| f())
+            t.join()
+        }
+        go()
+        f = || print(2)
+    }
+}

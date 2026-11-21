@@ -208,6 +208,32 @@ the counts.
   keeps the pending escape of main, so no row in scope on main leaves the scope; the census
   rows are as above.
 
+## Z9b (as built)
+
+- Z9b closed 1 row of tier 1 (row 92, `fixes/r0kd2/s4_spawn_in_closure_ok`; 25 to 24
+  fallbacks of the census rows) and no row of tier 2 (19 stay: no row of tier 2 has the
+  form): `docs/plan/core-ir.md`, "Z9b as built". The row is in scope with no error, as the
+  old pipeline.
+- Row 92: the cause of the plan is the real cause (`TASK_LATE`: a spawn in a closure on the
+  scope of the scope body gets the rule of R0j, two whole writes of `f`). The spawn now has
+  a window up to the end of the scope (`templates::outer_window`): the function around the
+  scope waits at the scope, so its two writes of `f` before the scope do not count.
+- Tier 1: 185 fallbacks of 5929 files (main 196 of 5929). The new files are the 33 probes
+  of `fixes/r0z9b` and the corpus program `207_spawn_window`; main sends 16 of them to the
+  old pipeline. The row above leaves the fallback, and so do 10 of these 16; the other 6
+  keep it (the refusal probes of the stage: a write of the scope body before the closure, a
+  `join` in the scope body, a scope in a clause, in a task or in a closure, a write after
+  the scope in a loop). Tier 2: 19 fallbacks (main 19); no row of tier 2 has the form.
+- No row in scope on main leaves the scope, and no row changes its codes.
+- Review round 2 (R-ESCAPE): a function value that can leave the function around the
+  scope (its result, a parameter, an operation of a user effect) keeps the rule of R0j.
+  Without it, four review probes (a closure that spawns on the scope is returned, put in a
+  returned struct, stored through a reference parameter or pushed into a `Vec`
+  parameter) came into scope with no error and faulted (the task runs in the caller):
+  lost faults. Row 92 and the clean probes of the stage have no such way out, so the
+  census rows are as above. The probes `x01_return_escape_bad`, `x02_struct_return_bad`,
+  `x03_vec_param_bad` and `x01_return_fn_ok` keep the fallback, as on main.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -331,7 +357,7 @@ the counts.
 | 89 | `verify/s5/R2c: .../p/rr3_v20_with_timeout.wf` | D1 | runtime run: `resume` in the block of `with_timeout` | clean | no fault | clean | no | Z4b |
 | 90 | `fixes/r0kd1/d02_multi_weak.wf` | esc | D4 multi: the update after a `multi` resume stays weak, so a closure seems to run outside its handler | clean | no fault | clean | yes | Z8 (closed) |
 | 91 | `verify/partb/p/g2_lexical.wf` | D3 | a value through a `resume`: the inner clause gives back a closure that performs to the outer handler | clean | no fault | clean | no | Z8 (closed) |
-| 92 | `fixes/r0kd2/s4_spawn_in_closure_ok.wf` | E4 | a spawn in a closure on the scope of the outer body; two writes of `f` | clean | no fault | clean | yes | Z9b |
+| 92 | `fixes/r0kd2/s4_spawn_in_closure_ok.wf` | E4 | a spawn in a closure on the scope of the outer body; two writes of `f` | clean | no fault | clean | yes | Z9b (closed) |
 | 93 | `fixes/r0f/c09_cc_during_ok.wf` | E2 | two values: code of a caller runs `f` once on the task (the c09 subset of R0k-d3) | clean | no fault | clean | no | Z9a |
 | 94 | `fixes/r0j/j01_again_ok.wf` | E2 | code of a caller runs `f` two times on the task | clean | no fault | clean | yes | Z9a |
 | 95 | `r3/oracle/probes/i9_kept_write.wf` | E2 | a task runs a kept callback more than once | W0405 | no fault | rejected | no | Z9a |

@@ -1,0 +1,11 @@
+// Plan stage R0z Z9b (clean, refusal): the scope body joins the task of
+// `go`, then gives `f` a new value. The fallback stays.
+fn main() / async {
+    let f = || print(1)
+    scope { s =>
+        let go = || s.spawn(|| f())
+        let t = go()
+        t.join()
+        f = || print(2)
+    }
+}

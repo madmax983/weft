@@ -1,0 +1,16 @@
+// Plan stage R0z Z9b (clean, refusal): the scope is in a task of an outer
+// scope. The body around the scope is a closure, so the old rule stays.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s0 =>
+        s0.spawn(|| {
+            scope { s =>
+                let go = || s.spawn(|| f())
+                go()
+            }
+            ()
+        })
+        print(0)
+    }
+}

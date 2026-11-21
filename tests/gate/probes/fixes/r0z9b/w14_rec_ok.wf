@@ -1,0 +1,14 @@
+// Plan stage R0z Z9b (clean): a recursive function. Each run has its own
+// `f`, and its scope ends before it returns.
+fn r(n: u64) / async {
+    let f = || print(n)
+    f = || print(n + 1)
+    scope { s =>
+        let go = || s.spawn(|| f())
+        go()
+        if n > 0 { r(n - 1) }
+    }
+}
+fn main() / async {
+    r(2)
+}

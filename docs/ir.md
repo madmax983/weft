@@ -3525,6 +3525,25 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   no write in that window the value of the variable for the whole task is its value at
   the spawn, which the state of the spawn node has, so the run at the spawn node applies
   each value that the task can run, and the program is in scope.
+  From plan stage R0z Z9b a spawn in a body inside a scope body, on the scope of that
+  body (a closure, a task or a clause that spawns through a capture of the scope
+  capability), has a window too (`templates::outer_window`): the task can outlive the body
+  of the spawn, up to the end of the scope. The function or test body around the scope
+  waits at the scope, so its writes before the scope do not count. Each other write
+  counts: in the scope body (the closure can run after it), in a body inside the scope
+  body, in another body, and in the function around the scope on a path from the end of
+  the scope (a closure can go out of the scope and spawn there; the task can then run
+  after the scope). The task is late only if the rule of plan stage R0j also finds it
+  late (more than one whole write): each rule alone is sound. A scope whose parent is not a
+  function or a test body (a closure, a clause, a task, a handled body, or a `sim.run` or
+  `with_timeout` block), or a scope with more than one `scope` terminator, keeps the rule
+  of plan stage R0j: such a body around the scope can run again while the task runs.
+  The rule of plan stage R0j stays too if a function value can leave the function around
+  the scope (R-ESCAPE, `templates::can_leave`): its result or a parameter has a type that
+  can hold a function value, is nonportable (a scope capability, an `Rc`) or has a type
+  parameter, or the function performs an effect that is not a standard effect. A closure
+  that holds the scope capability can then spawn after the function returns, and the task
+  runs in the caller, where the facts of the function do not follow it.
   From plan stage R0z Z5 the window of a task of a scope in a clause includes the region
   of a `resume` in the scope body (6.5, "As built (plan stage R0z Z5)"): the task runs
   while the rest of the handled body runs, up to the end of the scope. The facts give this

@@ -6394,6 +6394,7 @@ const TASK_LATE: &str = "a task that runs a function variable that gets a new va
 /// ([`late_write`]).
 fn runs_rebound_cell(
     p: &weft_ir::Program,
+    tys: &TyTable,
     f: &FnVal,
     sums: &crate::analysis::Summaries,
     at: (BodyId, weft_ir::BlockId),
@@ -6417,7 +6418,7 @@ fn runs_rebound_cell(
         let Some(cell) = super::instantiate::whole_cell_of(p, decl.maker, &cap.source) else {
             return true;
         };
-        late_write(p, cell, at)
+        late_write(p, (tys, sums), cell, at)
     })
 }
 
@@ -6437,11 +6438,24 @@ fn runs_rebound_cell(
 ///   counts.
 /// - Each other write counts: a body inside the body of the terminator (a
 ///   task, a clause, a closure), a body that the code of the window can call
-///   or run. For any other terminator (a spawn on a scope of another body:
-///   the task can outlive the body) the variable is late if it has more than
-///   one whole write (the rule of plan stage R0j).
+///   or run.
+/// - A spawn in a body inside a scope body on the scope of that body (plan
+///   stage R0z Z9b, [`outer_window`]): the task can outlive the body of the
+///   spawn, up to the end of the scope. The function around the scope waits
+///   at the scope, so its writes before the scope do not count. Each other
+///   write counts: in the scope body (the closure can run after it), in a
+///   body inside the scope body, in another body, and in the function around
+///   the scope on a path from the end of the scope (a closure can go out of
+///   the scope and spawn there). The variable is late only if the rule of
+///   plan stage R0j also finds it late (more than one whole write): each rule
+///   alone is sound.
+///
+/// For any other spawn (for example on a scope capability that a parameter
+/// holds, or on a scope whose parent is a closure or a clause) the variable
+/// is late if it has more than one whole write (the rule of plan stage R0j).
 fn late_write(
     p: &weft_ir::Program,
+    (tys, sums): (&TyTable, &crate::analysis::Summaries),
     cell: (BodyId, weft_ir::LocalId),
     (b, k): (BodyId, weft_ir::BlockId),
 ) -> bool {
@@ -6512,8 +6526,15 @@ fn late_write(
     }
     // With no window: more than one whole write (the rule of plan stage
     // R0j: the one write gives the variable its value before the task can
-    // read it).
+    // read it). With the window of a scope around the body (stage R0z Z9b):
+    // that rule and a write in the window.
+    let outer = if window.is_none() {
+        outer_window(p, (tys, sums), b, term)
+    } else {
+        None
+    };
     let mut all = 0usize;
+    let mut in_outer = false;
     for (i, x) in p.bodies.iter().enumerate() {
         let xid = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
         for (bi, blk) in x.blocks.iter().enumerate() {
@@ -6522,10 +6543,14 @@ fn late_write(
                 continue;
             }
             all += n;
+            if let Some(o) = &outer {
+                in_outer = in_outer || o.counts(p, cell, xid, bi, blk);
+            }
             let counts = match window {
                 Some(_) if xid != b && crate::analysis::clause::inside(p, b, xid) => false,
                 Some(_) if xid == b => !fork && reached.get(bi).copied().unwrap_or(true),
                 Some(_) => true,
+                None if outer.is_some() => all > 1 && in_outer,
                 None => all > 1,
             };
             if counts {
@@ -6534,6 +6559,158 @@ fn late_write(
         }
     }
     false
+}
+
+/// The window of a spawn in a body inside a scope body on the scope of
+/// that body (plan stage R0z Z9b): the function body around the scope, and
+/// the blocks of it that a path from the end of the scope reaches.
+struct OuterWindow {
+    /// The function or test body that runs the scope.
+    around: BodyId,
+    /// The block of the `scope` terminator in `around`.
+    at: weft_ir::BlockId,
+    /// The blocks of `around` that a path from the end of the scope reaches.
+    reached: Vec<bool>,
+}
+
+impl OuterWindow {
+    /// True if a whole write of `cell` in block `bi` of body `x` counts: a
+    /// write in another body than `around`, or a write in `around` on a path
+    /// from the end of the scope (the destination of the `scope` terminator
+    /// too).
+    fn counts(
+        &self,
+        p: &weft_ir::Program,
+        cell: (BodyId, weft_ir::LocalId),
+        x: BodyId,
+        bi: usize,
+        blk: &weft_ir::Block,
+    ) -> bool {
+        if x != self.around || self.reached.get(bi).copied().unwrap_or(true) {
+            return true;
+        }
+        bi == self.at.index()
+            && blk
+                .term
+                .kind
+                .dest()
+                .is_some_and(|q| super::instantiate::whole_cell_of(p, x, q) == Some(cell))
+    }
+}
+
+/// The window of the spawn `term` of body `b` on the scope of a scope body
+/// around `b` (plan stage R0z Z9b). `None` if `term` is no such spawn, or
+/// if the window is not exact:
+///
+/// - the scope operand must name the scope capability of a scope body `s`
+///   (through the upvar locals and the captures of the makers), and `b` must
+///   be inside `s`;
+/// - the parent of `s` must be a function or a test body (a closure or a
+///   clause around the scope can run again while the task runs: the rule of
+///   plan stage R0j stays), with one `scope` terminator of the scope;
+/// - no function value can leave the parent (R-ESCAPE, [`can_leave`]): a
+///   closure that holds the scope capability can then spawn after the
+///   parent returns, and the task runs in the caller, where the facts of the
+///   parent do not follow it.
+fn outer_window(
+    p: &weft_ir::Program,
+    (tys, sums): (&TyTable, &crate::analysis::Summaries),
+    b: BodyId,
+    term: &weft_ir::TermKind,
+) -> Option<OuterWindow> {
+    let weft_ir::TermKind::Spawn { scope, .. } = term else {
+        return None;
+    };
+    let (s, cap) = super::instantiate::whole_cell_of(p, b, scope.place()?)?;
+    let sb = p.body(s)?;
+    let weft_ir::BodyKind::Scope(sid) = sb.kind else {
+        return None;
+    };
+    if s == b
+        || !matches!(sb.local_kind(cap), Some(weft_ir::LocalKind::ScopeCap))
+        || !crate::analysis::clause::inside(p, b, s)
+    {
+        return None;
+    }
+    let around = sb.parent?;
+    let ab = p.body(around)?;
+    if !matches!(
+        ab.kind,
+        weft_ir::BodyKind::Fn(_) | weft_ir::BodyKind::Test(_)
+    ) || can_leave(tys, sums, ab)
+    {
+        return None;
+    }
+    let mut sites = ab.blocks.iter().enumerate().filter(
+        |(_, x)| matches!(&x.term.kind, weft_ir::TermKind::Scope { scope, .. } if *scope == sid),
+    );
+    let (at, blk) = sites.next()?;
+    if sites.next().is_some() {
+        return None;
+    }
+    let mut reached = vec![false; ab.blocks.len()];
+    let mut work: Vec<weft_ir::BlockId> = blk
+        .term
+        .kind
+        .normal_successors()
+        .into_iter()
+        .chain(blk.term.kind.unwind())
+        .collect();
+    while let Some(x) = work.pop() {
+        match reached.get_mut(x.index()) {
+            Some(r) if !*r => *r = true,
+            _ => continue,
+        }
+        if let Some(next) = ab.block(x) {
+            work.extend(next.term.kind.normal_successors());
+            work.extend(next.term.kind.unwind());
+        }
+    }
+    Some(OuterWindow {
+        around,
+        at: weft_ir::BlockId(u32::try_from(at).ok()?),
+        reached,
+    })
+}
+
+/// The standard effects. No operation of them takes or gives a function
+/// value (`std/prelude.wf`).
+const STD_EFFECTS: [&str; 9] = [
+    "Async", "Net", "Fs", "Clock", "Rand", "Log", "Blocking", "Fail", "Par",
+];
+
+/// True if a function value can leave the function or test body `ab` (plan
+/// stage R0z Z9b, the refusal R-ESCAPE of [`outer_window`]): its result or
+/// a parameter has a type that can hold a function value (through
+/// references, fields and elements), that is nonportable (a scope
+/// capability, an `Rc`), or that has a type parameter; or the body of a
+/// function performs an effect that is not a standard effect (an operation
+/// can give the value to a handler of a caller). The language has no global
+/// variables, and a failure carries a `String`.
+fn can_leave(tys: &TyTable, sums: &crate::analysis::Summaries, ab: &weft_ir::Body) -> bool {
+    let carries = |t: weft_ir::TyId| {
+        crate::props::ir_has_fns(tys, t) || {
+            let props = crate::props::ir_props(tys, t);
+            props.nonportable || props.generic
+        }
+    };
+    let types = std::iter::once(weft_ir::LocalId(0))
+        .chain(ab.params.iter().copied())
+        .map(|l| ab.local(l).map(|d| d.ty));
+    for t in types {
+        match t {
+            Some(t) if !carries(t) => {}
+            _ => return true,
+        }
+    }
+    match ab.kind {
+        weft_ir::BodyKind::Fn(f) => sums.get(f).map_or(true, |sum| {
+            sum.performs
+                .iter()
+                .any(|x| !STD_EFFECTS.contains(&x.effect.as_str()))
+        }),
+        _ => false,
+    }
 }
 
 /// Why a call of a function value that runs a value of its arguments as a
@@ -7019,7 +7196,7 @@ fn task_start(
     // `n`, so the program is in scope only if the `ir` pipeline rejects it.
     if fns
         .iter()
-        .any(|f| runs_rebound_cell(em.p, f, em.sums, (body, block)))
+        .any(|f| runs_rebound_cell(em.p, em.tys, f, em.sums, (body, block)))
     {
         pending(crate::irbuild::scope::Group::E, TASK_LATE);
     }

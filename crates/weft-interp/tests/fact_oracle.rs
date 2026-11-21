@@ -1518,6 +1518,36 @@ fn the_probes_of_the_handler_environment_leftovers_pass_the_fact_oracle() {
     assert!(checked >= 20, "{checked}");
 }
 
+/// Each probe of plan stage R0z Z9b (`fixes/r0z9b`: a spawn in a closure, a
+/// task or a clause on the scope of the body around it) that the `ir`
+/// pipeline accepts runs with no failure of the fact oracle. The run at the
+/// spawn node applies each value that the task can run.
+#[test]
+fn the_probes_of_the_window_of_an_outer_scope_pass_the_fact_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z9b");
+    let mut checked = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        let m = r
+            .as_ref()
+            .err()
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
+        assert!(
+            failure(&r).is_none() && !m.starts_with("clause oracle"),
+            "{}: {m}",
+            p.display()
+        );
+        checked += 1;
+    }
+    assert!(checked >= 10, "{checked}");
+}
+
 /// The closure identity of a copy region (plan stage R0k-b2), the mutation.
 /// A copy replaces the run by the body of one closure, so the facts of the
 /// region hold only for a run of that closure: at the entry of the region

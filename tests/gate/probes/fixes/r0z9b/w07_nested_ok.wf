@@ -1,0 +1,14 @@
+// Plan stage R0z Z9b (clean): `go` spawns on the outer scope from an inner
+// scope.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        scope { s2 =>
+            let go = || s.spawn(|| f())
+            go()
+            s2.spawn(|| print(0))
+        }
+        print(0)
+    }
+}

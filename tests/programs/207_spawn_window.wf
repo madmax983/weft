@@ -1,0 +1,49 @@
+// Plan stage R0z Z9b: the window of a task that a closure spawns on the
+// scope of the body around the closure. The task can outlive the run of
+// the closure, up to the end of the scope. The function around the scope
+// waits at the scope, so its writes before the scope do not change the
+// value that the task runs. A write in the scope body, or after the scope,
+// is in the window. The probes `tests/gate/probes/fixes/r0z9b/` run these
+// forms with `main`.
+
+fn app(g: fn()) {
+    g()
+    print(0)
+}
+
+// Two writes of `f` before the scope; a closure spawns the task, two times.
+fn twice() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let go = || { s.spawn(|| f()); () }
+        go()
+        go()
+    }
+}
+
+// A callee runs the closure that spawns the task.
+fn callee() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        app(|| { s.spawn(|| f()); () })
+    }
+}
+
+// The scope body gives `f` a new value after the closure spawns the task:
+// the task can read `f` while the scope body writes it.
+fn write_in_window() / async {
+    let f = || print(1)
+    scope { s =>
+        let go = || { s.spawn(|| f()); () }
+        go()
+        f = || print(2)   //~ W0405
+    }
+}
+
+fn main() / async {
+    twice()
+    callee()
+    write_in_window()
+}

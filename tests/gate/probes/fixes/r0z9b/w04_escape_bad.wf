@@ -1,0 +1,14 @@
+// Plan stage R0z Z9b (bad): a closure that spawns on the scope goes out of
+// the scope and runs after it. The task runs after the scope, and `main`
+// gives `f` a new value while the task can read it.
+fn main() / async {
+    let f = || print(1)
+    let g = || print(0)
+    scope { s =>
+        g = || { s.spawn(|| f()); () }
+    }
+    g()
+    scope { s2 => s2.spawn(|| print(7)) }
+    f = || print(2)
+    print(6)
+}

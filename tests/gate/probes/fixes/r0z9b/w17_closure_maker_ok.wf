@@ -1,0 +1,14 @@
+// Plan stage R0z Z9b (clean, refusal): the scope is in a closure `h`, and
+// `f` belongs to `main`. The body around the scope is a closure, so the old
+// rule stays (the fallback).
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    let h = || {
+        scope { s =>
+            let go = || s.spawn(|| f())
+            go()
+        }
+    }
+    h()
+}

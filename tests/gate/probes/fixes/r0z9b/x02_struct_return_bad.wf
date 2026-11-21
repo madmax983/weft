@@ -1,0 +1,26 @@
+// Plan stage R0z Z9b (R-ESCAPE, bad): `mk` puts the closure that spawns on
+// its scope in a field of the struct that it returns. The task runs in the
+// caller and changes `x.count` while the caller reads it.
+struct Stats { count: u64 }
+struct H { g: fn() }
+fn mk(x: &Stats) -> H / mut(x.count), async {
+    let f = || print(1)
+    f = || x.count += 1
+    let h = H { g: || print(0) }
+    scope { s =>
+        h.g = || { s.spawn(|| f()); () }
+    }
+    h
+}
+fn main() / async {
+    let x = Stats { count: 0 }
+    let h = mk(&x)
+    let k = h.g
+    k()
+    let i = 0
+    while i < 50 {
+        print(x.count)
+        i += 1
+    }
+    scope { s2 => s2.spawn(|| print(7)) }
+}

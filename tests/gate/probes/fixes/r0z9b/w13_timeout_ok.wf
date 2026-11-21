@@ -1,0 +1,9 @@
+// Plan stage R0z Z9b (clean): `with_timeout` runs `go` in the scope.
+fn main() / async, clock, fail {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let go = || { s.spawn(|| f()); () }
+        with_timeout(50.ms) { go() }
+    }
+}

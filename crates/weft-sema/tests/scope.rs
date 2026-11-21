@@ -861,10 +861,11 @@ fn the_task_fallbacks_are_pending() {
             include_str!("../../../tests/gate/probes/fixes/r0j/j01_again_ok.wf"),
             "runs a callback more than once",
         ),
-        // A late task (stage R0k-d2: a spawn in a closure on an outer scope,
-        // with two writes of the variable).
+        // A late task (stage R0z Z9b: a spawn in a closure on a scope whose
+        // parent is a closure, with two writes of the variable: the rule of
+        // stage R0j stays).
         (
-            include_str!("../../../tests/gate/probes/fixes/r0kd2/s4_spawn_in_closure_ok.wf"),
+            include_str!("../../../tests/gate/probes/fixes/r0z9b/w17_closure_maker_ok.wf"),
             "function variable that gets a new value",
         ),
         (
@@ -891,6 +892,17 @@ fn the_task_fallbacks_are_pending() {
     // window of the task (one before the spawn, one after the `join`): the
     // program has full facts.
     let src = include_str!("../../../tests/gate/probes/fixes/r0j/j02_late_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
+    // Stage R0z Z9b: the spawn in the closure of `s4_spawn_in_closure_ok` is on
+    // the scope of the body around the closure, and both writes of the
+    // variable are in `main` before the scope (out of the window of the
+    // task): the program has full facts.
+    let src = include_str!("../../../tests/gate/probes/fixes/r0kd2/s4_spawn_in_closure_ok.wf");
     let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
     let scope = a.ir_scope.as_ref().expect("a scope");
     assert_eq!(

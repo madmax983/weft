@@ -1,0 +1,19 @@
+// Plan stage R0z Z9b (bad): the scope is in a clause, and the scope body
+// gives `f` a new value after `go` spawns the task.
+effect Op { fn op() }
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    handle Op {
+        fn op() {
+            scope { s =>
+                let go = || s.spawn(|| f())
+                go()
+                f = || print(3)
+            }
+            resume(())
+        }
+    } in {
+        op()
+    }
+}

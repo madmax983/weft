@@ -1,0 +1,13 @@
+// Plan stage R0z Z9b (bad): the scope body runs `go` in a loop and gives `f`
+// a new value in each turn, while the task of the turn before can run.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let go = || s.spawn(|| f())
+        for i in 0..3 {
+            go()
+            f = || print(i)
+        }
+    }
+}

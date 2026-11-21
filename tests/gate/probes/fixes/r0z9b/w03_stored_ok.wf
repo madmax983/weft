@@ -1,0 +1,11 @@
+// Plan stage R0z Z9b (clean): `go` goes into another local and runs later.
+fn main() / async {
+    let f = || print(1)
+    f = || print(2)
+    scope { s =>
+        let go = || s.spawn(|| f())
+        let keep = go
+        print(0)
+        keep()
+    }
+}
