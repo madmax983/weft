@@ -10,3 +10,4 @@ pub mod dataflow;
 pub mod lifecycle;
 pub mod modes;
 pub mod places;
+pub mod tasks;

@@ -1,0 +1,85 @@
+// Plan stage R0z Z9c-A: the `with` of a task of a call slot. A callee runs
+// a value of the interface of its caller as a task. While the task runs,
+// the callee runs another value of that interface (as plain code or as a
+// second task), or the same value again. A clause of a local handler that
+// runs a value of the interface in the window of a task counts too. The summary of the caller keeps that value in the
+// `with` of the run (or `twice`), so a caller of the caller sees the race.
+// The probes `tests/gate/probes/fixes/r0z9c/` run these forms with `main`.
+
+effect Note { fn note(x: u64) }
+
+struct C { k: u64 }
+
+fn both(a: fn(), b: fn()) / async { scope { s => s.spawn(a); b(); () } }
+
+fn both2(a: fn(), b: fn()) / async { scope { s => s.spawn(a); s.spawn(b); () } }
+
+fn seqf(a: fn(), b: fn()) / async { scope { s => s.spawn(a); () }; b() }
+
+fn pick(a: fn(), b: fn(), w: bool) / async { if w { scope { s => s.spawn(a); () } } else { b() } }
+
+fn sp_before(h: fn()) / async, Note { note(1); scope { s => s.spawn(h); () } }
+
+fn par(h: fn(), k: fn()) / async { both(h, k) }
+
+fn par2(h: fn(), k: fn()) / async { both2(h, k) }
+
+fn par_same(h: fn()) / async { both2(h, h) }
+
+fn par_clause(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } } in { scope { s => s.spawn(h); note(1) } }
+}
+
+fn par_before(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } } in { sp_before(h) }
+}
+
+fn par_seq(h: fn(), k: fn()) / async { seqf(h, k) }
+
+fn par_pick(h: fn(), k: fn(), w: bool) / async { pick(h, k, w) }
+
+// The callee runs `k` as plain code while the task of `h` runs.
+fn plain_with() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))   //~ W0405
+}
+
+// The callee runs `h` and `k` as two tasks at the same time: one error for
+// each task (the old pipeline gives one).
+fn two_tasks() / async {
+    let c = C { k: 0 }
+    par2(|| c.k += 1, || print(c.k))   //~ W0405 W0405 old: W0405
+}
+
+// The same value runs as two tasks at the same time.
+fn same_twice() / async {
+    let c = C { k: 0 }
+    par_same(|| c.k += 1)   //~ W0405
+}
+
+// A clause of a local handler of `par_clause` runs `k` while its task of `h`
+// runs (the old pipeline does not see this race). The same clause at a call
+// whose callee runs `h` as a task is not in the summary yet (review round 1
+// of Z9c-A: `fixes/r0z9c/a10_item_clause_bad` stays open).
+fn clause_with() / async {
+    let c = C { k: 0 }
+    par_clause(|| print(c.k), || c.k += 1)   //~ W0405 old:
+}
+
+// Clean: both values only read.
+fn readers() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || print(c.k + 1))
+    par2(|| print(c.k), || print(c.k + 1))
+    par_same(|| print(c.k))
+    par_clause(|| print(c.k), || print(c.k + 1))
+}
+
+// Clean: the runs come in sequence, on exclusive paths, or the clause runs
+// before the task starts.
+fn no_overlap(w: bool) / async {
+    let c = C { k: 0 }
+    par_seq(|| c.k += 1, || print(c.k))
+    par_pick(|| c.k += 1, || print(c.k), w)
+    par_before(|| print(c.k), || c.k += 1)
+}

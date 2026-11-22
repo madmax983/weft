@@ -1,0 +1,11 @@
+// R0z Z9c-A review round 3 (probe q11): clean twin of q11: the handled body performs nothing.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn par(h: fn()) / async {
+    scope { s => s.spawn(h); handle Note { fn note(x) { resume(()); h() } } in { print(1) } }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1)
+    print(c.k)
+}

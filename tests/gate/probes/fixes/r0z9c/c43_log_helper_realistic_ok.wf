@@ -1,0 +1,15 @@
+// R0z Z9c-A review round 2 (probe p43): the job runs as a task while a helper logs at warn level; only the info clause runs the hook, before the spawn.
+effect Log { fn info(m: u64), fn warn(m: u64) }
+struct C { k: u64 }
+fn report(n: u64) / Log { warn(n) }
+fn par(job: fn(), on_info: fn()) / async {
+    handle Log { fn info(m) { on_info(); resume(()) } fn warn(m) { print(m); resume(()) } } in {
+        info(0)
+        scope { s => s.spawn(job); report(1) }
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+    print(c.k)
+}

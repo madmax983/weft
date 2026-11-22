@@ -1,0 +1,9 @@
+// R0z Z9c-A probe: the callee joins the task of a before it runs b: the runs come in sequence.
+struct C { k: u64 }
+fn seqf(a: fn(), b: fn()) / async { scope { s => s.spawn(a); () }; b() }
+fn par(h: fn(), k: fn()) / async { seqf(h, k) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+    print(c.k)
+}

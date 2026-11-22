@@ -90,6 +90,23 @@
 //!   runs code of a caller (`opaque(T)`), a place behind a parameter does not
 //!   count: the caller checks the value that it gives as a task.
 //!
+//! - **The `with` check (plan stage R0z Z9c-A, C7).** The summary of a body
+//!   says how the body runs each function value of its interface as a task:
+//!   the other values of the interface that it runs while the task runs are
+//!   in `with`, and a second run of the value itself at that time is
+//!   `twice`. The oracle names the closure values of the interface of each
+//!   frame of a function or closure body (its parameters and captures that
+//!   hold a closure). A task that runs such a value `j` of a frame starts
+//!   from a stack with the frame on it. While the task runs, a run of
+//!   another value `k` of the interface of the frame, as plain code by the
+//!   frame or a callee of it, or as a new task, must be in `with` of the run
+//!   of `j` in the summary (for two tasks: of one of the two runs); a run of
+//!   `j` itself must be `twice`. A run in the worst way (`foreign`) passes.
+//!   The check skips a value that two entries of the interface hold, a run
+//!   of a capture beside a run of a parameter (`with` has one kind), a run
+//!   that the task itself makes, and a run through a clause frame or through
+//!   a frame that the oracle does not follow.
+//!
 //! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
 //! at `Return`, a whole write of a temporary or of `_0`, the read of the
 //! buffer handle of an array and an access of a cell that the op frees need
@@ -119,7 +136,7 @@ use weft_sema::irbuild::Built;
 
 use crate::code::Code;
 use crate::heap::Heap;
-use crate::value::{CellId, Place, Value};
+use crate::value::{CellId, ClosureVal, Place, Value};
 
 /// One step of the IR trace (`--ir-trace`): a frame starts the ops of an IR
 /// location.
@@ -188,6 +205,10 @@ pub struct FactReport {
     /// runs, and a node of its handled body has `performs_at` with the
     /// capability of the handler.
     pub clause: u64,
+    /// The checks of the `with` check (plan stage R0z Z9c-A, C7): a run of a
+    /// value of the interface of a frame while a task of the frame runs a
+    /// value of its interface.
+    pub with: u64,
 }
 
 /// What the IR of a run gives the fact oracle: the IR and the components.
@@ -511,8 +532,50 @@ pub struct FactOracle {
     /// of the body of the spawn, the task `T` of the facts and the nodes of
     /// the spawn (the task cover).
     covers: HashMap<usize, TaskCover>,
+    /// The frames of function and closure bodies whose summary runs a value
+    /// of the interface as a task, by frame (the `with` check, plan stage
+    /// R0z Z9c-A, C7).
+    ifaces: HashMap<u64, IfaceFrame>,
+    /// The task that started each task of the run.
+    parents: HashMap<usize, usize>,
+    /// The tasks of the run that are done.
+    done: HashSet<usize>,
     /// What the run saw.
     pub report: FactReport,
+}
+
+/// A frame of a function or closure body whose summary runs a value of its
+/// interface as a task (the `with` check, plan stage R0z Z9c-A, C7).
+#[derive(Clone, Debug)]
+struct IfaceFrame {
+    /// The closure values of the interface: the value (a weak handle, so
+    /// that no other closure gets its address), the parameter or capture,
+    /// and true for a capture.
+    vals: Vec<(std::rc::Weak<ClosureVal>, u32, bool)>,
+    /// The runs as a task of the summary: the parameter or capture, true for
+    /// a capture, `with`, `twice` and `foreign`.
+    hows: Vec<(u32, bool, std::collections::BTreeSet<u32>, bool, bool)>,
+    /// The tasks of the run that run a value of the interface: the task, the
+    /// parameter or capture, and true for a capture.
+    tasks: Vec<(usize, u32, bool)>,
+}
+
+impl IfaceFrame {
+    /// True if the summary lets the value `j` (a capture with `jc`) run as
+    /// a task while the value `k` runs: `k` is in `with` (or `twice` for
+    /// `k == j`), or the run of `j` is the worst way. `None` if the summary
+    /// has no run of `j` as a task: the check does not apply.
+    fn lets(&self, (j, jc): (u32, bool), k: u32) -> Option<bool> {
+        let mut found = None;
+        for (p, c, with, twice, foreign) in &self.hows {
+            if (*p, *c) != (j, jc) {
+                continue;
+            }
+            let ok = *foreign || if k == j { *twice } else { with.contains(&k) };
+            found = Some(found.unwrap_or(false) || ok);
+        }
+        found
+    }
 }
 
 /// What the task cover checks a task of the run with (plan stage R0z
@@ -1095,6 +1158,9 @@ impl FactOracle {
             instances: HashMap::new(),
             active: HashMap::new(),
             covers: HashMap::new(),
+            ifaces: HashMap::new(),
+            parents: HashMap::new(),
+            done: HashSet::new(),
             report,
         }
     }
@@ -1119,6 +1185,7 @@ impl FactOracle {
     pub fn task_spawned(&mut self, parent: usize, child: usize, frames: &[u64]) {
         let known = self.knows.get(&parent).cloned().unwrap_or_default();
         self.knows.insert(child, known);
+        self.parents.insert(child, parent);
         for &uid in frames {
             let Some(fr) = self.frames.get(&uid).or_else(|| self.light.get(&uid)) else {
                 continue;
@@ -1709,6 +1776,11 @@ impl FactOracle {
         } else {
             None
         };
+        if run == uid {
+            if let Some(f) = self.iface_frame(ci, code, slots, caps, heap) {
+                self.ifaces.insert(uid, f);
+            }
+        }
         self.frames.insert(
             uid,
             FrameFacts {
@@ -1720,6 +1792,205 @@ impl FactOracle {
                 site,
             },
         );
+    }
+
+    /// The closure values of the interface of a new frame of component `ci`
+    /// (a function body or a closure body), if its summary runs a value of
+    /// the interface as a task (the `with` check, plan stage R0z Z9c-A, C7).
+    fn iface_frame(
+        &self,
+        ci: usize,
+        code: &Code,
+        slots: &[Option<CellId>],
+        caps: &[CellId],
+        heap: &Heap,
+    ) -> Option<IfaceFrame> {
+        let comp = self.comps.get(ci)?;
+        let unit = self.input.comps.as_ref().ok()?.get(comp.unit)?;
+        let p = &self.input.built.program;
+        let b = p.bodies.get(comp.body.index())?;
+        let (sum, closure) = match b.kind {
+            weft_ir::BodyKind::Closure(c) => (
+                unit.emitted
+                    .closures
+                    .iter()
+                    .find(|(x, _)| *x == c)
+                    .map(|(_, s)| s)?,
+                true,
+            ),
+            _ if comp.body == unit.entry => (unit.summary.as_ref()?, false),
+            _ => return None,
+        };
+        let hows: Vec<_> = sum
+            .runs
+            .iter()
+            .filter(|r| r.task && !r.result)
+            .map(|r| {
+                (
+                    r.param,
+                    r.capture,
+                    r.how.with.clone(),
+                    r.how.twice,
+                    r.how.foreign,
+                )
+            })
+            .collect();
+        if hows.is_empty() {
+            return None;
+        }
+        let mut vals = Vec::new();
+        let closure_of = |cell: CellId| match heap.slot(cell).map(|s| &s.val) {
+            Ok(Value::Closure(c)) => Some(Rc::downgrade(c)),
+            _ => None,
+        };
+        // A closure body has its environment first (`weft_ir::Body::params`).
+        let skip = usize::from(closure);
+        for (i, &l) in b.params.iter().enumerate().skip(skip) {
+            let Some(s) = code.slot_locals.iter().position(|&x| x == l.0) else {
+                continue;
+            };
+            if let Some(w) = slots.get(s).copied().flatten().and_then(closure_of) {
+                vals.push((w, u32_of(i - skip), false));
+            }
+        }
+        if closure {
+            for (k, &cell) in caps.iter().enumerate() {
+                if let Some(w) = closure_of(cell) {
+                    vals.push((w, u32_of(k), true));
+                }
+            }
+        }
+        (!vals.is_empty()).then_some(IfaceFrame {
+            vals,
+            hows,
+            tasks: Vec::new(),
+        })
+    }
+
+    /// Task `t` of the run is done (the `with` check).
+    pub fn task_done(&mut self, t: usize) {
+        self.done.insert(t);
+    }
+
+    /// True if task `t` is task `u` or a task that `u` started, also
+    /// through other tasks.
+    fn started_by(&self, mut t: usize, u: usize) -> bool {
+        for _ in 0..=self.parents.len() {
+            if t == u {
+                return true;
+            }
+            match self.parents.get(&t) {
+                Some(&p) => t = p,
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// The `with` check (plan stage R0z Z9c-A, C7): task `task` runs the
+    /// closure `c`, as plain code (`child` is `None`) or as the new task
+    /// `child`. `frames` are the frames of the stack of the run, from the
+    /// top down (0 for a frame that the oracle does not follow).
+    ///
+    /// For each frame on the stack whose interface holds `c` (one entry
+    /// only), each task of the frame that runs a value of its interface and
+    /// is not done must let `c` run at the same time (its summary,
+    /// `IfaceFrame::lets`). A run as a task is a task of the frame then.
+    /// The walk stops at a frame that the oracle does not follow, and at a
+    /// clause frame: the code of a clause of a caller of the frames below it,
+    /// or of a local handler of one of them at a call whose callee runs a
+    /// task. The facts do not know for that second form which task of the
+    /// call runs while the clause runs (review round 1 of Z9c-A, B1), so the
+    /// summary does not have it, and the check does not look at it.
+    ///
+    /// # Errors
+    ///
+    /// The message of a failure.
+    pub fn value_run(
+        &mut self,
+        task: usize,
+        c: &Rc<ClosureVal>,
+        frames: &[u64],
+        child: Option<usize>,
+    ) -> Result<(), String> {
+        let ptr = Rc::as_ptr(c);
+        let mut seen: Vec<u64> = Vec::new();
+        for &uid in frames {
+            if uid == 0 {
+                break;
+            }
+            let Some(fr) = self.frames.get(&uid).or_else(|| self.light.get(&uid)) else {
+                break;
+            };
+            let Some(comp) = self.comps.get(fr.comp) else {
+                break;
+            };
+            if comp.clause {
+                break;
+            }
+            let act = self.activation.get(&uid).copied().unwrap_or(uid);
+            if seen.contains(&act) {
+                continue;
+            }
+            seen.push(act);
+            let Some(fi) = self.ifaces.get(&act) else {
+                continue;
+            };
+            let mine: Vec<(u32, bool)> = fi
+                .vals
+                .iter()
+                .filter(|(w, _, _)| std::ptr::eq(w.as_ptr(), ptr))
+                .map(|&(_, k, kc)| (k, kc))
+                .collect();
+            let [(k, kc)] = mine.as_slice() else {
+                continue;
+            };
+            let (k, kc) = (*k, *kc);
+            for &(u, j, jc) in &fi.tasks {
+                if self.done.contains(&u) || Some(u) == child || self.started_by(task, u) {
+                    continue;
+                }
+                if jc != kc {
+                    continue;
+                }
+                let ok = match child {
+                    // Two tasks: the summary must let one run with the other.
+                    Some(_) => match (fi.lets((j, jc), k), fi.lets((k, kc), j)) {
+                        (None, None) => None,
+                        (a, b) => Some(a.unwrap_or(false) || b.unwrap_or(false)),
+                    },
+                    None => fi.lets((j, jc), k),
+                };
+                let Some(ok) = ok else {
+                    continue;
+                };
+                self.report.with += 1;
+                if !ok {
+                    let kind = if jc { "capture" } else { "parameter" };
+                    let how = if child.is_some() {
+                        "as a task"
+                    } else {
+                        "as plain code"
+                    };
+                    let name = self
+                        .comps
+                        .get(fr.comp)
+                        .map_or_else(String::new, |c| c.facts.name.clone());
+                    let part = if j == k {
+                        "is not `twice`".to_string()
+                    } else {
+                        format!("does not have {kind} {k} in `with`")
+                    };
+                    return Err(format!(
+                        "fact oracle (with): in `{name}`, a task runs {kind} {j}, and {kind} {k} runs {how} at the same time, but the run of {kind} {j} in the summary of `{name}` {part}"
+                    ));
+                }
+            }
+            if let (Some(u), Some(fi)) = (child, self.ifaces.get_mut(&act)) {
+                fi.tasks.push((u, k, kc));
+            }
+        }
+        Ok(())
     }
 
     /// The state of frame `uid` with no anchors: the component and the

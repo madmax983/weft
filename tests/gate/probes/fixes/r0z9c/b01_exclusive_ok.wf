@@ -1,0 +1,9 @@
+// R0z Z9c-A probe: the callee spawns a on one path and runs b on the other path: no overlap.
+struct C { k: u64 }
+fn pick(a: fn(), b: fn(), w: bool) / async { if w { scope { s => s.spawn(a); () } } else { b() } }
+fn par(h: fn(), k: fn(), w: bool) / async { pick(h, k, w) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k), true)
+    print(c.k)
+}

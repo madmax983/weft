@@ -19,13 +19,17 @@ Put Verus on `PATH`. Use the revision in `../VERUS_VERSION`. Then run:
 The results must be:
 
 ```text
-check-copies: 10 included source files, no shadow copies, 0 verbatim copies identical
+check-copies: 11 included source files, no shadow copies, 0 verbatim copies identical
 verification results:: 235 verified, 0 errors
 ```
+
+The count is from before the module `tasks` (plan stage R0z Z9c-A). With it
+the count is higher; it is not recorded yet.
 
 | Module | Verified | What it is |
 | --- | --- | --- |
 | `places`, `dataflow`, `lifecycle` | 27, 16, 15 | Included from `crates/weft-verified/src/` |
+| `tasks` | not recorded | Included from `crates/weft-verified/src/` (plan stage R0z Z9c-A, P1; not verified in the build container of that stage) |
 | `model`, `soundness`, `cfg` | 2, 24, 7 | Included from `proofs/borrowing/src/` (base model and B1) |
 | `layout`, `layout_proof`, `layout_examples` | 5, 34, 25 | Included from `proofs/borrowing/src/` (B3) |
 | `effects_model` | 0 (specs only) | Included from `proofs/effects/src/model.rs` |

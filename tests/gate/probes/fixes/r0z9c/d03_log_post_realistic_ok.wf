@@ -1,0 +1,16 @@
+// R0z Z9c-A review round 3 (probe q03): realistic. The job runs as a task; a local logger handles Log around a helper that only logs info.
+// The warn clause calls the hook after resume. warn never runs, so the hook never runs while the job runs.
+effect Log { fn info(m: u64), fn warn(m: u64) }
+struct C { k: u64 }
+fn helper() / Log { info(1) }
+fn run_job(job: fn(), on_warn: fn()) / async {
+    scope { s =>
+        s.spawn(job)
+        handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()); on_warn() } } in { helper() }
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    run_job(|| print(c.k), || c.k += 1)
+    print(c.k)
+}

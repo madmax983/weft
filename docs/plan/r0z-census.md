@@ -267,6 +267,19 @@ the counts.
 - No row in scope on main leaves the scope. Three rejected rows of main get one more W0301
   at the spawn, the code of the old pipeline (`tests/programs/114_repeated_callbacks`,
   `verify/s5/p/or3c`, `verify/s5/repro/V4_or3_containers`).
+## Z9c-A (as built)
+
+- Z9c-A (part A of Z9c: the `with` of a task of a call slot, C1 of the design review)
+  closes no row and opens none: `docs/plan/core-ir.md`, "Z9c-A as built". It only adds
+  rejections: the summary of a body keeps the values of the interface that a callee runs
+  with a task of a call slot, so eight old holes of main close (`fixes/r0z9c`; two of them
+  are review probes of the design).
+- Tier 1: 199 fallbacks of 6038 files with main and with Z9c-A, the same rows and the
+  same reasons (`check --reasons`, `weft-work/z9c/census/`). The new files are the 38
+  probes of `fixes/r0z9c` and the corpus program `209_slot_task_with`; each one is in
+  scope with both. The census rows stay 21. Tier 2 (the rows of the Z8 list): 15
+  fallbacks and 6 time-outs with both, the same rows.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a

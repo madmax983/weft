@@ -1000,7 +1000,8 @@ pub fn emit_parts(
     let joins: Vec<u32>;
     let abort_joins: Vec<u32>;
     let fn_then: Vec<(u32, bool)>;
-    let task_hows: Vec<crate::analysis::tasks::RawHow>;
+    let mut task_hows: Vec<crate::analysis::tasks::RawHow>;
+    let fn_task_runs: Vec<(weft_facts::TaskId, u32, bool, bool)>;
     let fn_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
     let fn_inherited: Vec<(u32, bool, PlaceId, bool)>;
     let task_effects: std::collections::BTreeSet<String>;
@@ -1035,6 +1036,7 @@ pub fn emit_parts(
             run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
+            task_with: Vec::new(),
             maker_site: None,
             maker_runs: Vec::new(),
             run_at: Vec::new(),
@@ -1062,7 +1064,9 @@ pub fn emit_parts(
         if has_tasks {
             templates::task_ends(&mut em);
         }
-        task_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        task_hows =
+            crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at, &em.task_with);
+        fn_task_runs = std::mem::take(&mut em.task_runs);
         fn_run_at = std::mem::take(&mut em.run_at);
         fn_inherited = std::mem::take(&mut em.run_during);
         fn_then = then_runs(em.facts, &fn_run_at, &em.then_runs);
@@ -1239,10 +1243,17 @@ pub fn emit_parts(
     // A run of a value in a clause runs at the nodes that run the clause
     // (stage R0e fix 4: the callee runs the value in a clause of its own
     // handler while its task runs).
-    let fn_run_at: Vec<(u32, bool, weft_facts::NodeId)> = fn_run_at
-        .into_iter()
-        .chain(handlers::clause_run_at(p, &table, &hx, &fn_clause_at))
-        .collect();
+    let fn_clause_run_at = handlers::clause_run_at(p, &table, &hx, &fn_clause_at);
+    // The values of the interface that clauses of local handlers run while
+    // a task of the body runs (plan stage R0z Z9c-A, C1).
+    let more = crate::analysis::tasks::clause_with(
+        facts,
+        &fn_task_runs,
+        &handlers::clause_perform_run_at(p, &table, &hx, &fn_clause_at),
+    );
+    crate::analysis::tasks::add_with(&mut task_hows, &fn_task_runs, &more);
+    let fn_run_at: Vec<(u32, bool, weft_facts::NodeId)> =
+        fn_run_at.into_iter().chain(fn_clause_run_at).collect();
     let fn_inherited: Vec<(u32, bool, PlaceId, bool)> = fn_inherited
         .into_iter()
         .chain(fn_clause_inherited)
@@ -2082,7 +2093,8 @@ fn closure_summary(
     let closure_then: Vec<(u32, bool)>;
     let closure_waits: crate::analysis::tasks::WaitRaw;
     let run_multi: Vec<weft_facts::NodeId>;
-    let closure_hows: Vec<crate::analysis::tasks::RawHow>;
+    let mut closure_hows: Vec<crate::analysis::tasks::RawHow>;
+    let closure_task_runs: Vec<(weft_facts::TaskId, u32, bool, bool)>;
     let closure_maker_runs: Vec<(u32, u32, bool)>;
     let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)>;
     let closure_inherited: Vec<(u32, bool, PlaceId, bool)>;
@@ -2114,6 +2126,7 @@ fn closure_summary(
             run_multi: Vec::new(),
             own_lends: Vec::new(),
             task_runs: Vec::new(),
+            task_with: Vec::new(),
             maker_site: None,
             maker_runs: Vec::new(),
             run_at: Vec::new(),
@@ -2141,7 +2154,9 @@ fn closure_summary(
         if has_tasks {
             templates::task_ends(&mut em);
         }
-        closure_hows = crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at);
+        closure_hows =
+            crate::analysis::tasks::task_hows(em.facts, &em.task_runs, &em.run_at, &em.task_with);
+        closure_task_runs = std::mem::take(&mut em.task_runs);
         closure_maker_runs = std::mem::take(&mut em.maker_runs);
         closure_run_at = em.run_at.clone();
         closure_inherited = std::mem::take(&mut em.run_during);
@@ -2283,9 +2298,18 @@ fn closure_summary(
     // interface (`Run::during`, stage R0e fix).
     // A run of a value in a clause of the closure runs at the nodes that run
     // the clause (stage R0e fix 4).
+    let closure_clause_run_at = handlers::clause_run_at(p, &table, &hx, &clause_at);
+    // The values of the interface that clauses of local handlers run while
+    // a task of the closure body runs (plan stage R0z Z9c-A, C1).
+    let more = crate::analysis::tasks::clause_with(
+        &facts,
+        &closure_task_runs,
+        &handlers::clause_perform_run_at(p, &table, &hx, &clause_at),
+    );
+    crate::analysis::tasks::add_with(&mut closure_hows, &closure_task_runs, &more);
     let closure_run_at: Vec<(u32, bool, weft_facts::NodeId)> = closure_run_at
         .into_iter()
-        .chain(handlers::clause_run_at(p, &table, &hx, &clause_at))
+        .chain(closure_clause_run_at)
         .collect();
     let closure_inherited: Vec<(u32, bool, PlaceId, bool)> = closure_inherited
         .into_iter()
@@ -2576,6 +2600,7 @@ fn emit_closure(
         run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
+        task_with: Vec::new(),
         maker_site: None,
         maker_runs: Vec::new(),
         run_at: Vec::new(),
@@ -2909,6 +2934,7 @@ fn emit_clause(
         run_multi: Vec::new(),
         own_lends: Vec::new(),
         task_runs: Vec::new(),
+        task_with: Vec::new(),
         maker_site: None,
         maker_runs: Vec::new(),
         run_at: Vec::new(),
@@ -2974,6 +3000,10 @@ pub struct Component {
     pub facts: FnFacts,
     /// The tables.
     pub emitted: Emitted,
+    /// The summary of the function of the entry body, from the fixpoint of
+    /// the call graph (the `with` check of the fact oracle, plan stage R0z
+    /// Z9c-A, C7). `None` for a body with no function or no summary.
+    pub summary: Option<crate::analysis::Summary>,
 }
 
 /// The facts of each component of a program in scope, with the tables that
@@ -3091,18 +3121,26 @@ fn components_of(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsuppor
             continue;
         };
         let emitted = emit_parts(a, built, &inf.sums, i, entry, f)?;
-        tables.push((i, entry, emitted));
+        let summary = built
+            .program
+            .fns
+            .iter()
+            .position(|d| d.body == Some(entry))
+            .and_then(|k| u32::try_from(k).ok())
+            .and_then(|k| inf.sums.get(weft_ir::FnId(k)).ok().cloned());
+        tables.push((i, entry, emitted, summary));
     }
     exports::fill(a, built, &mut facts);
     Ok(tables
         .into_iter()
-        .filter_map(|(index, entry, emitted)| {
+        .filter_map(|(index, entry, emitted, summary)| {
             let facts = facts.get(index)?.clone();
             Some(Component {
                 index,
                 entry,
                 facts,
                 emitted,
+                summary,
             })
         })
         .collect())

@@ -1,0 +1,12 @@
+// R0z Z9c-A review round 1 (probe f01): the callee waits at note only while the task of k runs; the task of h ends before. The clause runs m.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn sp2(h: fn(), k: fn()) / async, Note { scope { s => s.spawn(h); () }; scope { s => s.spawn(k); note(1) } }
+fn par(h: fn(), k: fn(), m: fn()) / async {
+    handle Note { fn note(x) { m(); resume(()) } } in { sp2(h, k) }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || (), || c.k += 1)
+    print(c.k)
+}

@@ -1,0 +1,11 @@
+// R0z Z9c-A probe: a function value of par spawns a and runs b; par gives h and k (a value slot).
+struct C { k: u64 }
+fn par(h: fn(), k: fn()) / async {
+    let f = |a: fn(), b: fn()| scope { s => s.spawn(a); b(); () }
+    f(h, k)
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+    print(c.k)
+}

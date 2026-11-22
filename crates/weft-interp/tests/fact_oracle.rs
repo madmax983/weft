@@ -1716,3 +1716,65 @@ fn a_kont_region_with_no_region_of_its_resume_fails_a4() {
     };
     assert!(m.contains("A4"), "{m}");
 }
+
+/// The probes of plan stage R0z Z9c-A (`fixes/r0z9c`: the values of the
+/// interface that run with a task of a call slot). Each probe that the `ir`
+/// pipeline accepts runs with no failure of the fact oracle, and the `with`
+/// check checks runs of the probes.
+#[test]
+fn the_probes_of_the_with_of_slot_tasks_pass_the_fact_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z9c");
+    let mut checked = 0;
+    let mut with = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), r.err());
+        if let Ok(o) = &r {
+            with += o.fact_oracle.as_ref().map_or(0, |f| f.with);
+        }
+        checked += 1;
+    }
+    assert!(checked >= 10, "{checked}");
+    assert!(with > 0, "the `with` check checks nothing");
+}
+
+/// The `with` check (plan stage R0z Z9c-A, C7), the mutation: with
+/// `no_slot_with` the summaries do not have the values of the interface
+/// that the callee runs with a task of a call slot (as on main before C1).
+/// In the bad probes these values run at the same time as the task, so the
+/// check fails (`a10`, a clause run at the call, is not checked: the facts
+/// do not have that form, review round 1 of Z9c-A). The memory oracle is off: the race of the probe would stop
+/// the run first.
+#[test]
+fn a_summary_with_no_slot_with_fails_the_with_check() {
+    for name in [
+        "a01_item_with_param_bad.wf",
+        "a04_item_two_tasks_bad.wf",
+        "a12_same_param_twice_bad.wf",
+    ] {
+        let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z9c")
+            .join(name);
+        let c = check(&fs::read_to_string(&p).unwrap());
+        let plain = RunOptions {
+            oracle: false,
+            ..opts()
+        };
+        let r = run_main(&c, &plain);
+        assert!(r.is_ok(), "{name}: {:?}", r.err().map(|e| e.message));
+        let wrong = RunOptions {
+            no_slot_with: true,
+            ..plain
+        };
+        let m = match run_main(&c, &wrong) {
+            Ok(_) => panic!("{name}: the summaries with no slot `with` pass"),
+            Err(e) => e.message,
+        };
+        assert!(m.starts_with("fact oracle (with)"), "{name}: {m}");
+    }
+}

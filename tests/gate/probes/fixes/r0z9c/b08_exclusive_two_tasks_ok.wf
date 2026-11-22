@@ -1,0 +1,9 @@
+// R0z Z9c-A probe: the callee spawns a on one path and b on the other path; par gives h to both: one task of h.
+struct C { k: u64 }
+fn pick2(a: fn(), b: fn(), w: bool) / async { if w { scope { s => s.spawn(a); () } } else { scope { s => s.spawn(b); () } } }
+fn par(h: fn(), w: bool) / async { pick2(h, h, w) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, true)
+    print(c.k)
+}

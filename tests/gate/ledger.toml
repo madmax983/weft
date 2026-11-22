@@ -9764,7 +9764,7 @@ stage = "R0f"
 class = "changed"
 files = ["tests/programs/133_task_params.wf"]
 codes = ["W0403", "W0405"]
-reason = "stage R0f: the closure value and the returned closure that spawn their parameter two times are known at the call (a task of the call of the function value, not the worst way): W0405 and no W0403 (no `fork`); the old pipeline gives W0403 too. In `via_pass_on` the `ir` pipeline gives W0403 for the `fork` of `par` and the old pipeline also W0405. Rejected in both"
+reason = "stage R0f: the closure value and the returned closure that spawn their parameter two times are known at the call (a task of the call of the function value, not the worst way): W0405 and no W0403 (no `fork`); the old pipeline gives W0403 too. In `via_pass_on` the `ir` pipeline gives W0403 for the `fork` of `par` and the old pipeline also W0405. Plan stage R0z Z9c-A: the summary of `pass_on` keeps the `with` of `par` (the two fork branches run at the same time), so the `ir` pipeline gives W0405 there too, one for each branch (the old pipeline gives one). Rejected in both"
 stage = "R0f"
 
 [[entry]]
@@ -9900,7 +9900,7 @@ files = [
     "verify/s5/S5c/mut/progs/m01838_133_task_params.wf",
 ]
 codes = ["W0403", "W0405"]
-reason = "stage R0f: copies and mutants of `tests/programs/133_task_params.wf` (its entry of R0f): the closure value and the returned closure that spawn their parameter are known at the call, so W0405 and no W0403; `via_pass_on` gets the W0403 of the `fork` and no W0405. Rejected in both"
+reason = "stage R0f: copies and mutants of `tests/programs/133_task_params.wf` (its entry of R0f): the closure value and the returned closure that spawn their parameter are known at the call, so W0405 and no W0403; `via_pass_on` gets the W0403 of the `fork` and, from plan stage R0z Z9c-A (the summary of `pass_on` keeps the `with` of `par`), W0405 for each fork branch. Rejected in both"
 stage = "R0f"
 
 [[entry]]
@@ -11672,4 +11672,26 @@ class = "lost-clean"
 files = ["tests/gate/probes/fixes/r0z9a/h02_par_or_inline_ok.wf"]
 reason = "plan stage R0z Z9a, review round 2 (`z9arev2/p/fp14_par_or_inline_ok`): `run_maybe_par` runs `f` as a task on one path and as plain code on the other, and `main` calls it one time. The old pipeline gives W0301 (its worst way of the task of a parameter); main and Z9a check the program with the `ir` pipeline and accept it (one run on each path, `Run::seq`), and the oracle runs it with no fault, both engines. The `lost-clean` is the verdict of main too: Z9a does not change it"
 signed_by = "review agent, stage Z9a round 3 (independent)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z9c/a04_item_two_tasks_bad.wf",
+    "tests/gate/probes/fixes/r0z9c/a17_value_call_bad.wf",
+    "tests/programs/209_slot_task_with.wf",
+]
+codes = ["W0403", "W0405"]
+reason = "plan stage R0z Z9c-A (C1): a callee runs a value of the interface of the body as a task of a call slot, and runs another value of that interface (or the same value) while the task runs. The summary of the body keeps that value in the `with` of the run, so the caller of the body sees the race (W0405; on main the `ir` pipeline accepted these programs, HOLE). `a04_item_two_tasks_bad` and the `two_tasks` function of the corpus program: two tasks at the same time, one W0405 for each task (the old pipeline gives one). `a17_value_call_bad`: a value slot; both give W0405, and the old pipeline also W0403 (its worst way of the closure value). The `clause_with` function of the corpus program: a clause of a local handler of `par_clause` runs `k` while its own task of `h` runs (the clause run is in the window of the task); the old pipeline misses this race. Rejected by the `ir` pipeline; each program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "open"
+verdict = "stays"
+files = [
+    "tests/gate/probes/fixes/r0z9c/a10_item_clause_bad.wf",
+    "tests/gate/probes/fixes/r0z9c/a15_clause_k_task_bad.wf",
+]
+finding = "R0z-Z9c-A-B1"
+reason = "plan stage R0z Z9c-A, review round 1 (B1): a clause of a local handler of `par` runs `k` at a call while the callee runs `h` (a value of the interface of `par`) as a task of a call slot. The summary of `par` does not have `k` in the `with` of `h`: the part `waits` of the callee names an effect, not the task or the operation, and the first form that used it gave false positives (`fixes/r0z9c/c01` to `c27`). An exact form needs the waits of each task of the callee. The old pipeline accepts these programs too, and main accepts them (an old hole of main). Each program faults (the race oracle)"
 stage = "R0z"

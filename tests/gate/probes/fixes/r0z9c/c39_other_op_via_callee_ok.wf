@@ -1,0 +1,12 @@
+// R0z Z9c-A review round 2 (probe p39): in the window of the task of h, a callee performs only ping; the clause of note runs k, before the spawn.
+effect Note { fn note(x: u64), fn ping(x: u64) }
+struct C { k: u64 }
+fn tell() / Note { ping(1) }
+fn par(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } fn ping(x) { resume(()) } } in { note(0); scope { s => s.spawn(h); tell() } }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+    print(c.k)
+}

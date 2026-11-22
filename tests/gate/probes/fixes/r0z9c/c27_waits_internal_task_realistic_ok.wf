@@ -1,0 +1,15 @@
+// R0z Z9c-A review round 1 (probe f27): the callee runs the job h as a task and joins it, then logs while a helper task runs.
+effect Log { fn info(m: u64) }
+struct C { k: u64 }
+fn work(job: fn()) / async, Log {
+    scope { s => s.spawn(job); () }
+    scope { s => s.spawn(|| print(0)); info(1) }
+}
+fn run(job: fn(), on_log: fn()) / async {
+    handle Log { fn info(m) { on_log(); resume(()) } } in { work(job) }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    run(|| print(c.k), || c.k += 1)
+    print(c.k)
+}

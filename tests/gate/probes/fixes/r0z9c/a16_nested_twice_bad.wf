@@ -1,0 +1,9 @@
+// R0z Z9c-A probe: the callee spawns a and runs b; par gives a closure that runs h to each: two runs of h at the same time.
+struct C { k: u64 }
+fn both(a: fn(), b: fn()) / async { scope { s => s.spawn(a); b(); () } }
+fn par(h: fn()) / async { both(|| h(), || h()) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1)
+    print(c.k)
+}

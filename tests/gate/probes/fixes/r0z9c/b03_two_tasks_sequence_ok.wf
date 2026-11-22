@@ -1,0 +1,9 @@
+// R0z Z9c-A probe: the callee runs the task of b after the task of a ends: no overlap.
+struct C { k: u64 }
+fn seq2(a: fn(), b: fn()) / async { scope { s => s.spawn(a); () }; scope { s => s.spawn(b); () } }
+fn par(h: fn(), k: fn()) / async { seq2(h, k) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+    print(c.k)
+}

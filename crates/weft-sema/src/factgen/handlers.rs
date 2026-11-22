@@ -3117,12 +3117,56 @@ pub fn clause_run_at(
     hx: &Handlers,
     clause_runs: &[(BodyId, (u32, bool, NodeId))],
 ) -> Vec<(u32, bool, NodeId)> {
+    runs_at(p, table, hx, clause_runs, false)
+}
+
+/// The runs of [`clause_run_at`] at a perform of the operation of the clause.
+///
+/// A run before the first resume point counts if its node performs the
+/// operation (a run with no `given` places: not at a call). A run after the
+/// resume points (at the `Post` node of the `handle`) counts only if the
+/// clause also has such a run at a perform: the facts give a `Post` run for
+/// each clause of the handler, also for an operation that the handled body
+/// does not perform (plan stage R0z Z9c-A, review rounds 2 and 3, B2 and
+/// B3). At a call the facts give a run for each clause of the handler whose
+/// effect the callee can perform, with no regard to the operation. So these
+/// runs are not exact enough for the `with` of a task
+/// (`analysis::tasks::clause_with`).
+pub fn clause_perform_run_at(
+    p: &Program,
+    table: &NodeTable,
+    hx: &Handlers,
+    clause_runs: &[(BodyId, (u32, bool, NodeId))],
+) -> Vec<(u32, bool, NodeId)> {
+    runs_at(p, table, hx, clause_runs, true)
+}
+
+/// [`clause_run_at`], or [`clause_perform_run_at`] if `performs` is true.
+fn runs_at(
+    p: &Program,
+    table: &NodeTable,
+    hx: &Handlers,
+    clause_runs: &[(BodyId, (u32, bool, NodeId))],
+    performs: bool,
+) -> Vec<(u32, bool, NodeId)> {
     let ix = Index::new(p, table);
     let mut regions: HashMap<BodyId, (HashSet<NodeId>, HashSet<NodeId>)> = HashMap::new();
     let mut out = Vec::new();
     for &(c, (param, capture, m)) in clause_runs {
         let (pre, post) = regions.entry(c).or_insert_with(|| clause_nodes(p, &ix, c));
-        for r in hx.runs.iter().filter(|r| r.clause == c) {
+        // The clause runs at a perform of its operation (before its first
+        // resume point, not at a call).
+        let performed = hx
+            .runs
+            .iter()
+            .any(|r| r.clause == c && !r.post && r.given.is_none());
+        let exact =
+            |r: &crate::analysis::clause::ClauseRun| r.given.is_none() && (!r.post || performed);
+        for r in hx
+            .runs
+            .iter()
+            .filter(|r| r.clause == c && (!performs || exact(r)))
+        {
             if (!r.post && pre.contains(&m)) || (r.post && post.contains(&m)) {
                 out.push((param, capture, r.node));
             }
