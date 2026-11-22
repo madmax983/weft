@@ -737,6 +737,11 @@ pub fn spawn(
     note_site_scope(cx, body, st, site, scope)?;
     let ret_ty = task_ret(cx, body, task)?;
     let out = transfer::value_out_ty(cx, (body, block), st, task, &[], ret_ty)?;
+    // A task that runs a value more than once gets a second node of the run
+    // (plan stage R0z Z9a): the fact generator makes it after the analysis.
+    if out.apps.iter().any(|a| a.again && !a.order && a.seq) {
+        cx.hx.again_spawns.insert((body, block));
+    }
     transfer::apply_apps(cx, st, &out.apps, true);
     // A handle that the task holds: the task can join or detach it.
     lose_operands(cx, body, st, [task])?;

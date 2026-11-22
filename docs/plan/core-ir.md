@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L, Z9c L, Z10 M-L; then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L (done: tier 1 3 rows, 24 to 21 fallbacks of the census rows; tier 2 4 rows, 19 to 15; `c09_cc_during_ok` and `j01_again_ok` stay open (R-CODE); "Z9a as built"), Z9c L, Z10 M-L; then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -4583,7 +4583,7 @@ The clean rows (the precision work; tier 1 41, tier 2 16):
 | Z4 D1 resume points | The design of the R0k design note: each run node whose value set holds a closure with a `Kont` capture of the current activation of a clause is a resume node of that clause (the region of the R0k-c1 copies, with no copy). With one value it is a resume; with more values, or a value from a field or a `Vec`, it is a join of a run that resumes and a run that does not. Two runs of a `once` continuation are W0501. A callee that runs the value gets a summary part "resumes its parameter". Z4b: `sim.run` and `with_timeout` run their block at the call node on this task, so a `resume` in the block is a resume at that node (with the abort edge of the deadline). | L (+ S for Z4b; done but Part B, Part C and Z4b: "Z4 as built"; the copy is a kont region, a copy region that reads the continuation through its environment local, not a run node with no copy; the summary part "resumes its parameter" is not needed) | 8 / 0 / 6 (+ 2 / 0 / 0) | 2 / 0 / 2 (+ 2 / 0 / 0) | a resume region that starts in a callee; the `multi` re-entry of R0k-c2 with a resume at a run node; the fact oracle must see the resume at a closure run |
 | Z8 handler environment leftovers | (a) A value through a `resume` (g2_lexical): the result of a perform whose clause resumes with one closure that the clause makes is a step of the way (the maker is the clause, with its environment). (b) D4 for a `multi` continuation (d02): a write after each node that runs a clause, on each path to the end of the handled body, is a strong update (each run of the rest ends at that end). (c) A closure body that no node runs gives no pending escape (p2515, `Program::never_runs`). | M (S + S + M; done: "Z8 as built"; the cause of (c) is not `never_runs`: a closure body runs a closure of its maker that performs through a capability that both capture) | 2 / 0 / 0 | 2 / 0 / 0 | (b) and the copies of the frames at a re-entry |
 | Z9b E4 window | The window of R0k-d2 for a spawn in a closure body on the scope of the body around it: the writes in the closure body and in the bodies that the window can call, up to the end of that scope. | S-M (done: "Z9b as built"; the function around the scope waits, so only its writes before the scope are out of the window; a scope in a closure or a clause keeps the rule of R0j) | 1 / 0 / 0 | 0 | the task can outlive the closure body |
-| Z9a E2 | The design of the R0k-d3 design check: a second node of the run in the task region after the first (a cycle for a loop), the split of `templates::task_start`, the task facts of the second node, a cover of the fact oracle for a second run. | M-L | 3 / 0 / 2 | 2 / 0 / 2 | `i9_kept_write` (old W0405, no fault) can become `lost-clean`: a signed entry |
+| Z9a E2 | The design of the R0k-d3 design check: a second node of the run in the task region after the first (a cycle for a loop), the split of `templates::task_start`, the task facts of the second node, a cover of the fact oracle for a second run. | M-L (done: "Z9a as built"; the second node is a `Task(1)` node after `Main` of the `Spawn`, and the task starts there; no cycle: two runs, as `Main` and `Ret` of a call; the task cover of the fact oracle; R-FORK, R-INNER, R-ONCE, R-REBIND, R-CODE, R-ORDER and R-MULTI keep the rule of R0j or of main) | 3 / 0 / 2 | 2 / 0 / 2 | `i9_kept_write` (old W0405, no fault) can become `lost-clean`: a signed entry |
 | Z9c tasks of the values of the interface | R0e fix 2 and `VALUE_TASKS` as one design (R0k-d3): a summary part for the tasks of the values of the interface (the window and the footprint of the code that runs with them), its application at the run node, the proofs and the summary oracle. F18 for a plain task run: a task of a callee in `sim.run` or in a closure that the callee runs ends before the callee returns (`sim.run` waits for its tasks), so it gets the `TaskHow` of a scope of the callee. c16: the run of the inner closure in the facts of the maker. c10: a recursive callee gets its fixpoint summary, not the task run of the worst case (stage Z0 checks the cause). | L | 7 / 0 / 1 | 3 / 0 / 3 | the largest design of the plan, with proofs; three tier-2 rows (W0312, W0405, W0312, no fault) can become `lost-clean` |
 | Z10 the chain | A summary of a chain of function values that does not apply each level again (a memo of the walk by the value and the parameter, with the result of a level as its summary; R0k-d1: the depth bound stays). | M-L | 0 | 4 / 0 / 0 | the time limit of the gate (`closure_chain_800`) and the cost criterion 4 of 2.7 |
 
@@ -4602,7 +4602,7 @@ come before the stages with clean rows only; then the gain for each size):
 | 8 | Z4 D1 resume points, Z4b runtime runs (done but Part B, Part C and Z4b: 10 rows of tier 1 close, 37 to 27; 1 row of tier 2, 22 to 21; "Z4 as built") | as above | 16 (16) | 6 (16) | L + S | the r0kc twins; fd2_v2, fd2_v3; rr3_v19, rr3_v20; `kont_copies` (the copies stay for the forms that they cover) | a design review first |
 | 9 | Z8 handler environment leftovers (done: 2 rows of tier 1 close, 27 to 25; 2 rows of tier 2, 21 to 19; "Z8 as built") | as above | 2 (14) | 2 (14) | M | g2_lexical, d02 and twins; `p2515` | low |
 | 10 | Z9b E4 window (done: 1 row of tier 1 closes, 25 to 24; tier 2 0 rows, 19 stay; "Z9b as built") | as above | 1 (13) | 0 (14) | S-M | s4 and its bad twin; `fixes/r0z9b`; `analysis_units` `r0z9b::` | low |
-| 11 | Z9a E2 | as above | 5 (8) | 4 (10) | M-L | j01, c09, s8, i9, s9; `scope.rs` | `lost-clean` of i9 |
+| 11 | Z9a E2 (done: 3 rows of tier 1 close, 24 to 21; 4 rows of tier 2, 19 to 15; c09 and j01 stay open, R-CODE; "Z9a as built") | as above | 5 (8) | 4 (10) | M-L | j01, c09, s8, i9, s9; `scope.rs`; `fixes/r0z9a`; `analysis_units` `r0z9a::` | `lost-clean` of i9 (and of s9: the review) |
 | 12 | Z9c tasks of the values of the interface | as above | 8 (0) | 6 (4) | L | j03, j04, s3, a13, c16, c10, j07_ok; the summary oracle; proofs | a design review first; the largest risk of the plan |
 | 13 | Z10 the chain | as above | 0 (0) | 4 (0) | M-L | `closure_chain_*`; `scale.rs`, `limits.rs` | the time limit |
 | 14 | R0z the new baseline | 0 fallbacks: write the `ir` records of tiers 1 and 2 as the committed baseline; a fallback becomes a gate blocker (`crash`); the `open-old` entries and the old-against-new classes of the ledger close | 0 | 0 | S | the gate reads the new baseline | none |
@@ -6588,6 +6588,324 @@ Z8; the probes: `tests/gate/probes/fixes/r0z9b/`):
   cell, as in R0k-d2: such a write while the task runs is a race on the task footprint
   (W0405), not a case of this rule.
 
+Z9a as built (E2: a task that runs a value more than once; `docs/ir.md` 6.4 and 8.5; the
+work files: `weft-work/z9a/` outside the repository, binaries `z9a/bin/weft-z9a`,
+`weft-gate-z9a`; main is ac4e7ef, `z9a/base/weft-main`, `weft-gate-main`, the binaries of
+Z9b; the probes: `tests/gate/probes/fixes/r0z9a/`):
+
+- The reason on main (`check --reasons` with `z9a/base/weft-main`): each target row is
+  pending with `TASK_AGAIN` only. The summary of the task applies a value with `again` and
+  not `order` (`transfer::Applied`): `g(f)` with `g` a parameter (code of a caller: the
+  worst way runs `f` more than once; `j01_again_ok`, `c09_cc_during_ok`), a loop in the
+  task body (`s8_steal_fnparam`, `s9_steal_stored`), two runs in the task body
+  (`i9_kept_write`), and `run_both(f1, f1)` (tier 2 `m2/p7046`). A call runs such a value
+  at `Main` and again at `Ret`; a spawn had one node.
+- The rule (`nodes::NodeTable::again_nodes`, `templates::task_start`): such a spawn has a
+  second node of the run, a node of phase `Task(1)` after `Main` (kind `spawn task`). The
+  analysis notes these spawns (`Handlers::again_spawns`, in `tasks::spawn`), and the fact
+  generator makes the node after the last run of the analysis, on each edge from `Main` (as
+  it makes the re-entry edges), at each place that runs the analysis (a function body, a
+  closure body, the facts of a closure for its summary, a clause). The run of the task body
+  happens at `Main` and again at the second node (`CallNodes::ret`, as `Main` and `Ret` of
+  a call): a `once` value moves at `Main` and the second run uses it (W0502), and a change
+  of the first run ends the references that the second run reads (W0301). The value of the
+  task moves at the second node, and the task starts there (`spawned_at`), so the facts of
+  the runs are not code that runs while their own task runs. The writes and the reads of
+  both nodes are the footprint of the task. No code of a local handler runs at the nodes of
+  the spawn (`local_code` is false). The spawn has two nodes, as a call has `Main` and
+  `Ret` for such a value (a loop in the task body is a value that runs `Many` times); the
+  closure body of the task checks its own loop.
+- Review round 1 (`weft-work/z9arev1/REPORT.txt`, 131 probes) found 2 blockers, both lost
+  faults (held on main, HOLE with Z9a; both engines fault). B1: a callee whose task runs
+  its parameter more than once (`fn run2(f: fn()) { scope { s => s.spawn(|| twice(f)) } }`,
+  a loop, a method, `sim.run`, code of a caller `g(f)`): the second node is in the body of
+  the callee, but the caller got the parameter as a task run with `Run::many` and applied
+  it at one node, so the W0301 of a reference that the first run ends was lost. Now the
+  caller applies such a run at the first `Task` node of the slot and again at the second
+  one, and the task of the call starts at the second node (`templates::call_tasks`); for
+  code of a caller only if the node knows that the code runs the value again
+  (`Applied::via_twice`, as the W0502 rule of R0e fix 3: a first form with each foreign
+  `many` gave false W0502 on `fixes/r0e/rv1_b2_ok` and `fixes/r0f/c06_cc_once_ok`). This
+  also closes two old holes of main (`z9arev1/p/b4o_seq_tasks_ref_bad`,
+  `b4p_seq_tasks_closure_bad`: two tasks of the parameter, one after the other). B2: a task
+  body that reads a `once` element of a captured `Vec` two times and runs it
+  (`fs.push(|| take(v))`; `s.spawn(|| { for j in 0..3 { let g = fs[0]; g() } })`): the
+  summary of the first run has no move of the element, so the second node gives no error.
+  The cause is old (a local closure of the same form is HOLE on main, `s8`, `s13`). Now
+  R-ONCE (below) keeps the rule of R0j for such a run, and the old pipeline rejects the
+  program (W0302), as on main. `s9_steal_stored` and `e06_stored_ok` stay in scope: their
+  callback is not `once`.
+- Review round 2 (`weft-work/z9arev2/REPORT.txt`, 377 probes) found no lost fault and no
+  new HOLE, but 12 new false positives: `Run::many` and `again` count the runs of exclusive
+  paths together, so a callee that runs `f` one time on each path (`if c { scope { s =>
+  s.spawn(|| f()) } } else { f() }`, `run_maybe_par`) got two task runs at the caller
+  (W0301), and a task that runs a `once` closure in each arm of a `match` got the second
+  node (W0502). The exact fix (`docs/ir.md` 6.4): `Run::seq` and `Run::task_seq` (one
+  path runs the value more than once: a run node that runs it again on one path, or two
+  run nodes on one path, `summarize::one_path`; for `task_seq` also a task run and another
+  run on one path, which keeps closed the old holes of main that round 1 closed:
+  `z9arev2/p/h12_a`, `h33_a`, `h34_a`, `h35_a`, `h46_a`), `Applied::seq`, `TaskOf::seq`; the second
+  node of a spawn and the two task runs of a call need them. A first form found the place
+  of a site in a closure body with a parent as unknown (so on one path with each site),
+  and a first form of the call rule counted `via_twice` over exclusive paths
+  (`fp13_callee_spawn_or_code_ok`: a spawn in one arm, code of a caller in the other); the
+  rule now takes `via_twice` only for a value that the callee only gives to code of a
+  caller, or with `task_seq`. R-REBIND (below) for `o21_reassign_loop_ok`. The old gaps
+  of main stay as they are (`fp1c`, `fp2c`, `fp2e`, `o33`, `o34`: FP-IR on main too), and
+  `fp10`, `fp12` (rejected on main, W0403) keep one more W0301 (`via_twice` of a function
+  value whose code the node does not know).
+- Review round 3 (`weft-work/z9arev3/REPORT.txt`, 344 probes; the last round) found 3
+  blockers; each gets the narrowest refusal that gives back the verdict of main (no new
+  exact design). B1, a lost fault (held to HOLE): code of a caller holds a reference
+  across the run of its parameter, and the task of the callee runs it
+  (`mid(g, f) { scope { s => s.spawn(|| g(f)) } }`, `g = |x| { let r = &w[0]; x(); print(r) }`,
+  `fo11`, `fo14`, `l4`, `l7`); the fact oracle failed A3 on 14 probes that came into scope.
+  The root is old: the run node of the parameter in the body of code of a caller has no
+  accesses of the value that the callee gives (`fo12`, `l8`: HOLE on main, no task). Now
+  R-CODE (below) keeps the rule of R0j for it, and no narrow test separates the census rows
+  `j01_again_ok` and `c09_cc_during_ok` (the same `g(f)` form; the code of `g` is not
+  known at the spawn), so they go back to the fallback, as on main: census rows of tier 1
+  24 to 21 (`s8`, `i9`, `s9` stay closed). B2, a new false positive (10 files, a run before
+  a perform of a local `multi` operation): `Cycles::rows_at` marks the blocks before the
+  perform as cyclic, so a run there was a run again. Now `Run::seq_loop` (and
+  `RunOf::seq_loop`, `Applied::seq_loop`) is `seq` with no cycle that only such a re-entry
+  makes (`summarize::in_loop`: a path back to the block in the body, or to the block of a
+  `scope` or `handle` around it); `task_seq` uses it, so a call has one task run there, as
+  on main, and R-MULTI keeps the rule of R0j at a spawn whose runs again come only from such
+  a cycle. Two old holes of main that the earlier rounds of Z9a closed are open again, as
+  on main: `z9arev3/p/c06b_multi_branch_spawns_a_bad`, `c06c_multi_spawn_after_a_bad` (a
+  spawn after a `multi` perform). B3, a new false positive (5 files,
+  `s.spawn(|| { twice(f); cb() })`): the run node applies an app with `again` and `order`
+  (a value that runs one time, in either order) at both nodes, so `cb` read `a` at the
+  second node after its own push at the first one (a call has the same old gap). Now
+  R-ORDER keeps the rule of R0j for it. Also: the value of the task is read at `Main` and
+  moves at the second node (`operand_move_only`), and the `Ret` parts of an app that runs
+  once go to `Main` (`apps_at_ret`).
+- Refusals (each keeps the rule of R0j, pending with `TASK_AGAIN`; the cost is precision,
+  the rows keep the result of main): R-CODE (review round 3), a run again of code of a
+  caller that gets a value of the body (`Run::via`, `via_only`) or whose count the node
+  knows only from that code (`via_twice`) (`i01_code_ref_across_param`, and `e03_param_g_ok`,
+  `g05_param_code_ref_ok`, `j01_again_ok`, `c09_cc_during_ok`); R-ORDER (review round 3), an
+  app with `again` and `order` (`i04_once_beside_twice`); R-MULTI (review round 3), a spawn
+  whose runs again come only from the re-entry of a `multi` operation (`i03_task_multi_after`);
+  R-REBIND (`templates::two_runs`, review round 2), a
+  `once` closure that the task runs again while a run gives a capture that can hold a
+  function value a new whole value (`h04_reassign_loop_ok`); R-ONCE (`templates::two_runs`, review round 1), a run
+  again of a `once` closure whose move does not reach the facts (no part `once` and no
+  `once_args`: a value read out of a container; `g07_stored_once_bad`,
+  `g08_stored_once_twice_bad`); R-FORK, a branch of a `fork` (the `Task` nodes of a
+  `fork` are the starts of its branches; no second node; `r01_fork_ok`); R-INNER
+  (`templates::two_runs`), a run that starts a task in a scope of a maker (part `tasks`): a
+  task that the run at `Main` starts would not start at the node of the task of the spawn,
+  and the end of the task of the spawn would end its writes (`task_ends`), a false W0405
+  (`r02_inner_task_ok`). No row of the tiers has these forms.
+- The fact oracle: a new cover, the task cover (`FactOracle::check_task`, `docs/ir.md`
+  8.5). A task runs on its own stack, so the summary oracle (A3) does not check the facts
+  of its spawn. For a task whose spawn has the second node, the oracle names each access of
+  the task with the frame of the run of the body of the spawn (the machine finds the frame
+  on the stack of the parent task), and each change must be in `task_writes(T, _)` or in
+  the changes of the nodes of the spawn, each read in the accesses of `T` or of these
+  nodes. Code of a caller (`opaque(T)`) is out of the check for a place behind a parameter:
+  the caller checks the value that it gives as a task (part `runs`, F19), and the facts of
+  the spawn do not have the reads of that code (the first form of the cover failed on
+  `j01_again_ok` and `c09_cc_during_ok` with the read of `w.k`). The test
+  `fact_oracle.rs` `a_missing_task_write_of_a_second_run_fails_the_task_cover` (the facts
+  with no `task_writes` and no changes at the nodes of the spawn fail the cover). The
+  interpreter sources change, so the oracle caches run again (below).
+- The targets close (after review round 3: rows 95 to 97; `c09_cc_during_ok` and
+  `j01_again_ok` go back to the fallback by R-CODE, below): tier 1 rows 95 to 97 (`s8`,
+  and `i9`, `s9`, which the old pipeline rejects) are in scope with no error; tier 2 row 26
+  (`m2/p7046`) and the tier-2 copies of `s8`, `s9`, `i9` too. `i9_kept_write` (old W0405:
+  the end of `g` while the task reads `g`) is `lost-clean`: the capture of `g` is `Kept`,
+  so the task keeps the cell, and the end of the variable is no free for the task (`kept`);
+  the oracle runs it with no fault. `s9_steal_stored` (old W0302) is `lost-clean` too, and
+  it is a point for the review: the old pipeline moves `fs` into the task closure (its
+  `by_value` table), the IR copies the function value out of `fs[0]` and does not move
+  `fs` (class `closure-copy` of `exports_parity.rs`). The IR engine runs it with no fault
+  (the gate cache, six configurations). The AST engine faults ("a value is used after it
+  was moved") only with the `by_value` table of the old analysis: on main the program goes
+  to the old pipeline, which makes that table, so ev.sh gives `held` there; with Z9a the
+  program is in scope, the old facts are not made, and the AST engine is clean too. A twin
+  with one run of the callback (`weft-work/z9a/t/s9_once.wf`, no second run) is in scope
+  on main with no error: the same form, already `lost-clean` on main. Both entries are
+  signed by the builder only, as the ledger marks; a reviewer must sign them.
+  The corpus program `114_repeated_callbacks` gets the W0301 at `s.spawn(g)` that the old
+  pipeline gives (the comment of R0j said that the IR did not report the line), and
+  `verify/s5/p/or3c`, `verify/s5/repro/V4_or3_containers` one more W0301 at the spawn, as
+  the old pipeline: `114` and `V4` are now `same`.
+- Probes `tests/gate/probes/fixes/r0z9a/` (65 files; a bad case and a clean twin of each
+  form, and the refusal probes): `e01_loop_once` (a loop in the task body), `e02_twice_once`
+  (`twice(f)`), `e03_param_g` (`g(f)` with `g` a parameter), `e04_ref_end` (a reference that
+  the first run ends), `e05_kept` (a kept callback, the form of `i9`), `e06_stored` (a
+  stored callback, the form of `s9`), `e07_both_same` (`run_both(f1, f1)`, the form of
+  `p7046`; the old pipeline misses the bad twin: `fixed`), `e08_loop_spawn` (a spawn in a
+  loop), `e09_closure_body` (a spawn in a closure body: the clean twin keeps the fallback
+  with `VALUE_TASKS`, Z9c), `e10_clause` (a spawn in a clause), `e11_linear` (a linear value
+  moves into the task: W0602 from both pipelines for a value with no `on abort`, a cancel
+  that the run does not do), `e12_join`, `e13_param` (a callee spawns its parameter),
+  `e14_write_twice`, `e15_clause_outer` (a clause spawns on the scope of the site),
+  `e16_closure_outer` (a closure spawns on the scope of the scope body), `e17_loop_join` (a
+  loop of spawns, each handle joined), `r01_fork_ok` (R-FORK), `r02_inner_task_ok`
+  (R-INNER); review round 1 (14 files): `g01_param_twice_ref` (`run2(f)` with `twice(f)`
+  in its task), `g02_param_loop_ref`, `g03_method_param_ref`, `g04_sim_param_ref`,
+  `g05_param_code_ref` (code of a caller), `g06_seq_tasks_ref` (two tasks of the
+  parameter, one after the other), a bad case and a clean twin of each (B1), and
+  `g07_stored_once_bad`, `g08_stored_once_twice_bad` (R-ONCE; their clean twin is
+  `e06_stored_ok`); review round 2 (8 files): `h01_branch_task_or_direct` (`fp1`),
+  `h02_par_or_inline` (`fp14`), `h03_match_once_task` (`o36`), `h04_reassign_loop`
+  (`o21`, R-REBIND), each with a bad twin that runs the value two times on one path;
+  review round 3 (7 files): `i01_code_ref_across_param` (`fo11`, `fo8`; R-CODE),
+  `i02_multi_spawn_before_ok` (`c06d`; its bad twin `c06c` is an old hole of main),
+  `i03_task_multi_after` (`u06f`, R-MULTI), `i04_once_beside_twice` (`y2`, `y2g`;
+  R-ORDER). Each bad twin
+  faults (the oracle), but `e11_linear_bad`, and both pipelines reject it. Each clean twin
+  is in scope with no error, but `e09_closure_body_ok` and the refusal probes. The corpus
+  program `tests/programs/208_task_runs_again.wf` (four clean forms, a `once` closure
+  that the task runs two times, `//~ W0502 W0302 old: W0502`, where main gives only the
+  W0302 of the closure body, and a callee whose task runs its parameter two times,
+  `//~ W0301`, which main misses) and its IR text. Tests: `analysis_units` `r0z9a::` (the forms and
+  the census rows have full facts; the task starts at the second node; the refusals; the
+  reason of Z9c for a closure body; review round 1: a caller applies a task run of a
+  callee two times, and R-ONCE; review round 2: a run on each of two exclusive paths is
+  one run, and R-REBIND; review round 3: the refusals R-CODE, R-ORDER, R-MULTI, and one
+  task run before a `multi` perform; each test of a fix fails with the fix off), `scope.rs` (`the_task_fallbacks_are_pending`: the
+  example of `TASK_AGAIN` is now `r01_fork_ok`, and `j01_again_ok` has full facts),
+  `fact_oracle.rs` (each probe of `fixes/r0z9a` that the `ir` pipeline accepts passes the
+  fact oracle, and the task cover checks some accesses; the mutation of the task cover),
+  `cli.rs` (`nested_run.wf` of the fallback test is now a `fork` with `twice(f)`), and
+  `CLOSURE_COPY` in `exports_parity.rs` (`s9` is accepted now; `g07` and `g08` of review
+  round 1 join the list: the IR copies a `once` element, and R-ONCE keeps them out).
+- Gates (release binaries `z9a/bin/weft-z9a`, `weft-gate-z9a`; main: `z9a/base/weft-main`,
+  `weft-gate-main`, and the reports of Z9b). The interpreter sources change (the task
+  cover), so the oracle caches run again: tier 1 (both engines) and tier 2 (the `ir`
+  engine) give each program of the caches of main the verdict of main, but two `http` or
+  timing rows of tier 2 (`verify/partb/S3/design/snip06` from a timeout to `benign`,
+  `verify/s5/S5c/mut/progs/m01577_06_http` from `benign` to a timeout; the gate counts
+  neither as a fault). Tier 1: 0 blockers (5970 programs with the 37 new files; 4478 same,
+  32 open, 414 fixed, 1 new-fp, 0 lost-fault, 163 lost-clean, 148 moved, 734 changed; Z9b:
+  5933, 4451 same, 32 open, 413 fixed, 1 new-fp, 159 lost-clean, 148 moved, 729 changed).
+  The first run of the gate had 11 blockers, each a target or a new file: `changed` for 6
+  bad probes and the corpus program (W0302 or W0405 of the `ir` pipeline at the lines of
+  the old codes, a second W0301 or W0502 at the spawn; a ledger entry), and `lost-clean`
+  for `i9`, `s9`, `e05_kept_ok` and `e06_stored_ok` (two ledger entries, signed by the
+  builder only). `e07_both_same_bad` is `fixed` (the old pipeline misses it), and `114`
+  and `V4_or3_containers` are `same` now (the `ir` pipeline gives the W0301 of the old
+  pipeline at the spawn). The `ir` records of `weft-gate snapshot --tier 1 --facts ir`
+  against main: the diagnostics change only for `114`, `or3c` and `V4_or3_containers` (the
+  W0301 at the spawn), `i9` and `s9` (in scope with no error), and new files; 36 files
+  change only their fact digest (the programs that leave `TASK_AGAIN`: the targets, the
+  probes, and rejected programs of main with the same codes, as `84_task_stores`, the
+  `a1_*` probes of `verify/s5/S5a`, `h1_or7_more`, `s3_steal_ret_closure`). The fact
+  oracle of tier 1: 0 failures (1706 pass, 8 faults, 22 timeouts; Z9b 1685 pass). Sigdiff
+  tier 1: 0 rows with no entry (one new `sig` entry: `muts` of `join_it`, class
+  F19-SIG-MUTS, and `pins` of `main`, for the 5 targets and probes that come into scope or
+  are rejected in scope). Tier 2 (2 workers, the whole tier): 0 blockers (57393; 39875 same,
+  6 open, 92 fixed, 12 new-fp, 0 lost-fault, 3489 lost-clean, 1858 moved, 12061 changed;
+  Z9b: 39869 same, 3487 lost-clean, 1859 moved, 12068 changed); 54711 programs in scope
+  (Z9b 54707: `m2/p7046` and the copies of `i9`, `s8`, `s9` come into scope), 6 time-outs.
+  Only these rows change against the report of Z9b: the copies of `i9` and `s9` are
+  `lost-clean`, seven copies and mutants of `114` and `V4_or3_containers` go from `changed`
+  to `same`, and the mutant `m02663_114_repeated_callbacks` from `moved` to `changed`.
+- ev.sh (`weft-work/ev.sh`): `check --reasons` with main and Z9a on 8470 rows (the 4736
+  rows of Z9b, the files of tier 1, the review probes `weft-work/z9brev1/p`, `z9brev2/p`,
+  `z9brev3/p`, `z9b/p`, `z9b/p2`, and the probes of this stage, `weft-work/z9a/p` and
+  `fixes/r0z9a`) differs on 82 rows (`z9a/ev/diff-all.txt`); ev.sh on them with both
+  binaries (`diff-main.tsv`, `diff-z9a.tsv`): no new HOLE, no new FP-IR. 28 rows go from
+  nofault with the fallback to nofault in scope with no error, `i9`, `e05_kept_ok` (and its
+  scratch copy) from fb-reject to nofault (the false W0405 of the old pipeline), and `s9`,
+  `e06_stored_ok` (and its scratch copy) from held to nofault: with main the AST engine
+  faults with the `by_value` move of the old analysis (above); the IR engine is clean with
+  both binaries. The bad probes stay both-reject (or oldmiss for `e07_both_same_bad`) with
+  more codes; rejected rows of main keep their verdict. `fo.sh` (the fact oracle with the
+  task cover and the memory oracle, three configurations) on the 82 rows: no failure of the
+  fact oracle; the 37 rows that the `ir` pipeline accepts pass, and so do the tier-2 row
+  `m2/p7046` and the scratch probes `weft-work/z9a/p/c0*`.
+- The census (`check --reasons`, `weft-work/z9a/census/`, main and Z9a on the same files):
+  tier 1 187 fallbacks of 5970 files (main 208 of 5970): the 5 targets and 16 clean probes
+  of `fixes/r0z9a` leave it; `e09_closure_body_ok` keeps it with `VALUE_TASKS` (Z9c), and
+  `r01_fork_ok`, `r02_inner_task_ok` keep `TASK_AGAIN` (the refusals). The census rows: 24
+  to 19. Tier 2 (the 29 rows of the census of Z8): 19 to 15 fallbacks (`m2/p7046` and the
+  copies of `i9`, `s8`, `s9` leave it); the 6 time-outs of the census of main stay.
+- Gates of review round 1 (B1 and R-ONCE; the binaries rebuilt; the interpreter sources
+  do not change, so the oracle caches keep their keys and only the new files run): tier 1
+  0 blockers (5984 programs with the 14 new files; 4491 same, 32 open, 414 fixed, 1 new-fp,
+  0 lost-fault, 163 lost-clean, 148 moved, 735 changed); the first run had 1 blocker,
+  `g05_param_code_ref_bad` (`changed`: the old pipeline also gives W0405 and W0403, the
+  worst way of the task of code of a caller; a ledger entry). The fact oracle of tier 1: 0
+  failures (1712 pass, 8 faults, 22 timeouts). Sigdiff: 0 rows with no entry. Tier 2: 0
+  blockers, the counts of round 0 above (no row of tier 2 changes with B1 or R-ONCE),
+  54711 programs in scope. `check --reasons` with main and Z9a on 8511 rows (the list
+  above, the 131 review probes `weft-work/z9arev1/p`, the new files) differs on 173 rows,
+  each one a probe of the stage, of the review, or a row of the list of round 0; no other
+  row changes. ev.sh on them and on each review probe with both binaries
+  (`z9a/ev/r3-main.tsv`, `r3-z9a.tsv`): no new HOLE, no new FP-IR, and no row goes from held
+  to HOLE. The blocker probes of the review go from held to both-reject (`b4r`, `b4h`,
+  `b4i`, `c5`, `c6`, `c9`, `d25`, `d26`, `b4a`, `b4`, `b4l`, the probes `g01` to `g05`),
+  `s1`, `s6`, `g07`, `g08` stay held (R-ONCE), and the old holes `b4o`, `g06` go from HOLE to
+  both-reject and `b4p` to oldmiss. `s8` and `s13` stay HOLE, as on main (no task: an old
+  gap). `fo.sh` on these rows: no failure of the fact oracle (76 rows pass in each
+  configuration). The census: tier 1 189 fallbacks of 5984 files (main 220): the census
+  rows 24 to 19, as above; tier 2 19 to 15.
+- Gates of review round 2 (`Run::seq`, `task_seq`, R-REBIND; the binaries rebuilt; the
+  interpreter sources do not change): tier 1 0 blockers (5992 programs with the 8 new files;
+  4495 same, 32 open, 414 fixed, 1 new-fp, 0 lost-fault, 164 lost-clean, 149 moved, 737
+  changed); the first run had 4 blockers, the new files (`h02_par_or_inline_bad` `moved`,
+  `h02_par_or_inline_ok` `lost-clean` (the old W0301; main accepts it too, in scope),
+  `h03`, `h04` bad `changed`; ledger entries). The fact oracle of tier 1: 0 failures (1715
+  pass). Sigdiff: 0 rows with no entry (`h04_reassign_loop_bad` joins the `sig` entry,
+  `pins`). Tier 2: 0 blockers, the counts of round 0, 54712 programs in scope and 5
+  time-outs (a first run beside the census had 9 time-outs, with the same classes).
+  `check --reasons` with main and Z9a on 8896 rows (the list of round 1 and the 377 probes of `weft-work/z9arev2/p`) differs on
+  439 rows, each one a probe of the stage or of a review, or a row of the list of round 0.
+  ev.sh with both binaries on 619 rows (`z9a/ev/r4-main.tsv`, `r5-z9a.tsv`: the rows that
+  differ and each probe of `z9arev1/p`, `z9arev2/p` and `fixes/r0z9a`): no held to HOLE, no
+  nofault to FP-IR, no row to HOLE or fb-miss; 47 rows go from held to both-reject, 40 from
+  fb-reject to nofault (old W0405 or W0403 only), 3 from fb-reject to FP-IR (`fp9`,
+  `h00_a_once_ok`, `o26`: main rejects them too, a run that the values do not do); HOLE 10
+  to 2 (`s8`, `s13`, old). `fo.sh`: no failure of the fact oracle (271 rows pass in each
+  configuration). The census: tier 1 190 fallbacks of 5992 files (main 223); the census rows
+  24 to 19, 19 to 15.
+- Gates of review round 3 (R-CODE, R-ORDER, R-MULTI, `seq_loop`; the binaries rebuilt; the
+  interpreter sources do not change): tier 1 0 blockers (5999 programs with the 7 new files;
+  4501 same, 32 open, 414 fixed, 1 new-fp, 0 lost-fault, 164 lost-clean, 149 moved, 738
+  changed); the first run had 1 blocker, `i04_once_beside_twice_bad` (`changed`, a ledger
+  entry). The fact oracle of tier 1: 0 failures (1712 pass). Sigdiff: 0 rows with no entry.
+  Tier 2: 0 blockers, the counts of round 0, 54712 programs in scope, 5 time-outs. ev.sh
+  with both binaries on 863 rows (the rows whose `check --reasons` differs from main, and
+  each probe of `z9arev1/p`, `z9arev2/p`, `z9arev3/p` and `fixes/r0z9a`; `z9a/ev/r6-*.tsv`):
+  no held to HOLE, no nofault to FP-IR, no row to HOLE or fb-miss; 77 held to both-reject,
+  40 HOLE of main to both-reject or oldmiss; the 11 HOLE rows with Z9a are HOLE on main too
+  (`s8`, `s13`, `c05b`, `c05c`, `c05d`, `c06b_a`, `c06c_a`, `fo12`, `l8`, `w5`, `w5b`).
+  `fo.sh` on each of these rows in scope: 5 failures of A3 (`fo1`, `fo2`, `fo9`, `fo12`,
+  `l8`: no task; the same failures on main, the old gap of B1), none on a row that comes
+  into scope. The census: tier 1 199 fallbacks of 5999 files (main 228); the census rows 24
+  to 21 (`c09_cc_during_ok`, `j01_again_ok` go back, R-CODE); tier 2 19 to 15.
+- Ledger: `changed` for 10 bad probes of `fixes/r0z9a` and the corpus program; `moved` for
+  `h02_par_or_inline_bad`; `lost-clean` for `i9` and `e05_kept_ok`, and for `s9` and
+  `e06_stored_ok` (both signed by the review agent of round 1), and for
+  `h02_par_or_inline_ok` (signed by the review agent of round 3); one `sig` entry.
+- Open (precision, issue #79): the refusals R-FORK and R-INNER (no row of the tiers);
+  `e09_closure_body_ok` (Z9c). The task cover names only places that the frame of the
+  body of the spawn reaches: a local of a scope body has no name there (`e05_kept_ok`
+  checks no access).
+- Open (holes, issue #78): no new one. Each bad probe of the stage faults (but
+  `e11_linear_bad`, a cancel that the run does not do), and both pipelines reject it, but
+  `e07_both_same_bad`, which the old pipeline misses (`fixed`), and `g07`, `g08`, which keep
+  the fallback (R-ONCE; the old pipeline rejects them). Old holes that review round 1
+  found (the coordinator files them): a local closure that reads a `once` element of a
+  captured `Vec` two times (`z9arev1/p/s8_stored_once_closure_loop_bad`,
+  `s13_stored_once_closure_twice_reads_bad`: HOLE on main and with Z9a); two tasks of a
+  parameter, one after the other (`b4o`, `b4p`: HOLE on main, closed by B1).
+- What I am least sure of: `s9_steal_stored` (and `e06_stored_ok`). The old pipeline and
+  the AST engine move `fs` into the task closure; the IR and its engine copy the function
+  value. The gate classifies with the IR engine, so it is `lost-clean`, and a twin with one
+  run is `lost-clean` on main already; but if the language means the move of the old
+  analysis, both are lost faults. Second: two nodes of the run, not a cycle. The second
+  run sees the state after the first run, as `Ret` of a call does; a third run of a value
+  that rebinds a captured variable with a reference in it (`rebinds`) could end a
+  reference that only the second run makes. The calls have the same two nodes, and no
+  probe of the stage finds such a case.
+
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):
 
@@ -7085,7 +7403,7 @@ the design: scratchpad `r0k/d2/notes.md`):
   scope: no HOLE, no FP-IR.
 
 R0k-d3 design check (the task fallbacks that R0k-d2 left; not built; scratchpad
-`r0k/d3/notes.md`). Each reason is pending since R0j, so the rows left are programs that
+`r0k/d3/notes.md`; E2 is built in plan stage R0z Z9a, "Z9a as built"). Each reason is pending since R0j, so the rows left are programs that
 the facts with a weak form accept (census with `weft-r0kd2`):
 
 | reason | tier 1 | tier 2 | the rows |

@@ -1548,6 +1548,74 @@ fn the_probes_of_the_window_of_an_outer_scope_pass_the_fact_oracle() {
     assert!(checked >= 10, "{checked}");
 }
 
+/// Each probe of plan stage R0z Z9a (`fixes/r0z9a`: a task that runs a value
+/// more than once) that the `ir` pipeline accepts runs with no failure of
+/// the fact oracle, with the task cover of a spawn with a second node
+/// of the run.
+#[test]
+fn the_probes_of_a_task_that_runs_a_value_again_pass_the_fact_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z9a");
+    let mut checked = 0;
+    let mut tasks = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        let m = r
+            .as_ref()
+            .err()
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
+        assert!(
+            failure(&r).is_none() && !m.starts_with("clause oracle"),
+            "{}: {m}",
+            p.display()
+        );
+        if let Ok(o) = &r {
+            tasks += o.fact_oracle.as_ref().map_or(0, |f| f.task);
+        }
+        checked += 1;
+    }
+    assert!(checked >= 10, "{checked}");
+    assert!(tasks > 0, "the task cover checks nothing");
+}
+
+/// A program whose task runs a closure two times: the closure pushes into
+/// `v`, a local of `main` (plan stage R0z Z9a).
+const AGAIN: &str = "fn twice(f: fn()) { f(); f() }\n\
+    fn main() {\n\
+    let v = Vec.new()\n\
+    let f = || v.push(1)\n\
+    scope { s =>\n\
+    s.spawn(|| twice(f))\n\
+    }\n\
+    print(v.len())\n\
+    }\n";
+
+/// The facts with no writes of the tasks and no changes at the nodes of the
+/// spawns: the task cover has nothing that covers the push of the task.
+fn no_task_writes(f: &mut FnFacts) {
+    let spawn: Vec<weft_facts::NodeId> = (0..f.nodes.len())
+        .filter(|&i| matches!(f.nodes[i].kind.as_str(), "spawn" | "spawn task"))
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .collect();
+    f.task_writes.clear();
+    f.mutates_at.retain(|(n, _)| !spawn.contains(n));
+    f.lends_mut.retain(|(n, _)| !spawn.contains(n));
+}
+
+/// The task cover (plan stage R0z Z9a): a task whose spawn has a second
+/// node of the run writes a place of the frame of the spawn, so the writes
+/// of the task or the changes of the nodes of the spawn must cover it.
+#[test]
+fn a_missing_task_write_of_a_second_run_fails_the_task_cover() {
+    let m = broken(AGAIN, no_task_writes);
+    assert!(m.starts_with("fact oracle (task cover)"), "{m}");
+}
+
 /// The closure identity of a copy region (plan stage R0k-b2), the mutation.
 /// A copy replaces the run by the body of one closure, so the facts of the
 /// region hold only for a run of that closure: at the entry of the region

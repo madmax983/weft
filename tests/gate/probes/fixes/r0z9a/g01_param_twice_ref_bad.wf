@@ -1,0 +1,11 @@
+// Plan stage R0z Z9a, review round 1 (B1: a callee whose task runs its
+// parameter more than once; the caller applies both runs).
+// The task of run2 runs f two times; f reads a captured reference r and pushes v (run 2 reads r after run 1 ended it).
+fn twice(f: fn()) { f(); f() }
+fn run2(f: fn()) / async { scope { s => s.spawn(|| twice(f)) } }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    run2(|| { print(r); v.push(2) })
+}

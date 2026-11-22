@@ -1,0 +1,13 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A task runs `run_both(f1, f1)` with a `once` closure: the second run uses
+// the moved value.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f1 = || take(v)
+    scope { s =>
+        s.spawn(|| run_both(f1, f1))
+    }
+}

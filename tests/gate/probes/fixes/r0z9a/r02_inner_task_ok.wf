@@ -1,0 +1,10 @@
+// Plan stage R0z Z9a: a refusal probe (the rule of R0j stays).
+// A task runs two times a closure that spawns on the scope of the maker
+// (R-INNER: the rule of R0j stays).
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    scope { s =>
+        let f = || { let _ = s.spawn(|| print(1)) }
+        s.spawn(|| twice(f))
+    }
+}

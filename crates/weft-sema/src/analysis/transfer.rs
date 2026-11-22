@@ -2235,6 +2235,16 @@ pub struct RunOf {
     /// The block of the run node: a path to a `Return` that does not pass a
     /// run node can return with no run (`Run::maybe`).
     pub block: weft_ir::BlockId,
+    /// The run node runs the value again on one path (`Run::seq`; the fact
+    /// generator sets it, plan stage R0z Z9a).
+    pub seq: bool,
+    /// `seq` with no cycle that only the re-entry of a `multi` operation
+    /// makes (`Run::seq_loop`).
+    pub seq_loop: bool,
+    /// The run is in a task of the body (a spawn or a `fork` branch runs it;
+    /// the fact generator sets it, plan stage R0z Z9a): not the worst way of
+    /// code of a caller, which can run it on another thread too (`task`).
+    pub in_task: bool,
     /// The run node can end with no run: a callee runs the value on some
     /// paths only (its run is `maybe`), or code of a caller gets it. Its
     /// block does not count as a block that runs the value (hole H5b of the
@@ -2265,6 +2275,8 @@ pub struct TaskOf {
     pub twice: bool,
     /// `Run::many`.
     pub many: bool,
+    /// `Run::task_seq` (plan stage R0z Z9a).
+    pub seq: bool,
     /// `TaskHow::foreign`.
     pub foreign: bool,
     /// `TaskHow::with`.
@@ -2314,6 +2326,14 @@ pub struct Applied {
     /// The run happens again at the `Ret` node (a value that runs another
     /// value `Many` times, OR3).
     pub again: bool,
+    /// With `again`: the run happens again on one path (plan stage R0z Z9a,
+    /// review round 2). An app that is `again` only because the callee runs
+    /// the value on more than one exclusive path (`Run::many` with no
+    /// `Run::seq`) runs at most one time on each path.
+    pub seq: bool,
+    /// `seq` with no cycle that only the re-entry of a `multi` operation of
+    /// the callee makes (`Run::seq_loop`, review round 3).
+    pub seq_loop: bool,
     /// With `again`: the run happens one time, at the `Main` node or at the
     /// `Ret` node (a body that runs two values can run them in each order).
     /// A `once` value runs once then (no W0502: `fn both(f, g) { f(); g() }`
@@ -2981,6 +3001,8 @@ pub fn given_back_apps(
         )?;
         for a in apps.out.iter_mut().skip(start) {
             a.again = true;
+            a.seq = true;
+            a.seq_loop = true;
             a.kind = super::apply::RunKind::Run;
             if let Some(x) = a.run.as_mut() {
                 x.maybe = true;
@@ -4292,6 +4314,10 @@ fn apply_runs(
         // code run it more than once (stage R0e fix 3, H19)?
         let twice_via = run.via_only && via_twice(cx, run, runs, of)?;
         let run_many = if plain_via { twice_via } else { run.many };
+        // A run on more than one exclusive path of the callee runs the value
+        // at most one time on each path (`Run::seq`, plan stage R0z Z9a).
+        let run_seq = if plain_via { twice_via } else { run.seq };
+        let run_seq_loop = if plain_via { twice_via } else { run.seq_loop };
         let many = run_many || two;
         // A function value that a value of the callee runs as a task (a
         // closure with a scope that spawns a value of its maker, and a callee
@@ -4365,6 +4391,7 @@ fn apply_runs(
                 thread: run.how.thread,
                 twice: run.how.twice || code_twice,
                 many: run.many,
+                seq: run.task_seq,
                 foreign: run.how.foreign,
                 with: run.how.with.clone(),
                 writes: all_iplaces(cx, sigma, &run.how.writes)?,
@@ -4513,6 +4540,8 @@ fn apply_runs(
                         for a in apps.out.iter_mut().skip(start) {
                             if !a.again {
                                 a.again = true;
+                                a.seq = run_seq;
+                                a.seq_loop = run_seq_loop;
                                 a.order = !run_many;
                             }
                         }
@@ -4521,6 +4550,8 @@ fn apply_runs(
                     (false, Some(&k)) => {
                         if let Some(a) = apps.out.get_mut(k) {
                             a.again = true;
+                            a.seq = true;
+                            a.seq_loop = true;
                             a.order = false;
                         }
                     }
@@ -4645,6 +4676,8 @@ fn apply_runs(
             let once = in_value(run) && once_value(cx.p, v);
             if let Some(a) = apps.seen.get(v).and_then(|&k| apps.out.get_mut(k)) {
                 a.again = true;
+                a.seq = true;
+                a.seq_loop = true;
                 a.order = false;
                 if once && !a.once_args.contains(arg) {
                     a.once_args.push(arg.clone());
@@ -4668,6 +4701,8 @@ fn apply_runs(
             }
             if let Some(a) = apps.seen.get(v).and_then(|&k| apps.out.get_mut(k)) {
                 a.again = true;
+                a.seq = true;
+                a.seq_loop = true;
                 a.order = false;
             }
         }
@@ -4834,6 +4869,9 @@ fn apply_value(
                     multi: summary.multi,
                     task: false,
                     block: r.block,
+                    seq: false,
+                    seq_loop: false,
+                    in_task: false,
                     maybe: false,
                     body: r.body,
                     after: BTreeSet::new(),
@@ -4851,6 +4889,9 @@ fn apply_value(
                     multi: summary.multi,
                     task: false,
                     block: r.block,
+                    seq: false,
+                    seq_loop: false,
+                    in_task: false,
                     maybe: false,
                     body: r.body,
                     after: BTreeSet::new(),
@@ -4911,6 +4952,8 @@ fn apply_value(
                 once: Vec::new(),
                 once_args: Vec::new(),
                 again: false,
+                seq: false,
+                seq_loop: false,
                 order: false,
                 late: false,
                 then: false,
@@ -5039,6 +5082,7 @@ fn apply_value(
                             thread: true,
                             twice: true,
                             many: true,
+                            seq: true,
                             foreign: true,
                             with: fn_args.iter().copied().filter(|&j| j != k).collect(),
                             writes: all_places.clone(),
@@ -5053,6 +5097,8 @@ fn apply_value(
                         a.task_how = Some(how.clone());
                     }
                     a.again = true;
+                    a.seq = true;
+                    a.seq_loop = true;
                     a.kind = super::apply::RunKind::Run;
                     // Code of a caller can drop the value with no run.
                     if let Some(r) = a.run.as_mut() {
@@ -5137,6 +5183,8 @@ fn apply_value(
                 once: Vec::new(),
                 once_args: Vec::new(),
                 again: false,
+                seq: false,
+                seq_loop: false,
                 order: false,
                 late: false,
                 then: false,
@@ -5349,6 +5397,8 @@ fn apply_value(
                 once: Vec::new(),
                 once_args: Vec::new(),
                 again: false,
+                seq: false,
+                seq_loop: false,
                 order: false,
                 late: false,
                 then: false,
@@ -5376,6 +5426,8 @@ fn apply_value(
                 if runs.iter().any(|x| x.capture && x.many) {
                     for a in &mut apps.out {
                         a.again = true;
+                        a.seq = true;
+                        a.seq_loop = true;
                     }
                 }
                 let held = operand(cx, cb, st, callee)?.flat().fns;

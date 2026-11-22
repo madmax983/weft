@@ -180,6 +180,19 @@ pub struct Run {
     pub result: bool,
     /// The body can run it more than once.
     pub many: bool,
+    /// The body can run it more than once on one path: a loop, two runs one
+    /// after the other, or a run node that runs it again on one path (plan
+    /// stage R0z Z9a, review round 2). `many` without `seq` is a run on each
+    /// of more than one exclusive path (`if c { f() } else { f() }`).
+    pub seq: bool,
+    /// `seq` with no cycle that only the re-entry of a `multi` operation
+    /// makes (review round 3 of Z9a): a loop, or two runs on one path.
+    pub seq_loop: bool,
+    /// The tasks of the body run it more than once on one path: a task that
+    /// runs it again, or two tasks of it one after the other (`seq` of the
+    /// runs as a task only; plan stage R0z Z9a, review round 2). A caller
+    /// applies such a task run two times (`templates::call_tasks`).
+    pub task_seq: bool,
     /// The body runs it as a task.
     pub task: bool,
     /// How the body runs it as a task (plan stage F19, OR7).

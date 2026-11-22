@@ -234,6 +234,39 @@ the counts.
   census rows are as above. The probes `x01_return_escape_bad`, `x02_struct_return_bad`,
   `x03_vec_param_bad` and `x01_return_fn_ok` keep the fallback, as on main.
 
+
+## Z9a (as built)
+
+- Z9a closed 3 rows of tier 1 (rows 95 to 97: `i9_kept_write`, `s8_steal_fnparam`,
+  `s9_steal_stored`; 24 to 21 fallbacks of the census rows; rows 93 and 94,
+  `c09_cc_during_ok` and `j01_again_ok`, closed in the first build and went back to the
+  fallback in review round 3, by R-CODE: code of a caller `g(f)` runs a value of the body
+  again on the task) and 4 rows of tier 2 (row 26, `m2/p7046`, and the copies of `i9`, `s8`, `s9`; 19 to
+  15): `docs/plan/core-ir.md`, "Z9a as built". Each row is in scope with no error. `i9`
+  (old W0405) and `s9` (old W0302) are `lost-clean` (ledger entries, signed by the builder
+  only; `s9` is a point for the review: the old analysis moves `fs` into the task closure,
+  the IR copies the function value).
+- The cause of the plan is the real cause (`TASK_AGAIN`: a run with `again` and not
+  `order`). A spawn whose task runs a value more than once has a second node of the run
+  (`Task(1)` after `Main`); the run happens at both nodes, and the task starts at the
+  second one.
+- Tier 1: 187 fallbacks of 5970 files (main 208 of 5970). The new files are the 36 probes
+  of `fixes/r0z9a` and the corpus program `208_task_runs_again`; main sends 19 of them to
+  the old pipeline. The rows above leave the fallback, and so do 16 of these 19; the other
+  3 keep it (`e09_closure_body_ok`: `VALUE_TASKS`, Z9c; the refusal probes `r01_fork_ok`,
+  R-FORK, and `r02_inner_task_ok`, R-INNER). Tier 2: 15 fallbacks (main 19).
+- Review round 1: the 14 new probes of B1 and R-ONCE (`g01` to `g08`). Tier 1: 189
+  fallbacks of 5984 files (main 220 of 5984); the 10 probes `g01` to `g05` that main sends
+  to the old pipeline leave it; `g07_stored_once_bad` and `g08_stored_once_twice_bad` keep
+  it (R-ONCE), as on main. The census rows stay 24 to 19 and 19 to 15.
+- Review round 2: the 8 new probes `h01` to `h04`. Tier 1: 190 fallbacks of 5992 files
+  (main 223 of 5992); `h04_reassign_loop_ok` keeps it (R-REBIND), as on main. The census
+  rows stay 24 to 19 and 19 to 15.
+- Review round 3: the 7 new probes `i01` to `i04`. R-CODE puts rows 93 and 94 back, so the
+  census rows are 24 to 21 in tier 1 (19 to 15 in tier 2: no row of tier 2 has the form).
+- No row in scope on main leaves the scope. Three rejected rows of main get one more W0301
+  at the spawn, the code of the old pipeline (`tests/programs/114_repeated_callbacks`,
+  `verify/s5/p/or3c`, `verify/s5/repro/V4_or3_containers`).
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -358,11 +391,11 @@ the counts.
 | 90 | `fixes/r0kd1/d02_multi_weak.wf` | esc | D4 multi: the update after a `multi` resume stays weak, so a closure seems to run outside its handler | clean | no fault | clean | yes | Z8 (closed) |
 | 91 | `verify/partb/p/g2_lexical.wf` | D3 | a value through a `resume`: the inner clause gives back a closure that performs to the outer handler | clean | no fault | clean | no | Z8 (closed) |
 | 92 | `fixes/r0kd2/s4_spawn_in_closure_ok.wf` | E4 | a spawn in a closure on the scope of the outer body; two writes of `f` | clean | no fault | clean | yes | Z9b (closed) |
-| 93 | `fixes/r0f/c09_cc_during_ok.wf` | E2 | two values: code of a caller runs `f` once on the task (the c09 subset of R0k-d3) | clean | no fault | clean | no | Z9a |
-| 94 | `fixes/r0j/j01_again_ok.wf` | E2 | code of a caller runs `f` two times on the task | clean | no fault | clean | yes | Z9a |
-| 95 | `r3/oracle/probes/i9_kept_write.wf` | E2 | a task runs a kept callback more than once | W0405 | no fault | rejected | no | Z9a |
-| 96 | `r3/oracle/probes/s8_steal_fnparam.wf` | E2 | a task runs a function parameter more than once | clean | no fault | clean | no | Z9a |
-| 97 | `r3/oracle/probes/s9_steal_stored.wf` | E2 | a task runs a stored callback more than once | W0302 | fault (AST engine only) | rejected | no | Z9a |
+| 93 | `fixes/r0f/c09_cc_during_ok.wf` | E2 | two values: code of a caller runs `f` once on the task (the c09 subset of R0k-d3) | clean | no fault | clean | no | Z9a (open: R-CODE) |
+| 94 | `fixes/r0j/j01_again_ok.wf` | E2 | code of a caller runs `f` two times on the task | clean | no fault | clean | yes | Z9a (open: R-CODE) |
+| 95 | `r3/oracle/probes/i9_kept_write.wf` | E2 | a task runs a kept callback more than once | W0405 | no fault | rejected | no | Z9a (closed) |
+| 96 | `r3/oracle/probes/s8_steal_fnparam.wf` | E2 | a task runs a function parameter more than once | clean | no fault | clean | no | Z9a (closed) |
+| 97 | `r3/oracle/probes/s9_steal_stored.wf` | E2 | a task runs a stored callback more than once | W0302 | fault (AST engine only) | rejected | no | Z9a (closed) |
 | 98 | `fixes/r0e/a13_ok.wf` | NESTED | a spawn of a parameter inside `sim.run` of a callee (task of a callee, no `TaskHow`) | clean | no fault | clean | no | Z9c |
 | 99 | `fixes/r0j/j03_nested_ok.wf` | NESTED | a closure spawns a parameter and a task; the closure runs in a callee (two levels of runs) | clean | no fault | clean | yes | Z9c |
 | 100 | `fixes/r0j/j04_value_ok.wf` | VT | a closure spawns a captured closure two times (tasks of a value of the interface) | clean | no fault | clean | yes | Z9c |
@@ -431,7 +464,7 @@ The other 35 rows of tier 2:
 | 23 | `r3/oracle/runs/m3a/p5750.wf` | D1 | D1a refusal: a call (`print(r)`) between the make and the run | W0301 | no fault | rejected | no | Z4 (closed) |
 | 24 | `r3/oracle/runs/m3a/p7154.wf` | D1 | D1a refusal: a call (`Box.new`) between, a `resume` in a nested handled body | W0301 | no fault | rejected | no | Z4 |
 | 25 | `r2/oracle/runs/g2/p2515.wf` | esc | closures that capture a capability in a block of a closure body that no node runs (Z8: the cause is a closure body that runs a closure of its maker, `twice(f1)`) | clean | no fault | clean | no | Z8 (closed) |
-| 26 | `r2/oracle/runs/m2/p7046.wf` | E2 | a task runs `run_both(f1, f1)` | clean | no fault | clean | no | Z9a |
+| 26 | `r2/oracle/runs/m2/p7046.wf` | E2 | a task runs `run_both(f1, f1)` | clean | no fault | clean | no | Z9a (closed) |
 | 27 | `r3/oracle/runs/g3b/p18574.wf` | VT | a function value runs a value of its arguments as a task | W0312 | no fault | rejected | no | Z9c |
 | 28 | `r3/oracle/runs/g4p/p25005.wf` | NESTED | a value of a callee runs a value as a task | W0405 | no fault | rejected | no | Z9c |
 | 29 | `r3/oracle/runs/t3/p148.wf` | NESTED | a value of a callee runs a value as a task | W0312 | no fault | rejected | no | Z9c |

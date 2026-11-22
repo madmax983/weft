@@ -1,0 +1,16 @@
+// Plan stage R0z Z9a, review round 2 (a run on each of two exclusive paths is
+// one run: `Run::seq`, `Applied::seq`).
+// Clean: run f in a task or inline (one run on each path); f keeps a reference to the last element and reads it.
+fn run_maybe_par(par: bool, f: fn()) / async {
+    if par { scope { s => s.spawn(f) }; () } else { f() }
+}
+fn main() / async {
+    let xs = Vec.new()
+    xs.push(1)
+    let last: Option<&u64> = None
+    run_maybe_par(true, || {
+        match last { Some(y) => print(y), None => print(0) }
+        last = Some(&xs[0])
+        xs.push(2)
+    })
+}

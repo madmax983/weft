@@ -1,0 +1,79 @@
+// Plan stage R0z Z9a: a task that runs a value more than once. The spawn
+// has a second node of the run: the run of the task body happens at the
+// spawn and again at that node, so the effects of the first run reach the
+// second one. The task starts after both nodes. The probes
+// `tests/gate/probes/fixes/r0z9a/` run these forms with `main`.
+
+struct C { k: u64 }
+
+fn twice(f: fn()) { f(); f() }
+
+fn run_both(f: fn(), g: fn()) { f(); g() }
+
+fn take(v: Vec<u64>) { print(v.len()) }
+
+// A task runs a closure two times through a callee.
+fn two_runs() {
+    let c = C { k: 0 }
+    let f = || print(c.k)
+    scope { s =>
+        s.spawn(|| twice(f))
+    }
+    c.k += 1
+}
+
+// A task runs a closure in a loop.
+fn loop_runs() {
+    let v = Vec.new()
+    let f = || v.push(1)
+    scope { s =>
+        s.spawn(|| { for i in 0..3 { f() } })
+    }
+    print(v.len())
+}
+
+// Code of a caller (`g`, a parameter) runs `f` on the task.
+fn caller_code(g: fn(fn()), f: fn()) / async {
+    scope { s =>
+        s.spawn(|| g(f))
+    }
+}
+
+// A task runs the same closure as both arguments.
+fn same_value() {
+    let c = 1
+    let f1 = || print(c)
+    scope { s =>
+        s.spawn(|| run_both(f1, f1))
+    }
+}
+
+// A task runs a `once` closure two times: the second run uses the moved
+// value.
+fn once_twice() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || take(v)
+    scope { s =>
+        s.spawn(|| twice(f))   //~ W0502 W0302 old: W0502
+    }
+}
+
+// A callee whose task runs its parameter two times: the caller applies
+// both runs, so the second run reads `r` after the first run pushed into
+// `v` (review round 1 of Z9a).
+fn run2(f: fn()) / async { scope { s => s.spawn(|| twice(f)) } }
+
+fn param_twice() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    run2(|| { print(r); v.push(2) })   //~ W0301
+}
+
+fn main() / async {
+    two_runs()
+    loop_runs()
+    caller_code(|x| { x(); x() }, || print(1))
+    same_value()
+}

@@ -1,0 +1,12 @@
+// Plan stage R0z Z9a, review round 1 (B2, R-ONCE: a task body reads a `once`
+// element of a captured `Vec` and runs it again; the rule of R0j stays).
+// The task reads the once callback of the Vec two times (no loop) and runs each.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    let fs = Vec.new()
+    fs.push(|| take(v))
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g(); let h = fs[0]; h() })
+    }
+}

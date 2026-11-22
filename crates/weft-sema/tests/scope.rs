@@ -857,8 +857,10 @@ fn the_task_fallbacks_are_pending() {
     // error of the `ir` pipeline is final, else the old pipeline checks the
     // program. Each source is the clean twin of a probe.
     let pending = [
+        // A task that runs a value again in a branch of a `fork` (stage R0z
+        // Z9a: a `fork` has no second node of the run, R-FORK).
         (
-            include_str!("../../../tests/gate/probes/fixes/r0j/j01_again_ok.wf"),
+            include_str!("../../../tests/gate/probes/fixes/r0z9a/r01_fork_ok.wf"),
             "runs a callback more than once",
         ),
         // A late task (stage R0z Z9b: a spawn in a closure on a scope whose
@@ -909,6 +911,21 @@ fn the_task_fallbacks_are_pending() {
         (scope.fallback.as_deref(), scope.pending.is_some()),
         (None, false)
     );
+    // Stage R0z Z9a: a spawn has a second node of the run, so a task that
+    // runs a value more than once has full facts (`e02_twice_once_ok`); the
+    // code of a caller that runs a value of the body (`j01_again_ok`) keeps
+    // the rule of R0j (R-CODE, review round 3).
+    let src = include_str!("../../../tests/gate/probes/fixes/r0z9a/e02_twice_once_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j01_again_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert!(scope.pending.is_some(), "j01_again_ok");
     // A spawn on one of two nested scopes has full facts: the task ends at
     // the outer scope (`SiteScope::end`).
     let src = include_str!("../../../tests/gate/probes/fixes/r0j/j06_unowned_ok.wf");

@@ -3054,6 +3054,8 @@ Terminators:
 | `Scope` | FrameEnd | cfg_edge |
 | `ScopeWait` | Main | cfg_edge, uses, joined_at, lends_mut, may_abort, spared_at, performs_at, escapes_at, rebound_at (orphans) |
 | `Spawn` | Main | the operands; spawned_at, task_reads, task_writes, captures, mut_through, kept, spawns_in, opaque, call_mut, call_arg, performs_at, escapes_at; rebound_at, points_into (the handle); for a spawn statement rebound_at, empty_at (its `TaskResult` local) |
+| `Spawn` | Task(1) (plan stage R0z Z9a: a task that runs a value more than once) | the second run of the task body (as `Call` `Ret`); moved_at (the task operand), spawned_at |
+| `Call` | Task (the second start of a slot whose callee runs the value more than once in one task, plan stage R0z Z9a) | the second run of the value (as `Call` `Ret`), spawned_at |
 | `Join` | Main | cfg_edge, uses, moved_at (the handle), joined_at, may_abort, spared_at, performs_at, escapes_at |
 | `Join` | Ret | cfg_edge, rebound_at, points_into, empty_at, lends_mut |
 | `Detach` | Main | cfg_edge, uses, moved_at; a drop pair for a linear result |
@@ -3554,6 +3556,79 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   local handler, and the task runs the closure of the copy, with its places. The copies
   apply if `TASK_CODE`, `REST_NOT_FOUND` and `SCOPE_RESUME_AGAIN` are the only pending
   reasons and the copies have full facts.
+  From plan stage R0z Z9a a spawn whose task runs a value more than once (E2: a run of
+  the summary of the task with `again` and not `order`; code of a caller `g(f)` with `g`
+  a parameter, a loop in the task body, `twice(f)`, `run_both(f1, f1)`) has a second
+  node of the run: a node of phase `Task(1)` after `Main` of the `Spawn`
+  (`nodes::NodeTable::again_nodes`; its kind is `spawn task`). The analysis finds these
+  spawns (`Handlers::again_spawns`, `tasks::spawn`), so the fact generator makes the node
+  after the last run of the analysis, on each edge from `Main`, as it makes the re-entry
+  edges. The run of the task body happens at `Main` and again at the second node, as a
+  call runs such a value at `Main` and at `Ret` (`emit_apps`): a `once` value moves at
+  `Main` and the second run uses it (W0502), and a change of the first run ends the
+  references that the second run reads (W0301). The value of the task moves at the second
+  node, and the task starts there (`spawned_at`): the code of the spawn is no code that
+  runs while the task runs, so the writes of the runs do not conflict with their own task.
+  The writes and the reads of both nodes are the footprint of the task. No code of a local
+  handler runs at the nodes of the spawn (`CallNodes::local_code` is false). Two forms keep
+  the rule of plan stage R0j (pending, `TASK_AGAIN`): a branch of a `fork` (R-FORK: a
+  `fork` has no second node), and a run that starts a task in a scope of a maker (part
+  `tasks`, R-INNER: a task that the run at `Main` starts would not start at the node of
+  the task of the spawn, and the end of the task of the spawn would end its writes,
+  `task_ends`). A spawn that the analysis finds but whose runs are not again (or a
+  refusal) keeps one run at `Main`; the value moves and the task starts at the second
+  node. The fact oracle checks such a task with the task cover (8.5).
+  Review round 1 of Z9a added two rules. (B1) A callee whose task runs a value of its
+  interface more than once, one run after the other (`Run::many` of the part `runs`;
+  for code of a caller only if the node knows that the code runs it again,
+  `Applied::via_twice`), gives the caller a task run of the parameter. The caller applies
+  that run at the first `Task` node of the slot and again at the second one
+  (`templates::call_tasks`, `CallNodes::ret`), and the task of the call starts at the
+  second node, after both runs (with `TaskHow::twice` it starts at both nodes, as
+  before). Before, the caller applied one run, so a reference that the first run ends
+  and the second run reads gave no W0301 (`fixes/r0z9a/g01` to `g06`; also two tasks of
+  the parameter, one after the other, `g06_seq_tasks_ref_bad`, a hole that main has too).
+  (B2, R-ONCE) A run again of a `once` closure whose move does not reach the facts (the
+  app has no part `once` and no `once_args`: a value that the task body reads out of a
+  container, as `let g = fs[0]; g()`) keeps the rule of plan stage R0j: the summary of the
+  first run does not move the element, so the second node gives no W0302 and no W0502
+  (`g07_stored_once_bad`, `g08_stored_once_twice_bad`). A local closure that reads such an
+  element two times has the same gap, with no task (an old hole).
+  Review round 2 of Z9a: the part `runs` counts the runs of exclusive paths together
+  (`Run::many`), so both rules gave false W0301 and W0502 to a value that runs one time on
+  each path (`if c { scope { s => s.spawn(|| f()) } } else { f() }`; a `match` in the task
+  with a `once` closure in each arm). Now `Run::seq` says that one path of the body runs
+  the value more than once: a run node that runs it again on one path (`RunOf::seq`,
+  from `Applied::seq`), or two run nodes of the value on one path
+  (`summarize::one_path`: the innermost body around both nodes, a scope body or a handled
+  body at the block of its `scope` or `handle`, and a path from one block to the other;
+  a node whose place the function does not find counts as on one path). `Run::task_seq`
+  is the same for the runs in a task of the body (`RunOf::in_task`), or a run in a task
+  and another run on one path (a task, then a plain run: old holes of main that round 1
+  closed, `z9arev2/p/h34_a_bad`, `h35_a_bad`, `h46_a_bad`), and `TaskOf::seq` gives it to
+  the caller. `Applied::seq` is false only for an app that is `again` because
+  the callee runs the value on exclusive paths (`Run::many` with no `Run::seq`); each
+  other `again` is `seq`. The second node of a spawn needs an app with `again`, not
+  `order`, and `seq`; with no such app one run at `Main` is exact. A call applies a task
+  run two times only for `Run::task_seq` (with `via_twice` only for a value that the
+  callee only gives to code of a caller, or with `task_seq`: the count of `via_twice`
+  adds exclusive paths too). R-REBIND keeps the rule of R0j for a `once` closure that the
+  task runs again while a run gives a capture that can hold a function value a new whole
+  value (`h04_reassign_loop_ok`: the second run runs the new closure).
+  Review round 3 of Z9a added three refusals that give back the verdict of main. R-CODE: a
+  run again of code of a caller that gets a value of the body (`Run::via`, `via_only`,
+  `via_twice`; `g(f)` in the task): the run node of the parameter in the body of such code
+  has no accesses of the value that the callee gives (an old gap), so the second run does
+  not see a reference that the code holds across the first one. R-ORDER: an app with
+  `again` and `order` (a value that runs one time, in either order with a run again): the
+  run node applies it at both nodes, and its own change at the first node ends a reference
+  that it reads at the second one. R-MULTI: `Cycles::rows_at` marks each block of the
+  bodies that splice into the body of a `multi` perform as cyclic, also the blocks before
+  the perform, so `Run::seq_loop` (with `RunOf::seq_loop`, `Applied::seq_loop`) leaves out
+  a cycle that only such a re-entry makes (`summarize::in_loop`), `task_seq` uses it (one
+  task run at a call, as main), and a spawn whose runs again come only from such a cycle
+  keeps the rule of R0j. The value of the task is read at `Main` and moves at the second
+  node (`operand_move_only`), and the `Ret` parts of an app that runs once go to `Main`.
 
 As built (plan stage R0g: continuations and capabilities in closures):
 
@@ -6891,6 +6966,23 @@ conformance checks the abort edge (a first form with no such limit failed on 31 
 programs of tier 1: a `Fail` clause at the end of a scope). With the facts before the fix it
 fails on each probe of `fixes/henv` (bad and clean twins); with the facts of the fix it
 passes. Test: `summary_oracle.rs` `a_clause_that_no_node_runs_fails_the_clause_cover`.
+
+**As built (plan stage R0z Z9a): the task cover.** A task runs on its own stack, so the
+summary oracle (A3) does not check the facts of its spawn. For a task whose spawn has a
+second node of the run (6.4, a node of kind `spawn task`), the oracle names each access
+of the task with the frame of the run of the body of the spawn (`FactOracle::check_task`;
+the machine finds that frame on the stack of the parent task). Each change of a place that
+the frame can name must be in `task_writes(T, _)` or in the changes of the nodes of the
+spawn (the runs stay there too), and each read in the accesses of `T` or of these nodes;
+a move of the value of a local at these nodes covers a change of its cell. Else the run
+fails with "fact oracle (task cover)". For a task that runs code of a caller
+(`opaque(T)`), a place behind a parameter of the body does not count: the caller checks
+the value that it gives as a task (part `runs`, F19), and the facts of the spawn do not
+have the reads of that code (`j01_again_ok`, `c09_cc_during_ok`: the read of `w.k`). The
+oracle names only places that the frame of the body owns or reaches: a local of a scope
+body (a frame that the oracle follows only for the task check) has no name there. The
+report counts the checks (`FactReport::task`, `task_unnamed`). Test: `fact_oracle.rs`
+`a_missing_task_write_of_a_second_run_fails_the_task_cover`.
 
 **As built (R0k-b2): the closure of a copy region.** A copy region replaces a run of a
 function value by the body of one closure (6.1), so its facts hold only for a run of that

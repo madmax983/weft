@@ -1,0 +1,14 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A linear value with no `on abort` moves into a task that runs `f` two
+// times: a cancel of the task drops it (W0602).
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let c = 1
+    let f = || print(c)
+    let l = Lk { id: 1 }
+    scope { s =>
+        s.spawn(|| { twice(f); unlock(l) })
+    }
+}

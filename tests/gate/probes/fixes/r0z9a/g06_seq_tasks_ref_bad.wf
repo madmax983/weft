@@ -1,0 +1,17 @@
+// Plan stage R0z Z9a, review round 1 (B1: a callee whose task runs its
+// parameter more than once; the caller applies both runs).
+// seq runs f as a task, then again as a second task (one after the other).
+fn seq(f: fn()) / async {
+    scope { s => s.spawn(f) }
+    scope { s => s.spawn(f) }
+}
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let a: Option<&u64> = None
+    seq(|| {
+        match a { Some(y) => print(y), None => print(0) }
+        a = Some(&w[0])
+        w.push(2)
+    })
+}

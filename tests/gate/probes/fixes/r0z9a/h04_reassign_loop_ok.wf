@@ -1,0 +1,9 @@
+// Plan stage R0z Z9a, review round 2 (R-REBIND: a loop runs a `once` `f`, then
+// gives `f` a new closure; the rule of R0j stays).
+// Clean: the task runs f in a loop; each turn gives f a closure that is not once.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    let v = Vec.new()
+    let f = || take(v)
+    scope { s => s.spawn(|| { for j in 0..2 { f(); f = || print(0) } }) }
+}

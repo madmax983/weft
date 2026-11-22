@@ -1,0 +1,15 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A loop of spawns that run `f` two times; the write is before the join.
+struct C { k: u64 }
+fn twice(f: fn()) { f(); f() }
+fn main() / async {
+    let c = C { k: 0 }
+    let f = || print(c.k)
+    scope { s =>
+        for i in 0..3 {
+            let h = s.spawn(|| twice(f))
+            c.k += 1
+            h.join()
+        }
+    }
+}

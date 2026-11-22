@@ -1,0 +1,13 @@
+// Plan stage R0z Z9a (E2, a task that runs a value more than once).
+// A task runs a kept callback two times; the block of `g` ends before the
+// task ends (the task keeps the cell).
+fn main() {
+    scope { s =>
+        {
+            let n = 1
+            let g = || n += 1
+            s.spawn(|| { g(); sleep(1.s); g() })
+        }
+        print(0)
+    }
+}

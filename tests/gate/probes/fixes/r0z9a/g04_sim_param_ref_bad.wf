@@ -1,0 +1,11 @@
+// Plan stage R0z Z9a, review round 1 (B1: a callee whose task runs its
+// parameter more than once; the caller applies both runs).
+// In sim.run, a callee whose task runs its parameter f two times.
+fn twice(f: fn()) { f(); f() }
+fn run2(f: fn()) / async { scope { s => s.spawn(|| twice(f)) } }
+fn main() / clock {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    sim.run(seed: 1) { run2(|| { print(r); v.push(2) }) }
+}

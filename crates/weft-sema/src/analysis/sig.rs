@@ -241,6 +241,9 @@ pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
                     capture: false,
                     result: false,
                     many: true,
+                    seq: true,
+                    seq_loop: true,
+                    task_seq: true,
                     task: true,
                     how,
                     args: args.clone(),
@@ -439,6 +442,9 @@ pub fn intrinsic(decl: &FnDecl, tys: &TyTable, i: weft_ir::Intrinsic) -> Summary
                 capture: false,
                 result: false,
                 many: false,
+                seq: false,
+                seq_loop: false,
+                task_seq: false,
                 task: false,
                 how: super::summary::TaskHow::default(),
                 args: Vec::new(),
@@ -853,7 +859,7 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         return true;
     };
     let before = (
-        x.many,
+        (x.many, x.seq, x.seq_loop, x.task_seq),
         x.task,
         x.multi,
         x.maybe,
@@ -865,6 +871,9 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
         (x.via_only, x.via.clone()),
     );
     x.many |= r.many;
+    x.seq |= r.seq;
+    x.seq_loop |= r.seq_loop;
+    x.task_seq |= r.task_seq;
     join_via(x, r);
     x.task |= r.task;
     x.then |= r.then;
@@ -913,7 +922,7 @@ pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
     x.args.sort();
     before
         != (
-            x.many,
+            (x.many, x.seq, x.seq_loop, x.task_seq),
             x.task,
             x.multi,
             x.maybe,

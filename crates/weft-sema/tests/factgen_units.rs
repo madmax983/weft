@@ -1555,8 +1555,11 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // A spawn: the operands, the task (its run at the node), and the
-        // handle (or the `TaskResult` local) binds.
-        "spawn" => (
+        // handle (or the `TaskResult` local) binds. The second node of the
+        // run of a spawn whose task runs a value more than once (plan stage
+        // R0z Z9a): the second run, the move of the value of the task, and
+        // the start of the task.
+        "spawn" | "spawn task" => (
             &[
                 "cfg_edge",
                 "reads_at",

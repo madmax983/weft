@@ -1,0 +1,13 @@
+// Plan stage R0z Z9a, review round 2: the bad twin of
+// `h01_branch_task_or_direct_ok`: the task runs `f` two times on one path.
+fn mid(c: bool, f: fn()) / async { if c { scope { s => s.spawn(|| { f(); f() }) }; () } else { f() } }
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let a: Option<&u64> = None
+    mid(true, || {
+        match a { Some(y) => print(y), None => print(0) }
+        a = Some(&w[0])
+        w.push(2)
+    })
+}

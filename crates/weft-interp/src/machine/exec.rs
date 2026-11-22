@@ -418,6 +418,19 @@ impl super::Machine<'_, '_> {
             }
             fo.check_summary(c.uid, &c.code, &c.slots, &self.heap, &events)?;
         }
+        // The task cover (plan stage R0z Z9a): a task whose spawn has a
+        // second node of the run; the frame of the spawn names the places.
+        if let Some((parent, run)) = fo.task_cover(self.cur) {
+            let frame = self.tasks.get(parent).and_then(|t| {
+                t.frames.iter().rev().find_map(|f| match f {
+                    Frame::Code(c) if c.uid == run => Some(c),
+                    _ => None,
+                })
+            });
+            if let Some(c) = frame {
+                fo.check_task(self.cur, &c.code, &c.slots, &self.heap, &events)?;
+            }
+        }
         Ok(())
     }
 

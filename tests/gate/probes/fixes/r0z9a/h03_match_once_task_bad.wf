@@ -1,0 +1,9 @@
+// Plan stage R0z Z9a, review round 2: the bad twin of
+// `h03_match_once_task_ok`: one arm runs the `once` closure two times.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    let v = Vec.new()
+    let o = Some(3)
+    let done = || take(v)
+    scope { s => s.spawn(|| { match o { Some(x) => { print(x); done(); done() }, None => done() } }) }
+}
