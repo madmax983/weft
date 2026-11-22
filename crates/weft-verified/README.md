@@ -21,12 +21,16 @@ The result must be:
 verification results:: 67 verified, 0 errors
 ```
 
+The count is from before the module `tasks` (plan stage R0z Z9c-A). With it
+the count is higher; it is not recorded yet.
+
 | Module | Verified |
 | --- | --- |
 | `places` | 27 |
 | `dataflow` | 16 |
 | `modes` | 9 |
 | `lifecycle` | 15 |
+| `tasks` | not recorded (see below) |
 
 To verify one module, add `--verify-module <name>`.
 
@@ -151,3 +155,30 @@ The interpreter uses these state machines at run time.
 
 Together, these specs show that a `once` continuation resumes at most one time.
 They also show that a linear value finishes (consume or abort) at most one time.
+
+## `tasks`: the how of a task slot
+
+Plan stage R0z Z9c-A (proof P1). The fact generator joins what it knows about
+a task of a call slot: the flags `thread`, `twice`, `many`, `seq` and
+`foreign`, the values of the interface that run at the same time (`with`), and
+the places that the callee changes and reads while the task runs. Sema uses
+`compose` to add the values of the interface that run with a task of a call
+slot outside its window (`analysis::tasks::add_with`).
+
+| Exec function | Ensures |
+| --- | --- |
+| `union` | `spec_union(a@, b@, r@)`: an entry is in `r` if and only if it is in `a` or in `b` (also for sets that are not sorted). For two sorted sets, `r` is sorted (strictly increasing, so no duplicates). |
+| `compose` | `spec_composed(a, b, &r)`: each flag of `r` is the `or` of the flags, and each set is the union of the sets. For sorted hows, `r` is sorted. `spec_le(a, &r)` and `spec_le(b, &r)`: no flag and no entry of `a` or `b` is lost. |
+
+| Lemma | Statement |
+| --- | --- |
+| `lemma_has_next` | An entry of the first `n + 1` entries is an entry of the first `n` entries or entry `n`. |
+| `lemma_has_push` | The entries of `s.push(v)` are the entries of `s` and `v`. |
+| `lemma_compose_monotone` | The composition is monotone: hows within hows give a composition within the composition. |
+| `lemma_compose_empty` | The composition with the empty how keeps the how. |
+
+The proof does not show that the inputs are complete (that the fact generator
+gives each value that can run with the task). The fact oracle tests that (the
+`with` check, `docs/ir.md` 8.5). The stage that added this module had no Verus
+in its build container: the module was not verified there, and the count of
+the module is not recorded. Run `verus` (above) to verify it.

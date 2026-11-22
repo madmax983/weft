@@ -1486,6 +1486,7 @@ impl super::Machine<'_, '_> {
     pub(crate) fn call_value(&mut self, callee: Value, args: Vec<Value>) -> R<Flow> {
         match callee {
             Value::Closure(c) => {
+                self.oracle_value_run(&c, None)?;
                 let (caps, owned) = self.take_captures(&c);
                 let mut f = self.code_frame(c.code, args, caps, c.henv.clone())?;
                 f.owned = owned;
@@ -1730,6 +1731,30 @@ impl super::Machine<'_, '_> {
         }
     }
 
+    /// The `with` check of the fact oracle (plan stage R0z Z9c-A, C7): the
+    /// current task runs closure `c`, as plain code (`child` is `None`) or
+    /// as the new task `child`, with the frames of its stack.
+    fn oracle_value_run(&mut self, c: &Rc<ClosureVal>, child: Option<usize>) -> R<()> {
+        if self.facts.is_none() {
+            return Ok(());
+        }
+        let cur = self.cur;
+        let frames: Vec<u64> = self.tasks[cur]
+            .frames
+            .iter()
+            .rev()
+            .filter_map(|f| match f {
+                Frame::Code(cf) => Some(cf.uid),
+                _ => None,
+            })
+            .collect();
+        let r = self
+            .facts
+            .as_mut()
+            .map_or(Ok(()), |fo| fo.value_run(cur, c, &frames, child));
+        r.map_err(|m| self.fault(m))
+    }
+
     /// Spawns a closure as a child of a scope.
     pub(crate) fn spawn_task(&mut self, sid: ScopeId, f: Value, span: Span) -> R<usize> {
         // The span is in the code that spawns the task.
@@ -1738,6 +1763,11 @@ impl super::Machine<'_, '_> {
         if stealable {
             self.oracle_portable(&f);
         }
+        // The closure of the task, for the `with` check of the fact oracle.
+        let closure = match (&f, self.facts.is_some()) {
+            (Value::Closure(c), true) => Some(Rc::clone(c)),
+            _ => None,
+        };
         let frame = self.task_frame(f)?;
         let parent = self.cur;
         let uids: Vec<u64> = self.tasks[parent]
@@ -1754,6 +1784,9 @@ impl super::Machine<'_, '_> {
         let t = self.add_task(frame, Some(parent), stealable, Some(sid), sim);
         if let Some(fo) = self.facts.as_mut() {
             fo.task_spawned(parent, t, &uids);
+        }
+        if let Some(c) = &closure {
+            self.oracle_value_run(c, Some(t))?;
         }
         if let Some(s) = self.scopes.get_mut(sid) {
             s.children.push(t);

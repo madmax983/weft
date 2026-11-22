@@ -1,0 +1,11 @@
+// R0z Z9c-A review round 3 (probe q01): handle in the window of h; only `note` is performed; the code after resume of `ping` runs k, but ping never runs.
+effect Note { fn note(x: u64), fn ping(x: u64) }
+struct C { k: u64 }
+fn par(h: fn(), k: fn()) / async {
+    scope { s => s.spawn(h); handle Note { fn note(x) { resume(()) } fn ping(x) { resume(()); k() } } in { note(1) } }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+    print(c.k)
+}

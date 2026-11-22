@@ -1,0 +1,11 @@
+// R0z Z9c-A probe: the callee performs after the task of h ends, so the clause of par that runs k does not run with the task.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn sp3(h: fn()) / async, Note { scope { s => s.spawn(h); () }; note(1) }
+fn par(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } } in { sp3(h) }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+}

@@ -1,0 +1,11 @@
+// R0z Z9c-A review round 3 (probe q20): two tasks; the handle after both spawns performs only note; ping's code after resume runs k.
+effect Note { fn note(x: u64), fn ping(x: u64) }
+struct C { k: u64 }
+fn par(h: fn(), g: fn(), k: fn()) / async {
+    scope { s => s.spawn(h); s.spawn(g); handle Note { fn note(x) { resume(()) } fn ping(x) { resume(()); k() } } in { note(1) } }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || print(c.k + 1), || c.k += 1)
+    print(c.k)
+}

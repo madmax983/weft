@@ -1,0 +1,9 @@
+// R0z Z9c-A probe (clean twin of a04): the callee spawns two parameters at the same time; both only read.
+struct C { k: u64 }
+fn both2(a: fn(), b: fn()) / async { scope { s => s.spawn(a); s.spawn(b); () } }
+fn par(h: fn(), k: fn()) / async { both2(h, k) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || print(c.k + 1))
+    print(c.k)
+}

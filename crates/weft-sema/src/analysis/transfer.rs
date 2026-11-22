@@ -2399,6 +2399,13 @@ pub struct Applied {
     /// value (`TaskHow::tasks`, stage R0f): the run node gives the places
     /// of the value to these tasks too.
     pub maker_tasks: Vec<u32>,
+    /// For a value of the interface (`run`): the parameters of the callee
+    /// whose runs reach the value, also through the values that they run,
+    /// and also a run that does not apply the value again (a value applies
+    /// one time at a run node). The task nodes of a call find the values of
+    /// the interface that the callee runs with a task (`TaskHow::with`) by
+    /// them (plan stage R0z Z9c-A, C1).
+    pub reach: Vec<u32>,
 }
 
 /// The places that the references of the captures of closure `decl` point
@@ -4640,6 +4647,29 @@ fn apply_runs(
             (*k, out)
         })
         .collect();
+    // The parameters of the callee whose runs reach each value of the
+    // interface of this body (`Applied::reach`, plan stage R0z Z9c-A, C1).
+    if depth == 0 {
+        for (&(j, capture, result), keys) in &lifted {
+            if capture || result {
+                continue;
+            }
+            for &(i, c, res) in keys {
+                if res {
+                    continue;
+                }
+                for a in &mut apps.out {
+                    let hit = a
+                        .run
+                        .as_ref()
+                        .is_some_and(|x| (x.param, x.capture, x.result) == (i, c, false));
+                    if hit && !a.reach.contains(&j) {
+                        a.reach.push(j);
+                    }
+                }
+            }
+        }
+    }
     for (index, got, arg) in &per_run {
         let Some(run) = runs.get(*index) else {
             continue;
@@ -4970,6 +5000,7 @@ fn apply_value(
                 during_reads: Vec::new(),
                 via_twice: false,
                 maker_tasks: Vec::new(),
+                reach: Vec::new(),
                 task_how: None,
             });
             let places = match given {
@@ -5201,6 +5232,7 @@ fn apply_value(
                 during_reads: Vec::new(),
                 via_twice: false,
                 maker_tasks: Vec::new(),
+                reach: Vec::new(),
                 task_how: None,
             });
             apply_runs(
@@ -5415,6 +5447,7 @@ fn apply_value(
                 during_reads: Vec::new(),
                 via_twice: false,
                 maker_tasks: Vec::new(),
+                reach: Vec::new(),
                 task_how: None,
             });
             // A closure that a callee made holds the values that it runs in

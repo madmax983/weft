@@ -1,0 +1,9 @@
+// R0z Z9c-A (review probe): R0f item slots, the callee spawns two parameters at the same time; both are values of the interface of `par`.
+struct C { k: u64 }
+fn both2(a: fn(), b: fn()) / async { scope { s => s.spawn(a); s.spawn(b); () } }
+fn par(h: fn(), k: fn()) / async { both2(h, k) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+    print(c.k)
+}

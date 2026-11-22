@@ -17,6 +17,8 @@ pub mod places;
 pub mod dataflow;
 #[path = "../../../crates/weft-verified/src/lifecycle.rs"]
 pub mod lifecycle;
+#[path = "../../../crates/weft-verified/src/tasks.rs"]
+pub mod tasks;
 
 // The group-borrowing model: the base model, its soundness, B1 (CFG) and B3
 // (layout, its soundness proof and its examples). Source:

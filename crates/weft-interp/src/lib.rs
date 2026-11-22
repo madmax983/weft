@@ -126,6 +126,13 @@ pub struct RunOptions {
     /// the closures of each other, so a run takes the arm of another closure,
     /// and the check at the entry of its region fails. Off by default.
     pub wrong_arm_in_dispatch: bool,
+    /// A mutation for the tests of the fact oracle (plan stage R0z Z9c-A,
+    /// C7): the fact generator of the program of the fact oracle does not
+    /// add the values of the interface that run with a task of a call slot
+    /// outside its window (`weft_sema::analysis::tasks::NoSlotWith`), as on
+    /// main before C1. The `with` check then fails on a run where such
+    /// values run at the same time. Off by default.
+    pub no_slot_with: bool,
 }
 
 impl Default for RunOptions {
@@ -145,6 +152,7 @@ impl Default for RunOptions {
             site_henv_in_copies: false,
             wrong_closure_in_copies: false,
             wrong_arm_in_dispatch: false,
+            no_slot_with: false,
         }
     }
 }
@@ -341,7 +349,11 @@ fn runtime<'a>(
         // the copies of the callees at their calls, if it needs them (stage
         // R0k-a).
         let comps = if opts.fact_oracle {
+            let mutation = opts
+                .no_slot_with
+                .then(weft_sema::analysis::tasks::NoSlotWith::enter);
             let (b, c) = weft_sema::factgen::components_built(analysis, built);
+            drop(mutation);
             built = b;
             if opts.site_henv_in_copies {
                 built.program.regions.clear();

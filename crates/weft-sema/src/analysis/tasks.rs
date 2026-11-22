@@ -909,10 +909,15 @@ pub struct RawHow {
 /// second start of a task of the value is `twice`; a run of another value
 /// of the interface, plain or as a task, is in `with`; the changes and
 /// lends of the body are `writes`, and its reads are `reads`.
+///
+/// `with` has the values of the interface that run while a task of a call
+/// slot runs, outside the window of the task (plan stage R0z Z9c-A, C1):
+/// [`add_with`] adds them.
 pub fn task_hows(
     facts: &weft_facts::FnFacts,
     task_runs: &[(weft_facts::TaskId, u32, bool, bool)],
     run_at: &[(u32, bool, weft_facts::NodeId)],
+    with: &[(weft_facts::TaskId, u32, bool)],
 ) -> Vec<RawHow> {
     use std::collections::{BTreeMap, HashMap};
     use weft_facts::NodeId;
@@ -1033,7 +1038,166 @@ pub fn task_hows(
             h.with.insert(i);
         }
     }
-    out.into_values().collect()
+    let mut hows: Vec<RawHow> = out.into_values().collect();
+    add_with(&mut hows, task_runs, with);
+    hows
+}
+
+thread_local! {
+    /// The mutation [`NoSlotWith`] is on.
+    static NO_SLOT_WITH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A mutation for the tests of the fact oracle (plan stage R0z Z9c-A, C7).
+///
+/// While the value lives, [`add_with`] adds nothing. The summaries then lose
+/// the values of the interface that run with a task outside its window, as
+/// on main before C1, and the `with` check of the fact oracle must fail on a
+/// run where such values run at the same time.
+#[derive(Debug)]
+pub struct NoSlotWith {
+    old: bool,
+}
+
+impl NoSlotWith {
+    /// Turns the mutation on until the value drops.
+    #[must_use]
+    pub fn enter() -> Self {
+        Self {
+            old: NO_SLOT_WITH.with(|c| c.replace(true)),
+        }
+    }
+}
+
+impl Drop for NoSlotWith {
+    fn drop(&mut self) {
+        NO_SLOT_WITH.with(|c| c.set(self.old));
+    }
+}
+
+/// Adds the rows `with` to the hows `hows` of the tasks `task_runs` (plan
+/// stage R0z Z9c-A, C1).
+///
+/// A row has a task, and a value of the interface (the parameter or
+/// capture, true for a capture) that the body runs while the task runs,
+/// but not at a node in the window of the task: a value that the callee of
+/// a call slot runs with the task (`TaskHow::with` of the callee), or a
+/// value that a clause of a local handler runs while the task runs. The
+/// how of the value of the task gets the value in `with`. A row of the value
+/// itself is a second run at the same time (`twice`). A row of the other
+/// kind (a capture for a parameter) has no place in `with`: it does not
+/// count. A row adds no `with` to the how of the other value: its own task
+/// (if it has one) gets the row of the other direction from the callee, or
+/// it runs as plain code.
+///
+/// The verified union (`weft_verified::tasks::compose`) gives the new how:
+/// it keeps each flag and each entry of the old how.
+pub fn add_with(
+    hows: &mut [RawHow],
+    task_runs: &[(weft_facts::TaskId, u32, bool, bool)],
+    with: &[(weft_facts::TaskId, u32, bool)],
+) {
+    use weft_verified::tasks::{compose, SlotHow};
+    if with.is_empty() || NO_SLOT_WITH.with(std::cell::Cell::get) {
+        return;
+    }
+    for how in hows.iter_mut() {
+        let mut more = SlotHow::default();
+        for &(t, param, capture, _) in task_runs {
+            if (param, capture) != (how.param, how.capture) {
+                continue;
+            }
+            for &(u, p2, c2) in with {
+                if u != t || c2 != capture {
+                    continue;
+                }
+                if p2 == param {
+                    more.twice = true;
+                } else {
+                    more.with.push(p2);
+                }
+            }
+        }
+        if !more.twice && more.with.is_empty() {
+            continue;
+        }
+        more.with.sort_unstable();
+        more.with.dedup();
+        let old = SlotHow {
+            thread: how.thread,
+            twice: how.twice,
+            with: how.with.iter().copied().collect(),
+            ..SlotHow::default()
+        };
+        let new = compose(&old, &more);
+        how.thread = new.thread;
+        how.twice = new.twice;
+        how.with = new.with.into_iter().collect();
+    }
+}
+
+/// The values of the interface that clauses of local handlers run while the
+/// tasks `task_runs` run (plan stage R0z Z9c-A, C1): rows for [`add_with`].
+///
+/// `runs` has each run of a value of the interface in a clause
+/// (`factgen::handlers::clause_perform_run_at`: the parameter or capture,
+/// true for a capture, and the node): before the first resume point, at a
+/// perform of the operation of the clause; after it, at the `Post` node of
+/// the `handle`, if the clause also runs at such a perform. A task runs while
+/// the clause runs if the node is in the window of the task (the rule
+/// `active` of the spec).
+///
+/// A clause that runs at a call, and the code after the resume of a clause
+/// that the handled body does not perform directly, are not here (review
+/// rounds 1 to 3 of Z9c-A, B1 to B3: false positives). The facts give such
+/// runs for each clause of the handler, not for the operation, and the part
+/// `waits` of the callee names the effect, not the task or the operation.
+/// That stays a gap.
+pub fn clause_with(
+    facts: &weft_facts::FnFacts,
+    task_runs: &[(weft_facts::TaskId, u32, bool, bool)],
+    runs: &[(u32, bool, weft_facts::NodeId)],
+) -> Vec<(weft_facts::TaskId, u32, bool)> {
+    use std::collections::HashMap;
+    use weft_facts::NodeId;
+    let mut out = Vec::new();
+    if runs.is_empty() || task_runs.is_empty() {
+        return out;
+    }
+    let mut succ: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    let tasks: BTreeSet<weft_facts::TaskId> = task_runs.iter().map(|&(t, _, _, _)| t).collect();
+    for &t in &tasks {
+        let ends: BTreeSet<NodeId> = facts
+            .joined_at
+            .iter()
+            .filter(|(u, _)| *u == t)
+            .map(|(_, n)| *n)
+            .collect();
+        let mut active: BTreeSet<NodeId> = BTreeSet::new();
+        let mut work: Vec<NodeId> = facts
+            .spawned_at
+            .iter()
+            .filter(|(u, _)| *u == t)
+            .flat_map(|(_, n)| succ.get(n).into_iter().flatten().copied())
+            .collect();
+        while let Some(q) = work.pop() {
+            if !active.insert(q) || ends.contains(&q) {
+                continue;
+            }
+            work.extend(succ.get(&q).into_iter().flatten().copied());
+        }
+        for &(param, capture, n) in runs {
+            if active.contains(&n) {
+                out.push((t, param, capture));
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// The places of the tasks that run while a body runs one function value of

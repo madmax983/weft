@@ -1,0 +1,11 @@
+// R0z Z9c-A probe: a clause of a local handler of par runs k while a task of the callee runs h; the callee performs while the task runs.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn sp(h: fn()) / async, Note { scope { s => s.spawn(h); note(1); () } }
+fn par(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } } in { sp(h); () }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+}

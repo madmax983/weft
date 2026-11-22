@@ -3366,6 +3366,39 @@ scope):
   summary of a function body and of a closure body (`rv2_a15`, `rv2_a35`). A task of the
   body that runs at the same time as the task of a value of the interface gives its
   changes and reads to `TaskHow::writes` and `reads` (`tasks::task_hows`; `rv2_a31`).
+- The `with` of a task of a call slot (plan stage R0z Z9c-A, C1). The window of a task
+  of a slot (6.7) has the task nodes of the slot only: a value of the interface that the
+  callee runs with the task runs at `Ret`, or at the task nodes of another slot, so it
+  was not in the window. The summary of the body then said that the value of the slot
+  runs with no other value, and a caller of the body lost the race (`fixes/r0z9c/a01`,
+  `a04`, `a10`: HOLE on main). Now `tasks::task_hows` has an input of rows (task,
+  value) for each value of the interface that runs with a task outside its window, and
+  `tasks::add_with` adds each row to the `with` of the how of the task (`twice` for a row
+  of the value itself), with the verified union `weft_verified::tasks::compose` (proof
+  P1). The rows come from two places. (1) `templates::call_tasks`: for each `j` of the
+  `with` of the slot (`TaskHow::with` of the callee), the values of the interface that
+  the values of argument `j` run (`templates::iface_values`: the app of the value, by
+  `Applied::callee_param`, and each parameter of the callee whose runs reach it,
+  `Applied::reach`, also a run that the node does not apply again, as `both2(h, h)`).
+  (2) `tasks::clause_with`, after the clauses: a run of a value of the interface in a
+  clause of a local handler in the window of a task (`handlers::clause_perform_run_at`):
+  before the first resume point, at a perform of the operation of the clause; after it,
+  at the `Post` node of the `handle`, only if the handled body performs the operation
+  of the clause (the facts give a `Post` run for each clause of the handler; review
+  round 3 of Z9c-A, B3: `d01` to `d27`). The rows are
+  exact relative to the summary of the callee: a callee that runs the values on
+  exclusive paths or in sequence has no `with` (`b01` to `b08`). A row of a capture for a
+  parameter (or the other way) does not count: `with` has one kind. No row gives the
+  other value a `with`. The summary has no new part. Not covered: a clause that runs at a
+  call. The facts give a run at a call for each clause of the handler whose effect the
+  callee can perform, with no regard to the operation, and the part `waits` of the callee
+  names an effect, not the task or the operation. Two first forms that used these runs
+  gave false positives (review rounds 1 and 2 of Z9c-A, B1 and B2: the clause runs at a
+  call while a task of a call slot runs, `c01`, `c09`, `c14`, `c24`, `c27`; the clause
+  runs at a call in the window of a task of the body for another operation, `c39`,
+  `c43`). So `a10`, `a15`, `z9carev2/p/p01_bad`, `p24_bad` and `z9carev3/p/q03_bad` (the
+  operation of the clause through a call) stay holes (HOLE on main too); the exact form
+  needs the waits of each task of the callee by operation.
 - A clause of a handler in a closure body that spawns on a scope of the maker (O1 of
   the review of R0e, since R0d): the task is in the part `tasks` of the closure
   (`emit_clause` gives its spawn sites to `closure_summary`), so the node that runs the
@@ -6983,6 +7016,27 @@ oracle names only places that the frame of the body owns or reaches: a local of 
 body (a frame that the oracle follows only for the task check) has no name there. The
 report counts the checks (`FactReport::task`, `task_unnamed`). Test: `fact_oracle.rs`
 `a_missing_task_write_of_a_second_run_fails_the_task_cover`.
+
+**As built (plan stage R0z Z9c-A, C7): the `with` check.** The summary of a body says
+which other values of the interface run while a task runs a value of its interface (6.4,
+`TaskHow::with`, `twice`). At the entry of a frame of a function body or of a closure
+body whose summary runs a value as a task, the oracle names the closure values of the
+interface: each parameter and capture that holds a closure (`FactOracle::iface_frame`;
+the summary of a function is `factgen::Component::summary`). When the machine runs a
+closure (`call_value`) or starts a task with one (`spawn_task`), the oracle walks the
+stack from the top (`FactOracle::value_run`). For a frame whose interface holds the
+closure (one entry only), each task of the frame that runs a value `j` of the interface
+and is not done must let the new run of value `k` run at the same time: `k` in the `with`
+of the run of `j` (for two tasks, of one of the two runs), `twice` for `k == j`, or the
+run in the worst way (`foreign`). Else the run fails with "fact oracle (with)". The walk
+stops at a frame that the oracle does not follow and at a clause frame (code of a caller,
+or a clause at a call whose slot tasks the facts do not tell apart: `a10`). A run that the
+task itself makes, a run of a capture beside a run of a parameter, and a function item do
+not count. The report
+counts the checks (`FactReport::with`). With the facts of main (the mutation
+`RunOptions::no_slot_with`, `analysis::tasks::NoSlotWith`) it fails on `a01`, `a04` and
+`a12`. Tests: `fact_oracle.rs` `a_summary_with_no_slot_with_fails_the_with_check`,
+`the_probes_of_the_with_of_slot_tasks_pass_the_fact_oracle`.
 
 **As built (R0k-b2): the closure of a copy region.** A copy region replaces a run of a
 function value by the body of one closure (6.1), so its facts hold only for a run of that

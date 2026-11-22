@@ -124,6 +124,13 @@ pub struct Em<'a> {
     /// (code of a caller, plan stage F19): the task, the parameter (or
     /// capture) and if it is a capture, and if the task is a `fork` branch.
     pub task_runs: Vec<(weft_facts::TaskId, u32, bool, bool)>,
+    /// The values of the interface that run while a task of a call slot
+    /// runs, outside the window of the task (plan stage R0z Z9c-A, C1): the
+    /// task, and the parameter (or capture) and if it is a capture. A value
+    /// that the callee runs with the task (`TaskHow::with` of the callee)
+    /// runs at `Ret` or at the task nodes of another slot of the call
+    /// (`analysis::tasks::add_with`).
+    pub task_with: Vec<(weft_facts::TaskId, u32, bool)>,
     /// While the template of a spawn applies its task: the spawn site, if
     /// the facts have no task for it (a task of a scope of the maker of a
     /// closure, in the facts of the closure summary; stage R0f).
@@ -3136,7 +3143,8 @@ pub fn call(
     // value that it runs while a task runs gives its places to them (plan
     // stage F19).
     let tasks = out.apps.iter().any(|a| a.task_run.is_some());
-    let mut plain = std::collections::BTreeMap::new();
+    let mut plain = PlainPlaces::new();
+    let ifaces = iface_values(&out.apps);
     let run_frames = if tasks {
         let mut frames = Vec::new();
         for app in out.apps.iter().filter(|a| a.task_run.is_none()) {
@@ -3169,7 +3177,7 @@ pub fn call(
             block,
             slots,
             args,
-            &plain,
+            (&plain, &ifaces),
             (&spans, at, origin, &callee),
         )?;
     }
@@ -4089,6 +4097,15 @@ fn preds(em: &Em<'_>, n: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
+/// The places that the values of each parameter of a callee change and read
+/// where the call runs them as plain code ([`call_tasks`]).
+type PlainPlaces = std::collections::BTreeMap<u32, (Vec<PlaceId>, Vec<PlaceId>)>;
+
+/// The values of the interface of the body (the parameter or capture, and
+/// true for a capture) that the values of each parameter of a callee run,
+/// as plain code or as a task ([`call_tasks`], plan stage R0z Z9c-A, C1).
+type IfaceValues = std::collections::BTreeMap<u32, Vec<(u32, bool)>>;
+
 /// One value that a call runs as a task at four task nodes ([`call_tasks`]).
 ///
 /// It has the parameter of the callee, how the callee runs it (`TaskHow`,
@@ -4122,6 +4139,27 @@ struct TaskSlot {
     pub reads: Vec<PlaceId>,
     /// The values that the task runs.
     pub mine: Vec<transfer::Applied>,
+}
+
+/// The values of the interface of the body that the values of each
+/// parameter of the callee run, from the apps `apps` of a call (plan stage
+/// R0z Z9c-A, C1): the parameter of each app of a value of the interface
+/// (`Applied::callee_param`), and each parameter whose runs reach it
+/// (`Applied::reach`).
+fn iface_values(apps: &[transfer::Applied]) -> IfaceValues {
+    let mut out = IfaceValues::new();
+    for a in apps {
+        let Some(r) = a.run.as_ref().filter(|r| !r.result) else {
+            continue;
+        };
+        for &j in a.callee_param.iter().chain(&a.reach) {
+            let e = out.entry(j).or_default();
+            if !e.contains(&(r.param, r.capture)) {
+                e.push((r.param, r.capture));
+            }
+        }
+    }
+    out
 }
 
 /// The slots of a call of a function item with summary `sum` and σ `sigma`:
@@ -4249,6 +4287,10 @@ fn value_slots(apps: &[transfer::Applied], slots: &[u32]) -> Option<Vec<TaskSlot
 ///   `TaskHow::reads`);
 /// - the end (`joined_at`).
 ///
+/// The values of the interface of the body that these values of `with` run
+/// (`ifaces`) go to `Em::task_with`: the how of the value of the task in the
+/// summary of the body gets them (plan stage R0z Z9c-A, C1).
+///
 /// # Errors
 ///
 /// The errors of α.
@@ -4260,7 +4302,7 @@ fn call_tasks(
     block: weft_ir::BlockId,
     slots: Vec<TaskSlot>,
     args: &[Operand],
-    plain: &std::collections::BTreeMap<u32, (Vec<PlaceId>, Vec<PlaceId>)>,
+    (plain, ifaces): (&PlainPlaces, &IfaceValues),
     (spans, at, origin, callee): (&[Span], Span, weft_ir::Span, &str),
 ) -> R {
     let task_nodes = std::mem::take(&mut em.task_nodes);
@@ -4415,6 +4457,15 @@ fn call_tasks(
         ));
     }
     for ((twice, with, how_writes, how_reads), t, (d, x, e), writes, reads) in started {
+        // The values of the interface that the callee runs while the task
+        // runs (`with`) run outside the window of the task: at `Ret`, or at
+        // the task nodes of another slot. The how of the value of the task
+        // gets them (plan stage R0z Z9c-A, C1; `analysis::tasks::add_with`).
+        for j in &with {
+            for &(q, c) in ifaces.get(j).into_iter().flatten() {
+                em.task_with.push((t, q, c));
+            }
+        }
         if twice {
             em.facts.spawned_at.push((t, d));
             em.facts.lends_mut.extend(writes.iter().map(|&q| (d, q)));
@@ -4638,7 +4689,8 @@ fn value_run(
     let frames = match slots {
         Some(slots) => {
             let mut frames = Vec::new();
-            let mut plain = std::collections::BTreeMap::new();
+            let mut plain = PlainPlaces::new();
+            let ifaces = iface_values(&out.apps);
             for app in out.apps.iter().filter(|a| a.task_run.is_none()) {
                 let marks = (
                     em.facts.mutates_at.len(),
@@ -4670,7 +4722,7 @@ fn value_run(
                 block,
                 slots,
                 args,
-                &plain,
+                (&plain, &ifaces),
                 (&spans, at, origin, &label),
             )?;
             frames

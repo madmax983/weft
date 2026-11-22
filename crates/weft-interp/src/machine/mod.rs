@@ -754,6 +754,9 @@ impl<'r, 'a> Machine<'r, 'a> {
         };
         let scope = self.tasks[t].scope;
         self.tasks[t].state = TState::Done;
+        if let Some(fo) = self.facts.as_mut() {
+            fo.task_done(t);
+        }
         self.tasks[t].result = Some(result);
         self.tasks[t].frames.clear();
         if let (Some(sid), Some(msg)) = (scope, failed) {

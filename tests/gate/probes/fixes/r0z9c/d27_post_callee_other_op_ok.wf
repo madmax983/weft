@@ -1,0 +1,16 @@
+// R0z Z9c-A review round 3 (probe q27): realistic shape: a request handler spawns the job, then serves a body with a local Log handler; the
+// body calls a callee that only logs info; warn (not performed anywhere) counts a warning after resume.
+effect Log { fn info(m: u64), fn warn(m: u64) }
+struct Stats { warns: u64 }
+fn step(i: u64) / Log { info(i) }
+fn serve(job: fn(), count: fn()) / async {
+    scope { s =>
+        s.spawn(job)
+        handle Log { fn info(m) { print(m); resume(()) } fn warn(m) { print(m); resume(()); count() } } in { step(1); step(2) }
+    }
+}
+fn main() / async {
+    let st = Stats { warns: 0 }
+    serve(|| print(st.warns), || st.warns += 1)
+    print(st.warns)
+}

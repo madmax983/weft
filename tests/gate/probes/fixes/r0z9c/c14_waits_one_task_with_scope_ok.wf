@@ -1,0 +1,12 @@
+// R0z Z9c-A review round 1 (probe f14): one task of h; the callee performs note after the scope ends, while a task of its own runs.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn sp6(h: fn()) / async, Note { scope { s => s.spawn(h); () }; scope { s => s.spawn(|| ()); note(1) } }
+fn par(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } } in { sp6(h) }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+    print(c.k)
+}

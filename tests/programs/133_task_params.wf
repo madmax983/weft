@@ -82,10 +82,12 @@ fn via_task_and_call() / async {
     task_and_call(|| n += 1)   //~ W0405
 }
 
-// The parameters of `pass_on` run in a `fork`.
+// The parameters of `pass_on` run in a `fork`: at the same time, so each
+// task conflicts with the other one (plan stage R0z Z9c-A: the summary of
+// `pass_on` keeps the `with` of `par`).
 fn via_pass_on() / par {
     let n = 0
-    pass_on(|| n += 1, || print(n))   //~ W0403 old: W0403 W0405
+    pass_on(|| n += 1, || print(n))   //~ W0403 W0405 W0405 old: W0403 W0405
 }
 
 // A fork branch of the callee captures a nonportable value.

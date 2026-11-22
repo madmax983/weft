@@ -1,0 +1,10 @@
+// R0z Z9c-A probe (clean twin of a14): par performs before it spawns h, so the clause that runs k does not run with the task.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn par(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } } in { note(1); scope { s => s.spawn(h); () } }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+}

@@ -4605,3 +4605,203 @@ mod r0z9a {
         }
     }
 }
+
+/// Plan stage R0z Z9c-A (C1): the `with` of a task of a call slot keeps the
+/// values of the interface that run while the task runs.
+mod r0z9c {
+    use weft_facts::{FnFacts, NodeId};
+
+    /// The facts of `main` of the probe `name` of
+    /// `tests/gate/probes/fixes/r0z9c`. The probe is in scope.
+    fn main_facts(name: &str) -> FnFacts {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z9c")
+            .join(name);
+        let src = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        let a = weft_sema::analyze_source(&src, opts)
+            .unwrap_or_else(|d| panic!("{name}: the source does not parse: {}", d.message));
+        assert!(
+            a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
+            "{name}: {:?}",
+            a.ir_scope
+        );
+        a.bodies
+            .into_iter()
+            .find(|b| b.facts.name == "main")
+            .map_or_else(|| panic!("{name}: no `main`"), |b| b.facts)
+    }
+
+    /// For the tasks of the call slots of `f`: the number of accesses at the
+    /// node of the code that runs with a task (the node before the end of
+    /// the task, if it does not start the task), and the number of tasks
+    /// that start at two task nodes (`twice`).
+    fn slot_with(f: &FnFacts) -> (usize, usize) {
+        let task_node = |n: NodeId| f.node(n).kind == "call task";
+        let mut at_x = 0;
+        let mut twice = 0;
+        for &(t, e) in &f.joined_at {
+            if !task_node(e) {
+                continue;
+            }
+            // The facts drop a task node with no facts: with no code that
+            // runs with the task, the start (or the second start) of the
+            // task is the node before its end.
+            let starts_t = |n: NodeId| f.spawned_at.contains(&(t, n));
+            for &(x, _) in f
+                .cfg_edge
+                .iter()
+                .filter(|&&(x, b)| b == e && task_node(x) && !starts_t(x))
+            {
+                at_x += f.reads_at.iter().filter(|&&(n, _)| n == x).count();
+                at_x += f.lends_mut.iter().filter(|&&(n, _)| n == x).count();
+            }
+            let starts = f
+                .spawned_at
+                .iter()
+                .filter(|&&(u, n)| u == t && task_node(n))
+                .count();
+            if starts > 1 {
+                twice += 1;
+            }
+        }
+        (at_x, twice)
+    }
+
+    /// The bad probes: the callee of a function of `main` runs another value
+    /// of the interface with a task of a call slot (a parameter as plain
+    /// code, a second task), a clause of a local handler runs one in the
+    /// window of a task of the body, or the same value runs again. The caller gets the places of that value at the node of the
+    /// code that runs with the task, or a second start of the task. With C1
+    /// off (main before Z9c-A) there are none, and the checker accepts the
+    /// race.
+    #[test]
+    fn a_value_that_runs_with_a_slot_task_reaches_the_caller() {
+        for name in [
+            "a01_item_with_param_bad.wf",
+            "a04_item_two_tasks_bad.wf",
+            "a12_same_param_twice_bad.wf",
+            "a13_task_with_self_plain_bad.wf",
+            "a14_direct_clause_bad.wf",
+            "a16_nested_twice_bad.wf",
+            "a17_value_call_bad.wf",
+        ] {
+            let (at_x, twice) = slot_with(&main_facts(name));
+            assert!(at_x > 0 || twice > 0, "{name}: {at_x} {twice}");
+        }
+    }
+
+    /// The clean probes with runs on exclusive paths or in sequence: the
+    /// summary has no `with`, so the caller gets no places at the node of the
+    /// code that runs with the task and no second start.
+    #[test]
+    fn runs_on_exclusive_paths_or_in_sequence_add_nothing() {
+        for name in [
+            "b01_exclusive_ok.wf",
+            "b02_sequence_ok.wf",
+            "b03_two_tasks_sequence_ok.wf",
+            "b04_clause_before_task_ok.wf",
+            "b05_clause_after_task_ok.wf",
+            "b08_exclusive_two_tasks_ok.wf",
+            "a14_direct_clause_ok.wf",
+        ] {
+            assert_eq!(slot_with(&main_facts(name)), (0, 0), "{name}");
+        }
+    }
+
+    /// Review round 1 of Z9c-A (B1): a clause of a local handler of the body
+    /// that runs at a call while a task of a call slot can run adds nothing.
+    /// The part `waits` of the callee names an effect, not the task or the
+    /// operation, so a first form that gave each slot task the clause runs
+    /// had false positives: the callee waits only while another task runs
+    /// (`c01`), before the spawn (`c09`, `c24`), or while a task of its own
+    /// runs (`c14`, `c27`). The forms `a10` and `a15` stay open (an old hole
+    /// of main).
+    #[test]
+    fn a_clause_at_a_call_with_a_slot_task_adds_nothing() {
+        for name in [
+            "c01_waits_other_task_ok.wf",
+            "c09_clause_before_spawn_param_ok.wf",
+            "c14_waits_one_task_with_scope_ok.wf",
+            "c24_waits_same_effect_before_ok.wf",
+            "c27_waits_internal_task_realistic_ok.wf",
+            "a10_item_clause_ok.wf",
+        ] {
+            assert_eq!(slot_with(&main_facts(name)), (0, 0), "{name}");
+        }
+    }
+
+    /// Review round 2 of Z9c-A (B2): a clause of a local handler that runs a
+    /// value of the interface at a call in the window of a task of the body
+    /// adds no `with` row. The facts give a run at the call for each clause
+    /// of the handler whose effect the callee can perform, not for the
+    /// operation: in `c39` and `c43` the callee performs only another
+    /// operation. A clause run at a perform in the window still counts
+    /// (`a14_direct_clause_bad`).
+    #[test]
+    fn a_clause_at_a_call_node_adds_no_with_row() {
+        for name in [
+            "c39_other_op_via_callee_ok.wf",
+            "c43_log_helper_realistic_ok.wf",
+        ] {
+            assert_eq!(slot_with(&main_facts(name)), (0, 0), "{name}");
+        }
+        let (at_x, _) = slot_with(&main_facts("a14_direct_clause_bad.wf"));
+        assert!(at_x > 0);
+    }
+
+    /// Review round 3 of Z9c-A (B3): the code after the resume of a clause
+    /// runs at the `Post` node of the `handle`. The facts give a `Post` run
+    /// for each clause of the handler, so the run counts for the `with` of a
+    /// task only if the handled body performs the operation of the clause:
+    /// in the clean probes it does not (`d01`: only `note`, and the code
+    /// after the resume of `ping` runs `k`; `d11`: nothing). (`d20` has
+    /// accesses at its slot nodes from its two known tasks, as on main.) In
+    /// the bad twin
+    /// of `d01` the body performs `ping` in the window of the task, and the
+    /// caller gets the places of `k`.
+    #[test]
+    fn a_post_run_counts_only_for_a_clause_that_the_body_performs() {
+        for name in [
+            "d01_post_other_op_ok.wf",
+            "d03_log_post_realistic_ok.wf",
+            "d11_post_same_value_ok.wf",
+            "d16_post_loop_ok.wf",
+            "d27_post_callee_other_op_ok.wf",
+        ] {
+            assert_eq!(slot_with(&main_facts(name)), (0, 0), "{name}");
+        }
+        let (at_x, _) = slot_with(&main_facts("d01_post_other_op_bad.wf"));
+        assert!(at_x > 0);
+    }
+
+    /// `analysis::tasks::add_with`: a row of another value adds it to
+    /// `with`, a row of the value itself sets `twice`, a row of the other
+    /// kind or of another task adds nothing, and the old how stays.
+    #[test]
+    fn add_with_keeps_the_old_how_and_adds_the_rows() {
+        use weft_facts::TaskId;
+        use weft_sema::analysis::tasks::{add_with, RawHow};
+        let t = TaskId(0);
+        let runs = [(t, 0, false, false)];
+        let mut hows = vec![RawHow {
+            param: 0,
+            thread: true,
+            with: std::iter::once(3).collect(),
+            ..RawHow::default()
+        }];
+        add_with(
+            &mut hows,
+            &runs,
+            &[(t, 1, false), (t, 2, true), (TaskId(1), 4, false)],
+        );
+        let h = &hows[0];
+        assert!(h.thread && !h.twice);
+        assert_eq!(h.with.iter().copied().collect::<Vec<_>>(), [1, 3]);
+        add_with(&mut hows, &runs, &[(t, 0, false)]);
+        assert!(hows[0].twice);
+    }
+}
