@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L (done: tier 1 3 rows, 24 to 21 fallbacks of the census rows; tier 2 4 rows, 19 to 15; `c09_cc_during_ok` and `j01_again_ok` stay open (R-CODE); "Z9a as built"), Z9c L (part A done: change C1 of the design review, proof P1, the `with` check of the fact oracle; no row closes, eight old holes of main close; "Z9c-A as built"; part B done: late slots, capture slots, proof P2, the task cover of a late slot; tier 1 2 rows, 21 to 19 fallbacks of the census rows; tier 2 2 rows, 15 to 13; c16 stays open (R-VCODE); "Z9c-B as built"; part C open), Z10 M-L; then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L (done: tier 1 3 rows, 24 to 21 fallbacks of the census rows; tier 2 4 rows, 19 to 15; `c09_cc_during_ok` and `j01_again_ok` stay open (R-CODE); "Z9a as built"), Z9c L (part A done: change C1 of the design review, proof P1, the `with` check of the fact oracle; no row closes, eight old holes of main close; "Z9c-A as built"; part B done: late slots, capture slots, proof P2, the task cover of a late slot; tier 1 2 rows, 21 to 19 fallbacks of the census rows; tier 2 2 rows, 15 to 13; c16 stays open (R-VCODE); "Z9c-B as built"; part C done: the nested slots of a call; tier 1 2 rows, 19 to 17 fallbacks of the census rows; tier 2 0 rows, 13 stay; part 4 (c10) is out after review round 1, part 3 stays for Z9d; "Z9c-C as built"), Z10 M-L; then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -4603,7 +4603,7 @@ come before the stages with clean rows only; then the gain for each size):
 | 9 | Z8 handler environment leftovers (done: 2 rows of tier 1 close, 27 to 25; 2 rows of tier 2, 21 to 19; "Z8 as built") | as above | 2 (14) | 2 (14) | M | g2_lexical, d02 and twins; `p2515` | low |
 | 10 | Z9b E4 window (done: 1 row of tier 1 closes, 25 to 24; tier 2 0 rows, 19 stay; "Z9b as built") | as above | 1 (13) | 0 (14) | S-M | s4 and its bad twin; `fixes/r0z9b`; `analysis_units` `r0z9b::` | low |
 | 11 | Z9a E2 (done: 3 rows of tier 1 close, 24 to 21; 4 rows of tier 2, 19 to 15; c09 and j01 stay open, R-CODE; "Z9a as built") | as above | 5 (8) | 4 (10) | M-L | j01, c09, s8, i9, s9; `scope.rs`; `fixes/r0z9a`; `analysis_units` `r0z9a::` | `lost-clean` of i9 (and of s9: the review) |
-| 12 | Z9c tasks of the values of the interface (part A done: the `with` of a task of a call slot, C1; P1; the `with` check, C7; no row closes, 21 and 15 stay; "Z9c-A as built"; part B done: the capture slots, S1, P2; rows 100 and 104 of tier 1 close, 21 to 19; rows 27 and 30 of tier 2, 15 to 13; c16 stays (R-VCODE); "Z9c-B as built"; part C open) | as above | 8 (0) | 6 (4) | L | j03, j04, s3, a13, c16, c10, j07_ok; the summary oracle; proofs | a design review first; the largest risk of the plan |
+| 12 | Z9c tasks of the values of the interface (part A done: the `with` of a task of a call slot, C1; P1; the `with` check, C7; no row closes, 21 and 15 stay; "Z9c-A as built"; part B done: the capture slots, S1, P2; rows 100 and 104 of tier 1 close, 21 to 19; rows 27 and 30 of tier 2, 15 to 13; c16 stays (R-VCODE); "Z9c-B as built"; part C done: the nested slots of a call; rows 98 and 101 of tier 1 close, 19 to 17; tier 2 13 stay; part 4 (c10) is out after review round 1; "Z9c-C as built"; part 3 is Z9d) | as above | 8 (0) | 6 (4) | L | j03, j04, s3, a13, c16, c10, j07_ok; the summary oracle; proofs | a design review first; the largest risk of the plan |
 | 13 | Z10 the chain | as above | 0 (0) | 4 (0) | M-L | `closure_chain_*`; `scale.rs`, `limits.rs` | the time limit |
 | 14 | R0z the new baseline | 0 fallbacks: write the `ir` records of tiers 1 and 2 as the committed baseline; a fallback becomes a gate blocker (`crash`); the `open-old` entries and the old-against-new classes of the ledger close | 0 | 0 | S | the gate reads the new baseline | none |
 
@@ -6994,7 +6994,8 @@ probes: `tests/gate/probes/fixes/r0z9c/`):
   `with`, `writes` and `reads`; each how is within the result), with
   `lemma_compose_monotone`. `proofs/link` includes the file (`check-copies.sh`: 11 files).
   No `assume`, `admit` or `external_body`. Verus was not in the build container of the
-  stage, so the proof was not run: the result of Verus is not known.
+  stage, so the proof was not run then; `proofs/verify-all.sh` passes since Z9c-B
+  (`weft-verified` 78 verified, "Z9c-B as built").
 - C7, the `with` check of the fact oracle (`docs/ir.md` 8.5): a task that runs value `j`
   of the interface of a frame is live while the frame (or a callee in its stack) runs
   value `k` as plain code or as a new task; the run of `j` in the summary must have `k` in
@@ -7159,7 +7160,10 @@ Z9c-B as built (S1, part 1 and proof P2 of the design of Z9c, and part 5 as a ch
   `Main`: R-VARG (no argument slot nodes) and R-VCLAUSE (no wait handler) keep that true.
   The lemma with one start does not state `twice` or `seq` (another start set). No
   `assume`, `admit` or `external_body`. Verus was not in the build container of the
-  stage, so the proof was not run.
+  stage. It ran later (commit e506018, which builds the closed sets of the two precision
+  lemmas with `insert` and `union`, as `Set::new` of the pinned `vstd` gives an `Option`):
+  `proofs/verify-all.sh` passes (borrowing 169, effects 122, link 246, `weft-verified`
+  78 verified).
 - Rows (the census, `check --reasons`, `weft-work/z9cb/census/`, main and Z9c-B on the
   same files, after review round 4). Tier 1: 239 fallbacks of 6107 files with main, 229
   with Z9c-B. Of the 6038 files of Z9c-A, three leave the fallback (`j04_value_ok`,
@@ -7267,9 +7271,186 @@ Z9c-B as built (S1, part 1 and proof P2 of the design of Z9c, and part 5 as a ch
   parts 2 to 4 (PR-C and Z9d). The refusals keep the rule of main, so the old pipeline
   checks those programs: `b04_bad` and `b05_bad` are misses of the old pipeline (fb-miss
   on main and with Z9c-B).
-- What I am least sure of: P2, which was not run with Verus; and the join of two entries
+- What I am least sure of: P2, which was not run with Verus in the stage (it passes
+  since e506018, above); and the join of two entries
   of one capture into one slot (exclusive paths are one run; entries on one path rely on
   the `again` of the app and on `TaskOf::seq`, tested by `b11` and `b12`).
+
+Z9c-C as built (part 2 of the design of Z9c, with the changes C3 and C4 of the design
+review; part 4 (C2) was in the first build and is out after review round 1; `docs/ir.md` 6.4 and 8.5; the work files: `weft-work/z9cc/` outside
+the repository, notes `z9cc/NOTES-C.txt`, binaries `z9cc/bin/weft-c5`, `weft-gate-c5`;
+main is 2a55269, `z9cc/base/weft-main`, `weft-gate-main`; the probes:
+`tests/gate/probes/fixes/r0z9cc/`):
+
+- The reason on main. A callee of a function body B runs a closure g of B as plain code,
+  and g spawns a parameter h of B in its own scope (`fn param_in_sim(f: fn()) {
+  sim.run(seed: 1) { scope { s => s.spawn(f) } } }`). The call had no task nodes for the
+  task of h, so B was pending (`NESTED_TASK_RUN`), and a caller that gives h a value
+  that changes a place stopped with `TASK_RUN` (the summary of B had the worst way):
+  rows 98 (`a13_ok`) and 101 (`j07_run_ok`) of tier 1. Row 105 (`c10`) and its copy in
+  tier 2 have the same reason for another form (part 4, below: it stays).
+- Part 2, the nested slots (F18). At depth 1, `transfer::apply_runs` asks for a nested
+  slot of the run as a task (`transfer::nested_how`, `SlotKey::Nested { outer, closure,
+  inner }`, `Applied::nested`), and `transfer::nested_slots` notes it at the call
+  (`Handlers::late_slots`). The fact generator puts the run of h at the four late slot
+  nodes of S1 (`templates::nested_slots`, `call_tasks`). The how of the slot is the how
+  of the task in g (`weft_verified::tasks::compose`, proof P1; no new lemma; the join
+  with the places of `Run::during` of the callee is empty, as R-NREF refuses a callee whose tasks write or read a mapped place while it runs g). The run of h is then a task of B, and `tasks::task_hows` gives
+  the summary of B the how of the window of the slot (not `foreign`). A caller of B
+  applies it at its item slot (R0f): W0314 (`j07_run_bad`, `a13_sim_param_task`,
+  `a13b`, `a13c`: the error comes from the item slot now, with the text of
+  `task_w0314`), W0301 of a reference across the call, W0405 with a task of the caller,
+  W0502 of a `once` value given to two calls. The apps of the slot keep their `Ret` parts
+  (C3). No fact relation and no rule of `spec/weft.dl` is new (ADR 0002: only the corpus
+  program `211_nested_slots`).
+- Refusals of part 2 (each keeps `NESTED_TASK_RUN`, with rule E, the rule of main; the
+  design names R-DEEP, R-OUTER-TASK, R-AGAIN, R-MAKER, R-NMULTI and R-NODE; the build
+  adds the narrow ones that the probes of the old holes asked for):
+  - R-DEEP: a run at depth 2 or more. R-NODE: only a call of a function item
+    (`call_out`) asks; a call of a function value, a `spawn`, a `fork` and a clause do
+    not.
+  - R-OUTER-TASK: the callee runs g as a task, or only gives it to code of a caller, or
+    g is not a closure of the component (`FnVal::Closure`).
+  - R-AGAIN: the callee can run g more than once (`many`, `seq`, `after`, two values, a
+    run around it), g can run h more than once (`many`, `seq`, `after`, `task_seq`,
+    `twice`, code of a caller that runs it again), or the node is in a cycle of B.
+  - R-MAKER (C6): `TaskHow::tasks`, `Applied::maker_tasks`, or the part `tasks` of g.
+  - R-NMULTI (with C4): more than one key at the node (two values of the callee, two
+    entries of the callee or of g, two tasks), a callee with more than one entry in its
+    part `runs`, or a key with no app.
+  - R-NITEM: a value of the run is not a parameter of a function item (`Capture`,
+    `ParamResult`, a known value), or the node is not in the root body of the item.
+  - R-NREF: a parameter of B can give B a reference (`transfer::plain_param`: not
+    `ref_free`, or a function type whose result has a function type). The direct forms
+    (B spawns h itself, `weft-work/z9cc/p/d02` to `d05`: a reference parameter, a type
+    parameter, a getter, an `rc` handle) are holes of main (issue #78: no W0312 for the
+    writes of a slot task while a reference into the place is live); in the nested form
+    main holds them in the fallback. The second clause came from the review probe
+    `z9cbrev3/p/t18_maker_of_reader_ok` in the nested form: with a slot it got the
+    conservative W0301 of its direct form (FP-IR on main), a new false positive. Review
+    round 2 (B1) added the locals (`transfer::plain_bodies`, `plain_local`): each local of
+    B, of the callee and of each body inside them (not an environment, an upvar, a scope,
+    a task result, a capability or a continuation) has such a type, or a task handle or a
+    function type of such types; and no task that the callee runs while it runs g writes or reads a mapped place (the places of `Run::during` after the mapping are empty)
+    (`Run::during` is empty). An `rc` handle from the result of an operation in B
+    (`z9ccrev2/p4/u13`, `u17` to `u19`, `v04`, `v15`, `v16`) or in the callee (`v18`) gave
+    a lost race with a slot (held or fb-miss to HOLE; the direct forms `u14`, `v16d`, `v21`
+    are holes of main), and the task cover failed on the clean `v02`, `v03`, `v05`, `v17`:
+    the write of the value to the `rc` object is not behind a parameter of B. A reference
+    from an operation gave the clean `e01` a false W0301 (as its direct twins on main).
+  - R-NBUSY: the task is on another thread or is code of a caller, g runs another value
+    while the task runs (`TaskHow::with`: the summary would lose the overlap, C1), the
+    run has places (`Run::args`), or g performs an operation of an effect other than
+    `Async`, waits at one, or resumes more than once (a clause of a handler of a caller
+    can run while the task runs; Q2 of the design review, n22).
+  - R-NSLOT: the call has an item slot (two slots of one call are in sequence in the
+    facts, so the summary of B would lose the tasks that run at the same time).
+  - R-NCLAUSE: a clause of a local handler can run at the node, or at a call node of g
+    (as R-VCLAUSE of Z9c-B).
+  - R-NSTORE: the callee or a value that it runs stores a reference or a function value
+    into a place of the caller (issue #104).
+  - R-NONE (review rounds 1 and 2, F1, B2, B3), by value flow (`transfer::one_flow`): the
+    capture of g copies the parameter local itself (no alias), that local has one read in
+    B (the capture), the local that holds g has one read (the node), and no scope body,
+    handled body or clause of B reads either one. So no copy, field, result or argument
+    holds the value. A value at two nodes on exclusive paths gives two runs in the summary,
+    and a `once` value then got a false W0502 at the caller (round 1: `z9ccrev1/p/k05`,
+    `k05f`, `k05g`, `k05i`; round 2, through an alias: `z9ccrev2/p/r01`, `r03`, `r04`,
+    `r06`, `r08`, `r09`, `r10`; the direct forms give it on main too). An alias that B gives
+    back hid the second run (round 2, B2: `r12`, `r12r`, `r13`, a lost W0502; the direct
+    forms `r12d`, `r13d` are holes of main). The first form of round 1 counted the reads of
+    the capture source and of the parameters by name, so an alias passed. The value must
+    also come from a capture of g, not from a parameter of g (the index of the run is a
+    capture index only then).
+- Part 4 (c10) is out. The first build had fix (b) (a run as a task at depth > 0 of values
+  of the interface only, with a `foreign` how that is not `busy`, took the path of
+  `Unknown`) and a second form for c10 (a quiet run in a value that code of a caller runs).
+  Review round 1 (`weft-work/z9ccrev1/REPORT.txt`) found two hole classes there. H1: the
+  second form lost a race of the code of the caller with the task (9 probes, held or
+  fb-miss to HOLE: `w16`, `w30`, `w32`, `w33`, `w35`, `w37`, `w38`, `w40`, `w41`): a slot
+  in the closure gives the value an exact how (`tasks::task_hows`), so the summary does not
+  get the worst way, and even the worst way has no changes of the code itself. H2: fix (b)
+  skipped the note and with it rule E, so a `once` value that code of a caller runs two
+  times lost its W0502 (8 probes, both-reject to HOLE: `g06`, `f03`, `f03d`, `f03f`,
+  `f03h`, `f03i`, `f03l`, `g02`). Without the second form, fix (b) closes no row, so both
+  are out: each such run keeps `NESTED_TASK_RUN` (and rule E), the rule of main. Row 105
+  and its copy in tier 2 stay open for a later stage. The probes are in `fixes/r0z9cc`
+  (`h1_*`, `h2_*`, and `c08`, `c09` of the first build), and the unit test
+  `the_probes_of_review_round_1_keep_the_reason_of_main` fails on each one with the first
+  build.
+- The text of `NESTED_TASK_RUN` names the forms that stay: "a function value that a
+  function value of a callee runs as a task: a value that the run node knows, or a
+  value of the interface with no nested slot (plan stage R0z Z9d)". Part 3 (a value that
+  the run node knows) is not in this stage: rows 99 (`j03_nested_ok`) of tier 1 and 28,
+  29, 31 of tier 2 keep the reason.
+- The probes of the old holes, before the product code (`weft-work/z9cc/p`, 99 files:
+  the part-2 forms `p01` to `p33` with `sim.run`, `with_timeout` and an item callee, the
+  direct twins `d*`, and the part-4 forms `e01` to `e06` (review round 1 found the holes of
+  part 4 past them); and `weft-work/z9cc/conv`, 385
+  files: each review probe of Z9c-A and Z9c-B with a call `f()` of a local closure
+  becomes `run9(f)`, so the closure runs in a callee, the form of part 2). For each shape
+  the question was: does the item slot of the caller catch it? A reference into a place
+  that the task writes, held by the caller across the call: yes (W0301; `p01`, `c01`). A
+  reference parameter, a type parameter, a getter, an `rc` handle: no (the direct forms
+  are holes of main): R-NREF. A store into a captured reference before the task: only in
+  a closure body (R-NITEM). Two parameters with a plain run of k, or two tasks: R-NBUSY,
+  R-NMULTI (the C1 class, `a02`, `a05`). A clause of a local handler or of a handler of a
+  caller: R-NCLAUSE, R-NBUSY. A task of the caller across the call: yes (W0405; `p12`,
+  `c02`). A `once` value in two calls or in a loop of the caller: yes (W0502).
+- Rows (the census, `check --reasons`, `weft-work/z9cc/census/`, main and Z9c-C on the
+  same files, after review round 2). Tier 1: 311 fallbacks of 6205 files with main, 293
+  with Z9c-C. Of the 6107 files of Z9c-B, 229 to 225: rows 98 (`a13_ok`) and 101
+  (`j07_run_ok`), and the probes `fixes/r0z/c1_sim_param_task_ok` and
+  `rv2_n06_collide_e_ok` (the same form) leave the fallback (the test `ir_conservative`
+  of rule C now expects the clean twin `c1` in scope); the census rows go from 19 to 17.
+  Of the 97 probes of `fixes/r0z9cc` and the corpus program, 14 come into scope (13
+  probes and the corpus program), 16 bad twins are in scope with main too (the pending
+  rule rejects them), and the refusal probes and the probes of review rounds 1 and 2 keep
+  their reason. The bad twins of the line-29 rows of the census (`a13_sim_param_task`, `a13b`,
+  `a13c`, `j07_run_bad`, `c1_sim_param_task_bad`) get full facts and keep W0314; `sim1`
+  keeps `NESTED_TASK_RUN` (a value that the run node knows) and stays rejected. Tier 2
+  (the 29 rows of the Z8 list): 13 fallbacks and 5 time-outs with main and with Z9c-C.
+- No new false positive and no new hole. The first build: `check --reasons` with main and
+  Z9c-C on 71797 rows (the rows of Z9c-B, `z9cc/p`, `z9cc/conv` and `fixes/r0z9cc`,
+  with the new text of `NESTED_TASK_RUN` mapped to the old one) differed on 95 rows.
+  After review round 2, ev.sh with main and Z9c-C on 1739 rows (the probes of `z9cc`, of
+  `z9ccrev1/p` and of `z9ccrev2/p` to `p5`, `z9cdrev/p`, `z9cbrev1/p` to `z9cbrev4/p`, `z9cbrev2/ctl`,
+  `z9carev1/p` to `z9carev3/p`, `z9c/p`, `z9c/pa`, `fixes/r0z9a`, `r0z9c`, `r0z9cb`,
+  `r0z9cc`, the census rows and the 95 rows of that diff; `z9cc/ev/r3-*.tsv`): held to
+  both-reject 52, fb-miss to oldmiss 2 (`p26`, `c05_timeout_abort_bad`), FP-IR to
+  nofault 3 (`z9cbrev3/p/t08_ok` in the form of part 2, `z9ccrev1/p/i01_ok`, `o19_ok`),
+  fb-reject to nofault 3 (`z9cc/p/p23`, `z9ccrev1/p/o13_ok`, `z9ccrev2/p2/n01_ok`: an
+  old-only W0312 with no fault; the probes are not in the repository), fb-reject to FP-IR
+  6 (the corpus program `211_nested_slots` and `z9ccrev2/p2/n05`, which have no `main`,
+  and `z9ccrev1/p/t01`, `t05`, `x11`, `x12`, which main rejects too), the rest the same
+  verdict; no row goes to HOLE, and no row goes from nofault to FP-IR. The rows of rounds
+  1 and 2 (H1, H2, F1, B1, B2, B3) keep the verdict of main.
+- The fact oracle (`fo.sh`, three configurations) on the 126 rows that come into scope
+  and the probes of `fixes/r0z9cc` (142 rows in scope): no failure of the fact oracle;
+  only the race oracle faults on the bad probes.
+- Gates (after review round 2). Tier 1: 0 blockers, 6205 programs (4667 same, 50 open,
+  421 fixed, 1 new-fp, 0 lost-fault, 164 lost-clean, 150 moved, 752 changed; Z9c-B:
+  6107, 4586 same, 39 open, 418 fixed, 750 changed). The runs had 14 blockers, each a new
+  entry for a probe of `fixes/r0z9cc`: `changed` for `c08_rec_ref_bad` and
+  `c09_code_spawns_bad` (the old pipeline gives W0405 or W0312 at the call too), `moved`
+  for `n10_result_bad`, and `open` for `n04_rc_bad`, `h1_w30_one_k_code_task_field_bad`
+  and 9 bad probes of round 2 (`b1_e01`, `b1_v16`, `b1_v18`, `b2_r12`, `b2_r12n`,
+  `b2_r12r`, `b3_r01`, `b3_r03`, `b3_r04`: the old pipeline misses them, as on main). The fact oracle of tier 1: 0 failures (1761
+  pass, 10 faults, 22 time-outs). Sigdiff: 0 rows with no entry (four `sig` entries: the
+  part `pins` and the parts of entry 150 of the programs that come into scope, and the
+  weak form of the pending probes). Tier 2: 0 blockers, 57393 programs (39874 same, 12060
+  changed, 3490 lost-clean, after review round 2), 54713 in scope with 6 time-outs (Z9c-B: 54712, 7). No
+  `lost-clean` entry is new.
+- Open: part 3 (a value that the run node knows: rows 99 of tier 1 and 28, 29, 31 of
+  tier 2) is stage Z9d; part 4 (row 105 and its copy in tier 2) is for a later stage
+  (review round 1). The holes of Z9c-A and Z9c-B stay (issue #78; the direct forms of
+  R-NREF, `z9cc/p/d02` to `d05`, are holes of main and stay). Rows 102 and 103 (`c16`)
+  stay (R-VCODE of Z9c-B).
+- What I am least sure of: the `Async` performs that R-NBUSY lets the closure have (a
+  user handler of `Async` runs its clause at `suspend()`; review rounds 1 and 2 found no
+  hole there, `x02` to `x14`), and the task cover of a late slot with an `rc` place that
+  is not behind a parameter (round 2, B1): R-NREF of the locals keeps such bodies out of
+  the slots, but the cause in the facts of the late nodes is not found.
 
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):

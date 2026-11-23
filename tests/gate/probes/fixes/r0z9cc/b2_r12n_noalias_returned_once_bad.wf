@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-C, review round 2 (B2, R-NONE by value flow: an alias of a once parameter that the body gives back; with a slot a lost W0502, now NESTED_TASK_RUN; the probe `z9ccrev2/p/r12n_noalias_returned_once_bad.wf`).
+// r12 with no alias: B spawns h in sim and returns h (R-NONE refuses).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(h: fn()) -> fn() {
+    sim.run(seed: 1) { scope { s => s.spawn(h); () } }
+    h
+}
+fn main() {
+    let v = [1]
+    let k = par(|| take(v))
+    k()
+}

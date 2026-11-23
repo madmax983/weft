@@ -1,0 +1,8 @@
+// Plan stage R0z Z9c-C, review round 1 (F1, R-NONE: a once parameter at nested slots on exclusive paths; a slot gave a false W0502, now NESTED_TASK_RUN; the probe `z9ccrev1/p/k05f_branch_sim_ok.wf`).
+// sim.run twin of k05.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(h: fn(), c: bool) { if c { sim.run(seed: 1) { scope { s => s.spawn(h); () } } } else { sim.run(seed: 2) { scope { s => s.spawn(h); () } } } }
+fn main() {
+    let v = [1]
+    par(|| take(v), true)
+}

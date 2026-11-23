@@ -1,0 +1,8 @@
+// Plan stage R0z Z9c-C, review round 1 (H2: a value gives a once parameter to code of a caller that runs it two times; with fix (b) a lost W0502, now NESTED_TASK_RUN and rule E, the rule of main; the probe `z9ccrev1/p/g06_sim_code_twice_once_bad.wf`).
+// fix (b) through sim.run: the code runs x two times; x spawns a once h.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(h: fn(), f: fn(fn())) { sim.run(seed: 1) { f(|| scope { s => s.spawn(h); () }) } }
+fn main() {
+    let v = [1]
+    par(|| take(v), |x| { x(); x() })
+}

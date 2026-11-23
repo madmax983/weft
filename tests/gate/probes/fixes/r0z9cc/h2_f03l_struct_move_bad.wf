@@ -1,0 +1,10 @@
+// Plan stage R0z Z9c-C, review round 1 (H2: a value gives a once parameter to code of a caller that runs it two times; with fix (b) a lost W0502, now NESTED_TASK_RUN and rule E, the rule of main; the probe `z9ccrev1/p/f03l_struct_move_bad.wf`).
+// f03 with a struct moved by k.
+struct T { v: Vec<u64> }
+fn eat(t: T) { print(t.v.len()) }
+fn run1(g: fn()) { g() }
+fn mid(f: fn(fn()), k: fn()) / async { run1(|| f(k)) }
+fn main() / async {
+    let t = T { v: [1] }
+    mid(|x| { x(); x() }, || eat(t))
+}

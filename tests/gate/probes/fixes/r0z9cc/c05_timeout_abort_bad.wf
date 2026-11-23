@@ -1,0 +1,14 @@
+// Plan stage R0z Z9c-C (part 2): in scope: `with_timeout` can fail while the nested task runs; a clause of the caller reads `r` (W0405).
+fn par(f: fn()) / async, fail, clock {
+    with_timeout(50.ms) {
+        scope { s => s.spawn(f); () }
+    }
+}
+fn main() / async, clock {
+    let w = Vec.new()
+    w.push(1)
+    let r = &w[0]
+    handle Fail { fn fail(m) { print(r); () } } in {
+        par(|| { w.push(2); sleep(100.ms) })
+    }
+}

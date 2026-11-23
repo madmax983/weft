@@ -1,0 +1,15 @@
+// Plan stage R0z Z9c-C, review round 2 (B1, R-NREF of the locals: an rc handle from the result of an operation in the body or the callee; with a slot a lost race or a failure of the task cover, now NESTED_TASK_RUN; the probe `z9ccrev2/p4/v15_effect_struct_rc_bad.wf`).
+// B gets a struct holding main's rc handle from an effect; g writes through it while h writes it.
+struct Box1 { n: Vec<u64> }
+struct Ctx { b: Rc<Box1>, k: u64 }
+effect GetCtx { fn get_ctx() -> Ctx }
+fn par(h: fn()) / GetCtx, mut(Box1) {
+    let c = get_ctx()
+    sim.run(seed: 1) { scope { s => s.spawn(h); c.b.n.push(3); () } }
+}
+fn main() / mut(Box1) {
+    let b = Rc.new(Box1 { n: [1] })
+    let b2 = Rc.clone(&b)
+    handle GetCtx { fn get_ctx() { resume(Ctx { b: Rc.clone(&b2), k: 1 }) } } in par(|| b.n.push(2))
+    print(b.n.len())
+}

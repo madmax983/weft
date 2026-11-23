@@ -26,7 +26,8 @@ the counts.
   `r0z/z0/reasons-a3.tsv`). The second reasons that a later stage must close too:
   - D1 and TC (a task that runs code of a caller): `c2_task`, `k04_c2_race_ok`, `rv_p12`
     and its twin (Z5; closed, "Z5 (as built)");
-  - F18 and NESTED: `a13`, `a13b`, `a13c`, `j07_run_bad`, `j07_run_ok`, `sim1` (Z9c);
+  - F18 and NESTED: `a13`, `a13b`, `a13c`, `j07_run_bad`, `j07_run_ok`, `sim1` (Z9c;
+    Z9c-C closes the NESTED reason of all but `sim1`: "Z9c-C (as built)");
   - C2 and D5: `rv_p04` and its twin (Z7; closed, "Z7 (as built)");
   - D3 and TC: `d3f_task`;
   - three bodies with C2 and TC (with the copies VT): the four `e2b` rows;
@@ -297,6 +298,24 @@ the counts.
   files at the time limit). Row 27 (`p18574`) becomes `lost-clean` (old
   W0312, no fault): a ledger entry, signed by the reviewer of round 1 of the stage.
 
+## Z9c-C (as built)
+
+- Z9c-C (part C of Z9c: the nested slots of a call, part 2) closes rows 98 (`a13_ok`) and
+  101 (`j07_run_ok`) of tier 1: `docs/plan/core-ir.md`, "Z9c-C as built". The probes
+  `fixes/r0z/c1_sim_param_task_ok` and `rv2_n06_collide_e_ok` leave the fallback too. Part
+  4 (row 105, `c10`, and its copy in tier 2) is out after review round 1 (a lost race and a
+  lost W0502 of that path): the row stays open for a later stage. Row 99 (`j03_nested_ok`)
+  and rows 28, 29 and 31 of tier 2 stay: a value that the run node knows (part 3, stage
+  Z9d).
+- Tier 1: 311 fallbacks of 6205 files with main, 293 with Z9c-C (`check --reasons`,
+  `weft-work/z9cc/census/`, after review round 2). Of the 6107 files of Z9c-B, 229 to 225;
+  the census rows go from 19 to 17. The new files are the 97 probes of `fixes/r0z9cc` and
+  the corpus program `211_nested_slots`; 14 come into scope, 16 bad twins are in scope
+  with main too (the pending rule rejects them), and the refusal probes and the probes of
+  review rounds 1 and 2 keep `NESTED_TASK_RUN`.
+- Tier 2 (the rows of the Z8 list): 13 fallbacks and 5 time-outs with main and with
+  Z9c-C. No row becomes `lost-clean`.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -426,14 +445,14 @@ the counts.
 | 95 | `r3/oracle/probes/i9_kept_write.wf` | E2 | a task runs a kept callback more than once | W0405 | no fault | rejected | no | Z9a (closed) |
 | 96 | `r3/oracle/probes/s8_steal_fnparam.wf` | E2 | a task runs a function parameter more than once | clean | no fault | clean | no | Z9a (closed) |
 | 97 | `r3/oracle/probes/s9_steal_stored.wf` | E2 | a task runs a stored callback more than once | W0302 | fault (AST engine only) | rejected | no | Z9a (closed) |
-| 98 | `fixes/r0e/a13_ok.wf` | NESTED | a spawn of a parameter inside `sim.run` of a callee (task of a callee, no `TaskHow`) | clean | no fault | clean | no | Z9c |
+| 98 | `fixes/r0e/a13_ok.wf` | NESTED | a spawn of a parameter inside `sim.run` of a callee (task of a callee, no `TaskHow`) | clean | no fault | clean | no | Z9c-C (closed) |
 | 99 | `fixes/r0j/j03_nested_ok.wf` | NESTED | a closure spawns a parameter and a task; the closure runs in a callee (two levels of runs) | clean | no fault | clean | yes | Z9c |
 | 100 | `fixes/r0j/j04_value_ok.wf` | VT | a closure spawns a captured closure two times (tasks of a value of the interface) | clean | no fault | clean | yes | Z9c-B (closed) |
-| 101 | `fixes/r0j/j07_run_ok.wf` | F18 | a parameter spawned inside `sim.run`; the value changes a local of its maker (task of a callee, no `TaskHow`) | clean | no fault | clean | yes | Z9c |
+| 101 | `fixes/r0j/j07_run_ok.wf` | F18 | a parameter spawned inside `sim.run`; the value changes a local of its maker (task of a callee, no `TaskHow`) | clean | no fault | clean | yes | Z9c-C (closed) |
 | 102 | `fixes/r0kb1/c16_c2_nested_bad.wf` | C2>VT | a nested closure in the closure of the maker `mk_cap` (VALUE_TASKS in the facts of the maker) | W0301 | fault | rejected | yes | Z9c |
 | 103 | `fixes/r0kb1/c16_c2_nested_ok.wf` | C2>VT | a nested closure in the maker (clean twin) | clean | no fault | clean | yes | Z9c |
 | 104 | `fixes/r0kd2/s3_nested_closure_ok.wf` | VT | a task closure runs a value from the environment of the closure that makes the scope | clean | no fault | clean | no | Z9c-B (closed) |
-| 105 | `verify/review_core/Core_S2/probes/crash/c10.wf` | NESTED | a recursive higher-order function `y(f)`, no `main` (the worst case of a recursive callee: a task run) | clean | no `main` | clean | no | Z9c |
+| 105 | `verify/review_core/Core_S2/probes/crash/c10.wf` | NESTED | a recursive higher-order function `y(f)`, no `main` (the worst case of a recursive callee: a task run) | clean | no `main` | clean | no | Z9c (open: part 4 is out after review round 1 of Z9c-C; a later stage) |
 
 ## Tier 2 (60 rows)
 

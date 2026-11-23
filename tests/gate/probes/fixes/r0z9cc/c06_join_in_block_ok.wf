@@ -1,0 +1,13 @@
+// Plan stage R0z Z9c-C (part 2, in scope: the block joins the nested task; the caller makes the reference after the call); the clean twin.
+fn par(f: fn()) / async {
+    sim.run(seed: 1) {
+        scope { s => let t = s.spawn(f); t.join(); () }
+    }
+}
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    par(|| w.push(2))
+    let r = &w[0]
+    print(r)
+}

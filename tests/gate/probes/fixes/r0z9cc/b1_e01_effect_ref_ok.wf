@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-C, review round 2 (B1, R-NREF of the locals: a reference from the result of an operation; with a slot the clean twin got a false W0301, now NESTED_TASK_RUN; the probe `z9ccrev2/p/e01_effect_ref_ok.wf`).
+// Twin: h only reads w. Clean.
+effect Peek { fn peek() -> &u64 }
+fn par(h: fn()) / Peek {
+    let r = peek()
+    sim.run(seed: 1) { scope { s => s.spawn(h); () } }
+    print(r)
+}
+fn main() {
+    let w = [1]
+    handle Peek { fn peek() { resume(&w[0]) } } in par(|| print(w.len()))
+}

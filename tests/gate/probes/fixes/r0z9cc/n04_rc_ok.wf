@@ -1,0 +1,15 @@
+// Plan stage R0z Z9c-C (part 2): R-NREF: an `rc` handle (the old pipeline checks the program); the clean twin.
+struct Cache { w: Vec<u64>, u: Vec<u64> }
+fn par(h: fn(), c: Rc<Cache>) / mut(Cache) {
+    let r = &c.w[0]
+    sim.run(seed: 1) {
+        scope { s => s.spawn(h) }
+    }
+    print(r)
+}
+fn main() / mut(Cache) {
+    let c = Rc.new(Cache { w: Vec.new(), u: Vec.new() })
+    c.w.push(1)
+    let d = c.clone()
+    par(|| d.u.push(2), c)
+}

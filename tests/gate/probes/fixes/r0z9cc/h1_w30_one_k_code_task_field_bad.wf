@@ -1,0 +1,10 @@
+// Plan stage R0z Z9c-C, review round 1 (H1: code of a caller runs a closure that runs a parameter as a task; with the part-4 extension a HOLE, now NESTED_TASK_RUN, the rule of main; the probe `z9ccrev1/p/w30_one_k_code_task_field_bad.wf`).
+// fix (b): struct field form of w16.
+struct S { a: u64 }
+fn one(k: fn()) / async { scope { s => s.spawn(k); () } }
+fn mid(f: fn(fn()), k: fn()) / async { f(|| one(k)) }
+fn main() / async {
+    let c = S { a: 0 }
+    mid(|x| scope { s => s.spawn(|| c.a += 1); x(); () }, || print(c.a))
+    print(c.a)
+}

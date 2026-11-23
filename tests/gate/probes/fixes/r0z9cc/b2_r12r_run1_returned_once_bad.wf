@@ -1,0 +1,15 @@
+// Plan stage R0z Z9c-C, review round 2 (B2, R-NONE by value flow: an alias of a once parameter that the body gives back; with a slot a lost W0502, now NESTED_TASK_RUN; the probe `z9ccrev2/p/r12r_run1_returned_once_bad.wf`).
+// r12 with run1 as the callee.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run1(g: fn()) { g() }
+fn par(h: fn()) -> fn() / async {
+    let a = h
+    let b = a
+    run1(|| scope { s => s.spawn(b); () })
+    a
+}
+fn main() / async {
+    let v = [1]
+    let k = par(|| take(v))
+    k()
+}

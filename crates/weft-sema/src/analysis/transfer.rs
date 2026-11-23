@@ -1580,6 +1580,9 @@ pub struct CallOut {
     /// gives back from the arguments of the type parameter (plan stage F20,
     /// O3-9 `through_id`).
     pub back_tasks: BTreeSet<weft_ir::SpawnId>,
+    /// The nested slots of the node (`nested_slots`, plan stage R0z Z9c-C,
+    /// part 2): empty if the node has none.
+    pub late: Vec<SlotKey>,
 }
 
 /// The run node of a `Call` of function item `f` of block `block`, in state
@@ -1647,7 +1650,10 @@ pub fn call_out(
             Ok((BTreeSet::from([FnVal::Unknown]), BTreeSet::new()))
         })?;
     stores.extend(put_refs);
-    let mut apps = Apps::default();
+    let mut apps = Apps {
+        nest_ok: true,
+        ..Apps::default()
+    };
     let given = Given::Args(args);
     apply_runs(
         cx,
@@ -1659,6 +1665,14 @@ pub fn call_out(
         0,
         &mut apps,
     )?;
+    let late = nested_slots(
+        cx,
+        (body, block),
+        (&summary, &sigma),
+        &stores,
+        &put_fns,
+        &mut apps,
+    );
     let mut fs = ret_fns(cx, r, &summary, given, &mut |_, _| {
         Ok((BTreeSet::from([FnVal::Unknown]), BTreeSet::new()))
     })?;
@@ -1730,7 +1744,85 @@ pub fn call_out(
         apps: apps.out,
         put_fns,
         back_tasks,
+        late,
     })
+}
+
+/// The nested slots of the run node of a call of a function item at block
+/// `block` of body `body` (plan stage R0z Z9c-C, part 2): the keys that the
+/// runs of depth 1 ask for (`Apps::nested`, [`nested_how`]), if the node can
+/// have them. Else each one notes [`NESTED_TASK_RUN`] (the rule of main), and
+/// its apps are plain apps again. The node keeps the rule of main for each of
+/// these:
+///
+/// - R-NMULTI (with change C4 of the design review): more than one key at
+///   the node (two values of the callee, two entries of the callee or of the
+///   closure, two tasks), the callee has more than one entry in its part
+///   `runs`, or a key has no app (the value applied before).
+/// - R-NSLOT: the node runs a value as a task of an item slot
+///   (`Applied::task_run`): two slots of one call are in sequence in the
+///   facts, so the summary of the body would lose the tasks that run at the
+///   same time.
+/// - R-NCLAUSE: a clause of a local handler can run at the node, or at a
+///   call node of the body of the closure or of a body inside it (as
+///   R-VCLAUSE of [`capture_slots`]).
+/// - R-AGAIN: the node is in a cycle of the body.
+/// - R-NSTORE: the callee or a value that it runs stores a reference or a
+///   function value into a place of the caller (the facts apply it at
+///   `Ret`, after the late slot nodes; issue #104).
+fn nested_slots(
+    cx: &Cx<'_>,
+    (body, block): (BodyId, weft_ir::BlockId),
+    (summary, sigma): (&super::summary::Summary, &super::apply::Sigma),
+    stores: &[(PlaceId, Vec<PlaceId>)],
+    put_fns: &[(PlaceId, BTreeSet<FnVal>)],
+    apps: &mut Apps,
+) -> Vec<SlotKey> {
+    if apps.nested.is_empty() {
+        return Vec::new();
+    }
+    let keys: Vec<SlotKey> = apps.nested.iter().map(|(k, _)| *k).collect();
+    let ok = match keys.as_slice() {
+        [key @ SlotKey::Nested { closure, .. }] => {
+            let term =
+                cx.p.bodies
+                    .get(body.index())
+                    .and_then(|b| b.blocks.get(block.index()))
+                    .map(|b| &b.term.kind);
+            let clauses = term.is_none_or(|t| {
+                !crate::factgen::frames::clause_handlers(cx.p, cx.tys, cx.sums, body, t).is_empty()
+            });
+            summary.runs.len() == 1
+                && apps.out.iter().any(|a| a.nested == Some(*key))
+                && apps.out.iter().all(|a| a.task_run.is_none())
+                && !clauses
+                && !inner_call_clauses(cx, *closure)
+                && !sigma.cyclic
+                && stores.is_empty()
+                && put_fns.is_empty()
+                && apps
+                    .out
+                    .iter()
+                    .all(|a| a.stores.is_empty() && a.put_fns.is_empty())
+        }
+        _ => false,
+    };
+    if ok {
+        return keys;
+    }
+    for _ in &keys {
+        super::clause::note_pending(crate::factgen::Unsupported {
+            group: crate::irbuild::scope::Group::C,
+            reason: NESTED_TASK_RUN.to_string(),
+        });
+    }
+    for a in &mut apps.out {
+        if a.nested.take().is_some() {
+            a.task_how = None;
+        }
+    }
+    apps.nested.clear();
+    Vec::new()
 }
 
 /// The changes of the states of the summaries `apps` that a run node
@@ -1939,6 +2031,9 @@ fn call(
 ) -> Result<(), AlphaError> {
     let fns = args_linear(cx, body, st, args)?;
     let out = call_out(cx, body, block, st, f, targs, args, dest)?;
+    // The nested slots of the node (plan stage R0z Z9c-C, part 2): the fact
+    // generator makes their task nodes after the last run of the analysis.
+    note_late_slots(cx, (body, block), &out.late);
     for (q, refs) in &out.stores {
         if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
             st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
@@ -2414,6 +2509,10 @@ pub struct Applied {
     /// the run node whose runs reach the value, as [`Applied::reach`] for
     /// the parameters (plan stage R0z Z9c-B, part 1).
     pub cap_reach: Vec<u32>,
+    /// The nested slot of the run node that runs the value (plan stage R0z
+    /// Z9c-C, part 2): the app goes to the late slot nodes of the key, and
+    /// `task_how` has how the closure of the key runs the value.
+    pub nested: Option<SlotKey>,
 }
 
 /// A late slot of a run node (plan stage R0z Z9c-B, S1).
@@ -2431,6 +2530,19 @@ pub enum SlotKey {
         closure: weft_ir::ClosureId,
         /// The capture of the closure.
         capture: u32,
+    },
+    /// A nested slot (plan stage R0z Z9c-C, part 2, F18): the callee runs
+    /// the closure `closure` of the component as plain code (entry `outer`
+    /// of the part `runs` of the callee), and the closure runs a parameter
+    /// of the body as a task that ends before the closure returns (entry
+    /// `inner` of the part `runs` of the closure).
+    Nested {
+        /// The entry of the part `runs` of the callee that runs the closure.
+        outer: u32,
+        /// The closure that the callee runs.
+        closure: weft_ir::ClosureId,
+        /// The entry of the part `runs` of the closure that runs the task.
+        inner: u32,
     },
 }
 
@@ -2720,6 +2832,34 @@ struct Apps {
     /// [`apply_runs`]: a later application of the value adds only the value
     /// to `reached` (gap G5 of stage C1.5).
     inner: std::collections::HashMap<FnVal, BTreeSet<FnVal>>,
+    /// The run node can give nested slots (plan stage R0z Z9c-C, part 2):
+    /// only a call of a function item ([`call_out`]).
+    nest_ok: bool,
+    /// The entry of the part `runs` of the callee whose value the node
+    /// applies now (depth 1), for a nested slot ([`Nest`]).
+    nest: Option<Nest>,
+    /// The nested slots that the runs of depth 1 ask for ([`nested_how`]).
+    nested: Vec<(SlotKey, TaskOf)>,
+}
+
+/// The entry of the part `runs` of the callee whose value a run node
+/// applies at depth 1 (plan stage R0z Z9c-C, part 2): the facts that a
+/// nested slot needs from the callee (conditions 2 and 3 of the design).
+#[derive(Clone, Debug)]
+struct Nest {
+    /// The index of the entry of the part `runs` of the callee.
+    outer: u32,
+    /// The value is a closure of the component.
+    closure: Option<weft_ir::ClosureId>,
+    /// The callee runs the value as plain code, at most one time on each
+    /// path, and no value of the callee is code of a caller.
+    plain_once: bool,
+    /// The places that the tasks of the callee change while it runs the
+    /// value (`Run::during`), sorted.
+    during_writes: Vec<PlaceId>,
+    /// The places that the tasks of the callee read while it runs the
+    /// value, sorted.
+    during_reads: Vec<PlaceId>,
 }
 
 /// The run node of a `Call` of the function value `callee` of block `block`
@@ -4134,9 +4274,12 @@ pub fn cell_values<'r>(
 }
 
 /// The reason of the fallback for a value that a value of a callee runs as a
-/// task (stage R0e fix 2).
-const NESTED_TASK_RUN: &str =
-    "a function value that a function value of a callee runs as a task (stage R0e fix 2)";
+/// task (stage R0e fix 2). A parameter of the body gets a nested slot (plan
+/// stage R0z Z9c-C, part 2: [`nested_how`], [`nested_slots`]). The reason
+/// stays for a value that the run node knows (part 3 of the design of Z9c,
+/// stage Z9d) and for a form that the nested slots refuse.
+pub(crate) const NESTED_TASK_RUN: &str =
+    "a function value that a function value of a callee runs as a task: a value that the run node knows, or a value of the interface with no nested slot (plan stage R0z Z9d)";
 
 /// The reason for a function value that can race and that a task of a callee
 /// with no `TaskHow` runs (a task in a clause of the callee), or that code of
@@ -4658,6 +4801,349 @@ fn all_iplaces(
     Ok(out)
 }
 
+/// The flags of a run of depth 1 that [`nested_how`] needs.
+#[derive(Clone, Copy, Debug)]
+struct NestFlags {
+    /// The run can happen more than once (`Run::many`, or two values).
+    many: bool,
+    /// Code of a caller that gets the value can run it more than once.
+    twice_via: bool,
+    /// The value runs as plain code where code of a caller runs it.
+    plain_via: bool,
+    /// A task of a scope of a maker runs the value.
+    maker: bool,
+}
+
+/// True if a parameter of type `t` gives the body no reference (R-NREF of
+/// [`nested_how`]): `t` is [`ref_free`], and it has no function type, or it
+/// is a function type whose result has no function type. A function value
+/// holds references in its captures, so a result of a parameter that is a
+/// function value can hold a reference (`mk: fn() -> fn()`;
+/// `z9cbrev3/p/t18_maker_of_reader_ok` in the form of part 2 gets the
+/// conservative W0301 of the direct form, a false positive).
+fn plain_param(tys: &TyTable, t: TyId) -> bool {
+    if !ref_free(tys, t) {
+        return false;
+    }
+    match tys.try_get(t) {
+        Some(Ty::Fn(f)) => !crate::props::ir_has_fns(tys, f.ret),
+        _ => !crate::props::ir_has_fns(tys, t),
+    }
+}
+
+/// The body of the function item that run node `r` calls, if it has one.
+fn callee_body(p: &Program, r: Run0<'_>) -> Option<BodyId> {
+    let t = &p.body(r.body)?.blocks.get(r.block.index())?.term.kind;
+    match t {
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, _),
+            ..
+        } => p.fns.get(f.index())?.body,
+        _ => None,
+    }
+}
+
+/// True if a value of type `t` of a local can give the body no reference
+/// (R-NREF of [`nested_how`]): [`plain_param`], a task handle (`Task<T>`) of
+/// such a `T`, or a function type whose parameters and result are such types
+/// and whose result has no function type (a closure that gives back the task
+/// of its scope).
+fn plain_local(tys: &TyTable, t: TyId) -> bool {
+    if plain_param(tys, t) {
+        return true;
+    }
+    match tys.try_get(t) {
+        Some(Ty::Adt(a, args)) => {
+            tys.adts()
+                .get(a.index())
+                .is_some_and(|d| d.lang == Some(weft_ir::ty::Lang::Task))
+                && args.iter().all(|&x| plain_param(tys, x))
+        }
+        Some(Ty::Fn(f)) => {
+            !crate::props::ir_has_fns(tys, f.ret)
+                && f.params.iter().chain([&f.ret]).all(|&x| {
+                    plain_param(tys, x)
+                        || matches!(tys.try_get(x), Some(Ty::Adt(a, args))
+                            if tys.adts().get(a.index()).is_some_and(|d| d.lang == Some(weft_ir::ty::Lang::Task))
+                                && args.iter().all(|&y| plain_param(tys, y)))
+                })
+        }
+        _ => false,
+    }
+}
+
+/// True if each local of body `root` and of each body inside it has a type
+/// that gives the body no reference ([`plain_local`]): R-NREF of
+/// [`nested_how`] for the locals (review round 2 of Z9c-C, B1: an `rc` handle
+/// that the result of an operation or of a call gives the body). The locals
+/// that name a local of another body (the environment of a closure, an upvar
+/// local) and the locals of the runtime (a scope, a task result, a
+/// capability, a continuation) do not count: the local that they name counts
+/// where it is.
+fn plain_bodies(p: &Program, tys: &TyTable, root: BodyId) -> bool {
+    use crate::factgen::instantiate::inner_bodies;
+    let mut bodies = vec![root];
+    bodies.extend(inner_bodies(p, root));
+    bodies.into_iter().all(|b| {
+        p.body(b).is_some_and(|bd| {
+            bd.locals.iter().all(|d| {
+                matches!(
+                    d.kind,
+                    weft_ir::LocalKind::Env
+                        | weft_ir::LocalKind::Upvar(_)
+                        | weft_ir::LocalKind::ScopeCap
+                        | weft_ir::LocalKind::TaskResult(_)
+                        | weft_ir::LocalKind::Cap(_)
+                        | weft_ir::LocalKind::Kont(_)
+                ) || plain_local(tys, d.ty)
+            })
+        })
+    })
+}
+
+/// True if the value of parameter `param` of the function body `body` goes
+/// only into the capture `capture` of closure `closure`, and the value of the
+/// closure only into one operand (R-NONE of [`nested_how`]; review rounds 1
+/// and 2 of Z9c-C, F1, B2, B3). The closure is made in `body`; the capture
+/// copies the local of the parameter itself (no alias); that local has one
+/// read in `body` (the capture) and no read in a body inside `body` that is
+/// not a closure body; and the local that holds the closure has one read (the
+/// run node) and no read in such a body. So no copy, no field, no result and
+/// no argument holds the value: the run of the slot is its only run in the
+/// summary. A value at two nodes on exclusive paths gave two runs, and a
+/// `once` value then got a false W0502 at the caller (`k05`; through an
+/// alias, `r04`), and an alias that the body gives back hid a second run (a
+/// lost W0502, `r13`).
+fn one_flow(
+    p: &Program,
+    body: BodyId,
+    (closure, capture): (weft_ir::ClosureId, u32),
+    param: u32,
+) -> bool {
+    use crate::factgen::instantiate::{body_places, cell_of, inner_bodies, local_reads};
+    let (Some(decl), Some(b)) = (p.closures.get(closure.index()), p.body(body)) else {
+        return false;
+    };
+    let Some(cap) = decl.captures.get(capture as usize) else {
+        return false;
+    };
+    if decl.maker != body || !cap.source.proj.is_empty() {
+        return false;
+    }
+    let src = cap.source.local;
+    if b.local_kind(src) != Some(weft_ir::LocalKind::Param(param)) {
+        return false;
+    }
+    // The local that the closure goes into.
+    let mut made = Vec::new();
+    for blk in &b.blocks {
+        for st in &blk.stmts {
+            if let weft_ir::StmtKind::Assign(
+                q,
+                weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(c), _),
+            ) = &st.kind
+            {
+                if *c == closure {
+                    made.push(q.clone());
+                }
+            }
+        }
+    }
+    let [dest] = made.as_slice() else {
+        return false;
+    };
+    if !dest.proj.is_empty() {
+        return false;
+    }
+    let inner: Vec<BodyId> = inner_bodies(p, body)
+        .into_iter()
+        .filter(|&x| {
+            let mut at = Some(x);
+            for _ in 0..=p.bodies.len() {
+                match at {
+                    Some(y) if y == body => return true,
+                    Some(y) => match p.body(y) {
+                        Some(yb) if matches!(yb.kind, weft_ir::BodyKind::Closure(_)) => {
+                            return false
+                        }
+                        Some(yb) => at = yb.parent,
+                        None => return false,
+                    },
+                    None => return false,
+                }
+            }
+            false
+        })
+        .collect();
+    [src, dest.local].into_iter().all(|l| {
+        local_reads(b, l) == 1
+            && inner.iter().all(|&x| {
+                p.body(x).is_none_or(|xb| {
+                    body_places(xb)
+                        .iter()
+                        .all(|q| cell_of(p, x, q) != Some((body, l)))
+                })
+            })
+    })
+}
+
+/// The nested slot of a run of depth 1 at run node `r` (plan stage R0z
+/// Z9c-C, part 2, F18): the callee runs a closure of the component as plain
+/// code (`nest`), and the closure runs the values `fns` as a task (`run`,
+/// in the terms of σ `sigma` of the closure). The task ends before the
+/// closure returns, so it gets a slot at the late slot nodes of `r`, and
+/// the summary of the body gets the how of the window of the slot. The
+/// result is the key and how the slot runs the value: the how of the task
+/// in the closure, joined with the places of the tasks of the callee that
+/// run while the callee runs the closure (`weft_verified::tasks::compose`,
+/// proof P1).
+///
+/// `None` (the rule of main: the node notes [`NESTED_TASK_RUN`]) for each of
+/// these:
+///
+/// - R-OUTER-TASK: the callee runs the value as a task, or only gives it to
+///   code of a caller, or the value is not a closure of the component.
+/// - R-AGAIN: the callee can run the closure more than once (`many`,
+///   `seq`, `after`, two values, a run around it), or the closure can run
+///   the value more than once (`many`, `seq`, `after`, `task_seq`,
+///   `twice`, code of a caller that runs it again).
+/// - R-MAKER: a task of a scope of a maker runs the value
+///   (`TaskHow::tasks`), or the closure starts a task in a scope of a maker
+///   (part `tasks` of the closure).
+/// - R-NITEM: a value is not a parameter of a function item, or the body is
+///   not the body of the item (a closure body, a body inside the item).
+/// - R-NREF: a parameter of the item can give the body a reference
+///   ([`plain_param`]). A reference that the body holds across the node can
+///   point into a place that the task changes, and the alias rule W0312
+///   does not see the writes of a slot task (issue #78; the direct form
+///   `z9cc/p/d02` to `d05` is a hole of main). Also a local of the body, of
+///   the callee, or of a body inside them that can hold a reference or an
+///   `rc` handle ([`plain_bodies`]: the result of an operation or of a call
+///   can give one, review round 2 of Z9c-C, B1), and a callee with a task
+///   that writes or reads a mapped place while it runs the closure (the
+///   places of `Run::during`).
+/// - R-NONE: the value goes into more than the one capture of the closure, or
+///   the closure into more than the one operand of the node ([`one_flow`]).
+/// - R-NBUSY: the task is on another thread, it is code of a caller
+///   (`foreign`, no body), the closure runs another value while the task
+///   runs (`TaskHow::with`), the run has places (`Run::args`), or the
+///   closure performs an operation of an effect other than `Async` (the
+///   scope and the spawn), waits at one, or resumes more than once (parts
+///   `performs`, `waits`, `multi`): a clause of a handler of a caller can
+///   run while the task runs. `Async` is no wait point of the part
+///   `waits` either (`tasks::waits_of`).
+fn nested_how(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    (run, index): (&super::summary::Run, usize),
+    fns: &BTreeSet<FnVal>,
+    sigma: &super::apply::Sigma,
+    flags: NestFlags,
+    nest: Option<&Nest>,
+) -> Result<Option<(SlotKey, TaskOf)>, AlphaError> {
+    use weft_verified::tasks::{compose, SlotHow};
+    // R-OUTER-TASK, R-AGAIN of the callee.
+    let Some(nest) = nest else {
+        return Ok(None);
+    };
+    let (Some(closure), true) = (nest.closure, nest.plain_once) else {
+        return Ok(None);
+    };
+    // R-NITEM.
+    if fns.is_empty() || !fns.iter().all(|f| matches!(f, FnVal::Param(_))) {
+        return Ok(None);
+    }
+    let item = cx.p.body(r.body).and_then(|b| match b.kind {
+        weft_ir::BodyKind::Fn(f) => cx.p.fns.get(f.index()),
+        _ => None,
+    });
+    let Some(item) = item else {
+        return Ok(None);
+    };
+    // R-NREF.
+    if !item.params.iter().all(|&t| plain_param(cx.tys, t)) {
+        return Ok(None);
+    }
+    // R-NREF for the locals of the body and of the callee.
+    let callee_body = callee_body(cx.p, r);
+    if !plain_bodies(cx.p, cx.tys, r.body)
+        || callee_body.is_some_and(|cb| !plain_bodies(cx.p, cx.tys, cb))
+        || !nest.during_writes.is_empty()
+        || !nest.during_reads.is_empty()
+    {
+        return Ok(None);
+    }
+    // R-NONE.
+    let [FnVal::Param(i)] = fns.iter().collect::<Vec<_>>()[..] else {
+        return Ok(None);
+    };
+    if !run.capture || !one_flow(cx.p, r.body, (closure, run.param), *i) {
+        return Ok(None);
+    }
+    // R-AGAIN, R-MAKER, R-NBUSY of the closure.
+    let h = &run.how;
+    let again = flags.many
+        || run.seq
+        || run.seq_loop
+        || run.task_seq
+        || !run.after.is_empty()
+        || h.twice
+        || flags.twice_via;
+    let other = h.foreign
+        || h.no_body
+        || h.thread
+        || !h.with.is_empty()
+        || !h.tasks.is_empty()
+        || flags.maker
+        || flags.plain_via
+        || run.via_only
+        || !run.via.is_empty()
+        || run.result
+        || !run.args.is_empty();
+    if again || other {
+        return Ok(None);
+    }
+    let quiet = cx.sums.closure(closure).is_ok_and(|s| {
+        s.tasks.is_empty()
+            && s.performs.iter().all(|pf| pf.effect == "Async")
+            && s.waits.is_empty()
+            && !s.multi
+    });
+    if !quiet {
+        return Ok(None);
+    }
+    let ids = |v: Vec<PlaceId>| -> Vec<u32> { v.into_iter().map(|q| q.0).collect() };
+    let inner = SlotHow {
+        writes: ids(all_iplaces(cx, sigma, &h.writes)?),
+        reads: ids(all_iplaces(cx, sigma, &h.reads)?),
+        ..SlotHow::default()
+    };
+    let outer = SlotHow {
+        writes: ids(nest.during_writes.clone()),
+        reads: ids(nest.during_reads.clone()),
+        ..SlotHow::default()
+    };
+    let how = compose(&inner, &outer);
+    let key = SlotKey::Nested {
+        outer: nest.outer,
+        closure,
+        inner: u32::try_from(index).unwrap_or(u32::MAX),
+    };
+    Ok(Some((
+        key,
+        TaskOf {
+            thread: how.thread,
+            twice: how.twice,
+            many: how.many,
+            seq: how.seq,
+            foreign: how.foreign,
+            with: BTreeSet::new(),
+            writes: how.writes.into_iter().map(PlaceId).collect(),
+            reads: how.reads.into_iter().map(PlaceId).collect(),
+        },
+    )))
+}
+
 /// Applies the runs `runs` of a summary with σ `sigma` at run node `r`
 /// (part `runs`): each function value that the parameter or the capture
 /// holds applies its summary with the places of the run (`run.args`). `of`
@@ -4747,10 +5233,32 @@ fn apply_runs(
         // way of the callee has no changes of that code (B1 of the review of
         // R0f).
         let busy = !run.how.writes.is_empty() || !run.how.with.is_empty();
+        // Plan stage R0z Z9c-C, part 2: a nested slot at the run node for a
+        // parameter of the body that a closure of a callee runs as a task
+        // ([`nested_how`]).
+        let mut nested_now = None;
+        if task && depth == 1 {
+            let flags = NestFlags {
+                many,
+                twice_via,
+                plain_via,
+                maker: !maker_tasks.is_empty(),
+            };
+            if let Some(how) =
+                nested_how(cx, r, (run, index), &fns, sigma, flags, apps.nest.as_ref())?
+            {
+                apps.nested.push(how.clone());
+                nested_now = Some(how);
+            }
+        }
         // Plan stage R0j: the run stays a plain run of the node, and the
         // program is in scope only if the `ir` pipeline rejects it
         // (`Scope::pending`, the rule of stage R0g).
-        if task && depth > 0 && fns.iter().any(|f| !matches!(f, FnVal::Unknown) || busy) {
+        if task
+            && depth > 0
+            && nested_now.is_none()
+            && fns.iter().any(|f| !matches!(f, FnVal::Unknown) || busy)
+        {
             // Each value of this run runs more than once only if the run
             // does (`run_many`), or a run around it does: two runs of two
             // values (`two`) run each value once.
@@ -4842,6 +5350,28 @@ fn apply_runs(
             let fresh = !apps.modes.contains(&(g.clone(), Some(places.clone())));
             let from = apps.reached.len();
             let outer = OuterMany::enter(run_many);
+            // The entry of the callee for the nested slots of depth 1 (plan
+            // stage R0z Z9c-C, part 2).
+            let saved = apps.nest.take();
+            if depth == 0 && apps.nest_ok {
+                apps.nest = Some(Nest {
+                    outer: u32::try_from(index).unwrap_or(u32::MAX),
+                    closure: match g {
+                        FnVal::Closure(c) => Some(*c),
+                        _ => None,
+                    },
+                    plain_once: !task
+                        && !run.via_only
+                        && !run.capture
+                        && !many
+                        && !run.seq
+                        && !run.seq_loop
+                        && run.after.is_empty()
+                        && OUTER_MANY.with(std::cell::Cell::get) == 0,
+                    during_writes: during_writes.clone(),
+                    during_reads: during_reads.clone(),
+                });
+            }
             let applied = apply_value(
                 cx,
                 r,
@@ -4852,6 +5382,7 @@ fn apply_runs(
                 depth + 1,
                 apps,
             );
+            apps.nest = saved;
             drop(outer);
             applied?;
             if fresh {
@@ -4881,6 +5412,11 @@ fn apply_runs(
                     have.extend(more.iter().copied());
                     have.sort();
                     have.dedup();
+                }
+                // The nested slot of the run (plan stage R0z Z9c-C, part 2).
+                if let Some((key, how)) = &nested_now {
+                    a.nested = Some(*key);
+                    a.task_how = Some(how.clone());
                 }
                 // The callee runs the value as a task: the run node applies
                 // it at its task nodes (plan stage F19).
@@ -5420,6 +5956,7 @@ fn apply_value(
                 reach: Vec::new(),
                 callee_capture: None,
                 cap_reach: Vec::new(),
+                nested: None,
                 task_how: None,
             });
             let places = match given {
@@ -5654,6 +6191,7 @@ fn apply_value(
                 reach: Vec::new(),
                 callee_capture: None,
                 cap_reach: Vec::new(),
+                nested: None,
                 task_how: None,
             });
             apply_runs(
@@ -5871,6 +6409,7 @@ fn apply_value(
                 reach: Vec::new(),
                 callee_capture: None,
                 cap_reach: Vec::new(),
+                nested: None,
                 task_how: None,
             });
             // A closure that a callee made holds the values that it runs in
@@ -6366,15 +6905,7 @@ fn call_value(
     // The capture slots of the node (plan stage R0z Z9c-B, part 1): the
     // fact generator makes their task nodes after the last run of the
     // analysis.
-    if !out.late.is_empty() {
-        let keys = cx.hx.late_slots.entry((body, block)).or_default();
-        for k in &out.late {
-            if !keys.contains(k) {
-                keys.push(*k);
-            }
-        }
-        keys.sort();
-    }
+    note_late_slots(cx, (body, block), &out.late);
     apply_apps(cx, st, &out.apps, fns);
     note_multi_apps(cx, (body, block), &out.apps)?;
     let changed: Vec<PlaceId> = out
@@ -6384,6 +6915,22 @@ fn call_value(
         .collect();
     store_fns(cx, body, st, args, &changed)?;
     bind_result(cx, body, st, args, dest, out.ret)
+}
+
+/// Notes the late slots `late` of the run node of block `block` of body
+/// `body` (`Handlers::late_slots`, a union over the runs of the analysis;
+/// plan stage R0z Z9c-B, S1).
+fn note_late_slots(cx: &mut Cx<'_>, (body, block): (BodyId, weft_ir::BlockId), late: &[SlotKey]) {
+    if late.is_empty() {
+        return;
+    }
+    let keys = cx.hx.late_slots.entry((body, block)).or_default();
+    for k in late {
+        if !keys.contains(k) {
+            keys.push(*k);
+        }
+    }
+    keys.sort();
 }
 
 /// True if an argument of `args` can hold a linear value in state `st`.

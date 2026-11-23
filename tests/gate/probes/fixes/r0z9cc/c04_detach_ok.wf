@@ -1,0 +1,13 @@
+// Plan stage R0z Z9c-C (part 2): in scope: a detached nested task; the caller holds `r` across the call (W0301); the clean twin.
+fn in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => let t = s.spawn(f); t.detach(); () }
+    }
+}
+fn main() {
+    let w = Vec.new()
+    w.push(1)
+    in_sim(|| w.push(2))
+    let r = &w[0]
+    print(r)
+}

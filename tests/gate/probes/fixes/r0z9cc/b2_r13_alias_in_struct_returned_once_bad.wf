@@ -1,0 +1,16 @@
+// Plan stage R0z Z9c-C, review round 2 (B2, R-NONE by value flow: an alias of a once parameter that the body gives back; with a slot a lost W0502, now NESTED_TASK_RUN; the probe `z9ccrev2/p/r13_alias_in_struct_returned_once_bad.wf`).
+// R-NONE bypass: B returns a struct that holds the other alias; main calls it.
+fn take(v: Vec<u64>) { print(v.len()) }
+struct J { f: fn() }
+fn par(h: fn()) -> J {
+    let a = h
+    let b = a
+    sim.run(seed: 1) { scope { s => s.spawn(b); () } }
+    J { f: a }
+}
+fn main() {
+    let v = [1]
+    let j = par(|| take(v))
+    let k = j.f
+    k()
+}

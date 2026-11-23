@@ -1,0 +1,14 @@
+// Plan stage R0z Z9c-C (part 2): R-NITEM: the value is a result of a parameter (the old pipeline checks the program).
+fn par(mk: fn() -> fn()) {
+    let h = mk()
+    sim.run(seed: 1) {
+        scope { s => s.spawn(h); () }
+    }
+}
+fn main() {
+    let w = Vec.new()
+    w.push(1)
+    let r = &w[0]
+    par(|| || w.push(2))
+    print(r)
+}

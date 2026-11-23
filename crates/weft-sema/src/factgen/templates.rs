@@ -3149,7 +3149,40 @@ pub fn call(
     let tasks = out.apps.iter().any(|a| a.task_run.is_some());
     let mut plain = PlainPlaces::new();
     let ifaces = iface_values(&out.apps);
-    let run_frames = if tasks {
+    // The nested slots of the call (plan stage R0z Z9c-C, part 2): their
+    // apps run at the late slot nodes of the call only, not at `Main` or
+    // `Ret` (but their `Ret` parts, `apps_at_ret`, change C3). The analysis
+    // gives no nested slot to a call with an item slot (R-NSLOT).
+    let nested = if out.late.is_empty() || tasks {
+        None
+    } else {
+        let s = nested_slots(em, block, &out.late, &out.apps);
+        if s.is_none() {
+            pending(crate::irbuild::scope::Group::C, transfer::NESTED_TASK_RUN);
+        }
+        s
+    };
+    let run_frames = if let Some(slots) = nested {
+        em.task_nodes = std::mem::take(&mut em.late_nodes);
+        let rest: Vec<transfer::Applied> = out
+            .apps
+            .iter()
+            .filter(|a| a.nested.is_none())
+            .cloned()
+            .collect();
+        let frames = emit_apps(em, nodes, st, block, args, &rest, at, &spans, &bases)?;
+        call_tasks(
+            em,
+            nodes,
+            st,
+            block,
+            slots,
+            args,
+            (&plain, &ifaces),
+            (&spans, at, origin, &callee),
+        )?;
+        frames
+    } else if tasks {
         let mut frames = Vec::new();
         for app in out.apps.iter().filter(|a| a.task_run.is_none()) {
             let marks = (
@@ -4312,7 +4345,9 @@ fn capture_slots(
     let mut out = Vec::new();
     for key in keys {
         let k = have.iter().position(|x| x == key)?;
-        let transfer::SlotKey::Capture { closure, capture } = *key;
+        let transfer::SlotKey::Capture { closure, capture } = *key else {
+            return None;
+        };
         let mut slot = TaskSlot {
             k,
             param: capture,
@@ -4367,6 +4402,55 @@ fn capture_slots(
             }
         }
         out.push(slot);
+    }
+    out.sort_by_key(|x| x.k);
+    Some(out)
+}
+
+/// The nested slots of a call of a function item (plan stage R0z Z9c-C,
+/// part 2): one for each key of `keys` (`transfer::CallOut::late`), at the
+/// late slot nodes of the call (`Em::late_nodes`, in the order of
+/// `Handlers::late_slots`), with the apps `apps` of the key
+/// (`Applied::nested`) and how the closure of the key runs them
+/// (`Applied::task_how`). `None` if the analysis did not note a key at the
+/// node, or the node has no late nodes for it, or a key has no app.
+fn nested_slots(
+    em: &Em<'_>,
+    block: weft_ir::BlockId,
+    keys: &[transfer::SlotKey],
+    apps: &[transfer::Applied],
+) -> Option<Vec<TaskSlot>> {
+    let have = em.hx.late_slots.get(&(em.body, block))?;
+    if em.late_nodes.len() != have.len().saturating_mul(super::frames::TASK_NODES) {
+        return None;
+    }
+    let mut out = Vec::new();
+    for key in keys {
+        let k = have.iter().position(|x| x == key)?;
+        let mine: Vec<transfer::Applied> = apps
+            .iter()
+            .filter(|a| a.nested == Some(*key))
+            .cloned()
+            .collect();
+        let first = mine.first()?;
+        let how = first.task_how.clone()?;
+        let param = first.run.as_ref()?.param;
+        out.push(TaskSlot {
+            k,
+            param,
+            key: Some(*key),
+            thread: how.thread,
+            twice: how.twice,
+            many: how.many,
+            seq: how.seq,
+            via_only: false,
+            foreign: how.foreign,
+            with: std::collections::BTreeSet::new(),
+            writes: how.writes,
+            reads: how.reads,
+            mine,
+            once_caps: Vec::new(),
+        });
     }
     out.sort_by_key(|x| x.k);
     Some(out)
