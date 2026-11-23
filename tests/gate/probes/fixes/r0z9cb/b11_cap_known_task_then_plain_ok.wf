@@ -1,0 +1,8 @@
+// Plan stage R0z Z9c-B (part 1): the clean twin of b11. `f` only reads `w`.
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let f = || print(w[0])
+    let c = || { scope { s => s.spawn(f) }; f() }
+    c()
+}

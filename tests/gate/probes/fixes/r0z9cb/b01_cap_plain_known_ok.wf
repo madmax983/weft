@@ -1,0 +1,11 @@
+// Plan stage R0z Z9c-B (part 1, change C5): the clean twin of b01. `h`
+// changes `c.j`, a place that the task of `g` does not read.
+struct C { k: u64, j: u64 }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || print(c.k)
+    let h = || c.j += 1
+    let f = || scope { s => s.spawn(g); h(); () }
+    f()
+    print(c.j)
+}

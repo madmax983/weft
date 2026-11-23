@@ -223,6 +223,12 @@ pub struct Handlers {
     /// generator gives such a spawn a second node of the run
     /// (`crate::factgen::nodes::NodeTable::again_nodes`).
     pub again_spawns: std::collections::BTreeSet<(BodyId, BlockId)>,
+    /// The late slots of each run node of a function value, in order (plan
+    /// stage R0z Z9c-B, S1; `super::transfer::SlotKey`): a union over the
+    /// runs of the node. The fact generator gives each slot four task nodes
+    /// after the other task nodes of the node
+    /// (`crate::factgen::nodes::NodeTable::late_slot_nodes`).
+    pub late_slots: BTreeMap<(BodyId, BlockId), Vec<super::transfer::SlotKey>>,
     /// The scopes that the scope operand of each spawn site with no scope
     /// of its own (`SpawnDecl::scope` is `None`) can be, a join over the
     /// runs of the spawn (stage R0e, `super::tasks::SiteScope`).

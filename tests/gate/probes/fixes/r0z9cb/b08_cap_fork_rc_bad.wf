@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-B (part 1): `f` runs its capture `g` in a branch of a
+// `fork`, on another thread. `g` holds an `Rc` value (W0401).
+struct Node { v: u64 }
+fn main() / par {
+    let n = Rc.new(Node { v: 1 })
+    let g = || print(n.v)
+    let f = || { let _ = fork(g, || print(2)); () }
+    f()
+}

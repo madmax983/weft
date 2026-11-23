@@ -1,0 +1,13 @@
+// Plan stage R0z Z9c-B (R-VSTORE, review round 4, B7; the ok twin): the
+// closure stores a reference into a capture before its task starts, so the
+// call keeps the rule of main (root: issue #104). The probe of the review:
+// Review probe Z9c-B r4: clean twin of w11.
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let o = None
+    let g = || w.push(2)
+    let f = || { scope { s => s.spawn(g); () }; o = Some(&w[0]) }
+    f()
+    match o { Some(x) => print(x), None => () }
+}

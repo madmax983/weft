@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-B (part 1, change C5): `f` spawns its capture `g` and
+// runs its capture `h` while the task runs. `g` reads `c.k`, and `h` changes
+// it (W0405 at the call of `f`).
+struct C { k: u64, j: u64 }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || print(c.k)
+    let h = || c.k += 1
+    let f = || scope { s => s.spawn(g); h(); () }
+    f()
+    print(c.k)
+}

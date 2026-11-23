@@ -989,6 +989,9 @@ pub fn emit_parts(
     // The second node of the run of each spawn whose task runs a value more
     // than once (plan stage R0z Z9a).
     table.again_nodes(p, facts, &hx.again_spawns);
+    // The late slots of the run nodes of function values (plan stage R0z
+    // Z9c-B, S1).
+    table.late_slot_nodes(p, facts, &frames, &hx.late_slots);
     // The dispatches of the component (plan stage R0z Z6), after the last
     // run of the analysis.
     dispatch_checks(p, &spliced, &hx, &known, &table, facts);
@@ -1045,6 +1048,7 @@ pub fn emit_parts(
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
+            late_nodes: Vec::new(),
             wait_nodes: Vec::new(),
             abort_starts: Vec::new(),
             waits: crate::analysis::tasks::WaitRaw::default(),
@@ -2074,6 +2078,7 @@ fn closure_summary(
         hx = fresh_handlers(&mut hx);
     };
     table.again_nodes(p, &mut facts, &hx.again_spawns);
+    table.late_slot_nodes(p, &mut facts, &frames, &hx.late_slots);
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
     // The tasks that start and end in a run of the closure (stage R0e): a
@@ -2135,6 +2140,7 @@ fn closure_summary(
             in_task: None,
             code_opaque: Vec::new(),
             task_nodes: Vec::new(),
+            late_nodes: Vec::new(),
             wait_nodes: Vec::new(),
             abort_starts: Vec::new(),
             waits: crate::analysis::tasks::WaitRaw::default(),
@@ -2574,6 +2580,8 @@ fn emit_closure(
         hx = fresh_handlers(&mut hx);
     };
     out.table.again_nodes(p, out.facts, &hx.again_spawns);
+    out.table
+        .late_slot_nodes(p, out.facts, &frames, &hx.late_slots);
     hx.task_ids = cx.task_ids.clone();
     let mut em = templates::Em {
         p,
@@ -2609,6 +2617,7 @@ fn emit_closure(
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
+        late_nodes: Vec::new(),
         wait_nodes: Vec::new(),
         abort_starts: Vec::new(),
         waits: crate::analysis::tasks::WaitRaw::default(),
@@ -2909,6 +2918,8 @@ fn emit_clause(
         crate::analysis::run(&mut acx, cb, init)?
     };
     out.table.again_nodes(p, out.facts, &hx.again_spawns);
+    out.table
+        .late_slot_nodes(p, out.facts, frames, &hx.late_slots);
     let mut em = templates::Em {
         p,
         sema: &cx.a.program,
@@ -2943,6 +2954,7 @@ fn emit_clause(
         in_task: None,
         code_opaque: Vec::new(),
         task_nodes: Vec::new(),
+        late_nodes: Vec::new(),
         wait_nodes: Vec::new(),
         abort_starts: Vec::new(),
         waits: crate::analysis::tasks::WaitRaw::default(),
@@ -3731,6 +3743,14 @@ fn emit_block(
             em.task_nodes = (1..=runs)
                 .filter_map(|i| table.get(at(Phase::Task(i), NORMAL)))
                 .collect();
+            // The task nodes of the late slots of the call, after all the
+            // other task nodes (plan stage R0z Z9c-B, S1).
+            let before = frames.task_nodes(bid, block);
+            let late = em.hx.late_slots.get(&(bid, block)).map_or(0, Vec::len);
+            let late = u32::try_from(late.saturating_mul(frames::TASK_NODES)).unwrap_or(0);
+            em.late_nodes = (1..=late)
+                .filter_map(|i| table.get(at(Phase::Task(before.saturating_add(i)), NORMAL)))
+                .collect();
             // The task nodes of each local handler whose clause can run
             // while a task of the call runs (follow-up F19.5).
             em.wait_nodes = Vec::new();
@@ -3786,6 +3806,7 @@ fn emit_block(
             templates::call_joins(em, &nodes, &st, &blk.term.kind)?;
             templates::wait_tasks(em, n, blk.term.origin.span);
             em.wait_nodes.clear();
+            em.late_nodes.clear();
             em.abort_starts.clear();
         }
         weft_ir::TermKind::Perform { cap, .. } => {

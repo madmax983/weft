@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-B (part 1, R-VARG): the clean twin of b04. `x` only
+// reads `c.k`.
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let g = || print(c.k)
+    let f = |x: fn()| scope { s => s.spawn(g); x(); () }
+    f(|| print(c.k + 1))
+}

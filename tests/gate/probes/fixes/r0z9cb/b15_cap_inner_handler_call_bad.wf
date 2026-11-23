@@ -1,0 +1,16 @@
+// Plan stage R0z Z9c-B (R-VCLAUSE, review round 1, B2; probe r03 of the
+// review): the closure `f` has a local handler. While the task of its
+// capture `h` runs, `f` calls `helper`, which performs `note`, and the clause
+// runs `k`. `h` and `k` are parameters of `par` (a data race on `c.k`). The
+// call keeps the rule of main.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn helper() / Note { note(1) }
+fn par(h: fn(), k: fn()) / async {
+    let f = || handle Note { fn note(x) { k(); resume(()) } } in { scope { s => s.spawn(h); helper(); () } }
+    f()
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+}

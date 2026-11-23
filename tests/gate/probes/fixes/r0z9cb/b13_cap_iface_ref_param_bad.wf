@@ -1,0 +1,16 @@
+// Plan stage R0z Z9c-B (R-VREF, review round 1, B1; probe r35 of the
+// review): the closure `f` spawns the parameter `h` of `par`, and `par`
+// holds `r` into `v` across the call. `h` pushes to the vector that `v`
+// points into (W0312 at the call of `par`). The call keeps the rule of
+// main.
+fn par(h: fn(), v: &Vec<u64>) / async {
+    let f = || scope { s => s.spawn(h); () }
+    let r = &v[0]
+    f()
+    print(r)
+}
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    par(|| w.push(2), &w)
+}

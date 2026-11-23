@@ -1,0 +1,15 @@
+// Plan stage R0z Z9c-B (R-VIFACE, review round 3, B5 and B6; the bad twin):
+// the closure runs a value of the interface of the body, so the call keeps
+// the rule of main. The probe of the review:
+// Review probe Z9c-B r3: the closure holds a reference into an `rc` object of a capture while the task of `h` pushes to the object.
+struct Cache { w: Vec<u64>, u: Vec<u64> }
+fn par(h: fn(), c: Rc<Cache>) / mut(Cache), async {
+    let f = || { let r = &c.w[0]; scope { s => s.spawn(h); () }; print(r) }
+    f()
+}
+fn main() / mut(Cache), async {
+    let c = Rc.new(Cache { w: Vec.new(), u: Vec.new() })
+    c.w.push(1)
+    let d = c.clone()
+    par(|| d.w.push(2), c)
+}

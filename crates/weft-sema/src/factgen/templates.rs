@@ -162,6 +162,10 @@ pub struct Em<'a> {
     /// The [`super::nodes::Phase::Task`] nodes of the call that the
     /// template emits now (plan stage F19).
     pub task_nodes: Vec<NodeId>,
+    /// The task nodes of the late slots of the call that the template emits
+    /// now, four for each key of `Handlers::late_slots`, in order (plan
+    /// stage R0z Z9c-B, S1; `super::nodes::NodeTable::late_slot_nodes`).
+    pub late_nodes: Vec<NodeId>,
     /// The local handlers whose clauses the call that the template emits
     /// now runs while a task of the call can run, each with its four task
     /// nodes (`super::frames::Frames::wait_handlers`, follow-up F19.5).
@@ -3158,7 +3162,7 @@ pub fn call(
                 em, nodes, st, block, args, one, at, &spans, &bases,
             )?);
             if let Some(j) = app.callee_param {
-                let e: &mut (Vec<PlaceId>, Vec<PlaceId>) = plain.entry(j).or_default();
+                let e: &mut (Vec<PlaceId>, Vec<PlaceId>) = plain.entry((j, false)).or_default();
                 let (w, rd) = places_since(em.facts, marks, |_| true);
                 e.0.extend(w);
                 e.1.extend(rd);
@@ -4097,14 +4101,16 @@ fn preds(em: &Em<'_>, n: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// The places that the values of each parameter of a callee change and read
-/// where the call runs them as plain code ([`call_tasks`]).
-type PlainPlaces = std::collections::BTreeMap<u32, (Vec<PlaceId>, Vec<PlaceId>)>;
+/// The places that the values of each parameter of a callee (or capture of
+/// a closure that the call runs, true) change and read where the call runs
+/// them as plain code ([`call_tasks`]).
+type PlainPlaces = std::collections::BTreeMap<(u32, bool), (Vec<PlaceId>, Vec<PlaceId>)>;
 
 /// The values of the interface of the body (the parameter or capture, and
-/// true for a capture) that the values of each parameter of a callee run,
-/// as plain code or as a task ([`call_tasks`], plan stage R0z Z9c-A, C1).
-type IfaceValues = std::collections::BTreeMap<u32, Vec<(u32, bool)>>;
+/// true for a capture) that the values of each parameter of a callee (or
+/// capture of a closure that the call runs, true) run, as plain code or as
+/// a task ([`call_tasks`], plan stage R0z Z9c-A, C1).
+type IfaceValues = std::collections::BTreeMap<(u32, bool), Vec<(u32, bool)>>;
 
 /// One value that a call runs as a task at four task nodes ([`call_tasks`]).
 ///
@@ -4114,8 +4120,13 @@ type IfaceValues = std::collections::BTreeMap<u32, Vec<(u32, bool)>>;
 struct TaskSlot {
     /// The index of the slot: the task nodes `4 k` to `4 k + 3` of the call.
     pub k: usize,
-    /// The parameter of the callee that the task runs.
+    /// The parameter of the callee that the task runs, or the capture of the
+    /// closure that the call runs (`key`).
     pub param: u32,
+    /// The capture slot of the closure that the call runs (plan stage R0z
+    /// Z9c-B, part 1): `param` is a capture of the closure, and `with` has
+    /// captures of the closure. `None` for the slot of a parameter.
+    pub key: Option<transfer::SlotKey>,
     /// The task is on another thread (a `fork` branch).
     pub thread: bool,
     /// Two tasks of the value can run at the same time.
@@ -4139,6 +4150,10 @@ struct TaskSlot {
     pub reads: Vec<PlaceId>,
     /// The values that the task runs.
     pub mine: Vec<transfer::Applied>,
+    /// For a capture slot (`key`): the sources of the `once` values of the
+    /// capture that the run of the closure moves at `Main`
+    /// (`Applied::once`). A second run of the value uses them (W0502).
+    pub once_caps: Vec<(BodyId, Place)>,
 }
 
 /// The values of the interface of the body that the values of each
@@ -4152,7 +4167,15 @@ fn iface_values(apps: &[transfer::Applied]) -> IfaceValues {
         let Some(r) = a.run.as_ref().filter(|r| !r.result) else {
             continue;
         };
-        for &j in a.callee_param.iter().chain(&a.reach) {
+        let params = a.callee_param.iter().chain(&a.reach).map(|&j| (j, false));
+        // The captures of the closure of the call (plan stage R0z Z9c-B,
+        // part 1).
+        let caps = a
+            .callee_capture
+            .iter()
+            .chain(&a.cap_reach)
+            .map(|&k| (k, true));
+        for j in params.chain(caps) {
             let e = out.entry(j).or_default();
             if !e.contains(&(r.param, r.capture)) {
                 e.push((r.param, r.capture));
@@ -4197,6 +4220,7 @@ fn item_slots(
         out.push(TaskSlot {
             k,
             param: run.param,
+            key: None,
             thread: run.how.thread,
             twice: run.how.twice || code_twice,
             many: run.many,
@@ -4207,6 +4231,7 @@ fn item_slots(
             writes,
             reads,
             mine,
+            once_caps: Vec::new(),
         });
     }
     Ok(out)
@@ -4230,6 +4255,7 @@ fn value_slots(apps: &[transfer::Applied], slots: &[u32]) -> Option<Vec<TaskSlot
             out.push(TaskSlot {
                 k,
                 param,
+                key: None,
                 thread: false,
                 twice: false,
                 many: false,
@@ -4240,6 +4266,7 @@ fn value_slots(apps: &[transfer::Applied], slots: &[u32]) -> Option<Vec<TaskSlot
                 writes: Vec::new(),
                 reads: Vec::new(),
                 mine: Vec::new(),
+                once_caps: Vec::new(),
             });
             out.len() - 1
         };
@@ -4259,6 +4286,87 @@ fn value_slots(apps: &[transfer::Applied], slots: &[u32]) -> Option<Vec<TaskSlot
         x.writes.dedup();
         x.reads.sort();
         x.reads.dedup();
+    }
+    out.sort_by_key(|x| x.k);
+    Some(out)
+}
+
+/// The capture slots of a call of a function value (plan stage R0z Z9c-B,
+/// part 1): one for each key of `keys` (`transfer::ValueOut::late`), at the
+/// late slot nodes of the call (`Em::late_nodes`, in the order of
+/// `Handlers::late_slots`), with the values `apps` that the closure runs as
+/// a task through the capture (`Applied::callee_capture`) and the join of
+/// how it runs them, as [`value_slots`] does for an argument. `None` if the
+/// analysis did not note a key at the node, or the node has no late nodes
+/// for it.
+fn capture_slots(
+    em: &Em<'_>,
+    block: weft_ir::BlockId,
+    keys: &[transfer::SlotKey],
+    apps: &[transfer::Applied],
+) -> Option<Vec<TaskSlot>> {
+    let have = em.hx.late_slots.get(&(em.body, block))?;
+    if em.late_nodes.len() != have.len().saturating_mul(super::frames::TASK_NODES) {
+        return None;
+    }
+    let mut out = Vec::new();
+    for key in keys {
+        let k = have.iter().position(|x| x == key)?;
+        let transfer::SlotKey::Capture { closure, capture } = *key;
+        let mut slot = TaskSlot {
+            k,
+            param: capture,
+            key: Some(*key),
+            thread: false,
+            twice: false,
+            many: false,
+            seq: false,
+            via_only: false,
+            foreign: false,
+            with: std::collections::BTreeSet::new(),
+            writes: Vec::new(),
+            reads: Vec::new(),
+            mine: Vec::new(),
+            once_caps: Vec::new(),
+        };
+        for a in apps
+            .iter()
+            .filter(|a| a.task_run.is_some() && a.callee_capture == Some(capture))
+        {
+            let how = a.task_how.as_ref()?;
+            slot.thread |= how.thread;
+            slot.twice |= how.twice;
+            slot.many |= how.many;
+            slot.seq |= how.seq;
+            slot.foreign |= how.foreign;
+            slot.with.extend(how.with.iter().copied());
+            slot.writes.extend(how.writes.iter().copied());
+            slot.reads.extend(how.reads.iter().copied());
+            slot.mine.push(a.clone());
+        }
+        if slot.mine.is_empty() {
+            return None;
+        }
+        slot.writes.sort();
+        slot.writes.dedup();
+        slot.reads.sort();
+        slot.reads.dedup();
+        // The `once` values of the capture: the run of the closure moves
+        // them at `Main` (`transfer::apply_value`, `Applied::once`).
+        let src = em.p.closures.get(closure.index()).and_then(|d| {
+            d.captures
+                .get(capture as usize)
+                .map(|c| (d.maker, c.source.clone()))
+        });
+        if let Some(src) = src {
+            let moved = apps.iter().any(|a| {
+                a.closure == Some(closure) && a.task_run.is_none() && a.once.contains(&src)
+            });
+            if moved {
+                slot.once_caps.push(src);
+            }
+        }
+        out.push(slot);
     }
     out.sort_by_key(|x| x.k);
     Some(out)
@@ -4329,7 +4437,12 @@ fn call_tasks(
         } else {
             weft_facts::TaskKind::Spawn
         };
-        let span_of = spans.get(slot.param as usize).copied().unwrap_or(at);
+        let cap = slot.key.is_some();
+        let span_of = if cap {
+            at
+        } else {
+            spans.get(slot.param as usize).copied().unwrap_or(at)
+        };
         let t = em.facts.add_task(kind, span_of);
         // Review round 1 of plan stage R0z Z9a (B1): the callee can run the
         // value more than once in one task, one run after the other
@@ -4401,7 +4514,21 @@ fn call_tasks(
         // H19): the worst way, or the count of the code that the node knows.
         // Only the value of the parameter itself: a value that it runs gets
         // its runs from the summary of the value.
-        let own = args.get(slot.param as usize);
+        let own = if cap {
+            None
+        } else {
+            args.get(slot.param as usize)
+        };
+        // A `once` value of a capture that the closure runs more than once:
+        // the run of the closure moves it at `Main`, and the second start
+        // uses it (plan stage R0z Z9c-B, part 1).
+        if slot.twice || (slot.many && !slot.foreign) {
+            for (mb, src) in &slot.once_caps {
+                if let Some(v) = em.base_var(*mb, src)? {
+                    em.facts.uses.push((v, d));
+                }
+            }
+        }
         for app in mine {
             if slot.twice || (slot.many && !slot.foreign) || app.via_twice {
                 for (mb, op) in app
@@ -4428,8 +4555,25 @@ fn call_tasks(
         let (writes, reads) = places_since(em.facts, marks, shared);
         em.facts.task_writes.extend(writes.iter().map(|&q| (t, q)));
         em.facts.task_reads.extend(reads.iter().map(|&q| (t, q)));
-        let fns = match args.get(slot.param as usize) {
-            Some(op @ (Operand::Copy(_) | Operand::Move(_))) => {
+        let fns = match (slot.key, args.get(slot.param as usize)) {
+            // The values of a capture of the closure of the call (plan stage
+            // R0z Z9c-B, part 1).
+            (Some(transfer::SlotKey::Capture { closure, capture }), _) => {
+                let src = em.p.closures.get(closure.index()).and_then(|d| {
+                    d.captures
+                        .get(capture as usize)
+                        .map(|c| (d.maker, c.source.clone()))
+                });
+                match src {
+                    Some((mb, q)) => {
+                        transfer::operand(&mut em.cx(), mb, st, &Operand::Copy(q))?
+                            .flat()
+                            .fns
+                    }
+                    None => std::collections::BTreeSet::new(),
+                }
+            }
+            (None, Some(op @ (Operand::Copy(_) | Operand::Move(_)))) => {
                 transfer::operand(&mut em.cx(), body, st, op)?.flat().fns
             }
             _ => std::collections::BTreeSet::new(),
@@ -4447,22 +4591,22 @@ fn call_tasks(
         if code && !pins {
             em.code_opaque.push(t);
         }
-        places.insert(slot.param, (writes.clone(), reads.clone()));
+        places.insert((slot.param, cap), (writes.clone(), reads.clone()));
         started.push((
             (slot.twice, slot.with, slot.writes, slot.reads),
-            t,
+            (t, cap),
             (d, x, e),
             writes,
             reads,
         ));
     }
-    for ((twice, with, how_writes, how_reads), t, (d, x, e), writes, reads) in started {
+    for ((twice, with, how_writes, how_reads), (t, cap), (d, x, e), writes, reads) in started {
         // The values of the interface that the callee runs while the task
         // runs (`with`) run outside the window of the task: at `Ret`, or at
         // the task nodes of another slot. The how of the value of the task
         // gets them (plan stage R0z Z9c-A, C1; `analysis::tasks::add_with`).
-        for j in &with {
-            for &(q, c) in ifaces.get(j).into_iter().flatten() {
+        for &j in &with {
+            for &(q, c) in ifaces.get(&(j, cap)).into_iter().flatten() {
                 em.task_with.push((t, q, c));
             }
         }
@@ -4473,8 +4617,8 @@ fn call_tasks(
                 .reads_at
                 .extend(writes.iter().chain(&reads).map(|&q| (d, q)));
         }
-        for j in &with {
-            if let Some((w, r)) = places.get(j) {
+        for &j in &with {
+            if let Some((w, r)) = places.get(&(j, cap)) {
                 em.facts.lends_mut.extend(w.iter().map(|&q| (x, q)));
                 em.facts.reads_at.extend(w.iter().chain(r).map(|&q| (x, q)));
             }
@@ -4644,7 +4788,18 @@ fn value_run(
     // argument that can hold a function value (stage R0f). With no task
     // nodes, or a value of no such argument, the old pipeline checks the
     // program (plan stage F19).
-    let slots = if out.apps.iter().any(|a| a.task_run.is_some()) {
+    let late = if out.late.is_empty() || callee.is_none() {
+        None
+    } else {
+        capture_slots(em, block, &out.late, &out.apps)
+    };
+    let slots = if let Some(s) = late {
+        // The capture slots run at the late slot nodes of the call (plan
+        // stage R0z Z9c-B, part 1); the node has no argument slot
+        // (`transfer::capture_slots`, R-VARG).
+        em.task_nodes = std::mem::take(&mut em.late_nodes);
+        Some(s)
+    } else if out.apps.iter().any(|a| a.task_run.is_some()) {
         let ks = super::frames::value_task_args(em.p, &*em.tys, body, args);
         match value_slots(&out.apps, &ks) {
             Some(s) if !em.task_nodes.is_empty() => Some(s),
@@ -4701,7 +4856,14 @@ fn value_run(
                 frames.extend(emit_apps(
                     em, nodes, st, block, args, one, at, &spans, &bases,
                 )?);
-                if let Some(j) = app.callee_param {
+                // The key of the value: an argument, or a capture of the
+                // closure of the call (change C5 of the design review of
+                // plan stage R0z Z9c).
+                let key = app
+                    .callee_param
+                    .map(|j| (j, false))
+                    .or_else(|| app.callee_capture.map(|k| (k, true)));
+                if let Some(j) = key {
                     let e: &mut (Vec<PlaceId>, Vec<PlaceId>) = plain.entry(j).or_default();
                     let (w, rd) = places_since(em.facts, marks, |_| true);
                     e.0.extend(w);

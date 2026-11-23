@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-B (R-VREF, review round 2, B3 and B4; the bad twin):
+// a reference can be live in the window of the task, so the call keeps the
+// rule of main. The probe of the review:
+// Review probe Z9c-B r2 (B1 with a known capture): `f` gets `&w` as an argument and holds `r` into it while
+// the task of its capture `g` pushes to `w` (the closure sees `v` and `w` as separate places).
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    let g = || w.push(2)
+    let f = |v: &Vec<u64>| { let r = &v[0]; scope { s => s.spawn(g); () }; print(r) }
+    f(&w)
+}

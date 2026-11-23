@@ -88,7 +88,11 @@
 //!   `task_writes(T, _)` or in the changes of the nodes of the spawn, and
 //!   each read in the accesses of `T` or of these nodes. For a task that
 //!   runs code of a caller (`opaque(T)`), a place behind a parameter does not
-//!   count: the caller checks the value that it gives as a task.
+//!   count: the caller checks the value that it gives as a task. A frame
+//!   below the frame of a spawn that waits at a call with late slots (plan
+//!   stage R0z Z9c-B: a node of kind `call task late`) gives the task a
+//!   cover too: the tasks of the cover are the tasks of the late nodes of
+//!   the call, and the nodes are the nodes of the call.
 //!
 //! - **The `with` check (plan stage R0z Z9c-A, C7).** The summary of a body
 //!   says how the body runs each function value of its interface as a task:
@@ -586,15 +590,27 @@ struct TaskCover {
     parent: usize,
     /// The frame of the run of the body of the spawn (a tracked frame).
     frame: u64,
-    /// The task of the facts.
-    task: TaskId,
-    /// The nodes of the spawn.
+    /// The tasks of the facts: the task of the spawn, or the tasks that the
+    /// late slots of a call start (plan stage R0z Z9c-B).
+    tasks: Vec<TaskId>,
+    /// The nodes of the spawn, or of the call.
     group: Vec<NodeId>,
 }
 
 /// The kind of the second node of the run of a spawn (plan stage R0z Z9a,
 /// `weft_sema::factgen::nodes::NodeTable::again_nodes`).
 const AGAIN_KIND: &str = "spawn task";
+
+/// The end of the kind of a task node of a late slot (plan stage R0z
+/// Z9c-B, `weft_sema::factgen::nodes::LATE_KIND_SUFFIX`): the kind is the
+/// kind of the `Main` node of the run node and this suffix.
+const LATE_SUFFIX: &str = weft_sema::factgen::nodes::LATE_KIND_SUFFIX;
+
+/// True if `kind` is the kind of a task node of a late slot.
+fn late_kind(kind: &str) -> bool {
+    kind.strip_suffix(LATE_SUFFIX)
+        .is_some_and(|k| k.ends_with(' '))
+}
 
 /// The bit of the number of a frame of a scope body.
 ///
@@ -1186,7 +1202,7 @@ impl FactOracle {
         let known = self.knows.get(&parent).cloned().unwrap_or_default();
         self.knows.insert(child, known);
         self.parents.insert(child, parent);
-        for &uid in frames {
+        for (depth, &uid) in frames.iter().enumerate() {
             let Some(fr) = self.frames.get(&uid).or_else(|| self.light.get(&uid)) else {
                 continue;
             };
@@ -1200,14 +1216,42 @@ impl FactOracle {
                 .collect();
             ts.sort_unstable();
             ts.dedup();
+            let run = self.activation.get(&uid).copied().unwrap_or(uid);
+            // A call with late slots (plan stage R0z Z9c-B, S1): a frame
+            // below the frame of the spawn waits at a call whose callee
+            // runs a value of a capture as a task. The task cover checks the
+            // task with the frame of the run of the body of the call, the
+            // innermost such frame. Its tasks are the tasks that the late
+            // nodes of the call start.
+            let group = comp.group(&fr.cur);
+            let mut late: Vec<TaskId> = group
+                .iter()
+                .filter(|n| late_kind(comp.kind_of(**n)))
+                .flat_map(|n| comp.spawns.get(n.index()).into_iter().flatten().copied())
+                .collect();
+            late.sort_unstable();
+            late.dedup();
+            if depth > 0
+                && !late.is_empty()
+                && self.frames.contains_key(&run)
+                && !self.covers.contains_key(&child)
+            {
+                self.covers.insert(
+                    child,
+                    TaskCover {
+                        parent,
+                        frame: run,
+                        tasks: late,
+                        group: group.clone(),
+                    },
+                );
+            }
             let [t] = ts.as_slice() else {
                 continue;
             };
-            let run = self.activation.get(&uid).copied().unwrap_or(uid);
             // A spawn with a second node of the run (plan stage R0z Z9a):
             // the task cover checks the task with the frame of the run
             // of the body of the spawn, the innermost such frame.
-            let group = comp.group(&fr.cur);
             let again = group.iter().any(|n| {
                 comp.kind_of(*n) == AGAIN_KIND
                     && comp
@@ -1222,7 +1266,7 @@ impl FactOracle {
                     TaskCover {
                         parent,
                         frame: run,
-                        task: *t,
+                        tasks: vec![*t],
                         group,
                     },
                 );
@@ -1301,7 +1345,8 @@ impl FactOracle {
             // checks the value that it gives as a task (part `runs`, plan
             // stage F19), so a place behind a parameter of the body is not in
             // the facts of the spawn. Such a name does not count.
-            let names: Vec<PlaceId> = if comp.facts.opaque.contains(&cover.task) {
+            let opaque = cover.tasks.iter().any(|t| comp.facts.opaque.contains(t));
+            let names: Vec<PlaceId> = if opaque {
                 names.into_iter().filter(|&q| !comp.in_params(q)).collect()
             } else {
                 names
@@ -1320,7 +1365,7 @@ impl FactOracle {
             };
             let of_task = |rel: &[(TaskId, PlaceId)]| -> Vec<PlaceId> {
                 rel.iter()
-                    .filter(|(t, _)| *t == cover.task)
+                    .filter(|(t, _)| cover.tasks.contains(t))
                     .map(|(_, q)| *q)
                     .collect()
             };

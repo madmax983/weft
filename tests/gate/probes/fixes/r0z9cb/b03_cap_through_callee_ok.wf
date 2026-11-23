@@ -1,0 +1,13 @@
+// Plan stage R0z Z9c-B (part 1): the clean twin of b03. The task of `main`
+// reads `c.j`, a place that the task of `g` does not change.
+struct C { k: u64, j: u64 }
+fn run(h: fn()) / async { scope { s => s.spawn(h); () } }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || c.k += 1
+    let f = || run(g)
+    scope { s0 =>
+        s0.spawn(|| print(c.j))
+        f()
+    }
+}
