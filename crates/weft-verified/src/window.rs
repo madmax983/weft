@@ -131,7 +131,8 @@ pub proof fn lemma_slot_window_exact(
     ensures
         i == d || i == x || i == e,
 {
-    let a = Set::new(|q: int| q == d || q == x || q == e);
+    // `Set::new` of the pinned vstd gives an `Option` (a finite set only).
+    let a = Set::<int>::empty().insert(d).insert(x).insert(e);
     assert forall|p: int, q: int|
         0 <= p < gen.len() && gen[p] && #[trigger] crate::dataflow::spec_edge(succ, p, q)
             implies a.contains(q) by {
@@ -199,10 +200,7 @@ pub proof fn lemma_slot_window_local(
     ensures
         pre.contains(i) || out.contains(i) || i == m || i == s || i == d || i == x || i == e,
 {
-    let a = Set::new(
-        |q: int|
-            pre.contains(q) || out.contains(q) || q == m || q == s || q == d || q == x || q == e,
-    );
+    let a = pre.union(out).insert(m).insert(s).insert(d).insert(x).insert(e);
     assert forall|p: int, q: int|
         0 <= p < gen.len() && gen[p] && #[trigger] crate::dataflow::spec_edge(succ, p, q)
             implies a.contains(q) by {
