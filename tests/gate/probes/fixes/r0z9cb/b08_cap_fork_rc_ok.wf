@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-B (part 1): the clean twin of b08. `g` holds a plain
+// value.
+struct Node { v: u64 }
+fn main() / par {
+    let n = Node { v: 1 }
+    let g = || print(n.v)
+    let f = || { let _ = fork(g, || print(2)); () }
+    f()
+}

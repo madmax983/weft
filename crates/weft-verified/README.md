@@ -21,8 +21,8 @@ The result must be:
 verification results:: 67 verified, 0 errors
 ```
 
-The count is from before the module `tasks` (plan stage R0z Z9c-A). With it
-the count is higher; it is not recorded yet.
+The count is from before the modules `tasks` (plan stage R0z Z9c-A) and
+`window` (Z9c-B). With them the count is higher; it is not recorded yet.
 
 | Module | Verified |
 | --- | --- |
@@ -31,6 +31,7 @@ the count is higher; it is not recorded yet.
 | `modes` | 9 |
 | `lifecycle` | 15 |
 | `tasks` | not recorded (see below) |
+| `window` | not recorded (see below) |
 
 To verify one module, add `--verify-module <name>`.
 
@@ -182,3 +183,23 @@ gives each value that can run with the task). The fact oracle tests that (the
 `with` check, `docs/ir.md` 8.5). The stage that added this module had no Verus
 in its build container: the module was not verified there, and the count of
 the module is not recorded. Run `verus` (above) to verify it.
+
+## `window`: the window of a late slot
+
+Plan stage R0z Z9c-B (proof P2). A late slot of a call has four task nodes
+(the start `s`, the second start `d`, the node `x` of the code that runs with
+the task, the end `e`). The task is active in the least fixpoint of the
+`dataflow` rules with `gen = {s}` and `kill = {e}`
+(`dataflow::propagate`).
+
+| Lemma | Statement |
+| --- | --- |
+| `lemma_within_closed` | The least fixpoint is inside each closed set. |
+| `lemma_slot_window_sound` | With the edges `s -> d -> x -> e`, `s` a `gen` node and `d`, `x` not `kill` nodes, the window has `d`, `x` and `e` (also with more `gen` nodes). |
+| `lemma_slot_window_exact` | With `s` the only `gen` node, `e` a `kill` node and no successor of `s`, `d` or `x` outside the slot, the window is in `{d, x, e}`. |
+| `lemma_slot_window_local` | With `local_code` (the predecessors `pre` of `Main` are `gen` nodes too), the window is in `pre`, the abort paths `out` of `Main`, and `Main`, `s`, `d`, `x`, `e`, if that set is closed (change C8 of the design review). |
+
+The lemmas do not show that the fact generator builds such a graph
+(`NodeTable::late_slot_nodes`); the tests and the oracles check that. The stage
+that added this module had no Verus in its build container: the module was not
+verified there.

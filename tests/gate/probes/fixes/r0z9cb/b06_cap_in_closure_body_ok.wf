@@ -1,0 +1,10 @@
+// Plan stage R0z Z9c-B (part 1): the clean twin of b06. The task of `outer`
+// reads `c.j`.
+struct C { k: u64, j: u64 }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || c.k += 1
+    let f = || scope { s => s.spawn(g); () }
+    let outer = || scope { s0 => s0.spawn(|| print(c.j)); f() }
+    outer()
+}

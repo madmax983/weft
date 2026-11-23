@@ -175,6 +175,15 @@ pub struct NodeKey {
 /// The index of the terminator in [`NodeKey::at`].
 pub const TERM: u32 = u32::MAX;
 
+/// The end of the kind of a task node of a late slot (plan stage R0z
+/// Z9c-B, [`NodeTable::late_slot_nodes`]): `call task late`. The fact
+/// oracle finds the late slots by it (`weft_interp`, the task cover).
+pub const LATE_KIND_SUFFIX: &str = "task late";
+
+/// The kind of a task node of a late slot of a call
+/// ([`NodeTable::late_slot_nodes`]).
+pub const LATE_KIND: &str = "call task late";
+
 /// The copy of the [`Phase::Copy`] node of a `handle` for a later row.
 ///
 /// It is the re-entry after a node in the code of a clause after its
@@ -1181,6 +1190,96 @@ impl NodeTable {
                 }
             }
             facts.cfg_edge.push((main, n));
+        }
+    }
+
+    /// The task nodes of the late slots `slots` of each run node of a
+    /// function value (plan stage R0z Z9c-B, S1; `docs/ir.md` 6.7): four
+    /// nodes of [`Phase::Task`] for each slot (the start, the second start,
+    /// the code that runs with the task, the end), of kind [`LATE_KIND`],
+    /// after the task nodes of `frames` (`Frames::task_nodes`: the argument
+    /// slots and the wait handlers) and before `Ret`, on the edge into
+    /// `Ret`. The analysis finds the slots
+    /// (`crate::analysis::clause::Handlers::late_slots`), so the nodes come
+    /// after the build of the table. A node with no `Main` or `Ret` node,
+    /// or with the nodes already, does not change.
+    pub fn late_slot_nodes(
+        &mut self,
+        p: &Program,
+        facts: &mut FnFacts,
+        frames: &Frames,
+        slots: &BTreeMap<(BodyId, BlockId), Vec<crate::analysis::transfer::SlotKey>>,
+    ) {
+        for (&(body, block), keys) in slots {
+            let is_call = p
+                .bodies
+                .get(body.index())
+                .and_then(|b| b.blocks.get(block.index()))
+                .is_some_and(|blk| matches!(blk.term.kind, TermKind::Call { .. }));
+            if !is_call || keys.is_empty() {
+                continue;
+            }
+            let at = |phase| NodeKey {
+                body,
+                block,
+                at: TERM,
+                phase,
+                dest: NORMAL,
+            };
+            let before = frames.task_nodes(body, block);
+            let count = u32::try_from(keys.len().saturating_mul(super::frames::TASK_NODES))
+                .unwrap_or(u32::MAX);
+            if self
+                .get(at(Phase::Task(before.saturating_add(1))))
+                .is_some()
+            {
+                continue;
+            }
+            let last = if before == 0 {
+                self.get(at(Phase::Main))
+            } else {
+                self.get(at(Phase::Task(before)))
+            };
+            let (Some(main), Some(last), Some(ret)) =
+                (self.get(at(Phase::Main)), last, self.get(at(Phase::Ret)))
+            else {
+                continue;
+            };
+            if !facts.cfg_edge.contains(&(last, ret)) {
+                continue;
+            }
+            let m = facts.node(main).clone();
+            let kind = format!("{} {}", m.kind, LATE_KIND_SUFFIX);
+            let label = if m.label == m.kind {
+                kind.clone()
+            } else {
+                m.label.clone()
+            };
+            let mut prev = last;
+            let mut first = None;
+            for i in 1..=count {
+                let n = self.node(
+                    facts,
+                    at(Phase::Task(before.saturating_add(i))),
+                    m.span,
+                    [&label, &kind, &m.at],
+                );
+                if first.is_none() {
+                    first = Some(n);
+                } else {
+                    facts.cfg_edge.push((prev, n));
+                }
+                prev = n;
+            }
+            let Some(first) = first else {
+                continue;
+            };
+            for e in &mut facts.cfg_edge {
+                if *e == (last, ret) {
+                    e.1 = first;
+                }
+            }
+            facts.cfg_edge.push((prev, ret));
         }
     }
 

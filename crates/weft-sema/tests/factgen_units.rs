@@ -1581,7 +1581,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // at its `Task` node as a spawn, and the last `Task` node ends the
         // branches; `Ret` binds the tuple of the results.
         "fork" => (&["cfg_edge", "may_abort"], &[]),
-        "fork task" | "call task" | "perform task" => (
+        // A node of a late slot of a call (plan stage R0z Z9c-B) has the
+        // facts of a task node of a call.
+        "fork task" | "call task" | "perform task" | "call task late" => (
             &[
                 "cfg_edge",
                 "empty_at",

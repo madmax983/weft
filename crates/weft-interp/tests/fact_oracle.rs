@@ -1616,6 +1616,87 @@ fn a_missing_task_write_of_a_second_run_fails_the_task_cover() {
     assert!(m.starts_with("fact oracle (task cover)"), "{m}");
 }
 
+/// Each probe of plan stage R0z Z9c-B (`fixes/r0z9cb`: the capture slots of
+/// a call) that the `ir` pipeline accepts runs with no failure of the fact
+/// oracle, with the task cover of the late slots, and so do the rows of the
+/// census that the stage brings into scope.
+#[test]
+fn the_probes_of_the_capture_slots_pass_the_fact_oracle() {
+    let probes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes");
+    let mut paths = programs(&probes.join("r0z9cb"));
+    for row in [
+        "r0j/j04_value_ok.wf",
+        "r0kd2/s3_nested_closure_ok.wf",
+        "r0z9a/e09_closure_body_ok.wf",
+    ] {
+        paths.push(probes.join(row));
+    }
+    let mut checked = 0;
+    let mut tasks = 0;
+    for p in paths {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if !c.ir.as_ref().is_some_and(|ir| ir.ok()) {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        let m = r
+            .as_ref()
+            .err()
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
+        assert!(failure(&r).is_none(), "{}: {m}", p.display());
+        if let Ok(o) = &r {
+            tasks += o.fact_oracle.as_ref().map_or(0, |f| f.task);
+        }
+        checked += 1;
+    }
+    assert!(checked >= 7, "{checked}");
+    assert!(tasks > 0, "the task cover checks nothing");
+}
+
+/// A program whose closure `f` spawns its capture `g`, which changes `c.k`,
+/// a place of `main` (plan stage R0z Z9c-B): the call of `f` has a late
+/// slot.
+const LATE: &str = "struct C { k: u64 }\n\
+    fn main() / async {\n\
+    let c = C { k: 0 }\n\
+    let g = || c.k += 1\n\
+    let f = || scope { s => s.spawn(g); () }\n\
+    f()\n\
+    f()\n\
+    print(c.k)\n\
+    }\n";
+
+/// The facts with no writes of the tasks of the late slots and no changes
+/// at the nodes of the calls: the task cover has nothing that covers the
+/// change of the task.
+fn no_late_writes(f: &mut FnFacts) {
+    let call: Vec<weft_facts::NodeId> = (0..f.nodes.len())
+        .filter(|&i| f.nodes[i].kind.starts_with("call"))
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .collect();
+    let late: Vec<weft_facts::TaskId> = f
+        .spawned_at
+        .iter()
+        .filter(|(_, n)| f.nodes[n.index()].kind == weft_sema::factgen::nodes::LATE_KIND)
+        .map(|(t, _)| *t)
+        .collect();
+    f.task_writes.retain(|(t, _)| !late.contains(t));
+    f.mutates_at.retain(|(n, _)| !call.contains(n));
+    f.lends_mut.retain(|(n, _)| !call.contains(n));
+}
+
+/// The task cover of a late slot (plan stage R0z Z9c-B): the task of the
+/// capture writes a place of the frame of the call, so the writes of the
+/// tasks of the late slots or the changes of the nodes of the call must
+/// cover it.
+#[test]
+fn a_missing_task_write_of_a_late_slot_fails_the_task_cover() {
+    let m = broken(LATE, no_late_writes);
+    assert!(m.starts_with("fact oracle (task cover)"), "{m}");
+}
+
 /// The closure identity of a copy region (plan stage R0k-b2), the mutation.
 /// A copy replaces the run by the body of one closure, so the facts of the
 /// region hold only for a run of that closure: at the entry of the region

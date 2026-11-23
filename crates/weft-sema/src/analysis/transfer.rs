@@ -2406,6 +2406,32 @@ pub struct Applied {
     /// the interface that the callee runs with a task (`TaskHow::with`) by
     /// them (plan stage R0z Z9c-A, C1).
     pub reach: Vec<u32>,
+    /// The capture of the closure of the run node whose run (an entry of
+    /// the part `runs` of the summary of the closure) gives the app: the
+    /// key of its capture slot (plan stage R0z Z9c-B, part 1).
+    pub callee_capture: Option<u32>,
+    /// For a value of the interface (`run`): the captures of the closure of
+    /// the run node whose runs reach the value, as [`Applied::reach`] for
+    /// the parameters (plan stage R0z Z9c-B, part 1).
+    pub cap_reach: Vec<u32>,
+}
+
+/// A late slot of a run node (plan stage R0z Z9c-B, S1).
+///
+/// The fact generator makes its four task nodes after the last run of the
+/// analysis (`crate::factgen::nodes::NodeTable::late_slot_nodes`), for a
+/// value that the callee runs as a task and that no argument of the node
+/// gives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SlotKey {
+    /// Capture `capture` of closure `closure`, the callee: the closure runs
+    /// the value of the capture as a task (part 1, `VALUE_TASKS`).
+    Capture {
+        /// The closure that the node runs.
+        closure: weft_ir::ClosureId,
+        /// The capture of the closure.
+        capture: u32,
+    },
 }
 
 /// The places that the references of the captures of closure `decl` point
@@ -2452,6 +2478,9 @@ pub struct ValueOut {
     /// The callee can be a `once` closure: the call moves it (W0502 at a
     /// second call, also through a copy of the local, B12-fn-once).
     pub once: bool,
+    /// The capture slots of the node (`capture_slots`, plan stage R0z
+    /// Z9c-B, part 1): empty if the node has none.
+    pub late: Vec<SlotKey>,
 }
 
 /// True if body `body` is a closure body whose facts are in the terms of
@@ -2744,6 +2773,7 @@ pub fn value_out_ty(
                 apps: Vec::new(),
                 ret: Tree::leaf(AbsVal::of_type(ir_props(cx.tys, ret_ty).linear)),
                 once: false,
+                late: Vec::new(),
             });
         }
     }
@@ -2794,11 +2824,386 @@ pub fn value_out_ty(
         ret = with_fns(cx, ret, ret_ty, (f, q.into_iter().collect()));
     }
     let ret = back_ret(cx, inst, ret, ret_ty);
+    let late = capture_slots(cx, (body, block), st, &fns, &apps.out)?;
     Ok(ValueOut {
         apps: apps.out,
         ret,
         once,
+        late,
     })
+}
+
+/// True if a clause of a local handler can run at a call node of the body of
+/// closure `c`, or of a body inside it (a handled body, a scope body, a
+/// clause, a closure body): R-VCLAUSE of [`capture_slots`].
+fn inner_call_clauses(cx: &Cx<'_>, c: weft_ir::ClosureId) -> bool {
+    let Some(root) = cx.p.closures.get(c.index()).map(|d| d.body) else {
+        return true;
+    };
+    let inside = |b: BodyId| {
+        let mut at = Some(b);
+        for _ in 0..64 {
+            match at {
+                Some(x) if x == root => return true,
+                Some(x) => at = cx.p.bodies.get(x.index()).and_then(|bd| bd.parent),
+                None => return false,
+            }
+        }
+        true
+    };
+    cx.p.bodies.iter().enumerate().any(|(i, bd)| {
+        let b = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
+        inside(b)
+            && bd.blocks.iter().any(|blk| {
+                matches!(blk.term.kind, weft_ir::TermKind::Call { .. })
+                    && !crate::factgen::frames::clause_handlers(
+                        cx.p,
+                        cx.tys,
+                        cx.sums,
+                        b,
+                        &blk.term.kind,
+                    )
+                    .is_empty()
+            })
+    })
+}
+
+/// True if a value of type `t` holds no reference, by a whitelist (R-VREF
+/// of `capture_slots`, plan stage R0z Z9c-B, review round 3). A type is
+/// ref-free only if it is one of these:
+///
+/// - `()`, `bool`, an integer, or the type of an expression that does not
+///   return;
+/// - a tuple or a fixed array of ref-free types;
+/// - a function type whose parameters and result are ref-free;
+/// - a struct or an enum whose fields are ref-free (with its type arguments
+///   for its type parameters), with no place field;
+/// - `Vec`, `Box`, `String` or `Duration` with ref-free type arguments.
+///
+/// Each other type is not ref-free: a reference, a slice, an iterator, an
+/// `rc` handle (`Rc`, `Weak`), a raw pointer, a task handle, a scope, a
+/// capability, a continuation, a type parameter, an extern type of another
+/// kind, a type that the table does not know, and a type deeper than 16
+/// steps. A struct or an enum that contains itself counts as ref-free on
+/// the inner step (a reference must be at a finite depth).
+pub fn ref_free(tys: &TyTable, t: TyId) -> bool {
+    let mut open = BTreeSet::new();
+    ref_free_in(tys, t, &[], &mut open, 0)
+}
+
+/// [`ref_free`] of `t`, whose type parameters are `env` (the type arguments
+/// of the struct or enum around it; empty at the top: a type parameter there
+/// is not ref-free). `open` has the structs and enums whose fields the check
+/// visits now.
+fn ref_free_in(
+    tys: &TyTable,
+    t: TyId,
+    env: &[TyId],
+    open: &mut BTreeSet<(weft_ir::AdtId, Vec<TyId>)>,
+    depth: u32,
+) -> bool {
+    use weft_ir::ty::Lang;
+    use weft_ir::Ty;
+    if depth > 16 {
+        return false;
+    }
+    let go = |x: TyId, open: &mut BTreeSet<(weft_ir::AdtId, Vec<TyId>)>| {
+        ref_free_in(tys, x, env, open, depth + 1)
+    };
+    match tys.try_get(t) {
+        Some(Ty::Unit | Ty::Bool | Ty::Never | Ty::Int(_)) => true,
+        Some(Ty::Tuple(ts)) => ts.clone().into_iter().all(|x| go(x, open)),
+        Some(Ty::Array(x, _)) => {
+            let x = *x;
+            go(x, open)
+        }
+        Some(Ty::Fn(f)) => f.params.iter().copied().chain([f.ret]).all(|x| go(x, open)),
+        Some(Ty::Param(i)) => {
+            let Some(&a) = env.get(*i as usize) else {
+                return false;
+            };
+            ref_free_in(tys, a, &[], open, depth + 1)
+        }
+        Some(Ty::Adt(a, args)) => {
+            let (a, args) = (*a, args.clone());
+            // The type arguments in the terms of the type around it.
+            let mut outer = Vec::new();
+            for &x in &args {
+                if !go(x, open) {
+                    return false;
+                }
+                outer.push(x);
+            }
+            let Some(d) = tys.adts().get(a.index()) else {
+                return false;
+            };
+            match d.lang {
+                Some(Lang::Vec | Lang::Box | Lang::String | Lang::Duration) => return true,
+                Some(_) => return false,
+                None => {}
+            }
+            // The fields see the type arguments: resolve them here.
+            let resolved: Vec<TyId> = outer
+                .iter()
+                .map(|&x| match tys.try_get(x) {
+                    Some(Ty::Param(i)) => env.get(*i as usize).copied().unwrap_or(x),
+                    _ => x,
+                })
+                .collect();
+            let key = (a, resolved.clone());
+            if open.contains(&key) {
+                return true;
+            }
+            let fields: Vec<TyId> = match &d.kind {
+                weft_ir::ty::AdtKind::Struct(fs) => {
+                    if fs.iter().any(|f| f.place) {
+                        return false;
+                    }
+                    fs.iter().map(|f| f.ty).collect()
+                }
+                weft_ir::ty::AdtKind::Enum(vs) => {
+                    vs.iter().flat_map(|v| v.fields.iter().copied()).collect()
+                }
+                weft_ir::ty::AdtKind::Extern { .. } => return false,
+            };
+            open.insert(key.clone());
+            let ok = fields
+                .into_iter()
+                .all(|x| ref_free_in(tys, x, &resolved, open, depth + 1));
+            open.remove(&key);
+            ok
+        }
+        _ => false,
+    }
+}
+
+/// The capture slots of a run node of a function value (plan stage R0z
+/// Z9c-B, part 1): the captures of the closure of the callee `fns` that
+/// the closure runs as a task (`Applied::callee_capture` of an app with
+/// `Applied::task_run`). Each one gets a late slot at the node (four task
+/// nodes after the last run of the analysis, [`SlotKey`]), so the task
+/// runs inside the call and the code of the caller after the call is not
+/// in its window.
+///
+/// The result is empty (the node keeps the rule of main: the old
+/// pipeline checks the program, `VALUE_TASKS`) for each of these:
+///
+/// - R-VMULTI: more than one value of the callee runs a capture as a task,
+///   or such a value is a closure that a callee made (`FnVal::Made`: its
+///   body is not in the component).
+/// - R-VARG: the node runs a value of an argument (`Applied::callee_param`),
+///   or an argument can hold a function value (the call has argument slot
+///   nodes, `factgen::frames::value_task_args`). An argument slot and a
+///   capture slot of one call are two kinds of `with`, and the summary of
+///   the closure has one kind only. With no argument slot nodes and no wait
+///   handler (R-VCLAUSE), the late slot comes directly after `Main`.
+/// - R-VCLAUSE: a clause of a local handler can run at the node, or at a
+///   call node of the body of the closure or of a body inside it
+///   ([`inner_call_clauses`]). The clause can run a value of the interface
+///   while the task runs, and the window rule of `tasks::clause_with` does
+///   not see a clause run at a call node (review rounds 2 and 3 of plan
+///   stage R0z Z9c-A; probes `z9cdrev/p/w02_cap_param_local_clause_bad`
+///   and, review round 1 of Z9c-B, B2, `r03_inner_handler_helper_bad`).
+/// - R-VIFACE (review round 3 of Z9c-B): an app of the node is a value of the
+///   interface of the body (`Applied::run`), or a run of a capture reaches
+///   one (`Applied::cap_reach`). Only known values get a capture slot. A
+///   slot of a value of the interface needs the alias rule (W0312) for the
+///   writes of a slot task while a reference into the place is live, an old
+///   gap (#78): rounds 1 to 3 found lost faults for a reference parameter, a
+///   value of a type parameter, a getter, and an `rc` handle (`r35`, `q19`,
+///   `t01`, `t25`). Capture slots of values of the interface are left for a
+///   later stage.
+/// - R-VSTORE (review round 4 of Z9c-B, B7): a run of the node (the closure,
+///   a closure in it, a known capture that it runs) stores a reference or a
+///   function value into a place of the caller (`Applied::stores`,
+///   `Applied::put_fns`), or gives a capture a whole new value whose type can
+///   hold a reference (not [`ref_free`], or with a function type in it: a
+///   function value holds references in its captures). The facts apply
+///   these at `Ret`, after the late slot nodes, so a reference that the
+///   closure stores before its task starts was not live at the task nodes
+///   (`w06_assign_captured_ref_bad`: a lost W0301). The root is issue #104:
+///   the task nodes of a call must see the stores of the callee that come
+///   before the task starts.
+/// - R-VREF: an argument of the call does not have a ref-free type
+///   ([`ref_free`], a whitelist): a reference that the closure gets can be
+///   live in the window of the task (review round 2, B3: `q18`).
+/// - R-VMOVE: the capture is a `ByMove` capture. The closure owns the
+///   value, so the place of the maker does not hold it after the move, and
+///   the task slot would not find the captures of the value (`captures`,
+///   `kept`, `mut_through` of the task).
+/// - R-VONCE: the closure can run the value more than once (`twice`, or
+///   `many` or `seq` with no `foreign`), and a value of the capture is a
+///   value that the analysis does not know: a `once` value there does not
+///   move in the facts.
+///
+/// # Errors
+///
+/// The errors of α.
+fn capture_slots(
+    cx: &mut Cx<'_>,
+    at: (BodyId, weft_ir::BlockId),
+    st: &State,
+    fns: &BTreeSet<FnVal>,
+    apps: &[Applied],
+) -> Result<Vec<SlotKey>, AlphaError> {
+    if !apps
+        .iter()
+        .any(|a| a.task_run.is_some() && a.callee_capture.is_some())
+    {
+        return Ok(Vec::new());
+    }
+    capture_slot_keys(cx, at, st, fns, apps)
+}
+
+/// [`capture_slots`] for a node with an app of a capture task (out of line:
+/// most run nodes have none).
+#[cold]
+#[inline(never)]
+fn capture_slot_keys(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, weft_ir::BlockId),
+    st: &State,
+    fns: &BTreeSet<FnVal>,
+    apps: &[Applied],
+) -> Result<Vec<SlotKey>, AlphaError> {
+    let none = Vec::new();
+    let caps: Vec<&Applied> = apps
+        .iter()
+        .filter(|a| a.task_run.is_some() && a.callee_capture.is_some())
+        .collect();
+    // R-VMULTI.
+    let task_caps = |c: weft_ir::ClosureId| {
+        cx.sums
+            .closure(c)
+            .is_ok_and(|s| s.runs.iter().any(|r| r.task && r.capture))
+    };
+    let mut owners = Vec::new();
+    for f in fns {
+        match f {
+            FnVal::Closure(c) if task_caps(*c) => owners.push(*c),
+            FnVal::Made(c) if task_caps(*c) => return Ok(none),
+            _ => {}
+        }
+    }
+    let [closure] = owners.as_slice() else {
+        return Ok(none);
+    };
+    // R-VARG.
+    if apps.iter().any(|a| a.callee_param.is_some()) {
+        return Ok(none);
+    }
+    // R-VCLAUSE.
+    let term =
+        cx.p.bodies
+            .get(body.index())
+            .and_then(|b| b.blocks.get(block.index()))
+            .map(|b| &b.term.kind);
+    let clauses = term.is_none_or(|t| {
+        !crate::factgen::frames::clause_handlers(cx.p, cx.tys, cx.sums, body, t).is_empty()
+    });
+    if clauses || inner_call_clauses(cx, *closure) {
+        return Ok(none);
+    }
+    // R-VARG: the call has no argument slot nodes, so the late slot comes
+    // directly after `Main` (the premise of `weft_verified::window`).
+    let arg_slots = term.is_none_or(|t| match t {
+        weft_ir::TermKind::Call { args, .. } => {
+            !crate::factgen::frames::value_task_args(cx.p, cx.tys, body, args).is_empty()
+        }
+        _ => true,
+    });
+    if arg_slots {
+        return Ok(none);
+    }
+    // R-VIFACE: only known values, which reach no value of the interface.
+    if apps
+        .iter()
+        .any(|a| a.run.is_some() || !a.cap_reach.is_empty())
+    {
+        return Ok(none);
+    }
+    // R-VSTORE: no run of the node stores a reference or a function value
+    // into a place of the caller (#104).
+    let holds = |t: TyId| !ref_free(cx.tys, t) || crate::props::ir_has_fns(cx.tys, t);
+    let stores = apps.iter().any(|a| {
+        !a.stores.is_empty()
+            || !a.put_fns.is_empty()
+            || a.rebinds.iter().any(|(k, _)| {
+                cx.p.bodies
+                    .get(k.0.index())
+                    .and_then(|b| b.locals.get(k.1.index()))
+                    .is_none_or(|d| holds(d.ty))
+            })
+    });
+    if stores {
+        return Ok(none);
+    }
+    // R-VREF: each argument of the call has a ref-free type.
+    let ref_args = match term {
+        Some(weft_ir::TermKind::Call { args, .. }) => {
+            let mut any = false;
+            for op in args {
+                if let Operand::Copy(q) | Operand::Move(q) = op {
+                    let t = place_ty(cx, body, q)?;
+                    any |= !ref_free(cx.tys, t);
+                }
+            }
+            any
+        }
+        _ => true,
+    };
+    if ref_args {
+        return Ok(none);
+    }
+    let mut keys: BTreeSet<u32> = BTreeSet::new();
+    let mut again: BTreeSet<u32> = BTreeSet::new();
+    for a in &caps {
+        let (Some(k), Some(how)) = (a.callee_capture, a.task_how.as_ref()) else {
+            return Ok(none);
+        };
+        // R-VMAKER, R-VCODE.
+        if !a.maker_tasks.is_empty() || a.via_twice || (a.code && how.seq) {
+            return Ok(none);
+        }
+        keys.insert(k);
+        // The value runs again at the second start (`twice`), or after
+        // itself (`many` of a body that the closure has; the worst way of
+        // code of a caller is `many` by its `many` alone, as in
+        // `templates::call_tasks`).
+        if how.twice || ((how.many || how.seq) && !how.foreign) {
+            again.insert(k);
+        }
+    }
+    // R-VMOVE, R-VONCE.
+    let Some(decl) = cx.p.closures.get(closure.index()) else {
+        return Ok(none);
+    };
+    let maker = decl.maker;
+    for &k in &keys {
+        let by_move = decl
+            .captures
+            .get(k as usize)
+            .is_none_or(|cap| cap.mode == weft_ir::CaptureMode::ByMove);
+        if by_move {
+            return Ok(none);
+        }
+    }
+    for &k in &again {
+        let Some(cap) = decl.captures.get(k as usize) else {
+            return Ok(none);
+        };
+        let held = reach_fns(cx, maker, st, &Operand::Copy(cap.source.clone()))?;
+        if held.is_empty() || held.contains(&FnVal::Unknown) {
+            return Ok(none);
+        }
+    }
+    Ok(keys
+        .into_iter()
+        .map(|capture| SlotKey::Capture {
+            closure: *closure,
+            capture,
+        })
+        .collect())
 }
 
 /// The result `ret` of type `ret_ty` of run node `inst`: if a clause of a
@@ -3103,6 +3508,7 @@ pub fn op_value_out(
         apps: apps.out,
         ret,
         once: false,
+        late: Vec::new(),
     })
 }
 
@@ -4488,6 +4894,10 @@ fn apply_runs(
                 }
                 if !run.capture {
                     a.callee_param = Some(run.param);
+                } else if depth == 0 {
+                    // The key of a capture slot of the node (plan stage R0z
+                    // Z9c-B, part 1).
+                    a.callee_capture = Some(run.param);
                 }
                 a.sigma.others.clone_from(&others);
                 // A value that the closure runs through a capture changes
@@ -4651,7 +5061,7 @@ fn apply_runs(
     // interface of this body (`Applied::reach`, plan stage R0z Z9c-A, C1).
     if depth == 0 {
         for (&(j, capture, result), keys) in &lifted {
-            if capture || result {
+            if result {
                 continue;
             }
             for &(i, c, res) in keys {
@@ -4663,8 +5073,15 @@ fn apply_runs(
                         .run
                         .as_ref()
                         .is_some_and(|x| (x.param, x.capture, x.result) == (i, c, false));
-                    if hit && !a.reach.contains(&j) {
-                        a.reach.push(j);
+                    // A capture of the closure of the node: the key of a
+                    // capture slot (plan stage R0z Z9c-B, part 1).
+                    let have = if capture {
+                        &mut a.cap_reach
+                    } else {
+                        &mut a.reach
+                    };
+                    if hit && !have.contains(&j) {
+                        have.push(j);
                     }
                 }
             }
@@ -5001,6 +5418,8 @@ fn apply_value(
                 via_twice: false,
                 maker_tasks: Vec::new(),
                 reach: Vec::new(),
+                callee_capture: None,
+                cap_reach: Vec::new(),
                 task_how: None,
             });
             let places = match given {
@@ -5233,6 +5652,8 @@ fn apply_value(
                 via_twice: false,
                 maker_tasks: Vec::new(),
                 reach: Vec::new(),
+                callee_capture: None,
+                cap_reach: Vec::new(),
                 task_how: None,
             });
             apply_runs(
@@ -5448,6 +5869,8 @@ fn apply_value(
                 via_twice: false,
                 maker_tasks: Vec::new(),
                 reach: Vec::new(),
+                callee_capture: None,
+                cap_reach: Vec::new(),
                 task_how: None,
             });
             // A closure that a callee made holds the values that it runs in
@@ -5940,6 +6363,18 @@ fn call_value(
 ) -> Result<(), AlphaError> {
     let fns = args_linear(cx, body, st, args)?;
     let out = value_out(cx, body, block, st, callee, args, dest)?;
+    // The capture slots of the node (plan stage R0z Z9c-B, part 1): the
+    // fact generator makes their task nodes after the last run of the
+    // analysis.
+    if !out.late.is_empty() {
+        let keys = cx.hx.late_slots.entry((body, block)).or_default();
+        for k in &out.late {
+            if !keys.contains(k) {
+                keys.push(*k);
+            }
+        }
+        keys.sort();
+    }
     apply_apps(cx, st, &out.apps, fns);
     note_multi_apps(cx, (body, block), &out.apps)?;
     let changed: Vec<PlaceId> = out

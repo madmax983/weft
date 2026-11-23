@@ -1,0 +1,14 @@
+// Plan stage R0z Z9c-B (R-VREF): the clean twin of b14. `par` takes `r`
+// after the call. The old pipeline gives W0312 (an old false positive; main
+// gives it too).
+fn par(h: fn(), v: &Vec<u64>) / async {
+    let f = || scope { s => s.spawn(h); () }
+    f()
+    let r = &v[0]
+    print(r)
+}
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    par(|| w.push(2), &w)
+}

@@ -4594,15 +4594,21 @@ mod r0z9a {
         }
     }
 
-    /// A closure body whose spawn runs a value again keeps the reason of a
-    /// later stage (`VALUE_TASKS`, Z9c), not `TASK_AGAIN`.
+    /// A closure body whose spawn runs a value again: the call of the
+    /// closure runs the capture as a task at a late slot (plan stage R0z
+    /// Z9c-B, part 1), so `e09_closure_body_ok` has full facts. The bad
+    /// twin moves the `once` value into the closure (`ByMove`, R-VMOVE):
+    /// it keeps the reason of Z9c, not `TASK_AGAIN`.
     #[test]
     fn a_spawn_in_a_closure_body_keeps_only_the_reason_of_z9c() {
-        for twin in ["ok", "bad"] {
-            let (_, pending) = check(&format!("fixes/r0z9a/e09_closure_body_{twin}.wf"));
-            let p = pending.unwrap_or_default();
-            assert!(p.contains("runs a value of its arguments as a task"), "{p}");
-        }
+        assert_eq!(
+            check("fixes/r0z9a/e09_closure_body_ok.wf"),
+            (None, None),
+            "e09_closure_body_ok"
+        );
+        let (_, pending) = check("fixes/r0z9a/e09_closure_body_bad.wf");
+        let p = pending.unwrap_or_default();
+        assert!(p.contains("runs a value of its arguments as a task"), "{p}");
     }
 }
 
@@ -4803,5 +4809,358 @@ mod r0z9c {
         assert_eq!(h.with.iter().copied().collect::<Vec<_>>(), [1, 3]);
         add_with(&mut hows, &runs, &[(t, 0, false)]);
         assert!(hows[0].twice);
+    }
+}
+
+/// Plan stage R0z Z9c-B (S1 and part 1): the capture slots of a call. A
+/// call of a closure that runs one of its captures as a task gets a late
+/// slot: four task nodes of kind `call task late` before `Ret`, made after
+/// the last run of the analysis. On main each form is pending with
+/// `VALUE_TASKS`.
+mod r0z9cb {
+    use weft_facts::FnFacts;
+
+    /// The analysis of the probe `path` of `tests/gate/probes`, with the
+    /// facts of the `ir` pipeline.
+    fn analysis(path: &str) -> weft_sema::Analysis {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(path);
+        let src = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        weft_sema::analyze_source(&src, opts).unwrap_or_else(|d| panic!("{path}: {}", d.message))
+    }
+
+    /// The reason of the fallback and the reason of the pending construct.
+    fn check(path: &str) -> (Option<String>, Option<String>) {
+        let s = analysis(path).ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// The facts of `main` of the probe `path`.
+    fn main_facts(path: &str) -> FnFacts {
+        analysis(path)
+            .bodies
+            .into_iter()
+            .find(|b| b.facts.name == "main")
+            .map_or_else(|| panic!("{path}: no `main`"), |b| b.facts)
+    }
+
+    /// The tasks that start at a node of a late slot.
+    fn late_tasks(f: &FnFacts) -> Vec<weft_facts::TaskId> {
+        let late = |n: weft_facts::NodeId| f.node(n).kind == weft_sema::factgen::nodes::LATE_KIND;
+        let mut ts: Vec<_> = f
+            .spawned_at
+            .iter()
+            .filter(|&&(_, n)| late(n))
+            .map(|&(t, _)| t)
+            .collect();
+        ts.sort();
+        ts.dedup();
+        ts
+    }
+
+    /// The rows of the census (tier 1) and the clean probes have full facts,
+    /// and so do the bad twins: the checker rejects them.
+    #[test]
+    fn the_capture_slots_have_full_facts() {
+        let mut paths: Vec<String> = [
+            "fixes/r0j/j04_value_ok.wf",
+            "fixes/r0j/j04_value_bad.wf",
+            "fixes/r0kd2/s3_nested_closure_ok.wf",
+            "fixes/r0z9a/e09_closure_body_ok.wf",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        for form in [
+            "b01_cap_plain_known",
+            "b03_cap_through_callee",
+            "b07_cap_ref_across",
+            "b08_cap_fork_rc",
+            "b09_cap_fork_write",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z9cb/{form}_{twin}.wf"));
+            }
+        }
+        // The bad twins of `b11` and `b12` store a reference into a capture
+        // (R-VSTORE, review round 4): only the clean twins have a slot.
+        for form in [
+            "b11_cap_known_task_then_plain",
+            "b12_cap_known_plain_then_task",
+        ] {
+            paths.push(format!("fixes/r0z9cb/{form}_ok.wf"));
+        }
+        for path in &paths {
+            assert_eq!(check(path), (None, None), "{path}");
+        }
+    }
+
+    /// The task of a capture slot starts and ends at the late nodes, and it
+    /// has the footprint of the capture: `j04_value_ok` reads `c.k` in two
+    /// tasks at once (`twice`: two starts), once at each of the two calls.
+    #[test]
+    fn a_capture_slot_starts_and_ends_its_task_at_the_late_nodes() {
+        let f = main_facts("fixes/r0j/j04_value_ok.wf");
+        let ts = late_tasks(&f);
+        assert_eq!(ts.len(), 2, "{ts:?}");
+        let late = |n: weft_facts::NodeId| f.node(n).kind == weft_sema::factgen::nodes::LATE_KIND;
+        for t in ts {
+            let starts = f.spawned_at.iter().filter(|&&(u, _)| u == t).count();
+            assert_eq!(starts, 2, "{t:?}: the second start of `twice`");
+            assert!(
+                f.joined_at.iter().any(|&(u, n)| u == t && late(n)),
+                "{t:?}: no end at a late node"
+            );
+            let reads: Vec<String> = f
+                .task_reads
+                .iter()
+                .filter(|(u, _)| *u == t)
+                .map(|&(_, q)| f.place(q).display.clone())
+                .collect();
+            assert!(reads.iter().any(|r| r == "c.k"), "{t:?}: {reads:?}");
+        }
+    }
+
+    /// A call with no capture task has no late node: the facts of the
+    /// probes of Z9c-A do not change.
+    #[test]
+    fn a_call_with_no_capture_task_has_no_late_node() {
+        for name in ["a01_item_with_param_bad.wf", "c01_waits_other_task_ok.wf"] {
+            let f = main_facts(&format!("fixes/r0z9c/{name}"));
+            assert!(
+                !f.nodes
+                    .iter()
+                    .any(|n| n.kind == weft_sema::factgen::nodes::LATE_KIND),
+                "{name}"
+            );
+        }
+    }
+
+    /// The refusals keep `VALUE_TASKS` (the rule of main): a `once` value
+    /// that the closure moves into itself (`ByMove`, R-VMOVE), a closure that
+    /// also runs a value of an argument (R-VARG), a clause of a local handler
+    /// at the call (R-VCLAUSE), and a value of the interface that the closure
+    /// runs as a task and then again as plain code (`b10`).
+    #[test]
+    fn the_refusals_keep_the_reason_of_main() {
+        for path in [
+            "fixes/r0z9cb/b02_cap_two_calls_once_ok.wf",
+            "fixes/r0z9cb/b02_cap_two_calls_once_bad.wf",
+            "fixes/r0z9cb/b04_cap_and_arg_ok.wf",
+            "fixes/r0z9cb/b04_cap_and_arg_bad.wf",
+            "fixes/r0z9cb/b05_cap_local_clause_ok.wf",
+            "fixes/r0z9cb/b05_cap_local_clause_bad.wf",
+            "fixes/r0z9cb/b10_cap_task_then_plain_ok.wf",
+            "fixes/r0z9cb/b10_cap_task_then_plain_bad.wf",
+            "fixes/r0z9a/e09_closure_body_bad.wf",
+        ] {
+            let (fallback, pending) = check(path);
+            assert_eq!(fallback, None, "{path}");
+            let p = pending.unwrap_or_default();
+            assert!(
+                p.contains("runs a value of its arguments as a task"),
+                "{path}: {p}"
+            );
+        }
+    }
+
+    /// Review round 3 of Z9c-B (R-VIFACE, B5 and B6): a closure whose task
+    /// runs a value of the interface of the body keeps `VALUE_TASKS`, also a
+    /// known wrapper that runs one (`b24`), a getter of a type parameter
+    /// (`b22`, `b23`, `b27`) and an `rc` handle (`b25`, `b26`). The review
+    /// probes of Z9c-A and of round 1 with values of the interface (`a03`,
+    /// `b13`) keep it too. With no refusal each bad twin was a HOLE, and the
+    /// task cover failed on `b25` and `b26`.
+    #[test]
+    fn a_value_of_the_interface_gets_no_capture_slot() {
+        for form in [
+            "b22_cap_generic_getter_held",
+            "b23_cap_generic_held_in_caller_of_closure",
+            "b24_cap_generic_known_task_wrapper",
+            "b25_cap_rc_iface_ref_held",
+            "b26_cap_rc_iface_closure_ref",
+            "b27_cap_generic_caller_task_race",
+            "b13_cap_iface_ref_param",
+        ] {
+            for twin in ["ok", "bad"] {
+                let path = format!("fixes/r0z9cb/{form}_{twin}.wf");
+                let (fallback, pending) = check(&path);
+                assert_eq!(fallback, None, "{path}");
+                let p = pending.unwrap_or_default();
+                assert!(
+                    p.contains("runs a value of its arguments as a task"),
+                    "{path}: {p}"
+                );
+            }
+        }
+    }
+
+    /// Review round 4 of Z9c-B (R-VSTORE, B7): the closure stores a
+    /// reference (or a function value) into a capture before its task
+    /// starts. The facts apply the store at `Ret`, after the late slot nodes
+    /// (issue #104), so each bad probe was a HOLE; the call keeps
+    /// `VALUE_TASKS`.
+    #[test]
+    fn a_store_into_a_capture_that_can_hold_a_reference_keeps_the_fallback() {
+        for path in [
+            "fixes/r0z9cb/b28_cap_assign_captured_ref_bad.wf",
+            "fixes/r0z9cb/b28_cap_assign_captured_ref_ok.wf",
+            "fixes/r0z9cb/b29_cap_assign_option_ref_bad.wf",
+            "fixes/r0z9cb/b29_cap_assign_option_ref_ok.wf",
+            "fixes/r0z9cb/b30_cap_assign_tuple_ref_bad.wf",
+            "fixes/r0z9cb/b30_cap_assign_tuple_ref_ok.wf",
+            "fixes/r0z9cb/b31_cap_assign_ref_from_callee_bad.wf",
+            "fixes/r0z9cb/b31_cap_assign_ref_from_callee_ok.wf",
+            "fixes/r0z9cb/b32_cap_assign_ref_two_calls_bad.wf",
+            "fixes/r0z9cb/b33_cap_store_in_maker_fn_bad.wf",
+            "fixes/r0z9cb/b34_cap_store_reader_made_inside_bad.wf",
+            "fixes/r0z9cb/b34_cap_store_reader_made_inside_ok.wf",
+            "fixes/r0z9cb/b35_cap_store_reader_closure_param_body_bad.wf",
+            "fixes/r0z9cb/b36_cap_method_store_ref_bad.wf",
+        ] {
+            let (fallback, pending) = check(path);
+            assert_eq!(fallback, None, "{path}");
+            let p = pending.unwrap_or_default();
+            assert!(
+                p.contains("runs a value of its arguments as a task"),
+                "{path}: {p}"
+            );
+        }
+    }
+
+    /// `transfer::ref_free` is a whitelist: plain data, tuples, arrays,
+    /// structs and enums of plain data, `Vec` and `String` of plain data, and
+    /// function types of plain data are ref-free; a reference, a type
+    /// parameter, an `rc` handle, a struct with a reference field, and a
+    /// function type with a reference in its signature are not.
+    #[test]
+    fn ref_free_is_a_whitelist() {
+        use weft_ir::ty::{AdtDecl, AdtKind, FieldDecl, FnTy, IntTy, Lang, Ty, TyTable};
+        use weft_sema::analysis::transfer::ref_free;
+        let mut t = TyTable::new();
+        let unit = t.unit();
+        let u64 = t.intern(Ty::Int(IntTy::U64));
+        let r = t.intern(Ty::Ref(u64));
+        let param = t.intern(Ty::Param(0));
+        let decl = |name: &str, kind, lang, generics| AdtDecl {
+            name: name.to_string(),
+            generics,
+            kind,
+            lang,
+            linear: false,
+            on_abort: None,
+            has_on_abort: false,
+            immovable: false,
+            copy: false,
+            nonportable: false,
+            props: Default::default(),
+        };
+        let field = |ty| FieldDecl {
+            name: "f".to_string(),
+            ty,
+            place: false,
+        };
+        let plain = t.push_adt(decl("P", AdtKind::Struct(vec![field(u64)]), None, 0));
+        let plain = t.intern(Ty::Adt(plain, vec![]));
+        let with_ref = t.push_adt(decl("R", AdtKind::Struct(vec![field(r)]), None, 0));
+        let with_ref = t.intern(Ty::Adt(with_ref, vec![]));
+        let holder = t.push_adt(decl("H", AdtKind::Struct(vec![field(param)]), None, 1));
+        let holds_u64 = t.intern(Ty::Adt(holder, vec![u64]));
+        let holds_ref = t.intern(Ty::Adt(holder, vec![r]));
+        let ext = AdtKind::Extern {
+            elem_unstable: None,
+            deref: None,
+        };
+        let vec = t.push_adt(decl("Vec", ext.clone(), Some(Lang::Vec), 1));
+        let vec_u64 = t.intern(Ty::Adt(vec, vec![u64]));
+        let rc = t.push_adt(decl("Rc", ext, Some(Lang::Rc), 1));
+        let rc_plain = t.intern(Ty::Adt(rc, vec![plain]));
+        let tuple = t.intern(Ty::Tuple(vec![u64, plain]));
+        let fn_ty = |t: &mut TyTable, params: Vec<_>, ret| {
+            t.intern(Ty::Fn(FnTy {
+                params,
+                ret,
+                row: None,
+            }))
+        };
+        let f_plain = fn_ty(&mut t, vec![u64], unit);
+        let f_ref = fn_ty(&mut t, vec![], r);
+        let f_param = fn_ty(&mut t, vec![], param);
+        for (ty, want, what) in [
+            (unit, true, "()"),
+            (u64, true, "u64"),
+            (plain, true, "struct of u64"),
+            (holds_u64, true, "H<u64>"),
+            (vec_u64, true, "Vec<u64>"),
+            (tuple, true, "(u64, P)"),
+            (f_plain, true, "fn(u64)"),
+            (r, false, "&u64"),
+            (param, false, "a type parameter"),
+            (with_ref, false, "struct with a reference"),
+            (holds_ref, false, "H<&u64>"),
+            (rc_plain, false, "Rc<P>"),
+            (f_ref, false, "fn() -> &u64"),
+            (f_param, false, "fn() -> T"),
+        ] {
+            assert_eq!(ref_free(&t, ty), want, "{what}");
+        }
+    }
+
+    /// Review round 2 of Z9c-B (R-VREF, B3 and B4): an argument of the call
+    /// that can hold a reference (`b16`, `b18`, `b19`, `b21`), and a
+    /// parameter of the body of a type parameter (`b17`, `b20`) keep
+    /// `VALUE_TASKS`. With no refusal, each bad twin lost W0312 (HOLE).
+    #[test]
+    fn the_refusals_of_review_round_2_keep_the_reason_of_main() {
+        for form in [
+            "b16_cap_closure_ref_arg_known",
+            "b17_cap_generic_ref_iface",
+            "b18_cap_w0312_closure_two_args",
+            "b19_cap_closure_option_ref_arg",
+            "b20_cap_generic_plain_ref",
+            "b21_cap_getter_closure_arg",
+        ] {
+            for twin in ["ok", "bad"] {
+                let path = format!("fixes/r0z9cb/{form}_{twin}.wf");
+                let (fallback, pending) = check(&path);
+                assert_eq!(fallback, None, "{path}");
+                let p = pending.unwrap_or_default();
+                assert!(
+                    p.contains("runs a value of its arguments as a task"),
+                    "{path}: {p}"
+                );
+            }
+        }
+    }
+
+    /// Review round 1 of Z9c-B: a task of a value of the interface while
+    /// the body holds a reference parameter (R-VREF, B1: W0312 at the call of
+    /// the body), and a local handler in the closure whose clause runs at a
+    /// call of the closure body (R-VCLAUSE, B2) keep `VALUE_TASKS`. With no
+    /// refusal, `b13_bad` and `b14_bad` lost W0312, and `b15_bad` was
+    /// accepted (HOLE).
+    #[test]
+    fn the_refusals_of_review_round_1_keep_the_reason_of_main() {
+        for path in [
+            "fixes/r0z9cb/b13_cap_iface_ref_param_ok.wf",
+            "fixes/r0z9cb/b13_cap_iface_ref_param_bad.wf",
+            "fixes/r0z9cb/b14_cap_iface_ref_read_ok.wf",
+            "fixes/r0z9cb/b14_cap_iface_ref_read_bad.wf",
+            "fixes/r0z9cb/b15_cap_inner_handler_call_ok.wf",
+            "fixes/r0z9cb/b15_cap_inner_handler_call_bad.wf",
+        ] {
+            let (fallback, pending) = check(path);
+            assert_eq!(fallback, None, "{path}");
+            let p = pending.unwrap_or_default();
+            assert!(
+                p.contains("runs a value of its arguments as a task"),
+                "{path}: {p}"
+            );
+        }
     }
 }

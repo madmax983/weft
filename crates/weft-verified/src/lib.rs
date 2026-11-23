@@ -11,3 +11,4 @@ pub mod lifecycle;
 pub mod modes;
 pub mod places;
 pub mod tasks;
+pub mod window;

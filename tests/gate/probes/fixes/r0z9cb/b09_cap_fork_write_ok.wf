@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-B (part 1): the clean twin of b09. Both branches only
+// read `c.k`.
+struct C { k: u64 }
+fn main() / par {
+    let c = C { k: 0 }
+    let g = || print(c.k + 1)
+    let f = || { let _ = fork(g, || print(c.k)); () }
+    f()
+}

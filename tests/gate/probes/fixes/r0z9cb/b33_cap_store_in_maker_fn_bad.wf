@@ -1,0 +1,18 @@
+// Plan stage R0z Z9c-B (R-VSTORE, review round 4, B7; the bad twin): the
+// closure stores a reference into a capture before its task starts, so the
+// call keeps the rule of main (root: issue #104). The probe of the review:
+// Review probe Z9c-B r4: a function makes r point into its vector by a closure that it calls; the task of the closure pushes the vector.
+fn work(w: Vec<u64>) / async {
+    let u = Vec.new()
+    u.push(5)
+    let r = &u[0]
+    let g = || w.push(2)
+    let f = || { r = &w[0]; scope { s => s.spawn(g); () } }
+    f()
+    print(r)
+}
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    work(w)
+}

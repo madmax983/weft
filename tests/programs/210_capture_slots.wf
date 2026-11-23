@@ -1,0 +1,62 @@
+// Plan stage R0z Z9c-B (part 1): the capture slots of a call. A closure
+// runs one of its captures as a task, and the task ends before the closure
+// returns. The call of the closure has four task nodes for that task (a
+// late slot), so the task runs inside the call: the code of the caller
+// after the call does not run with the task, and the tasks of the caller
+// that run across the call do. The probes `tests/gate/probes/fixes/r0z9cb/`
+// run these forms with `main`. Only known values get a capture slot: a
+// closure that runs a value of the interface of the body keeps the old
+// pipeline (R-VIFACE of review round 3 of Z9c-B).
+
+struct C { k: u64, j: u64 }
+
+// The closure runs `h` while the task of `g` runs: `h` changes what the
+// task reads. The closure body sees the race, and the call sees it at the
+// late slot (the old pipeline only in the closure body).
+fn with_plain() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || print(c.k)
+    let h = || c.k += 1
+    let f = || scope { s => s.spawn(g); h(); () }   //~ W0405
+    f()   //~ W0405 old:
+}
+
+// A task of the caller runs across the call and reads what the task of
+// `g` changes.
+fn caller_task() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || c.k += 1
+    let f = || scope { s => s.spawn(g); () }
+    scope { s0 =>
+        s0.spawn(|| print(c.k))
+        f()   //~ W0405
+    }
+}
+
+// The task of `g` gives `x` a new value while the caller holds `r`.
+fn ref_across() / async {
+    let x = [1, 2]
+    let g = || x = [3]
+    let f = || scope { s => s.spawn(g); () }
+    let r = &x[1]
+    f()
+    print(r)   //~ W0301
+}
+
+// Clean: the task and the other code use separate places, or the caller
+// uses the place after the call.
+fn clean() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || print(c.k)
+    let h = || c.j += 1
+    let f = || scope { s => s.spawn(g); h(); () }
+    f()
+    f()
+    c.k += 1
+    let x = [1, 2]
+    let w = || x = [3]
+    let e = || scope { s => s.spawn(w); () }
+    e()
+    let r = &x[0]
+    print(r)
+}

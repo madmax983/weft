@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-B (part 1): the call of `f` is in the closure `outer`.
+// A task of `outer` reads `c.k` while the task of the capture `g` of `f`
+// changes it (W0405). The task of `g` is a task of a value that `outer`
+// runs (a nested run): it keeps the rule of main (part 2 or 3 of Z9c).
+struct C { k: u64, j: u64 }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let g = || c.k += 1
+    let f = || scope { s => s.spawn(g); () }
+    let outer = || scope { s0 => s0.spawn(|| print(c.k)); f() }
+    outer()
+}

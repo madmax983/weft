@@ -24,6 +24,7 @@ EXPECTED=(
     ../../../crates/weft-verified/src/dataflow.rs
     ../../../crates/weft-verified/src/lifecycle.rs
     ../../../crates/weft-verified/src/tasks.rs
+    ../../../crates/weft-verified/src/window.rs
     ../../borrowing/src/model.rs
     ../../borrowing/src/soundness.rs
     ../../borrowing/src/cfg.rs

@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-B (part 1, R-VMOVE): `g` is a `once` closure, and each
+// call of `f` spawns it. The second call runs it again (W0502). `f` moves
+// `g` into itself (`ByMove`), so the call keeps the rule of main.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let g = || take(v)
+    let f = || scope { s => s.spawn(g); () }
+    f()
+    f()
+}

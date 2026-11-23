@@ -1,0 +1,16 @@
+// Plan stage R0z Z9c-B (part 1, R-VCLAUSE): while the task of the capture
+// `h` runs, `g` performs `note`, and the clause of the local handler runs
+// `k`. `h` and `k` are parameters of `par`, so the old pipeline checks the
+// program (a data race at run time).
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn par(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); resume(()) } } in {
+        let g = || scope { s => s.spawn(h); note(1) }
+        g()
+    }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+}

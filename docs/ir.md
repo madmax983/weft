@@ -3519,6 +3519,49 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   a caller (a function value that the body does not know, `transfer::apply_value` with
   `Given::Args`) gets and that can race: each value of the arguments of that call runs
   there in the worst way (C1 of an unknown callee: `unknown_rc` of corpus 194, W0401).
+- The capture slots of a call (plan stage R0z Z9c-B, S1 and part 1). A closure can run
+  one of its captures as a task that ends before the closure returns: a spawn on a scope
+  of the closure body, or a slot of a callee of it (`let f = || scope { s =>
+  s.spawn(g) }; f()`). No argument of the call gives that value, so before Z9c-B such a
+  call was pending (`VALUE_TASKS`). Now the analysis notes a late slot at the call for
+  each such capture (`transfer::capture_slots`, `transfer::SlotKey`,
+  `Handlers::late_slots`), and the fact generator makes four more task nodes for it
+  after the last run of the analysis (`NodeTable::late_slot_nodes`: kind `call task
+  late`, after the task nodes of the argument slots and of the wait handlers, on the edge
+  into `Ret`). `templates::capture_slots` joins how the closure runs the capture
+  (`Applied::callee_capture`, `Applied::task_how`), and `call_tasks` does the rest, as
+  for an argument slot: the start, the second start (`twice`), the code that runs with
+  the task (`with` of other captures, the plain places of their runs: change C5 of the
+  design review, and `TaskHow::writes`, `reads`), the end, W0314, the starts of
+  `local_code` and of F19.5. The rows of C1 of Z9c-A for the other captures
+  (`Applied::cap_reach`) are in the code, but R-VIFACE (below) keeps each call with a
+  value of the interface out of the capture slots. The apps of the
+  slot keep their `Ret` parts (change C3). A `once` value of the capture moves at
+  `Main` (the run of the closure, `Applied::once`), and the second start of a value
+  that runs more than once uses it (W0502); no program in scope reaches that path
+  today, as a `once` capture that the closure runs is a `ByMove` capture (R-VMOVE). No fact relation is new. Refusals (the call
+  keeps `VALUE_TASKS`): more than one value of the callee runs a capture as a task, or a
+  closure that a callee made does (R-VMULTI); the call runs a value of an argument too,
+  or has argument slot nodes (R-VARG: `with` has one kind, and the late slot comes
+  directly after `Main`); a clause of a local handler can run at the call or at a call
+  node of the closure body (R-VCLAUSE: the window rule of Z9c-A does not see a clause run
+  at a call, `z9cdrev/p/w02`, `fixes/r0z9cb/b15`); an app of the call is a value of the
+  interface of the body, or a run of a capture reaches one (R-VIFACE: only known values
+  get a capture slot); a run of the call stores a reference or a function value into a
+  place of the caller, or gives a capture a new value that can hold one (R-VSTORE: the
+  facts apply the store at `Ret`, after the late slot nodes, issue #104; `b28` to `b36`);
+  an argument of the call does not have a ref-free type
+  (R-VREF, `transfer::ref_free`, a whitelist: plain data, tuples, arrays, structs and enums
+  of plain data, `Vec`, `Box`, `String` of plain data, and function types of plain
+  data). Capture slots of values of the interface are left for a later stage: they need
+  the alias rule W0312 for the writes of a slot task while a reference into the place is
+  live, an old gap of the argument slots too (issue #78; review rounds 1 to 3 of Z9c-B
+  found lost faults with a reference parameter, a type parameter, a getter and an `rc`
+  handle, `b13` to `b27`); a `ByMove` capture (R-VMOVE); a task of a scope of a maker (R-VMAKER,
+  change C6); code of a caller that runs the value more than once, or with
+  `Run::task_seq` (R-VCODE, issue #101); a value of the capture that the analysis does
+  not know, with more than one run (R-VONCE). A capture that a value of a callee runs as
+  a task at depth one or more stays `NESTED_TASK_RUN` (parts 2 and 3).
 - A closure that spawns a value of its interface on a scope of its maker (part `tasks`)
   runs the value in that task, after the call of the closure. Before R0f its summary
   had a plain run of the value only: the task did not have the places of the value, and
@@ -7016,6 +7059,17 @@ oracle names only places that the frame of the body owns or reaches: a local of 
 body (a frame that the oracle follows only for the task check) has no name there. The
 report counts the checks (`FactReport::task`, `task_unnamed`). Test: `fact_oracle.rs`
 `a_missing_task_write_of_a_second_run_fails_the_task_cover`.
+
+**As built (plan stage R0z Z9c-B): the task cover of a late slot.** A frame below the frame
+of a spawn that waits at a call with late slots (a node of kind `call task late` with a
+`spawned_at` in the group of the call) gives the task a cover too. The tasks of the cover are
+the tasks that the late nodes of the call start (`TaskCover::tasks`), and the group is the
+nodes of the call: each access of the task must be in the writes or reads of one of these
+tasks, or in the accesses of the nodes of the call. A cover of a spawn with a second node of
+the run (above) has one task. The innermost frame wins. The map `instances` keeps the rule of
+one task, so the task start check and the wait check do not change. Tests: `fact_oracle.rs`
+`a_missing_task_write_of_a_late_slot_fails_the_task_cover`,
+`the_probes_of_the_capture_slots_pass_the_fact_oracle`.
 
 **As built (plan stage R0z Z9c-A, C7): the `with` check.** The summary of a body says
 which other values of the interface run while a task runs a value of its interface (6.4,

@@ -1,0 +1,10 @@
+// Plan stage R0z Z9c-B (part 1, change C3): the task of the capture `g`
+// gives `x` a whole new value while `main` holds `r` across the call (W0301).
+fn main() / async {
+    let x = [1, 2]
+    let g = || x = [3]
+    let f = || scope { s => s.spawn(g); () }
+    let r = &x[1]
+    f()
+    print(r)
+}

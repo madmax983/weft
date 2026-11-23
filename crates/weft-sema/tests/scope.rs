@@ -874,8 +874,10 @@ fn the_task_fallbacks_are_pending() {
             include_str!("../../../tests/gate/probes/fixes/r0j/j03_nested_ok.wf"),
             "a function value of a callee runs as a task",
         ),
+        // A closure that runs a capture as a task and a value of an
+        // argument (stage R0z Z9c-B, R-VARG).
         (
-            include_str!("../../../tests/gate/probes/fixes/r0j/j04_value_ok.wf"),
+            include_str!("../../../tests/gate/probes/fixes/r0z9cb/b04_cap_and_arg_ok.wf"),
             "runs a value of its arguments as a task",
         ),
         (
@@ -890,6 +892,15 @@ fn the_task_fallbacks_are_pending() {
         let p = scope.pending.as_ref().expect("pending");
         assert!(p.reason.contains(reason), "{}: {src}", p.reason);
     }
+    // Stage R0z Z9c-B: the call of `f` in `j04_value_ok` runs the capture
+    // `g` of `f` as a task at its late slot (part 1): full facts.
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j04_value_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
     // Stage R0k-d2: the writes of the variable of `j02_late_ok` are out of the
     // window of the task (one before the spawn, one after the `join`): the
     // program has full facts.

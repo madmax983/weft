@@ -1,0 +1,19 @@
+// Plan stage R0z Z9c-B (R-VSTORE, review round 4, B7; the bad twin): the
+// closure stores a reference into a capture before its task starts, so the
+// call keeps the rule of main (root: issue #104). The probe of the review:
+// Review probe Z9c-B r4: a method: f sets the captured r into self.v, then the known task g pushes self.v.
+struct S { v: Vec<u64>, n: u64 }
+impl S {
+    fn go(self) / mut(self), async {
+        let r = &self.n
+        let g = || self.v.push(2)
+        let f = || { r = &self.v[0]; scope { s => s.spawn(g); () } }
+        f()
+        print(r)
+    }
+}
+fn main() / async {
+    let s = S { v: Vec.new(), n: 0 }
+    s.v.push(1)
+    s.go()
+}

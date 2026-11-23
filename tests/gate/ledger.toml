@@ -11695,3 +11695,71 @@ files = [
 finding = "R0z-Z9c-A-B1"
 reason = "plan stage R0z Z9c-A, review round 1 (B1): a clause of a local handler of `par` runs `k` at a call while the callee runs `h` (a value of the interface of `par`) as a task of a call slot. The summary of `par` does not have `k` in the `with` of `h`: the part `waits` of the callee names an effect, not the task or the operation, and the first form that used it gave false positives (`fixes/r0z9c/c01` to `c27`). An exact form needs the waits of each task of the callee. The old pipeline accepts these programs too, and main accepts them (an old hole of main). Each program faults (the race oracle)"
 stage = "R0z"
+
+# Plan stage R0z Z9c-B (part 1): the capture slots of a call. A closure runs a
+# capture as a task, and the call of the closure has a late slot for it. The
+# task of the slot conflicts at the call with the code that runs with it and
+# with a second task of the same value.
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0e/a11_captured_closure_twice.wf",
+    "tests/gate/probes/fixes/r0e/a11b_fork_captured.wf",
+    "tests/gate/probes/fixes/r0j/j04_value_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b01_cap_plain_known_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b08_cap_fork_rc_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b09_cap_fork_write_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b11_cap_known_task_then_plain_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b12_cap_known_plain_then_task_bad.wf",
+    "tests/programs/210_capture_slots.wf",
+]
+codes = ["W0301", "W0401", "W0403", "W0405"]
+reason = "plan stage R0z Z9c-B (part 1): a closure runs one of its captures as a task (a spawn on a scope of the closure body, a `fork`), and the call of the closure has a late slot for that task. On main the call was pending (`VALUE_TASKS`), and the `ir` pipeline gave only the errors of the closure body. Now the call gives the errors of the slot too: two tasks of one value at the same time (`a11`, `j04_value_bad`: one more W0405 at the call), the code of the closure that runs with the task (`b01`, `a11b`: W0405, W0403 at the call), a task on another thread that holds an `Rc` value (`b08`: W0401 at the call too), a run of the value before or after its task that ends a reference that the other run reads (`b11`, `b12`: W0301 at the call too). The old pipeline gives the errors of the closure body only. Rejected by both pipelines; each program faults (the race oracle) or is a corpus program with true races (`210_capture_slots`, no `main`)"
+stage = "R0z"
+
+[[entry]]
+class = "open"
+verdict = "stays"
+files = [
+    "tests/gate/probes/fixes/r0z9cb/b04_cap_and_arg_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b05_cap_local_clause_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b15_cap_inner_handler_call_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b25_cap_rc_iface_ref_held_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b26_cap_rc_iface_closure_ref_bad.wf",
+]
+finding = "R0z-Z9c-B-refusal"
+reason = "plan stage R0z Z9c-B (part 1), the refusal probes R-VARG, R-VCLAUSE and R-VIFACE: a closure runs a capture as a task while it runs a value of an argument (`b04`), or while a clause of a local handler runs a value of the interface (`b05`: the handler is at the call; `b15`, review round 1, B2: the handler is in the closure body, and its clause runs at a call of that body), and R-VIFACE: the task of a closure runs a value of the interface of `par` while `par` holds a reference through an `rc` handle (`b25`, `b26`, review round 3, B6). The call keeps the rule of main (`VALUE_TASKS`, pending), and the old pipeline accepts both programs, as on main (an old miss of the old pipeline). Each program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "tests/gate/probes/fixes/r0z9cb/b08_cap_fork_rc_ok.wf",
+    "tests/gate/probes/fixes/r0z9cb/b09_cap_fork_write_ok.wf",
+]
+reason = "class F19-SIG-PINS (stage F19), for programs that plan stage R0z Z9c-B brings into scope (the capture slots of a call): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`); a task that a closure body starts (the `fork` branches in the closure `f`, the spawn in the closure `g` of `par`) is `opaque`, as its captures are captures of the closure. The old inference pins for other reasons. No check of a caller of these functions reads the part"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["tasks", "task_runs", "pins"]
+files = [
+    "tests/gate/probes/fixes/r0z9cb/b10_cap_task_then_plain_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b13_cap_iface_ref_param_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b14_cap_iface_ref_read_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b14_cap_iface_ref_read_ok.wf",
+    "tests/gate/probes/fixes/r0z9cb/b17_cap_generic_ref_iface_bad.wf",
+    "tests/gate/probes/fixes/r0z9cb/b20_cap_generic_plain_ref_bad.wf",
+    "tests/programs/210_capture_slots.wf",
+]
+reason = "class F19-SIG-PINS (stage F19) and the parts of entry 150 (`tasks`, `task_runs`: the old inference marks a function value that a later task can run; the IR has `runs` with `task`), for `par` of the corpus program of plan stage R0z Z9c-B `mid` of `b10` and `par` of `b13`, `b14`, `b17` and `b20` (in scope by the pending rule): the spawn of the closure of the body is a task that a closure body starts, so it is `opaque` (part `pins` of the IR). No check of a caller of these functions reads these parts"
+stage = "R0z"
+
+# Plan stage R0z Z9c-B: the lost-clean row of tier 2.
+[[entry]]
+class = "lost-clean"
+files = ["r3/oracle/runs/g3b/p18574.wf"]
+reason = "plan stage R0z Z9c-B (part 1): in the closure `g16`, the call `g15()` runs the capture `r10` of `g15` as a task (`spawn_join(|| print(r10()))`), and the call has a capture slot for it (row 27 of tier 2 of the census of R0z). Main sends the program to the old pipeline (`VALUE_TASKS`); now it is in scope with no error. The old pipeline gives W0312 at line 90 (`run(|| v1 = mk_v())` with a reader of `&v1`, another part of `main`), an old-pipeline-only diagnostic: the design review (Q8, probe `z9cdrev/p/q08_p18574_head`, the program with no `g16` part) shows that main is in scope with no error on that part too. The oracle runs the program with no fault in each configuration, both engines"
+signed_by = "review agent, stage Z9c-B round 1 (independent)"
+stage = "R0z"
