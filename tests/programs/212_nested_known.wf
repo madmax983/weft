@@ -1,0 +1,47 @@
+// Plan stage R0z Z9d (part 3 of the design of Z9c): the nested slot of a
+// value that the run node knows, and of a value that the callee gives to the
+// closure. A callee runs a closure of the body as plain code, and the
+// closure spawns a closure of the body (or the value of the callee) in its
+// own scope. The task ends before the closure returns, so the call has four
+// task nodes for it (a nested slot). The apps of a known value have places:
+// the footprint of the task is at the start node of the slot. The closure
+// body checks its own code with the task (one view of the code). The probes
+// `tests/gate/probes/fixes/r0z9d/` run these forms with `main`.
+
+struct C { k: u64, j: u64 }
+
+fn run1(g: fn()) / async { g() }
+
+fn run2(f: fn(fn())) / async { f(|| print(1)) }
+
+// The known value writes `c.k` in the nested task while the closure writes
+// `c.k` too.
+fn known_bad() / async {
+    let c = C { k: 0, j: 0 }
+    let h = || c.k += 1
+    run1(|| scope { s => s.spawn(h); c.k += 2; () })   //~ W0405
+    print(c.k)
+}
+
+// Clean: the closure writes `c.j`, and the body reads `c.k` after the call.
+fn known_ok() / async {
+    let c = C { k: 0, j: 0 }
+    let h = || c.k += 1
+    run1(|| scope { s => s.spawn(h); c.j += 2; () })
+    print(c.k)
+}
+
+// The callee gives the closure a value, and the closure spawns it beside a
+// writer of `c.k` and writes `c.k` while the tasks run.
+fn callee_value_bad() / async {
+    let c = C { k: 0, j: 0 }
+    run2(|h| scope { s => s.spawn(h); s.spawn(|| c.k += 1); c.k += 2 })   //~ W0405
+    print(c.k)
+}
+
+// Clean: the closure writes `c.k` after its scope.
+fn callee_value_ok() / async {
+    let c = C { k: 0, j: 0 }
+    run2(|h| { scope { s => s.spawn(h); s.spawn(|| c.k += 1) }; c.k += 2 })
+    print(c.k)
+}

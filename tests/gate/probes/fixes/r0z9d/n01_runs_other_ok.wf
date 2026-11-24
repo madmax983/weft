@@ -1,0 +1,10 @@
+// z9d probe (part 3, R-NKNOWN): clean twin of k40: g writes `c.j`.
+struct C { k: u64, j: u64 }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let k = || c.k += 1
+    let h = || k()
+    run1(|| scope { s => s.spawn(h); c.j += 2; () })
+    print(c.k)
+}

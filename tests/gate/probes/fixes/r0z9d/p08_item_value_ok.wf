@@ -1,0 +1,7 @@
+// z9d probe (part 3, in scope): a local holds an item; g spawns it.
+fn hi() { print(1) }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let h = hi
+    run1(|| scope { s => s.spawn(h); () })
+}

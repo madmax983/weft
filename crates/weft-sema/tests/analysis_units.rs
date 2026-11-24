@@ -5417,3 +5417,207 @@ mod r0z9cc {
         }
     }
 }
+
+/// Plan stage R0z Z9d (part 3 of the design of Z9c): the nested slot of a
+/// value that the run node knows (a closure, an item), and of a value that
+/// the callee gives to the closure (`FnVal::Unknown`). The probes are in
+/// `tests/gate/probes/fixes/r0z9d`: `p*` are in scope, `n*` are refusals.
+mod r0z9d {
+    use weft_facts::FnFacts;
+
+    /// The source of the probe `path` of `tests/gate/probes`.
+    fn source(path: &str) -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(path);
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    /// The analysis of the probe `path`, with the facts of the `ir`
+    /// pipeline.
+    fn analysis(path: &str) -> weft_sema::Analysis {
+        let src = source(path);
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        weft_sema::analyze_source(&src, opts).unwrap_or_else(|d| panic!("{path}: {}", d.message))
+    }
+
+    /// The reason of the fallback and the reason of the pending construct.
+    fn check(path: &str) -> (Option<String>, Option<String>) {
+        let s = analysis(path).ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// The facts of the function `name` of the probe `path`.
+    fn facts_of(path: &str, name: &str) -> FnFacts {
+        analysis(path)
+            .bodies
+            .into_iter()
+            .find(|b| b.facts.name == name)
+            .map_or_else(|| panic!("{path}: no `{name}`"), |b| b.facts)
+    }
+
+    /// The four late slot nodes of the facts `f` (one slot), in their order:
+    /// the start, the second start, the node of the code that runs with the
+    /// task, the end.
+    fn late_nodes(f: &FnFacts) -> Vec<weft_facts::NodeId> {
+        let mut out: Vec<weft_facts::NodeId> = (0..f.nodes.len())
+            .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap_or(u32::MAX)))
+            .filter(|&n| {
+                f.node(n)
+                    .kind
+                    .ends_with(weft_sema::factgen::nodes::LATE_KIND_SUFFIX)
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The text of each place that the facts `f` lend at node `n`.
+    fn lent_at(f: &FnFacts, n: weft_facts::NodeId) -> Vec<String> {
+        f.lends_mut
+            .iter()
+            .filter(|&&(m, _)| m == n)
+            .map(|&(_, q)| f.place(q).display.clone())
+            .collect()
+    }
+
+    /// The reasons of the program `path` (`check --reasons`).
+    fn reasons(path: &str) -> Vec<String> {
+        let src = source(path);
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Old,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        let a = weft_sema::analyze_source(&src, opts)
+            .unwrap_or_else(|d| panic!("{path}: {}", d.message));
+        weft_sema::factgen::reasons(&a, opts.ir_groups, opts.no_runtime)
+    }
+
+    /// Row 99 of tier 1 of the census (`j03_nested_ok`, a value of the
+    /// callee) and the probes of the forms in scope have full facts. With the
+    /// fix off (main), each one is pending (`NESTED_TASK_RUN`).
+    #[test]
+    fn the_nested_slots_of_part_3_have_full_facts() {
+        let mut paths = vec![
+            "fixes/r0j/j03_nested_ok.wf".to_string(),
+            "fixes/r0j/j03_nested_bad.wf".to_string(),
+            "fixes/r0z9d/p03_unknown_scalar_ok.wf".to_string(),
+            "fixes/r0z9d/p08_item_value_ok.wf".to_string(),
+            "fixes/r0z9d/p09_timeout_field_ok.wf".to_string(),
+        ];
+        for form in [
+            "p01_unknown_busy",
+            "p02_unknown_fields",
+            "p04_field_writer",
+            "p05_field_reader",
+            "p06_sim_field",
+            "p07_item_slot_in_g",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z9d/{form}_{twin}.wf"));
+            }
+        }
+        for path in &paths {
+            assert_eq!(check(path), (None, None), "{path}");
+        }
+    }
+
+    /// The slot of a value that the run node knows has the footprint of the
+    /// value: its task starts at the first late node of `main` and writes
+    /// `c.k` there, and it ends at the last late node. With the fix off, the
+    /// node has no late nodes.
+    #[test]
+    fn a_known_value_gives_its_footprint_to_the_slot() {
+        let f = facts_of("fixes/r0z9d/p04_field_writer_ok.wf", "main");
+        let late = late_nodes(&f);
+        assert_eq!(late.len(), 4, "{late:?}");
+        let (s, e) = (late[0], late[3]);
+        let ts: Vec<_> = f
+            .spawned_at
+            .iter()
+            .filter(|&&(_, n)| n == s)
+            .map(|&(t, _)| t)
+            .collect();
+        let [t] = ts[..] else {
+            panic!("one task at the start node: {ts:?}");
+        };
+        assert!(f.joined_at.contains(&(t, e)), "{t:?}: no end at {e:?}");
+        let writes: Vec<String> = f
+            .task_writes
+            .iter()
+            .filter(|&&(u, _)| u == t)
+            .map(|&(_, q)| f.place(q).display.clone())
+            .collect();
+        assert!(writes.iter().any(|w| w == "c.k"), "{writes:?}");
+    }
+
+    /// One view of the code of the closure (question Q6 of the design review
+    /// of Z9c): for a value that the run node knows, the closure body checks
+    /// its code with the task (the spawn there has the footprint), so the
+    /// node of that code in the slot lends no place, and the conflict gives
+    /// one W0405, not two. A value of the callee has no footprint in the
+    /// closure body, so its slot has the code of the closure (`c.k` of
+    /// `j03_nested_ok`). With the fix off, the nodes are not there; with the
+    /// code of the closure in the slot of a known value, `p04` lends `c.k`
+    /// at the node too.
+    #[test]
+    fn the_slot_of_a_known_value_leaves_the_code_of_the_closure_to_the_closure_body() {
+        let f = facts_of("fixes/r0z9d/p04_field_writer_bad.wf", "main");
+        let late = late_nodes(&f);
+        assert_eq!(late.len(), 4, "{late:?}");
+        assert_eq!(lent_at(&f, late[2]), Vec::<String>::new());
+        let f = facts_of("fixes/r0j/j03_nested_ok.wf", "main");
+        let late = late_nodes(&f);
+        assert_eq!(late.len(), 4, "{late:?}");
+        let lent = lent_at(&f, late[2]);
+        assert!(lent.iter().any(|w| w == "c.k"), "{lent:?}");
+    }
+
+    /// The refusals of part 3 keep `NESTED_TASK_RUN` (the rule of main):
+    /// R-NKNOWN (the value runs another closure, or gives a scalar of main a
+    /// new value), R-NITEM (a node in a scope body of `main`, a value of the
+    /// interface of the body), R-AGAIN (two spawns, a callee that runs the
+    /// closure two times, a value of the callee spawned two times), R-NREF of
+    /// the locals (the reference temporary of a method call: the rows 28, 29
+    /// and 31 of tier 2 of the census), R-OUTER-TASK (a callee that runs
+    /// another value as a task while it runs the closure), R-NMULTI (a `once`
+    /// value that the value of the closure holds: the callee can run it
+    /// too), and R-NONE (a closure that a callee made: its local gets the
+    /// result of the call).
+    #[test]
+    fn the_refusals_of_part_3_keep_the_reason_of_main() {
+        let mut paths = vec![
+            "fixes/r0z9d/n12_once_one_ok.wf".to_string(),
+            "fixes/r0z9d/n12_once_twice_bad.wf".to_string(),
+            "fixes/r0z9d/n13_made_ok.wf".to_string(),
+            "fixes/r0z9d/n14_unknown_twice_bad.wf".to_string(),
+            "fixes/r0z9d/n15_timeout_linear_bad.wf".to_string(),
+        ];
+        for form in [
+            "n01_runs_other",
+            "n02_rebind",
+            "n04_scope_body",
+            "n05_twice",
+            "n06_callee_twice",
+            "n07_method_ref",
+            "n08_apply_cap",
+            "n09_writer_main_task",
+            "n10_callee_task",
+            "n11_iface_value",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z9d/{form}_{twin}.wf"));
+            }
+        }
+        for path in &paths {
+            let list = reasons(path);
+            assert!(
+                list.iter().any(|r| r.contains("with no nested slot")),
+                "{path}: {list:?}"
+            );
+        }
+    }
+}

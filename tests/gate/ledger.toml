@@ -11877,3 +11877,34 @@ files = [
 finding = "R0z-Z9c-C-refusal"
 reason = "plan stage R0z Z9c-C, review round 2: the refusal probes of R-NREF for the locals (B1: a reference or an `rc` handle from the result of an operation in the body or in the callee) and of R-NONE by value flow (B2, B3: an alias of a `once` parameter that the body gives back or runs again). The call keeps `NESTED_TASK_RUN` (pending), and the old pipeline accepts the program, as on main (an old miss of the old pipeline; the direct forms of B1 and of `r12` are holes of main, issue #78). Each program faults (the race oracle or the move oracle)"
 stage = "R0z"
+
+# Plan stage R0z Z9d (part 3 of the design of Z9c): the nested slot of a value that the
+# run node knows and of a value of the callee. The probes of `fixes/r0z9d`.
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0z9d/p07_item_slot_in_g_bad.wf"]
+codes = ["W0405"]
+reason = "plan stage R0z Z9d (part 3): the closure that `run1` runs gives a known reader of `c.k` and a writer of `c.k` to `both`, which spawns both. The call has a nested slot for the reader (the program is in scope; on main it is pending, and the `ir` pipeline gives the same two diagnostics by the pending rule). Both pipelines reject the program at line 8: the `ir` pipeline gives two W0405 (the argument that can mutate `c.k`, and the access of the task), the old pipeline one. The program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z9d/n10_callee_task_bad.wf",
+    "tests/gate/probes/fixes/r0z9d/n12_once_twice_bad.wf",
+    "tests/gate/probes/fixes/r0z9d/n15_timeout_linear_bad.wf",
+]
+codes = ["W0302", "W0312", "W0405", "W0502", "W0602"]
+reason = "plan stage R0z Z9d (part 3), refusal probes: the call keeps `NESTED_TASK_RUN` (pending), as on main, and the `ir` pipeline rejects the program (the pending rule) at the line where the old pipeline rejects it, with other codes or counts: `n10` (R-OUTER-TASK: the callee runs a writer as its own task while it runs the closure) W0405 where the old pipeline gives W0312 and W0405; `n12` (R-NMULTI: a `once` value that the closure spawns two times) W0302 where the old pipeline gives W0502; `n15` (a linear value with no `on abort` in a value of `with_timeout`) two W0602 where the old pipeline gives one. `n10` and `n12` fault (the race oracle, the move oracle); `n15` does not fault in the runs of the oracle (the time limit does not end the block), and both pipelines reject it"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["pins"]
+files = [
+    "tests/gate/probes/fixes/r0z9d/n01_runs_other_bad.wf",
+    "tests/gate/probes/fixes/r0z9d/n12_once_twice_bad.wf",
+    "tests/gate/probes/fixes/r0z9d/p07_item_slot_in_g_ok.wf",
+]
+reason = "class F19-SIG-PINS (stage F19), for the probes of plan stage R0z Z9d (part 3: in scope, or in scope by the pending rule): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`); the spawn in the closure that `main` gives to the callee is a task that a closure body starts, so it is `opaque` (its captures are captures of the closure), and `main` pins. The old inference does not pin `main`. No check of a caller reads the part (`main` has no caller)"
+stage = "R0z"

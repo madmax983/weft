@@ -1,0 +1,8 @@
+// z9d probe (part 3, in scope): `sim.run` runs a block that spawns a known writer of `c.k`.
+struct C { k: u64 }
+fn main() / async {
+    let c = C { k: 0 }
+    let h = || c.k += 1
+    sim.run(seed: 1) { scope { s => s.spawn(h); () } }
+    print(c.k)
+}

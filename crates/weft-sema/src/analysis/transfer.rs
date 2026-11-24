@@ -2860,6 +2860,11 @@ struct Nest {
     /// The places that the tasks of the callee read while it runs the
     /// value, sorted.
     during_reads: Vec<PlaceId>,
+    /// The places of the run of the value (`Run::args` of the callee), sorted:
+    /// the places of a value that the callee gives to the closure (part 3 of
+    /// the design of Z9c, `FnVal::Unknown`: the worst way of code of a
+    /// caller at the slot).
+    args: Vec<PlaceId>,
 }
 
 /// The run node of a `Call` of the function value `callee` of block `block`
@@ -4274,12 +4279,15 @@ pub fn cell_values<'r>(
 }
 
 /// The reason of the fallback for a value that a value of a callee runs as a
-/// task (stage R0e fix 2). A parameter of the body gets a nested slot (plan
-/// stage R0z Z9c-C, part 2: [`nested_how`], [`nested_slots`]). The reason
-/// stays for a value that the run node knows (part 3 of the design of Z9c,
-/// stage Z9d) and for a form that the nested slots refuse.
+/// task (stage R0e fix 2). A parameter of the body (plan stage R0z Z9c-C,
+/// part 2), a value that the run node knows, and a value that the callee
+/// gives to its closure (plan stage R0z Z9d, part 3) get a nested slot
+/// ([`nested_how`], [`nested_slots`]). The reason stays for each form that
+/// the nested slots refuse: most often a local of the body or of the callee
+/// that can hold a reference or an `rc` handle (R-NREF), a value that runs
+/// other values (R-NKNOWN), or a value of the interface with no slot.
 pub(crate) const NESTED_TASK_RUN: &str =
-    "a function value that a function value of a callee runs as a task: a value that the run node knows, or a value of the interface with no nested slot (plan stage R0z Z9d)";
+    "a function value that a function value of a callee runs as a task, with no nested slot: a local that can hold a reference or an `rc` handle, a value that runs other values, or another refused form (plan stage R0z Z9d)";
 
 /// The reason for a function value that can race and that a task of a callee
 /// with no `TaskHow` runs (a task in a clause of the callee), or that code of
@@ -4812,6 +4820,9 @@ struct NestFlags {
     plain_via: bool,
     /// A task of a scope of a maker runs the value.
     maker: bool,
+    /// The task runs while the closure changes places or runs other code
+    /// (`TaskHow::writes`, `with`).
+    busy: bool,
 }
 
 /// True if a parameter of type `t` gives the body no reference (R-NREF of
@@ -4901,38 +4912,69 @@ fn plain_bodies(p: &Program, tys: &TyTable, root: BodyId) -> bool {
     })
 }
 
-/// True if the value of parameter `param` of the function body `body` goes
-/// only into the capture `capture` of closure `closure`, and the value of the
-/// closure only into one operand (R-NONE of [`nested_how`]; review rounds 1
-/// and 2 of Z9c-C, F1, B2, B3). The closure is made in `body`; the capture
-/// copies the local of the parameter itself (no alias); that local has one
-/// read in `body` (the capture) and no read in a body inside `body` that is
-/// not a closure body; and the local that holds the closure has one read (the
-/// run node) and no read in such a body. So no copy, no field, no result and
-/// no argument holds the value: the run of the slot is its only run in the
-/// summary. A value at two nodes on exclusive paths gave two runs, and a
-/// `once` value then got a false W0502 at the caller (`k05`; through an
-/// alias, `r04`), and an alias that the body gives back hid a second run (a
-/// lost W0502, `r13`).
+/// What the capture of the closure of a nested slot copies (R-NONE of
+/// [`nested_how`]).
+#[derive(Clone, Copy, Debug)]
+enum FlowSrc {
+    /// The local of parameter `i` of the body (part 2 of the design of Z9c).
+    Param(u32),
+    /// A local of the body that is not a parameter (part 3, a value that the
+    /// run node knows). With `Some(c)`, the local gets its value one time,
+    /// from the literal of closure `c`, and from no other statement or
+    /// terminator (R-NONCE: the move of a `once` value reaches the facts).
+    Local(Option<weft_ir::ClosureId>),
+}
+
+/// True if the value goes only into the capture `capture` of closure
+/// `closure`, and the value of the closure only into one operand (R-NONE of
+/// [`nested_how`]; review rounds 1 and 2 of Z9c-C, F1, B2, B3). The closure
+/// is made in `body`; the capture copies the local of the value itself (no
+/// alias, `src`); that local has one read in `body` (the capture) and no read
+/// in a body inside `body` that is not a closure body; and the local that
+/// holds the closure has one read (the run node) and no read in such a body.
+/// So no copy, no field, no result and no argument holds the value: the run
+/// of the slot is its only run. A value at two nodes on exclusive paths gave
+/// two runs, and a `once` value then got a false W0502 at the caller (`k05`;
+/// through an alias, `r04`), and an alias that the body gives back hid a
+/// second run (a lost W0502, `r13`). With no capture (`None`: a value that
+/// the callee gives to the closure, part 3), only the local of the closure
+/// counts.
 fn one_flow(
     p: &Program,
     body: BodyId,
-    (closure, capture): (weft_ir::ClosureId, u32),
-    param: u32,
+    closure: weft_ir::ClosureId,
+    capture: Option<(u32, FlowSrc)>,
 ) -> bool {
     use crate::factgen::instantiate::{body_places, cell_of, inner_bodies, local_reads};
     let (Some(decl), Some(b)) = (p.closures.get(closure.index()), p.body(body)) else {
         return false;
     };
-    let Some(cap) = decl.captures.get(capture as usize) else {
-        return false;
-    };
-    if decl.maker != body || !cap.source.proj.is_empty() {
+    if decl.maker != body {
         return false;
     }
-    let src = cap.source.local;
-    if b.local_kind(src) != Some(weft_ir::LocalKind::Param(param)) {
-        return false;
+    let mut locals = Vec::new();
+    if let Some((capture, from)) = capture {
+        let Some(cap) = decl.captures.get(capture as usize) else {
+            return false;
+        };
+        if !cap.source.proj.is_empty() {
+            return false;
+        }
+        let src = cap.source.local;
+        let kind = b.local_kind(src);
+        let ok = match from {
+            FlowSrc::Param(i) => kind == Some(weft_ir::LocalKind::Param(i)),
+            FlowSrc::Local(lit) => {
+                matches!(
+                    kind,
+                    Some(weft_ir::LocalKind::User | weft_ir::LocalKind::Temp(_))
+                ) && lit.is_none_or(|c| literal_only(b, src, c))
+            }
+        };
+        if !ok {
+            return false;
+        }
+        locals.push(src);
     }
     // The local that the closure goes into.
     let mut made = Vec::new();
@@ -4955,6 +4997,7 @@ fn one_flow(
     if !dest.proj.is_empty() {
         return false;
     }
+    locals.push(dest.local);
     let inner: Vec<BodyId> = inner_bodies(p, body)
         .into_iter()
         .filter(|&x| {
@@ -4975,7 +5018,7 @@ fn one_flow(
             false
         })
         .collect();
-    [src, dest.local].into_iter().all(|l| {
+    locals.into_iter().all(|l| {
         local_reads(b, l) == 1
             && inner.iter().all(|&x| {
                 p.body(x).is_none_or(|xb| {
@@ -4984,6 +5027,66 @@ fn one_flow(
                         .all(|q| cell_of(p, x, q) != Some((body, l)))
                 })
             })
+    })
+}
+
+/// True if local `l` of body `b` gets a value one time, from the literal of
+/// closure `c` into the whole local, and from no other statement or
+/// terminator (R-NONCE of [`nested_how`]).
+fn literal_only(b: &weft_ir::Body, l: weft_ir::LocalId, c: weft_ir::ClosureId) -> bool {
+    let mut lits = 0usize;
+    for blk in &b.blocks {
+        for st in &blk.stmts {
+            if let weft_ir::StmtKind::Assign(q, rv) = &st.kind {
+                if q.local != l {
+                    continue;
+                }
+                match rv {
+                    weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(x), _)
+                        if *x == c && q.is_local() =>
+                    {
+                        lits += 1;
+                    }
+                    _ => return false,
+                }
+            }
+        }
+        if blk.term.kind.dest().is_some_and(|q| q.local == l) {
+            return false;
+        }
+    }
+    lits == 1
+}
+
+/// True if the summary of the value `fv` that the run node knows is quiet
+/// enough for a nested slot (R-NKNOWN of [`nested_how`], plan stage R0z
+/// Z9d): it runs no function value (part `runs`: no value of the interface
+/// of the body and no other value goes into the task), starts no task in a
+/// scope of a maker (part `tasks`), performs only operations of `Async`,
+/// waits at none, resumes at most once, and puts no reference, no function
+/// value and no new whole value into a place of the caller (parts `stores`,
+/// `puts`, `put_fns`, `rebinds`: the facts apply them at `Ret`, after the
+/// late slot nodes, issue #104). A summary that pins its task (`pins`) is
+/// not quiet either.
+fn quiet_value(cx: &Cx<'_>, fv: &FnVal) -> bool {
+    let sum = match fv {
+        FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
+        FnVal::Item(f, _) => cx.sums.get(*f).ok(),
+        _ => None,
+    };
+    sum.is_some_and(|s| {
+        s.runs.is_empty()
+            && !s.unknown_runs
+            && s.tasks.is_empty()
+            && s.performs.iter().all(|pf| pf.effect == "Async")
+            && s.waits.is_empty()
+            && !s.multi
+            && !s.unknown_multi
+            && s.stores.is_empty()
+            && s.puts.is_empty()
+            && s.put_fns.is_empty()
+            && s.rebinds.is_empty()
+            && !s.pins
     })
 }
 
@@ -4998,6 +5101,21 @@ fn one_flow(
 /// run while the callee runs the closure (`weft_verified::tasks::compose`,
 /// proof P1).
 ///
+/// The value is a parameter of the body (part 2), a value that the run node
+/// knows (plan stage R0z Z9d, part 3: a closure, a closure that a callee
+/// made, an item), or a value that the callee gives to the closure as a
+/// parameter (part 3: `FnVal::Unknown`, code of the callee). The apps of a
+/// value that the node knows have places: they go to the slot with its key
+/// (not to `Ret`), so the footprint of the task is at the start nodes, and
+/// the tasks of the body that are active at the node conflict with it. A
+/// value of the callee has the places of the run of the closure (the places
+/// that the callee gives to the closure, `Nest::args`): the worst way of
+/// code of a caller at the slot. The closure body of the component also has
+/// the spawn of a value that the node knows, with its footprint: that view
+/// checks the code of the closure, and it gives no run to the summary of the
+/// body (the task runs of a closure component do not go into the summary).
+/// So the summary has one view of the task: the slot.
+///
 /// `None` (the rule of main: the node notes [`NESTED_TASK_RUN`]) for each of
 /// these:
 ///
@@ -5010,8 +5128,24 @@ fn one_flow(
 /// - R-MAKER: a task of a scope of a maker runs the value
 ///   (`TaskHow::tasks`), or the closure starts a task in a scope of a maker
 ///   (part `tasks` of the closure).
-/// - R-NITEM: a value is not a parameter of a function item, or the body is
-///   not the body of the item (a closure body, a body inside the item).
+/// - R-NITEM: more than one value, a value that is not of a form above (a
+///   result of a parameter, a capture), or the body is not the body of a
+///   function item (a closure body, a body inside the item).
+/// - R-NKNOWN (part 3): a value that the node knows runs a function value
+///   (part `runs`: also a value of the interface of the body, whose run
+///   would need the R-NONE rule through two closures), starts a task in a
+///   scope of a maker, performs an operation of an effect other than
+///   `Async`, waits, resumes more than once, pins its task, or puts a
+///   reference, a function value or a new whole value into a place of the
+///   caller ([`quiet_value`]).
+/// - R-NONCE (part 3): a `once` value that the node knows whose move does
+///   not reach the facts: the local that the closure captures gets the
+///   value from another statement than the literal of the closure (a field,
+///   an element of a container, a result), or the value is a closure that a
+///   callee made ([`literal_only`]).
+/// - R-NUNKNOWN (part 3): a value of the callee that the closure gets as a
+///   capture, or whose task runs with no change and no other code of the
+///   closure (not `busy`: the path of main, no note).
 /// - R-NREF: a parameter of the item can give the body a reference
 ///   ([`plain_param`]). A reference that the body holds across the node can
 ///   point into a place that the task changes, and the alias rule W0312
@@ -5024,6 +5158,8 @@ fn one_flow(
 ///   places of `Run::during`).
 /// - R-NONE: the value goes into more than the one capture of the closure, or
 ///   the closure into more than the one operand of the node ([`one_flow`]).
+///   A value that the node knows must come from a local of the body (not a
+///   parameter); a value of the callee comes from no capture.
 /// - R-NBUSY: the task is on another thread, it is code of a caller
 ///   (`foreign`, no body), the closure runs another value while the task
 ///   runs (`TaskHow::with`), the run has places (`Run::args`), or the
@@ -5049,10 +5185,10 @@ fn nested_how(
     let (Some(closure), true) = (nest.closure, nest.plain_once) else {
         return Ok(None);
     };
-    // R-NITEM.
-    if fns.is_empty() || !fns.iter().all(|f| matches!(f, FnVal::Param(_))) {
+    // R-NITEM: one value, in the root body of a function item.
+    let [one] = fns.iter().collect::<Vec<_>>()[..] else {
         return Ok(None);
-    }
+    };
     let item = cx.p.body(r.body).and_then(|b| match b.kind {
         weft_ir::BodyKind::Fn(f) => cx.p.fns.get(f.index()),
         _ => None,
@@ -5073,11 +5209,41 @@ fn nested_how(
     {
         return Ok(None);
     }
-    // R-NONE.
-    let [FnVal::Param(i)] = fns.iter().collect::<Vec<_>>()[..] else {
-        return Ok(None);
+    // R-NONE, and the forms of the value (part 2: a parameter of the body;
+    // part 3, plan stage R0z Z9d: a value that the run node knows, or a
+    // value that the callee gives to the closure).
+    let flow = match one {
+        FnVal::Param(i) => {
+            run.capture && one_flow(cx.p, r.body, closure, Some((run.param, FlowSrc::Param(*i))))
+        }
+        FnVal::Closure(_) | FnVal::Made(_) | FnVal::Item(..) => {
+            // R-NONCE: a `once` value moves where the closure runs only if
+            // the local that the closure captures holds its literal.
+            let lit = match one {
+                FnVal::Closure(c) if once_value(cx.p, one) => Some(Some(*c)),
+                _ if once_value(cx.p, one) => None,
+                _ => Some(None),
+            };
+            run.capture
+                && quiet_value(cx, one)
+                && lit.is_some_and(|lit| {
+                    one_flow(
+                        cx.p,
+                        r.body,
+                        closure,
+                        Some((run.param, FlowSrc::Local(lit))),
+                    )
+                })
+        }
+        // A value of a parameter of the closure: the callee gives it (code of
+        // the callee, the worst way with the places of the run of the
+        // closure). Only a run that changes places or runs other code while
+        // the task runs (`busy`) comes here: else the run takes the path of
+        // main (no note).
+        FnVal::Unknown => flags.busy && !run.capture && one_flow(cx.p, r.body, closure, None),
+        FnVal::ParamResult(_) | FnVal::Capture(_) => false,
     };
-    if !run.capture || !one_flow(cx.p, r.body, (closure, run.param), *i) {
+    if !flow {
         return Ok(None);
     }
     // R-AGAIN, R-MAKER, R-NBUSY of the closure.
@@ -5113,10 +5279,22 @@ fn nested_how(
         return Ok(None);
     }
     let ids = |v: Vec<PlaceId>| -> Vec<u32> { v.into_iter().map(|q| q.0).collect() };
-    let inner = SlotHow {
-        writes: ids(all_iplaces(cx, sigma, &h.writes)?),
-        reads: ids(all_iplaces(cx, sigma, &h.reads)?),
-        ..SlotHow::default()
+    // The code of the closure that runs with the task (`TaskHow::writes`,
+    // `reads`) goes to the node of that code in the slot. For a value that
+    // the run node knows, the closure body of the component checks that code
+    // with the task (the spawn there has the footprint of the value), so the
+    // slot leaves it out: one view of the code, one diagnostic (question Q6
+    // of the design review of Z9c). A parameter of the body or a value of
+    // the callee has no footprint in the closure body.
+    let known = matches!(one, FnVal::Closure(_) | FnVal::Made(_) | FnVal::Item(..));
+    let inner = if known {
+        SlotHow::default()
+    } else {
+        SlotHow {
+            writes: ids(all_iplaces(cx, sigma, &h.writes)?),
+            reads: ids(all_iplaces(cx, sigma, &h.reads)?),
+            ..SlotHow::default()
+        }
     };
     let outer = SlotHow {
         writes: ids(nest.during_writes.clone()),
@@ -5243,6 +5421,7 @@ fn apply_runs(
                 twice_via,
                 plain_via,
                 maker: !maker_tasks.is_empty(),
+                busy,
             };
             if let Some(how) =
                 nested_how(cx, r, (run, index), &fns, sigma, flags, apps.nest.as_ref())?
@@ -5276,6 +5455,14 @@ fn apply_runs(
         let mut places = Vec::new();
         for a in &run.args {
             places.extend(super::apply::iplaces(cx, sigma, a)?);
+        }
+        // A value that the callee gives to the closure of a nested slot
+        // (plan stage R0z Z9d, part 3): code of the callee, with the places
+        // of the run of the closure.
+        if nested_now.is_some() && fns.contains(&FnVal::Unknown) {
+            if let Some(n) = &apps.nest {
+                places.extend(n.args.iter().copied());
+            }
         }
         places.sort();
         places.dedup();
@@ -5370,6 +5557,7 @@ fn apply_runs(
                         && OUTER_MANY.with(std::cell::Cell::get) == 0,
                     during_writes: during_writes.clone(),
                     during_reads: during_reads.clone(),
+                    args: places.clone(),
                 });
             }
             let applied = apply_value(

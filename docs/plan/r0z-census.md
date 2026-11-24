@@ -306,7 +306,7 @@ the counts.
   4 (row 105, `c10`, and its copy in tier 2) is out after review round 1 (a lost race and a
   lost W0502 of that path): the row stays open for a later stage. Row 99 (`j03_nested_ok`)
   and rows 28, 29 and 31 of tier 2 stay: a value that the run node knows (part 3, stage
-  Z9d).
+  Z9d: row 99 closes there, rows 28, 29 and 31 stay, "Z9d (as built)").
 - Tier 1: 311 fallbacks of 6205 files with main, 293 with Z9c-C (`check --reasons`,
   `weft-work/z9cc/census/`, after review round 2). Of the 6107 files of Z9c-B, 229 to 225;
   the census rows go from 19 to 17. The new files are the 97 probes of `fixes/r0z9cc` and
@@ -315,6 +315,22 @@ the counts.
   review rounds 1 and 2 keep `NESTED_TASK_RUN`.
 - Tier 2 (the rows of the Z8 list): 13 fallbacks and 5 time-outs with main and with
   Z9c-C. No row becomes `lost-clean`.
+
+## Z9d (as built)
+
+- Z9d (part 3 of Z9c: the nested slot of a value that the run node knows, and of a value
+  that the callee gives to the closure) closes row 99 (`j03_nested_ok`) of tier 1:
+  `docs/plan/core-ir.md`, "Z9d as built". Rows 28 (`p25005`), 29 (`p148`) and 31
+  (`gen3_18180`) of tier 2 stay: R-NREF of the locals (`transfer::plain_bodies`, a
+  refusal of Z9c-C) refuses them, as each one has a local that can hold a reference or an
+  `rc` handle (the reference temporaries of method calls, a struct with a function field,
+  a reference result, an `rc` handle from a call). No row becomes `lost-clean`.
+- Tier 1: 315 fallbacks of 6246 files with main, 305 with Z9d (`check --reasons`,
+  `weft-work/z9d/census/`). Of the 6205 files of Z9c-C, 293 to 292; the census rows go
+  from 17 to 16. The new files are the 40 probes of `fixes/r0z9d` and the corpus program
+  `212_nested_known`; the 9 clean probes `p01` to `p09` come into scope, and the refusal
+  probes keep `NESTED_TASK_RUN`.
+- Tier 2 (the rows of the Z8 list): 13 fallbacks and 6 time-outs with main and with Z9d.
 
 ## Columns
 
@@ -446,7 +462,7 @@ the counts.
 | 96 | `r3/oracle/probes/s8_steal_fnparam.wf` | E2 | a task runs a function parameter more than once | clean | no fault | clean | no | Z9a (closed) |
 | 97 | `r3/oracle/probes/s9_steal_stored.wf` | E2 | a task runs a stored callback more than once | W0302 | fault (AST engine only) | rejected | no | Z9a (closed) |
 | 98 | `fixes/r0e/a13_ok.wf` | NESTED | a spawn of a parameter inside `sim.run` of a callee (task of a callee, no `TaskHow`) | clean | no fault | clean | no | Z9c-C (closed) |
-| 99 | `fixes/r0j/j03_nested_ok.wf` | NESTED | a closure spawns a parameter and a task; the closure runs in a callee (two levels of runs) | clean | no fault | clean | yes | Z9c |
+| 99 | `fixes/r0j/j03_nested_ok.wf` | NESTED | a closure spawns a parameter and a task; the closure runs in a callee (two levels of runs) | clean | no fault | clean | yes | Z9d (closed) |
 | 100 | `fixes/r0j/j04_value_ok.wf` | VT | a closure spawns a captured closure two times (tasks of a value of the interface) | clean | no fault | clean | yes | Z9c-B (closed) |
 | 101 | `fixes/r0j/j07_run_ok.wf` | F18 | a parameter spawned inside `sim.run`; the value changes a local of its maker (task of a callee, no `TaskHow`) | clean | no fault | clean | yes | Z9c-C (closed) |
 | 102 | `fixes/r0kb1/c16_c2_nested_bad.wf` | C2>VT | a nested closure in the closure of the maker `mk_cap` (VALUE_TASKS in the facts of the maker) | W0301 | fault | rejected | yes | Z9c |
@@ -515,10 +531,10 @@ The other 35 rows of tier 2:
 | 25 | `r2/oracle/runs/g2/p2515.wf` | esc | closures that capture a capability in a block of a closure body that no node runs (Z8: the cause is a closure body that runs a closure of its maker, `twice(f1)`) | clean | no fault | clean | no | Z8 (closed) |
 | 26 | `r2/oracle/runs/m2/p7046.wf` | E2 | a task runs `run_both(f1, f1)` | clean | no fault | clean | no | Z9a (closed) |
 | 27 | `r3/oracle/runs/g3b/p18574.wf` | VT | a function value runs a value of its arguments as a task | W0312 | no fault | rejected | no | Z9c-B (closed) |
-| 28 | `r3/oracle/runs/g4p/p25005.wf` | NESTED | a value of a callee runs a value as a task | W0405 | no fault | rejected | no | Z9c |
-| 29 | `r3/oracle/runs/t3/p148.wf` | NESTED | a value of a callee runs a value as a task | W0312 | no fault | rejected | no | Z9c |
+| 28 | `r3/oracle/runs/g4p/p25005.wf` | NESTED | a value of a callee runs a value as a task | W0405 | no fault | rejected | no | Z9d (open: R-NREF of the locals) |
+| 29 | `r3/oracle/runs/t3/p148.wf` | NESTED | a value of a callee runs a value as a task | W0312 | no fault | rejected | no | Z9d (open: R-NREF of the locals) |
 | 30 | `r3/oracle/seeds3/gen3_15687.wf` | VT | a function value runs a value of its arguments as a task | clean | no fault | clean | no | Z9c-B (closed) |
-| 31 | `r3/oracle/seeds3/gen3_18180.wf` | NESTED | a value of a callee runs a value as a task | clean | no fault | clean | no | Z9c |
+| 31 | `r3/oracle/seeds3/gen3_18180.wf` | NESTED | a value of a callee runs a value as a task | clean | no fault | clean | no | Z9d (open: R-NREF of the locals) |
 | 32 | `r3/quality/gen3/closure_chain_100.wf` | chain | a chain of function values deeper than 64, no `main` | clean | no `main` | clean | no | Z10 |
 | 33 | `r3/quality/gen3/closure_chain_200.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 |
 | 34 | `r3/quality/gen3/closure_chain_400.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 |

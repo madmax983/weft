@@ -1,0 +1,8 @@
+// z9d probe (part 3): the callee gives g a `once` closure; g spawns it two times beside a writer.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run2(f: fn(fn())) / async { let v = [1]; f(|| take(v)) }
+fn main() / async {
+    let n = 0
+    run2(|h| scope { s => s.spawn(h); s.spawn(h); s.spawn(|| n += 1); () })
+    print(n)
+}

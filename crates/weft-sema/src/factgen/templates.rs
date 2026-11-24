@@ -4434,7 +4434,9 @@ fn nested_slots(
             .collect();
         let first = mine.first()?;
         let how = first.task_how.clone()?;
-        let param = first.run.as_ref()?.param;
+        // A value that the run node knows has no entry of the part `runs`
+        // (plan stage R0z Z9d, part 3): no parameter of the callee names it.
+        let param = first.run.as_ref().map_or(u32::MAX, |x| x.param);
         out.push(TaskSlot {
             k,
             param,
@@ -4657,6 +4659,15 @@ fn call_tasks(
                     None => std::collections::BTreeSet::new(),
                 }
             }
+            // The value of a nested slot that the run node knows (plan stage
+            // R0z Z9d, part 3): the closure of its app (no capture slot of a
+            // value of the interface has one).
+            (Some(transfer::SlotKey::Nested { .. }), _) => mine
+                .first()
+                .and_then(|a| a.closure)
+                .map(FnVal::Closure)
+                .into_iter()
+                .collect(),
             (None, Some(op @ (Operand::Copy(_) | Operand::Move(_)))) => {
                 transfer::operand(&mut em.cx(), body, st, op)?.flat().fns
             }

@@ -1,0 +1,7 @@
+// z9d probe (part 3, Unknown): g spawns the value of the callee beside a writer of a scalar of main; main reads it after.
+fn run2(f: fn(fn())) / async { f(|| print(1)) }
+fn main() / async {
+    let n = 0
+    run2(|h| scope { s => s.spawn(h); s.spawn(|| n += 1); () })
+    print(n)
+}

@@ -1,0 +1,9 @@
+// z9d probe (part 3, R-NKNOWN): the known value gives a scalar of main a new value; g reads it while the task runs.
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let n = 0
+    let m = 0
+    let h = || n += 1
+    run1(|| scope { s => s.spawn(h); m += n; () })
+    print(n)
+}

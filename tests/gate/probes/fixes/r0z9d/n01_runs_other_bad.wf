@@ -1,0 +1,10 @@
+// z9d probe (part 3, R-NKNOWN): the known value runs another closure of main that writes `c.k`; g writes `c.k` while the task runs.
+struct C { k: u64, j: u64 }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let k = || c.k += 1
+    let h = || k()
+    run1(|| scope { s => s.spawn(h); c.k += 2; () })
+    print(c.k)
+}

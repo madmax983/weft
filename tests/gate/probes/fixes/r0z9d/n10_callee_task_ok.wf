@@ -1,0 +1,8 @@
+// z9d probe (part 3): clean twin of k07c: the task of the callee pushes to another vector.
+fn both(a: fn(), g: fn()) / async { scope { s => s.spawn(a); g(); () } }
+fn main() / async {
+    let w = [1]
+    let u = [1]
+    let h = || print(w.len())
+    both(|| u.push(2), || scope { s => s.spawn(h); () })
+}

@@ -1,0 +1,8 @@
+// z9d probe (part 3, R-AGAIN): the callee runs g two times; g spawns the known writer and reads `c.k` while it runs.
+struct C { k: u64 }
+fn twice(g: fn()) / async { g(); g() }
+fn main() / async {
+    let c = C { k: 0 }
+    let h = || c.k += 1
+    twice(|| scope { s => s.spawn(h); print(c.k); () })
+}

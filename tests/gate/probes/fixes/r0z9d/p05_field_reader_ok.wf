@@ -1,0 +1,9 @@
+// z9d probe (part 3, in scope): a known value reads `c.k` in the nested task; g writes `c.j`.
+struct C { k: u64, j: u64 }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let h = || print(c.k)
+    run1(|| scope { s => s.spawn(h); c.j += 2; () })
+    print(c.k)
+}
