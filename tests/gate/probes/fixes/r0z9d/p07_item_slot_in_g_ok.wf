@@ -1,0 +1,11 @@
+// z9d probe (part 3, in scope, the p25005 form): the block runs a known reader in the slot of an item; main writes after.
+struct C { k: u64 }
+fn spawn_join(f: fn()) / async { scope { s => let t = s.spawn(f); t.join() } }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let c = C { k: 0 }
+    let r = || c.k
+    run1(|| spawn_join(|| print(r())))
+    c.k += 1
+    print(c.k)
+}

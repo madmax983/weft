@@ -1,0 +1,7 @@
+// z9d probe (part 3, in scope): a closure that an item made with no reference; g spawns it.
+fn mk() -> fn() { || print(7) }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let h = mk()
+    run1(|| scope { s => s.spawn(h); () })
+}

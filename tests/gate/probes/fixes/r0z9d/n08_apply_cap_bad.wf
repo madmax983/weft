@@ -1,0 +1,7 @@
+// z9d probe (part 3, the p148 form): `apply` runs a closure that changes `v`, then spawns a reader of a closure of main while it writes `v`.
+fn apply(f: fn()) { f() }
+fn main() / async {
+    let v = [1, 2]
+    let r = || print(v.len())
+    apply(|| { v.push(5); scope { s => s.spawn(|| r()); v.push(3) } })
+}

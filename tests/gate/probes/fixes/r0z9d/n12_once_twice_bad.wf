@@ -1,0 +1,8 @@
+// z9d probe (part 3): the closure spawns the `once` value two times.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn later(h: fn()) / async { h() }
+fn main() / async {
+    let v = [1]
+    let g = || take(v)
+    later(|| scope { s => s.spawn(g); s.spawn(g); () })
+}

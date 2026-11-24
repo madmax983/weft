@@ -3601,8 +3601,33 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   local of B or of the callee (each body inside them too) that can hold a reference or an
   `rc` handle (R-NREF of the locals, `transfer::plain_bodies`: the result of an operation
   or of a call can give one), or tasks of the callee that write or read a mapped place while it runs g
-  (the places of `Run::during` after the mapping). A value that the run node knows stays `NESTED_TASK_RUN`
-  (part 3, stage Z9d).
+  (the places of `Run::during` after the mapping).
+- The nested slot of a value that the run node knows, and of a value that the callee
+  gives to the closure (plan stage R0z Z9d, part 3 of the design of Z9c). The value of
+  the task of g can be a closure of B, a closure that a callee made, an item (a known
+  value), or a value that the callee gives to g as a parameter (`FnVal::Unknown`, code of
+  the callee: `fn run2(f: fn(fn())) { f(|| print(1)) }`, `run2(|h| { scope { s =>
+  s.spawn(h); s.spawn(|| c.k += 1) }; c.k += 2 })`). `transfer::nested_how` gives such a
+  run the same nested slot as part 2. The apps of a known value (`apply_value` at depth 2)
+  have places, and they go to the slot with its key (not to `Ret`): the footprint of the
+  task is at the start nodes of the slot. A value of the callee has the places of the run
+  of g in the callee (`Nest::args`, the worst way of code of a caller), and only a run
+  whose task runs while g changes places (`busy`) comes here: a quiet run of such a value
+  takes the path of main (no note). The closure body of g in the component has the spawn
+  of a known value too, with its footprint, so it checks the code of g with the task. The
+  slot of a known value leaves the code of g out of the node of the code that runs with
+  the task (one view of that code: one W0405, not two; question Q6 of the design review
+  of Z9c), and the task runs of a closure component do not go into the summary of B, so
+  the summary has one view of the task. Each refusal of part 2 stays, and part 3 adds
+  three: R-NKNOWN (`transfer::quiet_value`: a known value that runs a function value,
+  starts a task in a scope of a maker, performs an operation of an effect other than
+  `Async`, waits, resumes more than once, pins its task, or puts a reference, a function
+  value or a new whole value into a place of the caller), R-NONCE (a `once` known value
+  whose local gets its value from another statement than the literal of the closure,
+  `transfer::literal_only`) and R-NUNKNOWN (a value of the callee from a capture of g). In
+  practice R-NREF of the locals (`plain_bodies`) refuses most known values: a method call
+  of a `Vec` makes a reference temporary (`w.len()`, `w.push(2)`), in the value, in g or in
+  B. A value that the node knows and that a slot refuses keeps `NESTED_TASK_RUN`.
 - A run of a value of the interface in a value that code of a caller runs (part 4 of the
   design of Z9c, c10: `fn y(f: fn(fn())) { f(|| y(f)) }`) keeps `NESTED_TASK_RUN`. The
   build of Z9c-C took such a run on the path of `Unknown` (fix (b) and a form for c10);

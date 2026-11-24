@@ -1,0 +1,8 @@
+// z9d probe (part 3): a known value moves a linear value with no `on abort`; `with_timeout` can cancel its nested task (W0602).
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print(id) }
+fn main() / async, fail {
+    let t = Tx { id: 1 }
+    let h = || commit(t)
+    with_timeout(5.s) { scope { s => s.spawn(h); () } }
+}

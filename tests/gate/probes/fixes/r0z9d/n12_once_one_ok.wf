@@ -1,0 +1,8 @@
+// z9d probe (part 3, n10): a closure that a callee runs spawns a `once` value one time (no false W0502).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn later(h: fn()) / async { h() }
+fn main() / async {
+    let v = [1]
+    let g = || take(v)
+    later(|| scope { s => s.spawn(g); () })
+}

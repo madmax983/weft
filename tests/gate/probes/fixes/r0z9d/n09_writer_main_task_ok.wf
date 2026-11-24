@@ -1,0 +1,12 @@
+// z9d probe (part 3): clean twin of k01: the task of main reads another vector.
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let w = [1]
+    let u = [2]
+    let h = || w.push(2)
+    scope { s0 =>
+        s0.spawn(|| print(u.len()))
+        run1(|| scope { s => s.spawn(h); () })
+    }
+    print(w.len())
+}

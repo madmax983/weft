@@ -1,0 +1,8 @@
+// z9d probe (part 3, the j03 form): g spawns the value of the callee and a writer; it writes `c.k` after its scope.
+struct C { k: u64 }
+fn run2(f: fn(fn())) / async { f(|| print(1)) }
+fn main() / async {
+    let c = C { k: 0 }
+    run2(|h| { scope { s => s.spawn(h); s.spawn(|| c.k += 1) }; c.k += 2 })
+    print(c.k)
+}

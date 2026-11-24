@@ -1,0 +1,8 @@
+// z9d probe (part 3, R-NREF of the locals): clean twin of k46: main reads `w` after the call.
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let w = [1]
+    let h = || w.push(2)
+    run1(|| scope { s => s.spawn(h); () })
+    print(w.len())
+}

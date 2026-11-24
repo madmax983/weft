@@ -1,0 +1,13 @@
+// z9d probe (part 3): a known value of B runs the parameter `p` of B; main gives a writer of `w` and holds a task that reads `w`.
+fn run1(g: fn()) / async { g() }
+fn par(p: fn()) / async {
+    let h = || p()
+    run1(|| scope { s => s.spawn(h); () })
+}
+fn main() / async {
+    let w = [1]
+    scope { s0 =>
+        s0.spawn(|| print(w.len()))
+        par(|| w.push(2))
+    }
+}

@@ -1,0 +1,12 @@
+// z9d probe (part 3, R-NITEM): clean twin of k43: the task of main reads `c.j`.
+struct C { k: u64, j: u64 }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let c = C { k: 0, j: 0 }
+    let h = || c.k += 1
+    scope { s0 =>
+        s0.spawn(|| print(c.j))
+        run1(|| scope { s => s.spawn(h); () })
+    }
+    print(c.k)
+}

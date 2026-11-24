@@ -1,0 +1,10 @@
+// z9d probe (part 3, R-NKNOWN): clean twin of k41: g reads another scalar.
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let n = 0
+    let m = 0
+    let z = 1
+    let h = || n += 1
+    run1(|| scope { s => s.spawn(h); m += z; () })
+    print(n)
+}

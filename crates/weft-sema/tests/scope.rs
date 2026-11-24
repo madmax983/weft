@@ -870,8 +870,11 @@ fn the_task_fallbacks_are_pending() {
             include_str!("../../../tests/gate/probes/fixes/r0z9b/w17_closure_maker_ok.wf"),
             "function variable that gets a new value",
         ),
+        // A value that the run node knows and that a nested slot refuses
+        // (stage R0z Z9d: R-NREF of the locals; `j03_nested_ok` has full
+        // facts since Z9d, below).
         (
-            include_str!("../../../tests/gate/probes/fixes/r0j/j03_nested_ok.wf"),
+            include_str!("../../../tests/gate/probes/fixes/r0z9d/n08_apply_cap_ok.wf"),
             "a function value of a callee runs as a task",
         ),
         // A closure that runs a capture as a task and a value of an
@@ -958,11 +961,22 @@ fn the_task_fallbacks_are_pending() {
         (scope.fallback.as_deref(), scope.pending.is_some()),
         (None, false)
     );
-    // A value of a callee that a value of the callee runs as a task and that
-    // the run node knows stays pending (part 3 of Z9c, stage Z9d).
+    // Stage R0z Z9d (part 3): the closure that `run2` runs spawns the value
+    // that `run2` gives it, and the call has a nested slot for it: full
+    // facts (before Z9d the program stayed with the old pipeline).
     let src = include_str!("../../../tests/gate/probes/fixes/r0j/j03_nested_ok.wf");
     let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
     let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
+    // A value that the run node knows and that a nested slot refuses stays
+    // pending: the reference temporaries of the method calls in `main`
+    // (R-NREF of the locals, the form of row 29 of tier 2).
+    let src = include_str!("../../../tests/gate/probes/fixes/r0z9d/n08_apply_cap_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
     let p = scope.pending.as_ref().expect("pending");
-    assert!(p.reason.contains("the run node knows"), "{}", p.reason);
+    assert!(p.reason.contains("with no nested slot"), "{}", p.reason);
 }

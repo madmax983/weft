@@ -1,0 +1,7 @@
+// z9d probe (part 3, R-NREF of the locals): the known value pushes to `w` (a reference temporary of the method call); g reads `w` while the task runs.
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let w = [1]
+    let h = || w.push(2)
+    run1(|| scope { s => s.spawn(h); print(w.len()); () })
+}

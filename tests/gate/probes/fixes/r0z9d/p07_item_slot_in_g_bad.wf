@@ -1,0 +1,10 @@
+// z9d probe (part 3): the block runs a known reader of `c.k` in the slot of an item that writes `c.k` in its own task (through a parameter value).
+struct C { k: u64 }
+fn both(f: fn(), w: fn()) / async { scope { s => s.spawn(f); s.spawn(w); () } }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let c = C { k: 0 }
+    let r = || c.k
+    run1(|| both(|| print(r()), || c.k += 1))
+    print(c.k)
+}

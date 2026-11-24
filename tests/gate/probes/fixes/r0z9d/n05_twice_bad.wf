@@ -1,0 +1,9 @@
+// z9d probe (part 3, R-AGAIN): g spawns the known writer two times.
+struct C { k: u64 }
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let c = C { k: 0 }
+    let h = || c.k += 1
+    run1(|| scope { s => s.spawn(h); s.spawn(h); () })
+    print(c.k)
+}

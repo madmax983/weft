@@ -1,0 +1,10 @@
+// z9d probe (part 3): a known writer of `w` runs in the nested task; a task of main reads `w` while the call runs.
+fn run1(g: fn()) / async { g() }
+fn main() / async {
+    let w = [1]
+    let h = || w.push(2)
+    scope { s0 =>
+        s0.spawn(|| print(w.len()))
+        run1(|| scope { s => s.spawn(h); () })
+    }
+}
