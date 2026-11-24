@@ -5164,3 +5164,256 @@ mod r0z9cb {
         }
     }
 }
+
+/// Plan stage R0z Z9c-C: the nested slots of a call (part 2, F18), and the
+/// probes of review rounds 1 and 2 of the stage.
+mod r0z9cc {
+    use weft_facts::FnFacts;
+
+    /// The source of the probe `path` of `tests/gate/probes`.
+    fn source(path: &str) -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(path);
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    /// The analysis of the probe `path`, with the facts of the `ir`
+    /// pipeline.
+    fn analysis(path: &str) -> weft_sema::Analysis {
+        let src = source(path);
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        weft_sema::analyze_source(&src, opts).unwrap_or_else(|d| panic!("{path}: {}", d.message))
+    }
+
+    /// The reason of the fallback and the reason of the pending construct.
+    fn check(path: &str) -> (Option<String>, Option<String>) {
+        let s = analysis(path).ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// The facts of the function `name` of the probe `path`.
+    fn facts_of(path: &str, name: &str) -> FnFacts {
+        analysis(path)
+            .bodies
+            .into_iter()
+            .find(|b| b.facts.name == name)
+            .map_or_else(|| panic!("{path}: no `{name}`"), |b| b.facts)
+    }
+
+    /// The inferred summary of the function `name` of the probe `path`.
+    fn summary(path: &str, name: &str) -> weft_sema::analysis::Summary {
+        let a = analysis(path);
+        let b = weft_sema::irbuild::build(&a);
+        let sums = weft_sema::factgen::summaries(&a, &b);
+        let f = b
+            .program
+            .fns
+            .iter()
+            .position(|d| d.name == name)
+            .unwrap_or_else(|| panic!("{path}: no function `{name}`"));
+        sums.get(weft_ir::FnId(u32::try_from(f).unwrap_or(u32::MAX)))
+            .cloned()
+            .unwrap_or_else(|e| panic!("`{name}`: {e}"))
+    }
+
+    /// The rows of the census (tier 1: `a13_ok`, `j07_run_ok`) and the
+    /// probes of the forms in scope have full facts. With the fix off (main),
+    /// each one is pending (`NESTED_TASK_RUN`), or stops with `TASK_RUN` in
+    /// `main`.
+    #[test]
+    fn the_nested_slots_have_full_facts() {
+        let mut paths: Vec<String> = [
+            "fixes/r0e/a13_ok.wf",
+            "fixes/r0j/j07_run_ok.wf",
+            "fixes/r0j/j07_run_bad.wf",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        for form in [
+            "c01_sim_ref_across",
+            "c02_sim_caller_task",
+            "c03_timeout_ref",
+            "c04_detach",
+            "c05_timeout_abort",
+            "c06_join_in_block",
+            "c07_once_two_calls",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z9cc/{form}_{twin}.wf"));
+            }
+        }
+        for path in &paths {
+            assert_eq!(check(path), (None, None), "{path}");
+        }
+    }
+
+    /// The nested slot of `sim.run` in `param_in_sim`: one task starts at a
+    /// late node and ends at a late node, and it is opaque (code of a
+    /// caller: the task runs a parameter).
+    #[test]
+    fn a_nested_slot_starts_and_ends_its_task_at_the_late_nodes() {
+        let f = facts_of("fixes/r0e/a13_ok.wf", "param_in_sim");
+        let late = |n: weft_facts::NodeId| {
+            f.node(n)
+                .kind
+                .ends_with(weft_sema::factgen::nodes::LATE_KIND_SUFFIX)
+        };
+        let mut ts: Vec<_> = f
+            .spawned_at
+            .iter()
+            .filter(|&&(_, n)| late(n))
+            .map(|&(t, _)| t)
+            .collect();
+        ts.sort();
+        ts.dedup();
+        assert_eq!(ts.len(), 1, "{ts:?}");
+        let t = ts[0];
+        assert!(
+            f.joined_at.iter().any(|&(u, n)| u == t && late(n)),
+            "{t:?}: no end at a late node"
+        );
+        assert!(f.opaque.contains(&t), "{t:?}: not opaque");
+    }
+
+    /// The summary of `param_in_sim` runs its parameter as a task in the
+    /// how of the window of the slot, not in the worst way (with the fix
+    /// off, `TaskHow::foreign` and `thread`).
+    #[test]
+    fn the_summary_runs_the_parameter_in_the_how_of_the_slot() {
+        let s = summary("fixes/r0j/j07_run_ok.wf", "param_in_sim");
+        let run = s
+            .runs
+            .iter()
+            .find(|r| r.param == 0 && !r.capture)
+            .unwrap_or_else(|| panic!("no run of the parameter: {:?}", s.runs));
+        assert!(run.task, "{run:?}");
+        assert!(
+            !run.how.foreign && !run.how.thread && !run.how.twice,
+            "{run:?}"
+        );
+    }
+
+    /// The reasons of the program `path` (`check --reasons`).
+    fn reasons(path: &str) -> Vec<String> {
+        let src = source(path);
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Old,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        let a = weft_sema::analyze_source(&src, opts)
+            .unwrap_or_else(|d| panic!("{path}: {}", d.message));
+        weft_sema::factgen::reasons(&a, opts.ir_groups, opts.no_runtime)
+    }
+
+    /// Review round 1 of Z9c-C. H1 and H2: a run of a parameter in a value
+    /// that code of a caller runs keeps `NESTED_TASK_RUN` (part 4 is out: the
+    /// form of c10 lost a race of the code itself, H1, and fix (b) skipped
+    /// the W0502 of rule E, H2). F1 (R-NONE): a `once` parameter at nested
+    /// slots on exclusive paths keeps it too (a slot gave a false W0502).
+    /// Each probe fails with the fix off (in scope with no reason).
+    #[test]
+    fn the_probes_of_review_round_1_keep_the_reason_of_main() {
+        let mut paths = vec![
+            "verify/review_core/Core_S2/probes/crash/c10.wf".to_string(),
+            "fixes/r0z9cc/c08_rec_ref_bad.wf".to_string(),
+            "fixes/r0z9cc/c08_rec_ref_ok.wf".to_string(),
+            "fixes/r0z9cc/c09_code_spawns_ok.wf".to_string(),
+        ];
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z9cc");
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("h1_") || n.starts_with("h2_") || n.starts_with("f1_"))
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 25, "{names:?}");
+        paths.extend(names.into_iter().map(|n| format!("fixes/r0z9cc/{n}")));
+        for path in &paths {
+            let list = reasons(path);
+            assert!(
+                list.iter().any(|r| r.contains("with no nested slot")),
+                "{path}: {list:?}"
+            );
+        }
+    }
+
+    /// Review round 2 of Z9c-C. B1 (R-NREF of the locals of the body and of
+    /// the callee): an `rc` handle or a reference from the result of an
+    /// operation (a lost race, a failure of the task cover, a false W0301).
+    /// B2 and B3 (R-NONE by value flow): an alias of a `once` parameter that
+    /// the body gives back (a lost W0502) or runs on an exclusive path (a
+    /// false W0502). Each probe keeps `NESTED_TASK_RUN`; each one fails with
+    /// the fix off (the build of review round 1 has a slot for it).
+    #[test]
+    fn the_probes_of_review_round_2_keep_the_reason_of_main() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/fixes/r0z9cc");
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| {
+                (n.starts_with("b1_") || n.starts_with("b2_") || n.starts_with("b3_"))
+                    && !n.contains("_noalias_")
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 29, "{names:?}");
+        for n in &names {
+            let path = format!("fixes/r0z9cc/{n}");
+            let list = reasons(&path);
+            assert!(
+                list.iter().any(|r| r.contains("with no nested slot")),
+                "{path}: {list:?}"
+            );
+        }
+    }
+
+    /// The refusals keep `NESTED_TASK_RUN` (the rule of main): R-NREF (a
+    /// reference parameter, a type parameter, a getter, an `rc` handle),
+    /// R-NBUSY (a plain run of another value with the task, a perform of the
+    /// block), R-NMULTI (two tasks), R-NCLAUSE (a clause of a local handler),
+    /// R-NITEM (a closure body, a result of a parameter), R-AGAIN (two values
+    /// of F, two spawns), and code of a caller that runs the value while it
+    /// changes a place (`busy`, B1 of the review of R0f). The direct forms of
+    /// R-NREF are holes of main (`weft-work/z9cc/p/d02` to `d05`).
+    #[test]
+    fn the_refusals_keep_the_reason_of_main() {
+        let mut paths = vec![
+            "fixes/r0z9cc/c09_code_spawns_bad.wf".to_string(),
+            "fixes/r0z9cc/b2_r12n_noalias_returned_once_bad.wf".to_string(),
+        ];
+        for form in [
+            "n01_ref_param",
+            "n02_generic",
+            "n03_getter",
+            "n04_rc",
+            "n05_with_plain",
+            "n06_two_tasks",
+            "n07_local_clause",
+            "n08_caller_clause",
+            "n09_closure_body",
+            "n10_result",
+            "n11_two_params",
+            "n12_twice",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z9cc/{form}_{twin}.wf"));
+            }
+        }
+        for path in &paths {
+            let list = reasons(path);
+            assert!(
+                list.iter().any(|r| r.contains("with no nested slot")),
+                "{path}: {list:?}"
+            );
+        }
+    }
+}

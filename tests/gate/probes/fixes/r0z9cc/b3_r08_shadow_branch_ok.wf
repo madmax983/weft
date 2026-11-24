@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-C, review round 2 (B3, R-NONE by value flow: an alias of a once parameter on exclusive paths; with a slot a false W0502, now NESTED_TASK_RUN; the probe `z9ccrev2/p/r08_shadow_branch_ok.wf`).
+// R-NONE bypass by shadowing: the shadow h is read two times, the param h one time. Clean (exclusive paths).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(h: fn(), c: bool) {
+    let h = h
+    let k = h
+    if c { sim.run(seed: 1) { scope { s => s.spawn(k); () } } } else { h() }
+}
+fn main() {
+    let v = [1]
+    par(|| take(v), true)
+}

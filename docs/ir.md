@@ -3561,7 +3561,54 @@ As built (plan stage R0f: task runs, a value of a caller that a callee runs as a
   change C6); code of a caller that runs the value more than once, or with
   `Run::task_seq` (R-VCODE, issue #101); a value of the capture that the analysis does
   not know, with more than one run (R-VONCE). A capture that a value of a callee runs as
-  a task at depth one or more stays `NESTED_TASK_RUN` (parts 2 and 3).
+  a task at depth one or more is part 2 or 3 (below).
+- The nested slots of a call (plan stage R0z Z9c-C, part 2, F18). A callee of a function
+  body B (an item with a body, `sim.run` or `with_timeout`) runs a closure g of B as plain
+  code, and g spawns a parameter h of B in a scope of g (`fn param_in_sim(f: fn()) {
+  sim.run(seed: 1) { scope { s => s.spawn(f) } } }`). The task of h ends before g
+  returns, so it ends before the call returns. Before Z9c-C the run node had no task
+  nodes for it, and the program was pending (`NESTED_TASK_RUN`), or `main` stopped with
+  `TASK_RUN` (the summary of B had the worst way). Now `transfer::apply_runs` at depth 1
+  asks for a nested slot (`transfer::nested_how`, `SlotKey::Nested`, `Applied::nested`),
+  `transfer::nested_slots` notes it at the call (`Handlers::late_slots`, the late slot
+  nodes of S1), and `templates::nested_slots` and `call_tasks` put the run of h at the
+  four late nodes. The how of the slot is the how of the task in g
+  (`weft_verified::tasks::compose`, proof P1, with the empty `Run::during` of the callee:
+  a callee with tasks while it runs g is refused). The run of h
+  then is a task of B (`Em::task_runs`), and `tasks::task_hows` gives the summary of B
+  the how of the window of the slot, not the worst way. A caller of B applies the run
+  at its item slot (R0f): W0314, W0301 of a reference across the call, W0405 with a task
+  of the caller, W0502 of a `once` value. The apps of the slot keep their `Ret` parts
+  (change C3). No fact relation is new. Refusals (the call keeps `NESTED_TASK_RUN`, the
+  rule of main): the callee runs g as a task, or only gives it to code of a caller, or g
+  is not a closure of the component (R-OUTER-TASK); the callee or g can run the value more
+  than once (`many`, `seq`, `after`, `task_seq`, `twice`, two values, the node in a cycle:
+  R-AGAIN); a task of a scope of a maker (R-MAKER); a value that is not a parameter of a
+  function item, or a node that is not in the root body of the item (R-NITEM); a
+  parameter of B that can give B a reference (R-NREF, `transfer::plain_param`: not
+  `ref_free`, or a function type whose result has a function type; the direct forms are
+  holes of main, issue #78); a task on another thread, code of a caller, another value
+  that g runs while the task runs (`TaskHow::with`), a run with places, an operation of
+  g of an effect other than `Async`, a wait or a `multi` resume of g (R-NBUSY); more than
+  one key at the node, or a callee with more than one entry in its part `runs` (R-NMULTI,
+  with change C4); an item slot at the node (R-NSLOT); a clause of a local handler at the
+  node or at a call node of g (R-NCLAUSE); a store of the callee into a place of the
+  caller (R-NSTORE, issue #104); a value that goes into more than the one capture of g, or
+  a closure g that goes into more than the one operand of the node (R-NONE,
+  `transfer::one_flow`, by value flow: no copy, field, result or argument; a value on two
+  exclusive paths gives two runs in the summary, and a `once` value then gets a false
+  W0502 at the caller; an alias that B gives back hides a second run, a lost W0502); a
+  local of B or of the callee (each body inside them too) that can hold a reference or an
+  `rc` handle (R-NREF of the locals, `transfer::plain_bodies`: the result of an operation
+  or of a call can give one), or tasks of the callee that write or read a mapped place while it runs g
+  (the places of `Run::during` after the mapping). A value that the run node knows stays `NESTED_TASK_RUN`
+  (part 3, stage Z9d).
+- A run of a value of the interface in a value that code of a caller runs (part 4 of the
+  design of Z9c, c10: `fn y(f: fn(fn())) { f(|| y(f)) }`) keeps `NESTED_TASK_RUN`. The
+  build of Z9c-C took such a run on the path of `Unknown` (fix (b) and a form for c10);
+  review round 1 of Z9c-C found a lost race of the code of the caller (H1: the worst way
+  has no changes of that code, and a slot in the closure gives the value an exact how)
+  and a lost W0502 (H2: the path skipped rule E), so part 4 is out.
 - A closure that spawns a value of its interface on a scope of its maker (part `tasks`)
   runs the value in that task, after the call of the closure. Before R0f its summary
   had a plain run of the value only: the task did not have the places of the value, and
@@ -7070,6 +7117,15 @@ the run (above) has one task. The innermost frame wins. The map `instances` keep
 one task, so the task start check and the wait check do not change. Tests: `fact_oracle.rs`
 `a_missing_task_write_of_a_late_slot_fails_the_task_cover`,
 `the_probes_of_the_capture_slots_pass_the_fact_oracle`.
+
+**As built (plan stage R0z Z9c-C): the nested slots and the cover.** A nested slot (6.4)
+uses the same late nodes, so a spawn of the closure of the slot below the frame of the
+body gets the cover of the call (a node of kind `... task late`; the kind of the `Main`
+node of an item call). The task of the slot runs a parameter of the body only: it is
+`opaque`, and its accesses are places behind a parameter, so the cover checks little
+there. The accesses of the value are checked in the caller of the body, at its item
+slot, and the `with` check and the race oracle check the how of the summary. The fact
+oracle passes on each probe of `fixes/r0z9cc` and on the rows that come into scope.
 
 **As built (plan stage R0z Z9c-A, C7): the `with` check.** The summary of a body says
 which other values of the interface run while a task runs a value of its interface (6.4,

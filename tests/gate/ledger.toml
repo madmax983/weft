@@ -11763,3 +11763,117 @@ files = ["r3/oracle/runs/g3b/p18574.wf"]
 reason = "plan stage R0z Z9c-B (part 1): in the closure `g16`, the call `g15()` runs the capture `r10` of `g15` as a task (`spawn_join(|| print(r10()))`), and the call has a capture slot for it (row 27 of tier 2 of the census of R0z). Main sends the program to the old pipeline (`VALUE_TASKS`); now it is in scope with no error. The old pipeline gives W0312 at line 90 (`run(|| v1 = mk_v())` with a reader of `&v1`, another part of `main`), an old-pipeline-only diagnostic: the design review (Q8, probe `z9cdrev/p/q08_p18574_head`, the program with no `g16` part) shows that main is in scope with no error on that part too. The oracle runs the program with no fault in each configuration, both engines"
 signed_by = "review agent, stage Z9c-B round 1 (independent)"
 stage = "R0z"
+
+# Plan stage R0z Z9c-C (parts 2 and 4): the nested slots of a call, and the worst way of
+# a run in code of a caller. The probes of `fixes/r0z9cc`.
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z9cc/c08_rec_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c09_code_spawns_bad.wf",
+]
+codes = ["W0301", "W0312", "W0403", "W0405"]
+reason = "plan stage R0z Z9c-C (part 4, out after review round 1): code of a caller runs a closure that spawns a parameter of the body. The call keeps `NESTED_TASK_RUN` (pending), as on main, and the `ir` pipeline rejects the program (the pending rule): in `c08` W0403 and W0301 (the old pipeline gives W0405 at the call too), in `c09` W0405 (the code changes `w` while it runs the value; the old pipeline gives W0312 at the call). Rejected by both pipelines; each program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/r0z9cc/n10_result_bad.wf"]
+codes = ["W0301"]
+reason = "plan stage R0z Z9c-C (part 2), the refusal probe R-NITEM: the value of the task is a result of a parameter, so the call keeps `NESTED_TASK_RUN` (pending), as on main. Both pipelines give one W0301: the `ir` pipeline in `par` (the pending rule: the plain run of the result ends `h`), the old pipeline in `main` (the read of `r`). The program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "open"
+verdict = "stays"
+files = ["tests/gate/probes/fixes/r0z9cc/n04_rc_bad.wf"]
+finding = "R0z-Z9c-C-refusal"
+reason = "plan stage R0z Z9c-C (part 2), the refusal probe R-NREF: `par` holds a reference into an `rc` object across the call of `sim.run`, whose nested task pushes to the object through another handle. The call keeps the rule of main (`NESTED_TASK_RUN`), and the old pipeline accepts the program, as on main (an old miss of the old pipeline; the direct form, where `par` spawns the value itself, is in scope and missed on main, issue #78). The program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "tasks", "task_runs", "pins", "repeats"]
+files = [
+    "tests/gate/probes/fixes/r0j/j07_run_ok.wf",
+    "tests/gate/probes/fixes/r0z/c1_sim_param_task_ok.wf",
+    "tests/gate/probes/fixes/r0z/rv2_n06_collide_e_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c01_sim_ref_across_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c01_sim_ref_across_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c02_sim_caller_task_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c02_sim_caller_task_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c03_timeout_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c03_timeout_ref_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c04_detach_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c04_detach_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c05_timeout_abort_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c05_timeout_abort_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c06_join_in_block_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c06_join_in_block_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c07_once_two_calls_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c07_once_two_calls_ok.wf",
+    "tests/programs/211_nested_slots.wf",
+]
+reason = "class F19-SIG-PINS (stage F19) and the parts of entry 150 (`passthrough`, `tasks`, `task_runs`, `repeats`), for programs that plan stage R0z Z9c-C brings into scope (part 2, the nested slots of a call): the body (`param_in_sim`, `in_sim`, `par`, `two`) runs its parameter as a task of the nested slot of `sim.run` or `with_timeout` (the part `runs` with `task` and the how of the slot). The part `pins` of the IR comes from the facts of the body (`summarize::task_pins`): the spawn in the block of `sim.run` or `with_timeout` is a task that a closure body starts, so it is `opaque` (its captures are not named), and the body pins; a caller (`main`) that calls such a body pins too. The old inference does not pin these functions. No check of a caller of these functions reads these parts"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "tasks", "task_runs", "pins", "repeats", "reaches", "reach_repeats", "task_effects"]
+files = [
+    "tests/gate/probes/fixes/r0z9cc/c08_rec_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c08_rec_ref_ok.wf",
+    "tests/gate/probes/fixes/r0z9cc/c09_code_spawns_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/c09_code_spawns_ok.wf",
+    "tests/programs/211_nested_slots.wf",
+]
+reason = "stage R0z (Z1), the parts of entry 150, and the part `task_effects`, for the probes of part 4 of plan stage R0z Z9c-C, which is out after review round 1 (the form of c10: code of a caller runs a closure of the body that spawns a parameter): the call keeps `NESTED_TASK_RUN` (pending), and the `ir` pipeline rejects the bad twin (the pending rule) or the old pipeline checks the clean twin. In the weak form of entry 579 the parts `tasks`, `task_runs`, `passthrough`, `pins` and `repeats` of the old inference are not there; the old inference gives `Async` to the part `task_effects` (a task of the code of the caller spawns), and the weak form has no task there. No check of a caller of these functions reads these parts"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "tasks", "task_runs", "pins", "repeats"]
+files = [
+    "tests/gate/probes/fixes/r0z9cc/n07_local_clause_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/n08_caller_clause_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/n12_twice_bad.wf",
+]
+reason = "stage R0z (Z1), for the refusal probes of plan stage R0z Z9c-C (part 2: R-NCLAUSE, R-NBUSY, R-AGAIN): the call keeps `NESTED_TASK_RUN` (pending), and the `ir` pipeline rejects the program (the pending rule), as for the probes of the entry of Z1 with `a13_sim_param_task`: the body that runs a parameter in a task of a value of a callee keeps the weak form (a plain run of the parameter), so the parts `tasks`, `task_runs`, `passthrough`, `pins` and `repeats` of the old inference are not there. No check of a caller reads these parts"
+stage = "R0z"
+
+[[entry]]
+class = "open"
+verdict = "stays"
+files = ["tests/gate/probes/fixes/r0z9cc/h1_w30_one_k_code_task_field_bad.wf"]
+finding = "R0z-Z9c-C-refusal"
+reason = "plan stage R0z Z9c-C, review round 1 (H1): code of a caller runs a closure of `mid` that runs a parameter as a task (the value is in a field), while the code writes what the task reads. With the part-4 form of the first build the program was in scope with no error (a HOLE); part 4 is out, so the call keeps `NESTED_TASK_RUN` (pending), and the old pipeline accepts the program, as on main (an old miss of the old pipeline). The program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["passthrough", "tasks", "task_runs", "pins", "repeats", "task_effects", "raises"]
+files = [
+    "tests/gate/probes/fixes/r0z9cc/h2_f03i_with_timeout_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/h2_g02_run1_code_twice_once_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/h2_g06_sim_code_twice_once_bad.wf",
+]
+reason = "stage R0z (Z1), for the H2 probes of review round 1 of plan stage R0z Z9c-C: a value of the callee gives a `once` parameter to code of a caller that runs it two times. The call keeps `NESTED_TASK_RUN` (pending), and the `ir` pipeline rejects the program with W0502 (rule E, the pending rule), as on main. The body keeps the weak form of entry 579 (a plain run of the parameter): the parts `tasks`, `task_runs`, `passthrough`, `pins` and `repeats` of the old inference are not there, the part `task_effects` has no `Async` of the task of the code, and the weak form of the block of `with_timeout` gives no `raises` (as `main` of f1 in entry 579). No check of a caller of these functions reads these parts"
+stage = "R0z"
+
+[[entry]]
+class = "open"
+verdict = "stays"
+files = [
+    "tests/gate/probes/fixes/r0z9cc/b1_e01_effect_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b1_v16_effect_rc_b_reads_before_after_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b1_v18_callee_effect_rc_task_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b2_r12_alias_returned_once_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b2_r12n_noalias_returned_once_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b2_r12r_run1_returned_once_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b3_r01_alias_seq_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b3_r03_alias_two_nested_calls_bad.wf",
+    "tests/gate/probes/fixes/r0z9cc/b3_r04_alias_one_level_seq_bad.wf",
+]
+finding = "R0z-Z9c-C-refusal"
+reason = "plan stage R0z Z9c-C, review round 2: the refusal probes of R-NREF for the locals (B1: a reference or an `rc` handle from the result of an operation in the body or in the callee) and of R-NONE by value flow (B2, B3: an alias of a `once` parameter that the body gives back or runs again). The call keeps `NESTED_TASK_RUN` (pending), and the old pipeline accepts the program, as on main (an old miss of the old pipeline; the direct forms of B1 and of `r12` are holes of main, issue #78). Each program faults (the race oracle or the move oracle)"
+stage = "R0z"

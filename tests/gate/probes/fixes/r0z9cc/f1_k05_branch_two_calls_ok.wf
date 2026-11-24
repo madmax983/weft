@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-C, review round 1 (F1, R-NONE: a once parameter at nested slots on exclusive paths; a slot gave a false W0502, now NESTED_TASK_RUN; the probe `z9ccrev1/p/k05_branch_two_calls_ok.wf`).
+// part 2: two calls in exclusive branches, clean with a once value.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn run1(g: fn()) { g() }
+fn par(h: fn(), c: bool) / async { if c { run1(|| scope { s => s.spawn(h); () }) } else { run1(|| scope { s => s.spawn(h); () }) } }
+fn main() / async {
+    let v = [1]
+    par(|| take(v), true)
+}

@@ -1,0 +1,13 @@
+// Plan stage R0z Z9c-C (part 2): R-NBUSY: the block runs k while the task of h runs (the old pipeline checks the program); the clean twin.
+struct C { k: u64 }
+fn par(h: fn(), k: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(h); () }
+        k()
+    }
+}
+fn main() {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+    print(c.k)
+}

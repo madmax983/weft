@@ -1,0 +1,17 @@
+// Plan stage R0z Z9c-C (part 2): R-NITEM: the body is a closure body (the old pipeline checks the program).
+fn main() {
+    let w = Vec.new()
+    w.push(1)
+    let u = Vec.new()
+    u.push(5)
+    let r = &u[0]
+    let h = || w.push(2)
+    let b = || {
+        sim.run(seed: 1) {
+            r = &w[0]
+            scope { s => s.spawn(h) }
+        }
+    }
+    b()
+    print(r)
+}

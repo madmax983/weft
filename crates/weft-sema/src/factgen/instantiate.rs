@@ -196,7 +196,7 @@ fn body_fns(p: &Program) -> Vec<Option<FnId>> {
 }
 
 /// The bodies inside body `root` (not `root`), in the order of their ids.
-fn inner_bodies(p: &Program, root: BodyId) -> Vec<BodyId> {
+pub(crate) fn inner_bodies(p: &Program, root: BodyId) -> Vec<BodyId> {
     // Follow the parent chain of each body. This does not use the order of
     // the body ids: a copy can append a body after the bodies inside it.
     let mut out = Vec::new();
@@ -5571,7 +5571,7 @@ fn reach(b: &Body, from: BlockId, fwd: bool) -> Vec<bool> {
 }
 
 /// Each place that a statement or a terminator of body `b` names.
-fn body_places(b: &Body) -> Vec<Place> {
+pub(crate) fn body_places(b: &Body) -> Vec<Place> {
     let mut out = Vec::new();
     for blk in &b.blocks {
         for st in &blk.stmts {
@@ -6887,7 +6887,7 @@ fn names_after_resume(b: &Body, l: LocalId) -> bool {
 /// The number of reads of local `l` in body `body`: each statement or
 /// terminator that names `l`, but `Live`, `Dead`, the one write of `l`, and
 /// the drops of a cleanup block (`UnwindValue`).
-fn local_reads(body: &Body, l: LocalId) -> usize {
+pub(crate) fn local_reads(body: &Body, l: LocalId) -> usize {
     let mut n = 0usize;
     for blk in &body.blocks {
         for st in &blk.stmts {

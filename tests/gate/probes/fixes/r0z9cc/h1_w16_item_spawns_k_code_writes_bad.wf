@@ -1,0 +1,8 @@
+// Plan stage R0z Z9c-C, review round 1 (H1: code of a caller runs a closure that runs a parameter as a task; with the part-4 extension a HOLE, now NESTED_TASK_RUN, the rule of main; the probe `z9ccrev1/p/w16_item_spawns_k_code_writes_bad.wf`).
+// fix (b): the closure of mid calls an item that spawns k (reads w); the code pushes in its own task.
+fn one(k: fn()) / async { scope { s => s.spawn(k); () } }
+fn mid(f: fn(fn()), k: fn()) / async { f(|| one(k)) }
+fn main() / async {
+    let w = [1]
+    mid(|x| scope { s => s.spawn(|| w.push(3)); x(); () }, || print(w.len()))
+}

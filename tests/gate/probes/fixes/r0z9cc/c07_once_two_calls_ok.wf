@@ -1,0 +1,11 @@
+// Plan stage R0z Z9c-C (part 2, in scope: a `once` value goes to one call); the clean twin.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f); () }
+    }
+}
+fn main() {
+    let v = [1]
+    par(|| take(v))
+}

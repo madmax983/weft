@@ -946,9 +946,23 @@ fn the_task_fallbacks_are_pending() {
         (scope.fallback.as_deref(), scope.pending.is_some()),
         (None, false)
     );
-    // A value that code of a caller runs on a foreign task stays with the
-    // old pipeline: the weak facts give W0403 at the call.
+    // Stage R0z Z9c-C (part 2): the task of the block of `sim.run` in
+    // `param_in_sim` has a nested slot at the call, so the summary runs the
+    // value with the how of the slot, not in the worst way of a foreign task,
+    // and `main` applies it at its item slot: full facts (before Z9c-C the
+    // program stayed with the old pipeline, `TASK_RUN`).
     let src = include_str!("../../../tests/gate/probes/fixes/r0j/j07_run_ok.wf");
-    let reason = fallback(src).expect("a fallback");
-    assert!(reason.contains("can run on another thread"), "{reason}");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert_eq!(
+        (scope.fallback.as_deref(), scope.pending.is_some()),
+        (None, false)
+    );
+    // A value of a callee that a value of the callee runs as a task and that
+    // the run node knows stays pending (part 3 of Z9c, stage Z9d).
+    let src = include_str!("../../../tests/gate/probes/fixes/r0j/j03_nested_ok.wf");
+    let a = analyze(src, opts(FactGen::Ir, Groups::ALL));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    let p = scope.pending.as_ref().expect("pending");
+    assert!(p.reason.contains("the run node knows"), "{}", p.reason);
 }

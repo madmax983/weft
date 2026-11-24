@@ -1,0 +1,48 @@
+// Plan stage R0z Z9c-C (part 2, F18): the nested slots of a call. A callee
+// runs a closure of the body as plain code (here `sim.run`), and the closure
+// spawns a parameter of the body in its own scope. The task ends before the
+// closure returns, so the call has four task nodes for it (a nested slot),
+// and the summary of the body runs the parameter as a task with the how of
+// the slot. A caller then applies the run at its own task nodes (the slot
+// of an item). The probes `tests/gate/probes/fixes/r0z9cc/` run these forms
+// with `main`.
+
+fn in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f); () }
+    }
+}
+
+// The task of the value pushes to `w` while the caller holds `r`.
+fn ref_across() {
+    let w = Vec.new()
+    w.push(1)
+    let r = &w[0]
+    in_sim(|| w.push(2))
+    print(r)   //~ W0301
+}
+
+// A task of the caller reads `w` while the nested task pushes to it.
+fn caller_task() / async {
+    let w = Vec.new()
+    w.push(1)
+    scope { s =>
+        s.spawn(|| print(w.len()))
+        in_sim(|| w.push(2))   //~ W0405
+        ()
+    }
+}
+
+// Clean: the caller uses `w` after the call, and the tasks only read.
+fn clean() / async {
+    let w = Vec.new()
+    w.push(1)
+    in_sim(|| w.push(2))
+    let r = &w[0]
+    print(r)
+    scope { s =>
+        s.spawn(|| print(w.len()))
+        in_sim(|| print(w.len()))
+        ()
+    }
+}

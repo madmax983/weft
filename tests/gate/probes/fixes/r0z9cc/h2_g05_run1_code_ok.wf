@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-C, review round 1 (H2: a value gives a once parameter to code of a caller that runs it two times; with fix (b) a lost W0502, now NESTED_TASK_RUN and rule E, the rule of main; the probe `z9ccrev1/p/g05_run1_code_ok.wf`).
+// fix (b) through run1, clean.
+fn run1(g: fn()) { g() }
+fn par(h: fn(), f: fn(fn())) / async { run1(|| f(|| scope { s => s.spawn(h); () })) }
+fn main() / async {
+    let w = [1]
+    par(|| print(w.len()), |x| x())
+    w.push(2)
+}

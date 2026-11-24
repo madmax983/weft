@@ -1,0 +1,8 @@
+// Plan stage R0z Z9c-C (part 2): R-AGAIN: F runs two values, and a task of F runs k while g runs.
+struct C { k: u64 }
+fn run2(g: fn(), k: fn()) / async { scope { s => s.spawn(k); g(); () } }
+fn par(h: fn(), k: fn()) / async { run2(|| scope { s => s.spawn(h); () }, k) }
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| c.k += 1, || print(c.k))
+}

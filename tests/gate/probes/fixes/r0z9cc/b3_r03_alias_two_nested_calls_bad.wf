@@ -1,0 +1,14 @@
+// Plan stage R0z Z9c-C, review round 2 (B3, R-NONE by value flow: an alias of a once parameter on exclusive paths; with a slot a false W0502, now NESTED_TASK_RUN; the probe `z9ccrev2/p/r03_alias_two_nested_calls_bad.wf`).
+// R-NONE bypass: one alias x of h, read two times; two nested-slot calls each run one copy. A once value runs two times.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(h: fn()) {
+    let x = h
+    let a = x
+    let b = x
+    sim.run(seed: 1) { scope { s => s.spawn(a); () } }
+    sim.run(seed: 2) { scope { s => s.spawn(b); () } }
+}
+fn main() {
+    let v = [1]
+    par(|| take(v))
+}

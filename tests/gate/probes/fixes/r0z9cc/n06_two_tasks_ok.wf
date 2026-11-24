@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-C (part 2): R-NMULTI: the block spawns h and k (the old pipeline checks the program); the clean twin.
+struct C { k: u64 }
+fn par(h: fn(), k: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(h); s.spawn(k); () }
+    }
+}
+fn main() {
+    let c = C { k: 0 }
+    par(|| print(c.k + 1), || print(c.k))
+    print(c.k)
+}

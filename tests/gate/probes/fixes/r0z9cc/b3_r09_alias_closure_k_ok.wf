@@ -1,0 +1,13 @@
+// Plan stage R0z Z9c-C, review round 2 (B3, R-NONE by value flow: an alias of a once parameter on exclusive paths; with a slot a false W0502, now NESTED_TASK_RUN; the probe `z9ccrev2/p/r09_alias_closure_k_ok.wf`).
+// R-NONE bypass: a local closure k calls the alias; exclusive paths. Clean.
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(h: fn(), c: bool) {
+    let a = h
+    let b = a
+    let k = || a()
+    if c { sim.run(seed: 1) { scope { s => s.spawn(b); () } } } else { k() }
+}
+fn main() {
+    let v = [1]
+    par(|| take(v), true)
+}

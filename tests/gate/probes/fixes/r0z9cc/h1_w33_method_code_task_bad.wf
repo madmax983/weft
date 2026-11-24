@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-C, review round 1 (H1: code of a caller runs a closure that runs a parameter as a task; with the part-4 extension a HOLE, now NESTED_TASK_RUN, the rule of main; the probe `z9ccrev1/p/w33_method_code_task_bad.wf`).
+// fix (b): w16 with a method as the item.
+struct R { n: u64 }
+impl R { fn one(self, k: fn()) / async { scope { s => s.spawn(k); () } } }
+fn mid(f: fn(fn()), k: fn()) / async { f(|| R { n: 0 }.one(k)) }
+fn main() / async {
+    let w = [1]
+    mid(|x| scope { s => s.spawn(|| w.push(3)); x(); () }, || print(w.len()))
+}

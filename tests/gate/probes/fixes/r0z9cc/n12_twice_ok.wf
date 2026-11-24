@@ -1,0 +1,10 @@
+// Plan stage R0z Z9c-C (part 2, R-AGAIN: the block spawns a reader two times; the old pipeline checks the program); the clean twin.
+fn par(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f); s.spawn(f); () }
+    }
+}
+fn main() {
+    let v = [1]
+    par(|| print(v.len()))
+}

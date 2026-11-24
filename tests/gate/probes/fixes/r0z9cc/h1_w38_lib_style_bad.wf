@@ -1,0 +1,9 @@
+// Plan stage R0z Z9c-C, review round 1 (H1: code of a caller runs a closure that runs a parameter as a task; with the part-4 extension a HOLE, now NESTED_TASK_RUN, the rule of main; the probe `z9ccrev1/p/w38_lib_style_bad.wf`).
+// w16 class, library style: with_ctx gives a callback to user code; the callback runs the job as a task.
+fn run_job(job: fn()) / async { scope { s => s.spawn(job); () } }
+fn with_ctx(user: fn(fn()), job: fn()) / async { user(|| run_job(job)) }
+fn main() / async {
+    let stats = [0]
+    with_ctx(|go| scope { s => s.spawn(|| stats.push(1)); go(); () }, || print(stats.len()))
+    print(stats.len())
+}

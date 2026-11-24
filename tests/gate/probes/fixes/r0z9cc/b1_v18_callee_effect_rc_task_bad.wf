@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-C, review round 2 (B1, R-NREF of the locals: an rc handle from the result of an operation in the body or the callee; with a slot a lost race or a failure of the task cover, now NESTED_TASK_RUN; the probe `z9ccrev2/p4/v18_callee_effect_rc_task_bad.wf`).
+// The callee gets main's rc object from an effect and writes it in its own task while it runs g; g spawns h, which writes it too.
+struct Box1 { n: Vec<u64> }
+effect GetBox { fn get_box() -> Rc<Box1> }
+fn run_ctx(g: fn()) / GetBox, mut(Box1), async { let c = get_box(); scope { s => s.spawn(|| c.n.push(3)); g(); () } }
+fn par(h: fn()) / GetBox, mut(Box1), async { run_ctx(|| scope { s => s.spawn(h); () }) }
+fn main() / mut(Box1), async {
+    let b = Rc.new(Box1 { n: [1] })
+    let b2 = Rc.clone(&b)
+    handle GetBox { fn get_box() { resume(Rc.clone(&b2)) } } in par(|| b.n.push(2))
+    print(b.n.len())
+}

@@ -1,0 +1,12 @@
+// Plan stage R0z Z9c-C (part 2): R-NREF: a value of a type parameter (the old pipeline checks the program); the clean twin.
+fn par<T>(h: fn(), x: T, show: fn(T)) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(h) }
+    }
+    show(x)
+}
+fn main() {
+    let w = Vec.new()
+    w.push(1)
+    par(|| print(w.len()), &w[0], |y: &u64| print(y))
+}

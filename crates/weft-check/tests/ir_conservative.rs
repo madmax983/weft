@@ -101,15 +101,16 @@ fn rule_b_a_task_cannot_run_the_value_of_an_operation() {
 }
 
 /// Rule C: a value that a callee runs as a task of another stack and that
-/// holds the capability of a local handler is W0314 at the call. The clean
-/// twin keeps the fallback (a value of a callee runs the value as a task).
+/// holds the capability of a local handler is W0314 at the call. From plan
+/// stage R0z Z9c-C the task of the block of `sim.run` has a nested slot at
+/// the call, so the clean twin is in scope.
 #[test]
 fn rule_c_a_foreign_task_cannot_hold_a_local_capability() {
     twins(
         "c1_sim_param_task_bad.wf",
         &[("W0314", 11)],
         "c1_sim_param_task_ok.wf",
-        false,
+        true,
     );
 }
 

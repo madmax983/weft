@@ -1,0 +1,13 @@
+// Plan stage R0z Z9c-C (part 2): in scope: F is `with_timeout`; the caller holds `r` across the call (W0301); the clean twin.
+fn par(f: fn()) / async, fail {
+    with_timeout(50.ms) {
+        scope { s => s.spawn(f); () }
+    }
+}
+fn main() / async, fail {
+    let w = Vec.new()
+    w.push(1)
+    par(|| w.push(2))
+    let r = &w[0]
+    print(r)
+}

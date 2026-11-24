@@ -1,0 +1,11 @@
+// Plan stage R0z Z9c-C (part 2, R-AGAIN: the block spawns a `once` parameter two times (W0502, rule E)).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn par(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f); s.spawn(f); () }
+    }
+}
+fn main() {
+    let v = [1]
+    par(|| take(v))
+}

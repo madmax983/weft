@@ -1,0 +1,15 @@
+// Plan stage R0z Z9c-C (part 2): in scope: a task of the caller reads `w` while the nested task pushes to it (W0405).
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn main() / async {
+    let w = Vec.new()
+    w.push(1)
+    scope { s =>
+        s.spawn(|| print(w.len()))
+        param_in_sim(|| w.push(2))
+        ()
+    }
+}
