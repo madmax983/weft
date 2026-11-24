@@ -1,0 +1,20 @@
+// Plan stage R0z Z10 probe: a function item runs the top of a chain of 10 closures; the bottom pushes to `w.v` while a reference is live (W0301).
+struct W { v: Vec<u64> }
+fn run(g: fn()) { g() }
+fn main() {
+    let w = W { v: Vec.new() }
+    w.v.push(0)
+    let r = &w.v[0]
+    let c0 = || w.v.push(1)
+    let c1 = || c0()
+    let c2 = || c1()
+    let c3 = || c2()
+    let c4 = || c3()
+    let c5 = || c4()
+    let c6 = || c5()
+    let c7 = || c6()
+    let c8 = || c7()
+    let c9 = || c8()
+    run(c9)
+    print(r)
+}

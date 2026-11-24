@@ -344,10 +344,21 @@ impl Lower<'_> {
                 continue;
             };
             let (now_refs, parts) = self.cap_refs_now(l);
-            let new: Vec<PlaceId> = now_refs
-                .into_iter()
-                .filter(|p| !cv.refs.contains(p))
-                .collect();
+            // The places that are not old places. A chain of closures has a
+            // place for each level, so a search in the list of the old places
+            // costs a step for each level: the same list has no new place,
+            // and a longer list uses a set (plan stage R0z Z10).
+            let new: Vec<PlaceId> = if now_refs == cv.refs {
+                Vec::new()
+            } else if cv.refs.len() > 16 {
+                let was: std::collections::HashSet<PlaceId> = cv.refs.iter().copied().collect();
+                now_refs.into_iter().filter(|p| !was.contains(p)).collect()
+            } else {
+                now_refs
+                    .into_iter()
+                    .filter(|p| !cv.refs.contains(p))
+                    .collect()
+            };
             let now = match &cv.fn_value {
                 Some((old, _)) => Some(self.local_fn_info(l)).filter(|f| f != old),
                 None => None,
@@ -500,15 +511,18 @@ impl Lower<'_> {
     /// capture, or a captured function variable has a value now that runs only
     /// once, and the closure runs that variable.
     pub(super) fn closure_once_now(&self, s: usize) -> bool {
-        self.closure_is_once(s) || self.late_once(s, &mut Vec::new())
+        self.closure_is_once(s) || self.late_once(s, &mut std::collections::HashSet::new())
     }
 
-    fn late_once(&self, s: usize, seen: &mut Vec<usize>) -> bool {
+    /// True if a closure of summary `s`, or of a captured function variable
+    /// that it runs, can run only once now (`closure_once_now`). `seen` is a
+    /// set of the closures that the walk saw: a chain of closures has one for
+    /// each level, so a list costs a step for each level (plan stage R0z Z10).
+    fn late_once(&self, s: usize, seen: &mut std::collections::HashSet<usize>) -> bool {
         for &c in &self.closures[s].members {
-            if seen.contains(&c) {
+            if !seen.insert(c) {
                 continue;
             }
-            seen.push(c);
             let sum = &self.closures[c];
             for cv in self.cap_values.get(&c).into_iter().flatten() {
                 let Some((old, _)) = &cv.fn_value else {

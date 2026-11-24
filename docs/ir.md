@@ -5627,7 +5627,10 @@ in the default set):
   `many` or for two runs (each order, `run_both`), and has no check of the arguments of the call
   against the value, only of its changes against its environment (`RunKind::Run`, W0312). A run
   again of a `once` closure is W0502. A value applies one time at a run node (Q3-2: a DAG of
-  closures is linear); a chain deeper than 64 stays with the old pipeline.
+  closures is linear), and the walk of each level is in a memo (plan stage R0z Z10, "As built"
+  below); a chain deeper than 1024, or a run node of a chain deeper than 64 that asks for more
+  than 4096 values, stays with the old pipeline (a limit of the resources; before Z10, a chain
+  deeper than 64).
 - Part `ret` (`Ret::fns`): the function values of `_0` at each `Return` in interface terms; a
   closure of the body goes out as `Made(c)`, with the places of its `Kept` captures (their values
   where the body makes the closure, `FnParts::made`). A caller maps `Param(i)` to the values that
@@ -5842,6 +5845,40 @@ default set):
   argument reaches, the heap slots included. Plan deviation: there is no
   `analysis/heap.rs`; the slots are in `domain::State` (F10a), cut by the widening of the
   places that α gives.
+
+As built (plan stage R0z Z10: a chain of function values deeper than 64; `transfer::Apps`,
+`Apps::reach`; `docs/plan/core-ir.md`, "Z10 as built"):
+
+- A run node applies each value of a chain at its level (`apply_value`, `apply_runs`), and the
+  facts are the facts of a walk with no bound. Before Z10 the end of each level walked the values
+  of all the deeper levels again (the keys of the interface that a value reaches, `lifted`, and
+  if one of them can resume more than once, `multi_keys`), so a chain of `n` closures cost about
+  `n^4` (a chain of 200 took 160 s with no bound). Now:
+  - `Apps::inner` has, for each value, only the values that its application asks for at the next
+    depth (`Apps::kids`); a deeper value is a value of one of them, so the walk reaches the same
+    values.
+  - The walk from a value (`Apps::reach`: the keys of the interface, and if a value of the walk
+    that is no value of the interface can resume more than once) is in a memo (`Apps::memo`).
+    A walk stops at a value whose walk is in the memo, so each level costs one step.
+  - The memo key is the value at the run node: the result of the walk depends only on `inner`
+    (the values of each application of the value, each set of places) and on the app of each
+    value (`seen`: its summary). A change of `inner` of a value, or a new app of a value with a
+    new summary, clears the memo if a walk went through that value (`Apps::touch`,
+    `Apps::note_app`). A new app of an item or a closure that has an app keeps the memo: the app
+    has the summary of the value. The places, the handler environment, the task, the `once`,
+    `multi` and repeat flags of an application are not in the memo: each application still
+    makes its own app with them; the memo has only the walk.
+- The limits of the resources (fail-closed: the old pipeline checks the program):
+  `RUN_DEPTH` (1024 levels), and `DEEP_ASKS` (4096 values) for a run node whose chain is
+  deeper than 64 (`Apps::deep`). A chain of `once` closures captures each level by a move, so
+  the value of each level holds all the deeper closures, and a level asks for each of them: such
+  a chain deeper than 64 stays with the old pipeline, as before. A run node with no chain deeper
+  than 64 has no new limit, so its facts are the facts of main.
+- The old lowering (the checks of `typeck`, effect inference) is in the `ir` pipeline too. Its
+  walk of a chain (`Lower::late_join`, `late_once`) compared lists for each level; it uses sets
+  now (the same facts), so `closure_chain_800` takes about 10 s there in place of 20 s.
+- A chain of closures that give back closures (`transfer::with_results`, 16 levels, stage F13)
+  is another walk; Z10 does not change it.
 
 ### 6.8 Effect inference and signatures
 

@@ -1,0 +1,24 @@
+// Plan stage R0z Z10 probe: a chain of 10 closures in a handled body; the bottom performs `note`, and the clause pushes to `w.v` while a reference into `w.v` is live (W0301).
+effect N { fn note() }
+struct W { v: Vec<u64> }
+fn main() {
+    let w = W { v: Vec.new() }
+    w.v.push(0)
+    handle N {
+        fn note() { w.v.push(1); resume(()) }
+    } in {
+        let r = &w.v[0]
+        let c0 = || note()
+        let c1 = || c0()
+        let c2 = || c1()
+        let c3 = || c2()
+        let c4 = || c3()
+        let c5 = || c4()
+        let c6 = || c5()
+        let c7 = || c6()
+        let c8 = || c7()
+        let c9 = || c8()
+        c9()
+        print(r)
+    }
+}

@@ -11908,3 +11908,35 @@ files = [
 ]
 reason = "class F19-SIG-PINS (stage F19), for the probes of plan stage R0z Z9d (part 3: in scope, or in scope by the pending rule): the part `pins` of the IR comes from the facts of the body (`summarize::task_pins`); the spawn in the closure that `main` gives to the callee is a task that a closure body starts, so it is `opaque` (its captures are captures of the closure), and `main` pins. The old inference does not pin `main`. No check of a caller reads the part (`main` has no caller)"
 stage = "R0z"
+
+# Plan stage R0z Z10: the memo of the walk of a run node, so a chain of function values
+# deeper than 64 has full facts. The probes of `fixes/r0z10`.
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z10/c_task_mid_10_bad.wf",
+    "tests/gate/probes/fixes/r0z10/c_task_mid_65_bad.wf",
+    "tests/gate/probes/fixes/r0z10/c_task_mid_100_bad.wf",
+    "tests/gate/probes/fixes/r0z10/c_task_mid_200_bad.wf",
+]
+codes = ["W0405"]
+reason = "plan stage R0z Z10: a level in the middle of a chain of closures spawns the rest of the chain, which pushes to `w.v`, and reads `w.v` while the task runs. The run of the task keeps `NESTED_TASK_RUN` (pending, as on main), and the `ir` pipeline rejects the program (the pending rule) at the line where the old pipeline rejects it, with two W0405 (the access of the level, and the spawn whose task changes `w.v`) where the old pipeline gives one. The chains of 10 and 65 levels give the same diagnostics on main; the chains of 100 and 200 kept the fallback on main (deeper than 64). Each program faults (the race oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0z10/g_once_mid_10_bad.wf"]
+codes = ["W0302", "W0502"]
+reason = "plan stage R0z Z10: a chain of 10 closures whose bottom moves a `Vec` (each level is a `once` closure that holds the level below), and level 5 runs level 4 two times. Both pipelines reject the program at line 11: the `ir` pipeline gives W0502 there and a W0302 for each level above (the move of the level below by the first run), the old pipeline one W0502. The same on main. The program faults (the move oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/r0z10/m_cap_escape_12_bad.wf",
+    "tests/gate/probes/fixes/r0z10/m_cap_escape_70_bad.wf",
+    "tests/gate/probes/fixes/r0z10/m_cap_escape_100_bad.wf",
+]
+codes = ["W0301"]
+reason = "plan stage R0z Z10: the bottom of a chain of closures in a handled body performs through the capability of the local handler, and the handled body puts the top into a local of `main`. Both pipelines reject the program with W0313 at line 5 (the `handle`); the old pipeline also gives W0301 at the run of the local after the `handle` (its value points into the locals of the handled body). The `ir` pipeline gives W0313 only, as on main for the chain of 12 levels; the chains of 70 and 100 kept the fallback on main. Each program faults (no handler for `N.note` on the task)"
+stage = "R0z"

@@ -778,6 +778,63 @@ fn place_fields_of_a_deep_type_are_found_in_linear_work() {
     assert!(wg.place_types >= 1 && wg.place_types <= 8, "{wg:?}");
 }
 
+/// A chain of `n` closures in the form of the census rows
+/// `r3/quality/gen3/closure_chain_*` (plan stage R0z Z10): each closure runs
+/// the closure before it, and the first one pushes to `w.v`. With `bad`, a
+/// reference into `w.v` is live across the run of the last one (W0301).
+fn closure_chain(n: usize, bad: bool) -> String {
+    let mut s = String::from("struct W { v: Vec<u64> }\nfn big(w: &W) / mut(w.v) {\n");
+    s.push_str("    let r = &w.v[0]\n");
+    if !bad {
+        s.push_str("    print(r)\n");
+    }
+    s.push_str("    let c0 = || w.v.push(1)\n");
+    for i in 1..n {
+        let _ = writeln!(s, "    let c{i} = || c{}()", i - 1);
+    }
+    let _ = writeln!(s, "    c{}()", n - 1);
+    if bad {
+        s.push_str("    print(r)\n");
+    }
+    s.push_str("}\n");
+    s
+}
+
+/// A chain of closures deeper than the old bound of 64 has full facts of
+/// the `ir` pipeline, and the change at the bottom invalidates the
+/// reference at the top (plan stage R0z Z10). The memo of the walk of a run
+/// node gives the result of each level one time, so the check stays fast
+/// (with no bound and no memo, a chain of 200 took 160 s: R0k-d1).
+#[test]
+fn a_chain_of_closures_deeper_than_64_has_full_ir_facts() {
+    for n in [80, 120] {
+        for bad in [false, true] {
+            let src = closure_chain(n, bad);
+            let opts = Options {
+                facts: weft_sema::FactGen::Ir,
+                ..Options::default()
+            };
+            let c = check_source("chain.wf", &src, opts);
+            assert!(
+                c.analysis
+                    .ir_scope
+                    .as_ref()
+                    .is_some_and(weft_sema::Scope::in_scope),
+                "{n} {bad}: {:?}",
+                c.analysis
+                    .ir_scope
+                    .as_ref()
+                    .and_then(|s| s.fallback.clone())
+            );
+            let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
+                panic!("{n}: no body");
+            };
+            let (r, _) = check_counted(&body.facts);
+            assert_eq!(r.violations.error.len(), usize::from(bad), "{n} {bad}");
+        }
+    }
+}
+
 /// `n` helper closures in one body. Each helper calls the `back` helpers
 /// before it (review round 3, Q3-2: `r3/quality/repro/Q3_closure_*.wf`).
 fn helper_closures(n: usize, back: usize) -> String {

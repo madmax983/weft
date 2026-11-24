@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L (done: tier 1 3 rows, 24 to 21 fallbacks of the census rows; tier 2 4 rows, 19 to 15; `c09_cc_during_ok` and `j01_again_ok` stay open (R-CODE); "Z9a as built"), Z9c L (part A done: change C1 of the design review, proof P1, the `with` check of the fact oracle; no row closes, eight old holes of main close; "Z9c-A as built"; part B done: late slots, capture slots, proof P2, the task cover of a late slot; tier 1 2 rows, 21 to 19 fallbacks of the census rows; tier 2 2 rows, 15 to 13; c16 stays open (R-VCODE); "Z9c-B as built"; part C done: the nested slots of a call; tier 1 2 rows, 19 to 17 fallbacks of the census rows; tier 2 0 rows, 13 stay; part 4 (c10) is out after review round 1, part 3 stays for Z9d; "Z9c-C as built"), Z9d M (done: part 3 of Z9c, the nested slot of a value that the run node knows and of a value of the callee; tier 1 1 row (99), 17 to 16 fallbacks of the census rows; tier 2 0 rows, 13 stay: rows 28, 29 and 31 keep `NESTED_TASK_RUN` (R-NREF of the locals); "Z9d as built"), Z10 M-L; then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (not built), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L (done: tier 1 3 rows, 24 to 21 fallbacks of the census rows; tier 2 4 rows, 19 to 15; `c09_cc_during_ok` and `j01_again_ok` stay open (R-CODE); "Z9a as built"), Z9c L (part A done: change C1 of the design review, proof P1, the `with` check of the fact oracle; no row closes, eight old holes of main close; "Z9c-A as built"; part B done: late slots, capture slots, proof P2, the task cover of a late slot; tier 1 2 rows, 21 to 19 fallbacks of the census rows; tier 2 2 rows, 15 to 13; c16 stays open (R-VCODE); "Z9c-B as built"; part C done: the nested slots of a call; tier 1 2 rows, 19 to 17 fallbacks of the census rows; tier 2 0 rows, 13 stay; part 4 (c10) is out after review round 1, part 3 stays for Z9d; "Z9c-C as built"), Z9d M (done: part 3 of Z9c, the nested slot of a value that the run node knows and of a value of the callee; tier 1 1 row (99), 17 to 16 fallbacks of the census rows; tier 2 0 rows, 13 stay: rows 28, 29 and 31 keep `NESTED_TASK_RUN` (R-NREF of the locals); "Z9d as built"), Z10 M-L (done: the memo of the walk of a run node; tier 1 0 rows, 16 stay; tier 2 4 rows (32 to 35, `closure_chain_*`), 13 to 9 fallbacks of the census rows; the depth bound stays only as a limit of the resources (1024 levels, 4096 values at a run node of a chain deeper than 64); no W0706; "Z10 as built"); then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -4585,7 +4585,7 @@ The clean rows (the precision work; tier 1 41, tier 2 16):
 | Z9b E4 window | The window of R0k-d2 for a spawn in a closure body on the scope of the body around it: the writes in the closure body and in the bodies that the window can call, up to the end of that scope. | S-M (done: "Z9b as built"; the function around the scope waits, so only its writes before the scope are out of the window; a scope in a closure or a clause keeps the rule of R0j) | 1 / 0 / 0 | 0 | the task can outlive the closure body |
 | Z9a E2 | The design of the R0k-d3 design check: a second node of the run in the task region after the first (a cycle for a loop), the split of `templates::task_start`, the task facts of the second node, a cover of the fact oracle for a second run. | M-L (done: "Z9a as built"; the second node is a `Task(1)` node after `Main` of the `Spawn`, and the task starts there; no cycle: two runs, as `Main` and `Ret` of a call; the task cover of the fact oracle; R-FORK, R-INNER, R-ONCE, R-REBIND, R-CODE, R-ORDER and R-MULTI keep the rule of R0j or of main) | 3 / 0 / 2 | 2 / 0 / 2 | `i9_kept_write` (old W0405, no fault) can become `lost-clean`: a signed entry |
 | Z9c tasks of the values of the interface | R0e fix 2 and `VALUE_TASKS` as one design (R0k-d3): a summary part for the tasks of the values of the interface (the window and the footprint of the code that runs with them), its application at the run node, the proofs and the summary oracle. F18 for a plain task run: a task of a callee in `sim.run` or in a closure that the callee runs ends before the callee returns (`sim.run` waits for its tasks), so it gets the `TaskHow` of a scope of the callee. c16: the run of the inner closure in the facts of the maker. c10: a recursive callee gets its fixpoint summary, not the task run of the worst case (stage Z0 checks the cause). | L | 7 / 0 / 1 | 3 / 0 / 3 | the largest design of the plan, with proofs; three tier-2 rows (W0312, W0405, W0312, no fault) can become `lost-clean` |
-| Z10 the chain | A summary of a chain of function values that does not apply each level again (a memo of the walk by the value and the parameter, with the result of a level as its summary; R0k-d1: the depth bound stays). | M-L | 0 | 4 / 0 / 0 | the time limit of the gate (`closure_chain_800`) and the cost criterion 4 of 2.7 |
+| Z10 the chain | A summary of a chain of function values that does not apply each level again (a memo of the walk, with the result of a level as its summary; R0k-d1: the depth bound stays). | M-L (done: "Z10 as built"; the memo is of the walk of a run node, keyed by the value; each level still makes its own app; the bound is a limit of the resources) | 0 | 4 / 0 / 0 | the time limit of the gate (`closure_chain_800`: 18 s in place of the fallback) and the cost criterion 4 of 2.7 |
 
 The stages, in order (soundness first: Z1 loses nothing, and the stages with oldmiss rows
 come before the stages with clean rows only; then the gain for each size):
@@ -4604,7 +4604,7 @@ come before the stages with clean rows only; then the gain for each size):
 | 10 | Z9b E4 window (done: 1 row of tier 1 closes, 25 to 24; tier 2 0 rows, 19 stay; "Z9b as built") | as above | 1 (13) | 0 (14) | S-M | s4 and its bad twin; `fixes/r0z9b`; `analysis_units` `r0z9b::` | low |
 | 11 | Z9a E2 (done: 3 rows of tier 1 close, 24 to 21; 4 rows of tier 2, 19 to 15; c09 and j01 stay open, R-CODE; "Z9a as built") | as above | 5 (8) | 4 (10) | M-L | j01, c09, s8, i9, s9; `scope.rs`; `fixes/r0z9a`; `analysis_units` `r0z9a::` | `lost-clean` of i9 (and of s9: the review) |
 | 12 | Z9c tasks of the values of the interface (part A done: the `with` of a task of a call slot, C1; P1; the `with` check, C7; no row closes, 21 and 15 stay; "Z9c-A as built"; part B done: the capture slots, S1, P2; rows 100 and 104 of tier 1 close, 21 to 19; rows 27 and 30 of tier 2, 15 to 13; c16 stays (R-VCODE); "Z9c-B as built"; part C done: the nested slots of a call; rows 98 and 101 of tier 1 close, 19 to 17; tier 2 13 stay; part 4 (c10) is out after review round 1; "Z9c-C as built"; part 3 is Z9d: done, row 99 of tier 1 closes, 17 to 16; rows 28, 29, 31 of tier 2 stay (R-NREF of the locals); "Z9d as built") | as above | 8 (0) | 6 (4) | L | j03, j04, s3, a13, c16, c10, j07_ok; the summary oracle; proofs | a design review first; the largest risk of the plan |
-| 13 | Z10 the chain | as above | 0 (0) | 4 (0) | M-L | `closure_chain_*`; `scale.rs`, `limits.rs` | the time limit |
+| 13 | Z10 the chain (done: 4 rows of tier 2 close, 13 to 9; tier 1 0 rows, 16 stay; "Z10 as built") | as above | 0 (16) | 4 (9) | M-L | `closure_chain_*`; `scale.rs`, `limits.rs`; `fixes/r0z10`; `analysis_units` `r0z10::` | the time limit |
 | 14 | R0z the new baseline | 0 fallbacks: write the `ir` records of tiers 1 and 2 as the committed baseline; a fallback becomes a gate blocker (`crash`); the `open-old` entries and the old-against-new classes of the ledger close | 0 | 0 | S | the gate reads the new baseline | none |
 
 Each stage gates as C3 (tier 1 0 blockers; tier 2 with 2 workers, 0 blockers and new-fp
@@ -4648,6 +4648,8 @@ tiers (tier 1: 1 row of the about 1790 probes that `old` accepts, and 2 rows are
   a test change does not apply: signed `new-fp` entries (class `precision`, an issue each).
 - Z10 (M-L): the four `closure_chain` files (no `main`): a stated limit, as W0706 (a new
   code for a chain deeper than the bound), and signed `new-fp` entries.
+  (Z10 is built with the memo of the walk: the four files are in scope with no error, so
+  no W0706 and no `new-fp` entry is necessary: "Z10 as built".)
 - Z2, Z3, Z5, Z7, Z8, Z9b (S-M): no lost program is planned; these stages are small.
 - Each of these choices needs a decision of the user: a change of the 0.1 % rule for
   R0z (a signed class that does not count, or a higher share), a test change, or a new
@@ -7569,6 +7571,135 @@ files: `weft-work/z9d/` outside the repository, notes `z9d/NOTES.txt`, binaries
   the nodes where g can run). The probes of a writer, a reader, a local closure of g that
   writes (`z9cc/conv/..._r40_local_closure_with_task_bad`) and an item slot in g keep the
   W0405 of main, but a capture of g whose value the seed does not know would lose it.
+
+Z10 as built (the chain: a memo of the walk of a run node, so a chain of function values
+deeper than 64 has full facts; `docs/ir.md` 6.7, "As built (plan stage R0z Z10)"; the work
+files: `weft-work/z10/` outside the repository, notes `z10/NOTES.txt`, binaries
+`z10/bin/weft-z10`, `weft-gate-z10`; main is 656513d, `z10/base/weft-main`,
+`weft-gate-main`; the probes: `tests/gate/probes/fixes/r0z10/`):
+
+- The reason on main. A run node applies a value of a chain at each level
+  (`transfer::apply_value`, `apply_runs`), and a chain deeper than 64 stayed with the old
+  pipeline (`RUN_DEPTH`, stage F12): rows 32 to 35 of tier 2 (`closure_chain_100` to
+  `_800`, `fn f(w: &W) / mut(w.v)` with `let c0 = || w.v.push(1)` and `let ck = ||
+  c(k-1)()`, no `main`). With the bound taken out, the check took about `n^4` (R0k-d1: 160 s
+  for 200). The cause: at the end of each level, `apply_runs` walked the values of all the
+  deeper levels again (the keys of the interface that the values reach, `lifted`, and if a
+  value can resume more than once, `multi_keys`), through `Apps::inner`, which had the values
+  of all the deeper levels for each value.
+- The memo (`transfer::Apps::reach`, `Reach`):
+  - `Apps::inner` has, for each value, the values that its fresh applications ask for at the
+    next depth (`Apps::kids`), not the values of all the deeper levels. A deeper value is a
+    value of one of them, so a walk reaches the same values. The runs of each key of a level
+    give their values to the walk (`direct`) and their part of `Apps::reached` to the checks
+    that need the values of each depth (two keys, `Run::after`).
+  - The walk from a value gives the keys of the interface and the `multi` flag. A walk stops
+    at a value whose result is in the memo, so each level costs one step.
+  - The key of the memo is the value at the run node (`Apps` is one run node). The result
+    depends only on `inner` (each application of the value, with each set of places) and on
+    the app of each value of the walk (`seen`, its summary). A new value in `inner` of a value
+    that a walk went through, or a new app of such a value with a new summary, clears the memo
+    (`Apps::touch`, `Apps::note_app`); a new app of an item or a closure that has an app has the
+    same summary, so it keeps the memo. The rest of a level (the places, the handler
+    environment, the task, the `once`, `multi` and repeat flags, the depth) is not in the
+    memo: each application still makes its own app with them, as on main. So the facts are the
+    facts of a walk with no bound: the memo makes no fact.
+- The bound stays as a limit of the resources only (fail-closed: the old pipeline checks the
+  program): `RUN_DEPTH` is 1024 levels (the text of the reason says "deeper than 1024 (...
+  the limit of the resources of plan stage R0z Z10)"), and a run node with a chain deeper
+  than 64 (`Apps::deep`, `SHALLOW_DEPTH`) asks for at most 4096 values (`DEEP_ASKS`). The
+  second limit is for a chain of `once` closures: each level captures the level below by a
+  move, so the value of a level holds all the deeper closures, and each level asks for each
+  of them (`f_once_100` took 35 s, `f_once_200` more than 120 s with no such limit; main keeps
+  them with the old pipeline, and so does Z10). A run node with no chain deeper than 64 has no
+  new limit: its facts are the facts of main.
+- The old lowering. The `ir` pipeline runs the old lowering too (the checks of `typeck`, the
+  effect inference), and its walk of a chain compared lists at each level
+  (`Lower::late_changes`, `late_once`). They use sets now, with the same facts:
+  `closure_chain_800` with `--facts=old` takes 10 s in place of 20 s.
+- F13 (a chain of function values that give back function values, `transfer::with_results`,
+  16 levels) is another walk, with its own bound, and it is not the cause of a census row.
+  The work probes `z10/p/c/j_gives_back_65`, `_100`, `_200` keep that reason on main and
+  with Z10; they are not in `fixes/r0z10`, as they are of the class `closure-copy` of
+  `exports_parity.rs` (a new program there needs a review). `j_gives_back_10` is in scope.
+- Times (`weft check`, release, one job, an idle machine): `closure_chain_100` 0.14 s,
+  `_200` 0.66 s, `_400` 3.1 s, `_800` 18.0 s, each with full facts and no error (main: the
+  fallback; `_800` 38.7 s, the `ir` pipeline to the bound and then the old pipeline);
+  `--facts=both` of `_800` 19.5 s (main 20.6 s). A run node walks its chain one time, so its
+  work is linear in the depth. But each closure body of the chain has a run node of its own,
+  so the work and the facts of the program are quadratic in the length of the chain (the
+  facts have about `n^2/2` rows `uses`, as the old facts have `n^2` rows `points_into`), and
+  the old lowering is more than quadratic: from 400 to 800 the time grows about 5.8 times.
+  The tests `scale.rs` (`weft-check`) and `limits.rs` (`weft-cli`), debug, with other work
+  on the machine: main 16.5 s and 32.3 s, Z10 26.4 s (with the new test, 5.5 s) and 39.4 s.
+- The probes, before the product code (`weft-work/z10/p`, generator `p/tools/gen.py`, and
+  `p/k`), in `fixes/r0z10` (100 files), each with a bad twin and a clean twin, at 10, 65,
+  100 and 200 levels: `a_ref_top` (a reference into `w.v` live at the top, `w.v.push` at the
+  bottom: W0301), `b_task_top` (a task runs the top while `main` reads `w.v`: W0405),
+  `c_task_mid` (a level spawns the rest of the chain: the pending rule of main,
+  `NESTED_TASK_RUN`), `d_shared_args` (two levels run one value `h` with `&w.a` and `&w.b`),
+  `e_field` (a level in a field of a struct), `f_once` and `g_once_mid` (a `once` chain run
+  two times, or a level that runs the level below two times: W0502), `h_clause` (the bottom
+  performs, and the clause pushes), `i_callee` (a function item runs the top), `j_gives_back`
+  (F13, 10 levels only), `k_fn_form` (the form of the census rows, with a `main`), `l_once_top` (a `once`
+  level at the top), `m_cap_escape` (the top leaves the handled body: W0313, 12, 70, 100) and
+  `kont_chain` (the bottom resumes the continuation of the clause: W0501, 12 and 70). On
+  main each deep probe keeps the fallback (the old pipeline holds each bad twin); with Z10
+  the deep bad twins of `a`, `b`, `c`, `d`, `e`, `h`, `i`, `k`, `l` and `m` are rejected by
+  the `ir` pipeline itself, with the code of main.
+- No new false positive and no new hole. The facts of the `ir` pipeline (`weft-gate
+  snapshot --tier 1 --facts ir`, the fact digest of each record) with main and with Z10
+  (the build before the last probes) on the 6342 files of tier 1 then: 42 records differ,
+  each a probe of `fixes/r0z10` that comes into scope; with `--facts old`: 0 differ. ev.sh
+  with main and Z10 on the 966 rows of `fixes/r0z*` and of the work probes
+  (`z10/ev/r0z-cmp2.txt`): only rows of `fixes/r0z10` change: 22 go from
+  `held` to `both-reject` (the deep bad twins), 31 `nofault` rows come into scope with no
+  error, 7 `held` rows keep the fallback with the new text (the `once` chains, `kont_chain`);
+  no row goes to HOLE, and no row goes from `nofault` to `FP-IR` (main: 2 HOLE rows, old).
+  Each probe of `fixes/r0z10` checks in less than 3 s. (ev.sh gives the codes `0` for a check
+  that passes its time limit: the first `once` chains with no limit of asks looked like a
+  lost W0502, and were time-outs.)
+- The fact oracle (`fo.sh`, three configurations) on the 50 rows of `fixes/r0z10` that change:
+  42 are in scope, no failure of the fact oracle (only the race oracle and the memory oracle
+  fault, on bad twins). The four census rows have no `main`: `check --facts=both` gives no
+  error and no diagnostic of one pipeline only, and `agree` (the checker against
+  `spec/weft.dl`) passes on `closure_chain_100` and `_200`.
+- Gates (binaries `z10/bin/weft-z10`, `weft-gate-z10`). Tier 1: 0 blockers, 6346 programs
+  (4796 same, 50 open, 421 fixed, 1 new-fp, 0 lost-fault, 164 lost-clean, 150 moved, 764
+  changed; Z9d: 6246). The first run had 8 blockers, each a probe of `fixes/r0z10` with other
+  codes or counts than the old pipeline (`c_task_mid_*_bad` two W0405, `g_once_mid_10_bad` a
+  W0302 for each level, `m_cap_escape_*_bad` no W0301 after the W0313; main gives the same
+  diagnostics for the short chains): three `changed` entries, then 0. Sigdiff: 0 rows with
+  no entry. The fact oracle of tier 1: 0 failures. Tier 2 (alone): 0 blockers, 57393
+  programs (the counts of Z9d: 39874 same, 6 open, 92 fixed, 12 new-fp, 0 lost-fault, 3490
+  lost-clean, 1859 moved, 12060 changed), 54717 in scope with 6 time-outs (Z9d: 54712, 7;
+  `closure_chain_800` is no longer a time-out of the `ir` record). No `lost-clean` entry is
+  new, and no `new-fp` entry and no W0706 are necessary.
+- Census. Tier 1 (`check --reasons`, `weft-work/z10/census/`, main and Z10 on the same
+  6346 files): 368 fallbacks with main, 324 with Z10. Of the 6246 files of Z9d, 305 with
+  both (the census rows stay 16); of the 100 probes of `fixes/r0z10`, 63 with main and 19
+  with Z10 (the `once` chains, `kont_chain` with `KONT_CAPTURED`, and the clean twins of
+  `c_task_mid` by the pending rule). Tier 2 (the 29 rows of the Z8 list): 13 fallbacks and
+  6 time-outs with main, 9 and 6 with Z10; rows 32 to 35 (`closure_chain_100` to `_800`)
+  leave the fallback, with no error.
+- Unit tests: `analysis_units` `r0z10::` (the deep probes have full facts; the write at the
+  bottom is a change at the run node of the top, and a value that two levels run with `&w.a`
+  and `&w.b` changes both places; the limits of the resources keep the old pipeline, and a
+  level with a task keeps the pending reason of main); all three fail with the fix off (the
+  source of main). `transfer::z10_memo` (the memo against a walk with no memo, on random
+  changes of `inner` and `seen`; one step for each level of a chain). `scale.rs`
+  `a_chain_of_closures_deeper_than_64_has_full_ir_facts` (80 and 120 levels, the bad twin
+  W0301), which fails with the fix off. No verified code changes.
+- Open: the census rows of tier 1 (16) and the 9 rows of tier 2 of the earlier stages; F13
+  (a chain of more than 16 closures that give back closures) and a `once` chain deeper than
+  64 keep the old pipeline. The time of a long chain is quadratic in its length (above).
+- What I am least sure of: the rule that a new app of an item or a closure keeps the memo
+  (`Apps::note_app`). It rests on two facts: the app of such a value has the summary of the
+  value (`cx.sums`, which does not change while the node applies its values), and the walk
+  reads only the parts `multi`, `unknown_multi` and `performs` of that summary. A later
+  change that makes the app of a closure depend on its application (for example a summary
+  of a copy) must clear the memo there too. The random test of `z10_memo` and the digests of
+  tier 1 found no difference.
 
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):

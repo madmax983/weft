@@ -1,0 +1,17 @@
+// Plan stage R0z Z10 probe: a chain of 10 closures; the bottom moves a `Vec`; each level runs the level below one time (clean).
+fn take(v: Vec<u64>) { print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let c0 = || take(v)
+    let c1 = || c0()
+    let c2 = || c1()
+    let c3 = || c2()
+    let c4 = || c3()
+    let c5 = || c4()
+    let c6 = || c5()
+    let c7 = || c6()
+    let c8 = || c7()
+    let c9 = || c8()
+    c9()
+}
