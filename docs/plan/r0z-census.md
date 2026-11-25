@@ -332,6 +332,20 @@ the counts.
   probes keep `NESTED_TASK_RUN`.
 - Tier 2 (the rows of the Z8 list): 13 fallbacks and 6 time-outs with main and with Z9d.
 
+## Z10 (as built)
+
+- Z10 (the chain: a memo of the walk of a run node) closes rows 32 to 35 of tier 2
+  (`closure_chain_100`, `_200`, `_400`, `_800`): `docs/plan/core-ir.md`, "Z10 as built". Each
+  one has full facts of the `ir` pipeline and no error, as the old pipeline gives
+  (`closure_chain_800`: 18 s with `weft check`). The depth bound stays only as a limit of the
+  resources (1024 levels, and 4096 values at a run node of a chain deeper than 64). No
+  W0706, no `new-fp` entry and no `lost-clean` entry.
+- Tier 1: 368 fallbacks of 6346 files with main, 324 with Z10 (`check --reasons`,
+  `weft-work/z10/census/`). Of the 6246 files of Z9d, 305 with both; the census rows stay
+  16. The new files are the 100 probes of `fixes/r0z10`: 63 fallbacks with main, 19 with Z10.
+- Tier 2 (the rows of the Z8 list): 13 fallbacks and 6 time-outs with main, 9 fallbacks and
+  6 time-outs with Z10.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -535,7 +549,7 @@ The other 35 rows of tier 2:
 | 29 | `r3/oracle/runs/t3/p148.wf` | NESTED | a value of a callee runs a value as a task | W0312 | no fault | rejected | no | Z9d (open: R-NREF of the locals) |
 | 30 | `r3/oracle/seeds3/gen3_15687.wf` | VT | a function value runs a value of its arguments as a task | clean | no fault | clean | no | Z9c-B (closed) |
 | 31 | `r3/oracle/seeds3/gen3_18180.wf` | NESTED | a value of a callee runs a value as a task | clean | no fault | clean | no | Z9d (open: R-NREF of the locals) |
-| 32 | `r3/quality/gen3/closure_chain_100.wf` | chain | a chain of function values deeper than 64, no `main` | clean | no `main` | clean | no | Z10 |
-| 33 | `r3/quality/gen3/closure_chain_200.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 |
-| 34 | `r3/quality/gen3/closure_chain_400.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 |
-| 35 | `r3/quality/gen3/closure_chain_800.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 |
+| 32 | `r3/quality/gen3/closure_chain_100.wf` | chain | a chain of function values deeper than 64, no `main` | clean | no `main` | clean | no | Z10 (closed) |
+| 33 | `r3/quality/gen3/closure_chain_200.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 (closed) |
+| 34 | `r3/quality/gen3/closure_chain_400.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 (closed) |
+| 35 | `r3/quality/gen3/closure_chain_800.wf` | chain | as closure_chain_100 | clean | no `main` | clean | no | Z10 (closed) |

@@ -1,0 +1,24 @@
+// Plan stage R0z Z10 probe: a chain of 12 closures in a clause; the bottom resumes the continuation (a `once` capture), and the clause runs the top one time (clean).
+effect E { fn get() -> u64 }
+fn main() {
+    let x = handle E {
+        fn get() {
+            let c0 = || resume(1)
+            let c1 = || c0()
+            let c2 = || c1()
+            let c3 = || c2()
+            let c4 = || c3()
+            let c5 = || c4()
+            let c6 = || c5()
+            let c7 = || c6()
+            let c8 = || c7()
+            let c9 = || c8()
+            let c10 = || c9()
+            let c11 = || c10()
+            c11()
+        }
+    } in {
+        get() + 1
+    }
+    print(x)
+}

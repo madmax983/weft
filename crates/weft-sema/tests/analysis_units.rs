@@ -5621,3 +5621,143 @@ mod r0z9d {
         }
     }
 }
+
+/// Plan stage R0z Z10: a chain of function values deeper than 64. The memo
+/// of the walk of a run node (`transfer::Apps::reach`) gives the result of
+/// each level one time, so the depth bound of stage F12 (64) is only a
+/// limit of the resources now (1024 levels, and 4096 values that one run
+/// node of a deeper chain asks for).
+mod r0z10 {
+    use weft_facts::FnFacts;
+
+    /// The source of the probe `path` of `tests/gate/probes`.
+    fn source(path: &str) -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(path);
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    /// The analysis of the probe `path`, with the facts of the `ir`
+    /// pipeline.
+    fn analysis(path: &str) -> weft_sema::Analysis {
+        let src = source(path);
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        weft_sema::analyze_source(&src, opts).unwrap_or_else(|d| panic!("{path}: {}", d.message))
+    }
+
+    /// The reason of the fallback and the reason of the pending construct.
+    fn check(path: &str) -> (Option<String>, Option<String>) {
+        let s = analysis(path).ir_scope.expect("a scope");
+        (s.fallback, s.pending.map(|p| p.reason))
+    }
+
+    /// The facts of the function `name` of the probe `path`, with the facts
+    /// of the `ir` pipeline (the program is in scope).
+    fn facts_of(path: &str, name: &str) -> FnFacts {
+        let a = analysis(path);
+        let fallback = a.ir_scope.as_ref().and_then(|s| s.fallback.clone());
+        assert_eq!(fallback, None, "{path}");
+        a.bodies
+            .into_iter()
+            .find(|b| b.facts.name == name)
+            .map_or_else(|| panic!("{path}: no `{name}`"), |b| b.facts)
+    }
+
+    /// The chain probes of `fixes/r0z10` with a run of a chain of 100
+    /// levels (a write at the bottom, a task at the top, a value with two
+    /// arguments, a level in a field, a clause, a callee, the form of the
+    /// census rows, a `once` level at the top), and two of 200 levels, have
+    /// full facts. With the fix off (the bound 64), each one keeps the
+    /// fallback.
+    #[test]
+    fn a_chain_deeper_than_64_has_full_facts() {
+        let mut paths = vec![
+            "fixes/r0z10/a_ref_top_200_bad.wf".to_string(),
+            "fixes/r0z10/k_fn_form_200_ok.wf".to_string(),
+        ];
+        for form in [
+            "a_ref_top",
+            "b_task_top",
+            "d_shared_args",
+            "e_field",
+            "h_clause",
+            "i_callee",
+            "k_fn_form",
+            "l_once_top",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z10/{form}_100_{twin}.wf"));
+            }
+        }
+        for path in &paths {
+            assert_eq!(check(path), (None, None), "{path}");
+        }
+    }
+
+    /// The places that the facts of `main` of the probe `path` change at
+    /// the node of the line `line` (the run of the top of the chain).
+    fn changed_at(path: &str, line: &str) -> Vec<String> {
+        let src = source(path);
+        let lo = src
+            .find(line)
+            .unwrap_or_else(|| panic!("{path}: no `{line}`"));
+        let hi = lo + line.len();
+        let f = facts_of(path, "main");
+        let mut out: Vec<String> = f
+            .mutates_at
+            .iter()
+            .filter(|&&(n, _)| {
+                let s = f.node(n).span;
+                (lo..hi).contains(&(s.lo as usize))
+            })
+            .map(|&(_, q)| f.place(q).display.clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// The write at the bottom of a chain of 200 closures (`w.v.push(1)`)
+    /// is a change of `w.v` at the run node of the top in `main`, and a
+    /// value that a level runs two times with two arguments changes the
+    /// place of each argument (`w.a` and `w.b`), not only the place of the
+    /// first one: the memo is of the walk of each value with its places.
+    #[test]
+    fn the_write_at_the_bottom_is_a_change_at_the_top() {
+        let ps = changed_at("fixes/r0z10/a_ref_top_200_bad.wf", "\n    c199()\n");
+        assert!(ps.iter().any(|p| p == "w.v"), "{ps:?}");
+        let ps = changed_at("fixes/r0z10/d_shared_args_200_bad.wf", "\n    c199()\n");
+        assert!(ps.iter().any(|p| p == "w.a"), "{ps:?}");
+        assert!(ps.iter().any(|p| p == "w.b"), "{ps:?}");
+        assert!(!ps.iter().any(|p| p == "w.c"), "{ps:?}");
+    }
+
+    /// A chain of closures that hold each other in their values (`once`
+    /// closures capture the level below by a move) asks for each deeper
+    /// value at each level: a run node of a chain deeper than 64 that asks
+    /// for more than 4096 values keeps the old pipeline (the limit of the
+    /// resources). A level that spawns the rest of the chain keeps the
+    /// reason of main (`NESTED_TASK_RUN`).
+    #[test]
+    fn the_limits_of_the_resources_keep_the_old_pipeline() {
+        for path in [
+            "fixes/r0z10/f_once_100_bad.wf",
+            "fixes/r0z10/f_once_200_ok.wf",
+            "fixes/r0z10/g_once_mid_200_bad.wf",
+        ] {
+            let (fallback, _) = check(path);
+            let text = fallback.unwrap_or_default();
+            assert!(text.contains("more than 4096 values"), "{path}: {text}");
+        }
+        // The task of the level is a pending construct: the `ir` pipeline
+        // checks the program only if it rejects it (the rule of stage R0g).
+        let (fallback, pending) = check("fixes/r0z10/c_task_mid_200_ok.wf");
+        assert_eq!(fallback, None);
+        let text = pending.unwrap_or_default();
+        assert!(text.contains("as a task"), "{text}");
+    }
+}

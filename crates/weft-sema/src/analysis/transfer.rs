@@ -2284,8 +2284,23 @@ fn check_cap_apps(
 /// The most levels of values that a run node applies through the runs of
 /// the values that it runs (`f` runs `g`, which runs `h`). Each value applies
 /// one time at a run node, so a chain costs one application for each
-/// closure (Q3-2); a deeper chain stays with the old pipeline.
-const RUN_DEPTH: usize = 64;
+/// closure (Q3-2), and the memo of the walk (`Apps::reach`) gives the result
+/// of each level one time (plan stage R0z Z10). The bound is only a limit of
+/// the resources (the stack and the time of a run node): a deeper chain stays
+/// with the old pipeline.
+const RUN_DEPTH: usize = 1024;
+
+/// The depth bound of a run node before plan stage R0z Z10. A node whose
+/// chain is deeper ([`Apps::deep`]) can ask for at most [`DEEP_ASKS`] values
+/// (a limit of the resources: a chain of closures that hold each other in
+/// their values, as `once` closures do, asks for each deeper value at each
+/// level). A node with no deeper chain has no such limit, as before.
+const SHALLOW_DEPTH: usize = 64;
+
+/// The most values that a run node with a chain deeper than
+/// [`SHALLOW_DEPTH`] asks to apply (`Apps::reached`); a node that asks for
+/// more stays with the old pipeline.
+const DEEP_ASKS: usize = 4 * RUN_DEPTH;
 
 /// How a run node gives the arguments to a function value that it runs.
 #[derive(Clone, Copy, Debug)]
@@ -2827,11 +2842,26 @@ struct Apps {
     /// a second run of it). [`apply_runs`] finds a value that two runs reach
     /// with it (class H-ORD of the final check of group C: `both(h, || h())`).
     reached: Vec<FnVal>,
-    /// The values that the application of each value reached (the values
-    /// that it runs, at each depth), from its first application in
+    /// The node applies a value deeper than [`SHALLOW_DEPTH`] (plan stage
+    /// R0z Z10): it can ask for at most [`DEEP_ASKS`] values.
+    deep: bool,
+    /// For each depth `d`, the values that the node asks to apply at depth
+    /// `d` while [`apply_runs`] applies a value at depth `d - 1`: the values
+    /// that the value runs (plan stage R0z Z10).
+    kids: Vec<Option<BTreeSet<FnVal>>>,
+    /// The values that the application of each value asks to apply at the
+    /// next depth (the values that it runs), from each fresh application in
     /// [`apply_runs`]: a later application of the value adds only the value
-    /// to `reached` (gap G5 of stage C1.5).
+    /// to `reached` (gap G5 of stage C1.5). The values of the deeper levels
+    /// are the values of these values (plan stage R0z Z10: one level each,
+    /// so a chain costs one entry for each level).
     inner: std::collections::HashMap<FnVal, BTreeSet<FnVal>>,
+    /// The memo of the walk through `inner` (plan stage R0z Z10): for each
+    /// value, the result of the walk from it ([`Reach`]).
+    memo: std::collections::HashMap<FnVal, Reach>,
+    /// Each value that a walk of `memo` went through. A change of `inner`
+    /// or `seen` for one of them clears `memo`.
+    memo_seen: std::collections::HashSet<FnVal>,
     /// The run node can give nested slots (plan stage R0z Z9c-C, part 2):
     /// only a call of a function item ([`call_out`]).
     nest_ok: bool,
@@ -2840,6 +2870,87 @@ struct Apps {
     nest: Option<Nest>,
     /// The nested slots that the runs of depth 1 ask for ([`nested_how`]).
     nested: Vec<(SlotKey, TaskOf)>,
+}
+
+/// A part of [`Apps::reached`]: the first index and the index after the last.
+type Part = (usize, usize);
+
+/// The result of the walk from a value through [`Apps::inner`] (plan stage
+/// R0z Z10): the keys of the interface of the body that the walk reaches,
+/// and if a value of the walk that is no value of the interface can resume
+/// more than once.
+#[derive(Clone, Debug, Default)]
+struct Reach {
+    /// The keys of the interface ([`RunKey`](super::summary::RunKey)).
+    keys: BTreeSet<super::summary::RunKey>,
+    /// A value of the walk can resume more than once.
+    multi: bool,
+}
+
+impl Apps {
+    /// Clears the memo of the walk if `v` is a value that a walk went
+    /// through: its values (`inner`) or its app (`seen`) change now.
+    fn touch(&mut self, v: &FnVal) {
+        if self.memo_seen.contains(v) {
+            self.memo.clear();
+            self.memo_seen.clear();
+        }
+    }
+
+    /// Notes that the app of value `v` is `apps.out[at]` (`seen`). The app
+    /// of an item or of a closure has the summary of the value, so a new app
+    /// of such a value that has an app keeps the result of each walk through
+    /// it. Each other new app can change a walk ([`Apps::touch`]).
+    fn note_app(&mut self, v: &FnVal, at: usize) {
+        let same = matches!(v, FnVal::Item(..) | FnVal::Closure(_) | FnVal::Made(_))
+            && self.seen.contains_key(v);
+        if !same {
+            self.touch(v);
+        }
+        self.seen.insert(v.clone(), at);
+    }
+
+    /// The walk from `v` through `inner` ([`Reach`]): `iface` gives the key
+    /// of a value of the interface, and `multi` tells if a value can resume
+    /// more than once. A value whose walk is in the memo gives its result
+    /// with no new walk, so each level of a chain costs one step (plan stage
+    /// R0z Z10). The result is the same as a walk with no memo: a change of
+    /// a value of a walk clears the memo ([`Apps::touch`]).
+    fn reach(
+        &mut self,
+        v: &FnVal,
+        iface: &dyn Fn(&FnVal) -> Option<super::summary::RunKey>,
+        multi: &dyn Fn(&Self, &FnVal) -> bool,
+    ) -> Reach {
+        if let Some(r) = self.memo.get(v) {
+            return r.clone();
+        }
+        let mut out = Reach::default();
+        let mut seen: BTreeSet<FnVal> = BTreeSet::new();
+        let mut work: Vec<FnVal> = vec![v.clone()];
+        while let Some(x) = work.pop() {
+            if !seen.insert(x.clone()) {
+                continue;
+            }
+            if x != *v {
+                if let Some(r) = self.memo.get(&x) {
+                    out.keys.extend(r.keys.iter().copied());
+                    out.multi |= r.multi;
+                    continue;
+                }
+            }
+            match iface(&x) {
+                Some(k) => {
+                    out.keys.insert(k);
+                }
+                None => out.multi |= multi(self, &x),
+            }
+            work.extend(self.inner.get(&x).into_iter().flatten().cloned());
+        }
+        self.memo_seen.extend(seen);
+        self.memo.insert(v.clone(), out.clone());
+        out
+    }
 }
 
 /// The entry of the part `runs` of the callee whose value a run node
@@ -5353,12 +5464,20 @@ fn apply_runs(
     // that a value runs (`Apps::reached`). The key of a run of a result of
     // a parameter is not the key of the run of the parameter (`Run::after`,
     // gap G3 of stage C1.5).
-    let mut reached: BTreeMap<super::summary::RunKey, BTreeSet<FnVal>> = BTreeMap::new();
+    //
+    // Plan stage R0z Z10: `direct` has the values that the runs of each key
+    // ask for at the next depth, and `ranges` the part of `Apps::reached`
+    // that the runs of each key added. The walk through `Apps::inner` from
+    // the values of `direct` reaches the same values as a walk from that
+    // part of `Apps::reached`, and the memo of the walk (`Apps::reach`)
+    // gives the result of each level one time.
+    let mut direct: BTreeMap<super::summary::RunKey, BTreeSet<FnVal>> = BTreeMap::new();
+    let mut ranges: BTreeMap<super::summary::RunKey, Vec<Part>> = BTreeMap::new();
     // The keys whose values the node does not know (gap G5 of stage C1.5):
     // they count as values that can resume more than once.
     let mut open: BTreeSet<super::summary::RunKey> = BTreeSet::new();
     // The values that each run reaches, by the index of the run.
-    let mut per_run: Vec<(usize, Vec<FnVal>, (BodyId, Operand))> = Vec::new();
+    let mut per_run: Vec<(usize, Part, (BodyId, Operand))> = Vec::new();
     for (index, run) in runs.iter().enumerate() {
         let first = apps.reached.len();
         let key = (run.param, run.capture, run.result);
@@ -5535,7 +5654,6 @@ fn apply_runs(
             }
             let start = apps.out.len();
             let fresh = !apps.modes.contains(&(g.clone(), Some(places.clone())));
-            let from = apps.reached.len();
             let outer = OuterMany::enter(run_many);
             // The entry of the callee for the nested slots of depth 1 (plan
             // stage R0z Z9c-C, part 2).
@@ -5560,6 +5678,15 @@ fn apply_runs(
                     args: places.clone(),
                 });
             }
+            // The values that the application of `g` asks for at the next
+            // depth (plan stage R0z Z10).
+            if apps.kids.len() <= depth + 2 {
+                apps.kids.resize(depth + 3, None);
+            }
+            let outer_kids = apps
+                .kids
+                .get_mut(depth + 2)
+                .and_then(|k| k.replace(BTreeSet::new()));
             let applied = apply_value(
                 cx,
                 r,
@@ -5570,18 +5697,22 @@ fn apply_runs(
                 depth + 1,
                 apps,
             );
+            let got = apps
+                .kids
+                .get_mut(depth + 2)
+                .and_then(|k| std::mem::replace(k, outer_kids))
+                .unwrap_or_default();
             apps.nest = saved;
             drop(outer);
             applied?;
             if fresh {
-                let got: BTreeSet<FnVal> = apps
-                    .reached
-                    .get(from + 1..)
-                    .unwrap_or_default()
-                    .iter()
-                    .cloned()
-                    .collect();
-                apps.inner.entry(g.clone()).or_default().extend(got);
+                // A deeper value is a value of one of the values that `g`
+                // asks for (plan stage R0z Z10).
+                let have = apps.inner.get(g);
+                if got.iter().any(|v| !have.is_some_and(|h| h.contains(v))) || have.is_none() {
+                    apps.touch(g);
+                    apps.inner.entry(g.clone()).or_default().extend(got);
+                }
             }
             for a in apps.out.iter_mut().skip(start) {
                 a.kind = super::apply::RunKind::Run;
@@ -5700,9 +5831,12 @@ fn apply_runs(
                 }
             }
         }
-        let got = apps.reached.get(first..).unwrap_or_default();
-        reached.entry(key).or_default().extend(got.iter().cloned());
-        per_run.push((index, got.to_vec(), (src_body, src.clone())));
+        direct.entry(key).or_default().extend(fns.iter().cloned());
+        ranges
+            .entry(key)
+            .or_default()
+            .push((first, apps.reached.len()));
+        per_run.push((index, (first, apps.reached.len()), (src_body, src.clone())));
     }
     // A run after a run of a value that can resume more than once (code of
     // a caller in the body between them, `Run::after`) happens again: each
@@ -5720,7 +5854,7 @@ fn apply_runs(
     // A value can resume more than once if its own app can, or the app of
     // a value that its application reached (`Apps::inner`), or if it has
     // no app (gap G5 of stage C1.5).
-    let app_multi = |v: &FnVal| {
+    let app_multi = |apps: &Apps, v: &FnVal| {
         apps.seen
             .get(v)
             .and_then(|&k| apps.out.get(k))
@@ -5743,44 +5877,32 @@ fn apply_runs(
         FnVal::Capture(k) => Some((*k, true, false)),
         _ => None,
     };
-    let can_multi = |v: &FnVal| {
-        let mut seen: BTreeSet<&FnVal> = BTreeSet::new();
-        let mut work = vec![v];
-        while let Some(x) = work.pop() {
-            if !seen.insert(x) {
-                continue;
+    // The walk from each value of each key (`Apps::reach`, with the memo of
+    // plan stage R0z Z10): the keys of the interface of this body that the
+    // values of the key reach, also through the values that they run, and
+    // if one of those values can resume more than once.
+    let mut multi_keys: BTreeSet<super::summary::RunKey> = open.clone();
+    let mut lifted: BTreeMap<super::summary::RunKey, BTreeSet<super::summary::RunKey>> =
+        BTreeMap::new();
+    for (k, vals) in &direct {
+        let mut keys = BTreeSet::new();
+        for v in vals {
+            let r = apps.reach(v, &iface, &app_multi);
+            if r.multi {
+                multi_keys.insert(*k);
             }
-            if iface(x).is_none() && app_multi(x) {
-                return true;
-            }
-            work.extend(apps.inner.get(x).into_iter().flatten());
+            keys.extend(r.keys);
         }
-        false
+        lifted.insert(*k, keys);
+    }
+    // The values that the runs of a key added to `Apps::reached`, at each
+    // depth.
+    let added = |apps: &Apps, spans: &[Part]| -> BTreeSet<FnVal> {
+        spans
+            .iter()
+            .flat_map(|&(a, b)| apps.reached.get(a..b).unwrap_or_default().iter().cloned())
+            .collect()
     };
-    let multi_keys: BTreeSet<super::summary::RunKey> = reached
-        .iter()
-        .filter(|(_, vals)| vals.iter().any(can_multi))
-        .map(|(k, _)| *k)
-        .chain(open.iter().copied())
-        .collect();
-    // The keys of the interface of this body that the values of each key
-    // reach, also through the values that they run.
-    let lifted: BTreeMap<super::summary::RunKey, BTreeSet<super::summary::RunKey>> = reached
-        .iter()
-        .map(|(k, vals)| {
-            let mut out = BTreeSet::new();
-            let mut seen: BTreeSet<&FnVal> = BTreeSet::new();
-            let mut work: Vec<&FnVal> = vals.iter().collect();
-            while let Some(x) = work.pop() {
-                if !seen.insert(x) {
-                    continue;
-                }
-                out.extend(iface(x));
-                work.extend(apps.inner.get(x).into_iter().flatten());
-            }
-            (*k, out)
-        })
-        .collect();
     // The parameters of the callee whose runs reach each value of the
     // interface of this body (`Applied::reach`, plan stage R0z Z9c-A, C1).
     if depth == 0 {
@@ -5811,7 +5933,7 @@ fn apply_runs(
             }
         }
     }
-    for (index, got, arg) in &per_run {
+    for (index, span, arg) in &per_run {
         let Some(run) = runs.get(*index) else {
             continue;
         };
@@ -5826,7 +5948,12 @@ fn apply_runs(
         if !now && later.is_empty() {
             continue;
         }
-        for v in got {
+        let got: Vec<FnVal> = apps
+            .reached
+            .get(span.0..span.1)
+            .unwrap_or_default()
+            .to_vec();
+        for v in &got {
             // A run of a value of the interface after a value of the
             // interface: the caller decides (its part `after`).
             if !now && iface(v).is_some() {
@@ -5860,9 +5987,9 @@ fn apply_runs(
     // (`both(h, || h())`, `both(|| h(), || h())`): its app happens again,
     // not in one order only. An item has no `once` part to lose.
     if two {
-        let mut keys_of: BTreeMap<&FnVal, usize> = BTreeMap::new();
-        for vals in reached.values() {
-            for v in vals {
+        let mut keys_of: BTreeMap<FnVal, usize> = BTreeMap::new();
+        for spans in ranges.values() {
+            for v in added(apps, spans) {
                 *keys_of.entry(v).or_default() += 1;
             }
         }
@@ -5870,7 +5997,7 @@ fn apply_runs(
             if n < 2 || matches!(v, FnVal::Item(..)) {
                 continue;
             }
-            if let Some(a) = apps.seen.get(v).and_then(|&k| apps.out.get_mut(k)) {
+            if let Some(a) = apps.seen.get(&v).and_then(|&k| apps.out.get_mut(k)) {
                 a.again = true;
                 a.seq = true;
                 a.seq_loop = true;
@@ -5935,14 +6062,24 @@ fn apply_value(
     use super::summary::{IPlace, IRoot};
     if depth > RUN_DEPTH {
         return Err(AlphaError::Later(
-            "a chain of function values that run each other deeper than 64 (stage F12)",
+            "a chain of function values that run each other deeper than 1024 (stage F12; the limit of the resources of plan stage R0z Z10)",
+        ));
+    }
+    apps.deep |= depth > SHALLOW_DEPTH;
+    if apps.deep && apps.reached.len() > DEEP_ASKS {
+        return Err(AlphaError::Later(
+            "a chain of function values deeper than 64 whose run node applies more than 4096 values (the limit of the resources of plan stage R0z Z10)",
         ));
     }
     apps.reached.push(fv.clone());
+    if let Some(Some(kids)) = apps.kids.get_mut(depth) {
+        kids.insert(fv.clone());
+    }
     if !apps.modes.insert((fv.clone(), given.places())) {
         return Ok(());
     }
-    apps.seen.insert(fv.clone(), apps.out.len());
+    let at = apps.out.len();
+    apps.note_app(fv, at);
     let p = cx.p;
     let (body, st) = (r.body, r.st);
     match fv {
@@ -7313,4 +7450,126 @@ pub(crate) fn bind_result(
         store_heap(cx.facts, cx.roots, st, &a.places, &refs, &flat.top.fns);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod z10_memo {
+    //! The memo of the walk of plan stage R0z Z10 ([`Apps::reach`]) gives
+    //! the result of a walk with no memo, also after a change of `inner` or
+    //! `seen` ([`Apps::touch`]).
+    use super::{Apps, FnVal, Reach};
+    use std::collections::BTreeSet;
+    use weft_ir::ClosureId;
+
+    fn v(i: u32) -> FnVal {
+        match i % 5 {
+            4 => FnVal::Capture(i),
+            3 => FnVal::Param(i),
+            _ => FnVal::Closure(ClosureId(i)),
+        }
+    }
+
+    fn iface(x: &FnVal) -> Option<(u32, bool, bool)> {
+        match x {
+            FnVal::Capture(k) => Some((*k, true, false)),
+            _ => None,
+        }
+    }
+
+    /// A value "can resume more than once" if it has no app in `seen`. Else
+    /// a closure can if its id is odd (a stand-in for its summary, which is
+    /// the same for each app), and another value can if the index of its
+    /// app is odd (a stand-in for a summary of the app).
+    fn multi(a: &Apps, x: &FnVal) -> bool {
+        a.seen.get(x).is_none_or(|&k| match x {
+            FnVal::Closure(c) => c.0 % 2 == 1,
+            _ => k % 2 == 1,
+        })
+    }
+
+    /// The walk with no memo.
+    fn plain(a: &Apps, from: &FnVal) -> Reach {
+        let mut out = Reach::default();
+        let mut seen: BTreeSet<FnVal> = BTreeSet::new();
+        let mut work = vec![from.clone()];
+        while let Some(x) = work.pop() {
+            if !seen.insert(x.clone()) {
+                continue;
+            }
+            match iface(&x) {
+                Some(k) => {
+                    out.keys.insert(k);
+                }
+                None => out.multi |= multi(a, &x),
+            }
+            work.extend(a.inner.get(&x).into_iter().flatten().cloned());
+        }
+        out
+    }
+
+    /// A small generator of numbers (no crate for random numbers here).
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self, n: u32) -> u32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            u32::try_from((self.0 >> 33) % u64::from(n)).unwrap_or(0)
+        }
+    }
+
+    #[test]
+    fn the_memo_gives_the_result_of_a_plain_walk() {
+        for seed in 0..200 {
+            let mut g = Lcg(seed);
+            let mut a = Apps::default();
+            for _ in 0..60 {
+                let x = v(g.next(12));
+                match g.next(3) {
+                    // A new value of `x` (an application of `x`).
+                    0 => {
+                        let y = v(g.next(12));
+                        let have = a.inner.get(&x);
+                        if have.is_none_or(|h| !h.contains(&y)) {
+                            a.touch(&x);
+                            a.inner.entry(x.clone()).or_default().insert(y);
+                        }
+                    }
+                    // A new app of `x`.
+                    1 => {
+                        let at = g.next(4) as usize;
+                        a.note_app(&x, at);
+                    }
+                    // A walk.
+                    _ => {
+                        let want = plain(&a, &x);
+                        let got = a.reach(&x, &iface, &multi);
+                        assert_eq!(
+                            (got.keys, got.multi),
+                            (want.keys, want.multi),
+                            "seed {seed}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A chain: each walk takes one step for its own value, as the walk of
+    /// the value below is in the memo.
+    #[test]
+    fn a_chain_walks_each_level_one_time() {
+        let mut a = Apps::default();
+        for i in 1..500 {
+            a.inner
+                .entry(FnVal::Closure(ClosureId(i)))
+                .or_default()
+                .insert(FnVal::Closure(ClosureId(i - 1)));
+            a.seen.insert(FnVal::Closure(ClosureId(i)), 0);
+            let r = a.reach(&FnVal::Closure(ClosureId(i)), &iface, &multi);
+            assert!(r.multi, "value 0 has no app");
+            assert_eq!(a.memo.len(), usize::try_from(i).unwrap_or(0));
+        }
+    }
 }
