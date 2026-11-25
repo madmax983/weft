@@ -1,0 +1,19 @@
+// z4b probe (ok): as t05 bad, but the clause consumes the linear value before the block of with_timeout.
+effect Ask { fn ask() -> u64 }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            let t = T { id: 1 }
+            done(t)
+            let a = with_timeout(5.ms) { resume(1) }
+            a
+        }
+    } in {
+        let a = ask()
+        sleep(10.ms)
+        a + 1
+    }
+    print(r)
+}

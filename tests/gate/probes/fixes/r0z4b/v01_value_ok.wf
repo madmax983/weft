@@ -1,0 +1,14 @@
+// z4b probe (ok): the block of with_timeout gives the value of its resume back, and the clause uses it after the block.
+effect Ask { fn ask() -> u64 }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            let x = with_timeout(50.ms) { resume(1) }
+            x * 2
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

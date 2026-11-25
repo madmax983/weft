@@ -1,0 +1,18 @@
+// z4b probe (bad): the deadline cuts the rest of the handled body at `sleep`. A linear value with no `on abort` is live there (W0602). The rest must still be checked.
+effect Ask { fn ask() -> u64 }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            with_timeout(5.ms) { resume(1) }
+        }
+    } in {
+        let a = ask()
+        let t = T { id: a }
+        sleep(10.ms)
+        done(t)
+        a + 1
+    }
+    print(r)
+}

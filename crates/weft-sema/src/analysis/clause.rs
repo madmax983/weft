@@ -1192,6 +1192,56 @@ pub fn resume_point(p: &Program, body: BodyId, kont: &Place) -> Option<(HandlerI
     scope_resumes(p, top, cb).then_some((h, cb, multi))
 }
 
+/// A runtime resume node (plan stage R0z Z4b, [`weft_ir::ResumeRun`]).
+///
+/// The call of `sim.run` or `with_timeout` at the terminator of a block of
+/// clause body [`RtResume::cb`] runs its block at the call, on this task, and
+/// the block resumes the `once` continuation of the clause. So the call node
+/// is a resume point of the clause: the rest of the handled body of
+/// [`RtResume::h`] runs there. The block runs no other code that touches a
+/// place outside its frame (`factgen::instantiate`, the rules of a resumer),
+/// so the facts and the analysis do not apply its summary.
+#[derive(Clone, Copy, Debug)]
+pub struct RtResume<'a> {
+    /// The handler of the clause.
+    pub h: HandlerId,
+    /// The clause body: the body of the call.
+    pub cb: BodyId,
+    /// The argument of the `resume` of the block: a constant.
+    pub arg: &'a Operand,
+}
+
+/// The runtime resume node at the terminator of block `block` of body
+/// `body` (plan stage R0z Z4b), if the program has one there.
+pub fn runtime_resume(p: &Program, body: BodyId, block: BlockId) -> Option<RtResume<'_>> {
+    let r = p.resume_run_at(body, block)?;
+    let b = p.body(body)?;
+    let BodyKind::Clause(h, _) = b.kind else {
+        return None;
+    };
+    if b.kont.is_none_or(|(_, multi)| multi) {
+        return None;
+    }
+    let d = p.closures.get(r.closure.index())?;
+    let arg = p
+        .body(d.body)?
+        .blocks
+        .iter()
+        .filter(|x| !x.cleanup)
+        .find_map(|x| match &x.term.kind {
+            TermKind::Resume { arg, .. } => Some(arg),
+            _ => None,
+        })?;
+    Some(RtResume { h, cb: body, arg })
+}
+
+/// True if terminator `t` of block `block` of body `body` is a resume point
+/// in the body itself: a `Resume`, or a runtime resume node (plan stage R0z
+/// Z4b, [`runtime_resume`]).
+pub fn resume_term(p: &Program, body: BodyId, block: BlockId, t: &TermKind) -> bool {
+    matches!(t, TermKind::Resume { .. }) || p.resume_run_at(body, block).is_some()
+}
+
 /// The scope body of clause `cb` whose site is `cb` and that is `b` or has
 /// `b` inside it through scope bodies only.
 fn top_scope(p: &Program, b: BodyId, cb: BodyId) -> Option<BodyId> {
@@ -1302,6 +1352,10 @@ pub fn lands_in(p: &Program, b_id: BodyId, cb: BodyId) -> bool {
             continue;
         };
         if blk.cleanup {
+            continue;
+        }
+        // A runtime resume node (plan stage R0z Z4b) is a resume point.
+        if p.resume_run_at(b_id, at).is_some() {
             continue;
         }
         match blk.term.kind {
@@ -2217,13 +2271,27 @@ fn post_seeds(
     let mut by: BTreeMap<BodyId, Seeds> = BTreeMap::new();
     for (cb, rb, sr) in resumes {
         let cbody = body_of(p, *cb)?;
+        let t = cbody.blocks.get(rb.index()).map(|b| &b.term.kind);
+        // A runtime resume node (plan stage R0z Z4b): the call moves its
+        // operands, the rest of the handled body runs, and the destination
+        // gets the plain value of the block.
+        if let (Some(rt), Some(call @ TermKind::Call { next, .. })) =
+            (runtime_resume(p, *cb, *rb), t)
+        {
+            let mut s = sr.clone();
+            runtime_resume_with(cx, (*cb, *rb), &mut s, (&rt, call), Some(exit))?;
+            if let Some(next) = next {
+                by.entry(*cb).or_default().push((*next, s));
+            }
+            continue;
+        }
         let Some(TermKind::Resume {
             kont,
             arg,
             dest,
             next,
             ..
-        }) = cbody.blocks.get(rb.index()).map(|b| &b.term.kind)
+        }) = t
         else {
             continue;
         };
@@ -2318,6 +2386,85 @@ fn resume_with(
             st.clear(k, &path);
         }
     }
+    rest_exit(cx, st, (h, cb, multi), exit)?;
+    transfer::bind_result(cx, body, st, &[], dest, resumed.clone())
+}
+
+/// The transfer of a runtime resume node `rt` (the call `t` at block
+/// `block` of body `body`) in state `st` (plan stage R0z Z4b): the call with
+/// no run of its block (`transfer::call_out`: it moves the closure value of
+/// the block, and its destination gets the value of the block, plain data by
+/// the rules of a resumer), and the rest of the handled body (as at a
+/// `Resume`, [`rest_exit`] with the state `exit` at its end). The destination
+/// is a local of the clause, so the rest does not change it.
+///
+/// # Errors
+///
+/// The errors of α and of the transfer of a call.
+fn runtime_resume_with(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    st: &mut State,
+    (rt, t): (&RtResume<'_>, &TermKind),
+    exit: Option<&State>,
+) -> Result<(), AlphaError> {
+    let TermKind::Call {
+        callee: weft_ir::Callee::Fn(f, targs),
+        args,
+        dest,
+        ..
+    } = t
+    else {
+        return Err(AlphaError::BadPlace(
+            "not a runtime resume node".to_string(),
+        ));
+    };
+    transfer::call(cx, body, block, st, *f, targs, args, dest)?;
+    rest_exit(cx, st, (rt.h, rt.cb, false), exit)
+}
+
+/// The transfer of a runtime resume node in the code of a clause after its
+/// first resume point (plan stage R0z Z4b, as [`resume`] for a `Resume`
+/// there).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn runtime_resume_term(
+    cx: &mut Cx<'_>,
+    (body, block): (BodyId, BlockId),
+    st: &mut State,
+    t: &TermKind,
+) -> Result<(), AlphaError> {
+    let p = cx.p;
+    let rt = runtime_resume(p, body, block)
+        .ok_or_else(|| AlphaError::BadPlace("not a runtime resume node".to_string()))?;
+    handler(p, rt.h)?;
+    if cx.hx.open.iter().any(|o| o.handler == rt.h) {
+        let v = Tree::leaf(AbsVal::plain());
+        if let Some(o) = cx.hx.open_mut(rt.h) {
+            o.again.push((v, st.clone()));
+        }
+    }
+    let info = cx.hx.info(rt.h).cloned().unwrap_or_default();
+    runtime_resume_with(cx, (body, block), st, (&rt, t), info.exit.as_ref())
+}
+
+/// The locals that are not of clause `cb` of handler `h` get their values
+/// from the state `exit` at the end of the handled body (if it can end),
+/// joined with their values in `st`: the rest of the handled body runs at a
+/// resume point. `multi` is the mode of the continuation.
+///
+/// # Errors
+///
+/// The errors of [`must_written`].
+fn rest_exit(
+    cx: &Cx<'_>,
+    st: &mut State,
+    (h, cb, multi): (HandlerId, BodyId, bool),
+    exit: Option<&State>,
+) -> Result<(), AlphaError> {
+    let p = cx.p;
     if let Some(ex) = exit {
         let mut after = ex.with_bodies_of(st, &|b| inside(p, b, cb));
         // A local of the site that the rest of the handled body gives a
@@ -2341,7 +2488,7 @@ fn resume_with(
         after.join_values_but_keys(st, &|b| inside(p, b, cb), &strong);
         *st = after;
     }
-    transfer::bind_result(cx, body, st, &[], dest, resumed.clone())
+    Ok(())
 }
 
 /// The locals of the site that the rest of the handled body of handler `h`
@@ -2686,6 +2833,11 @@ fn run_clause(
             let v = transfer::operand(cx, rbody, sr, arg)?;
             check_kont_escape(cx, (h, cb), sr, None, Some(&v));
             value.join(&v);
+        } else if let Some(rt) = runtime_resume(p, rbody, rb) {
+            // A runtime resume node (plan stage R0z Z4b): the argument of
+            // the `resume` of the block is a constant.
+            let v = transfer::operand(cx, rbody, sr, rt.arg)?;
+            value.join(&v);
         }
         let sr = clean(sr);
         let mut s = sr.clone();
@@ -2832,14 +2984,17 @@ pub fn note_cap_apps(
     }
 }
 
-/// True if clause body `cb` has a resume point: a `Resume` of its own
-/// blocks, or a `scope` whose scope body has one (plan stage R0z Z5,
-/// [`resume_scope`]).
+/// True if clause body `cb` has a resume point.
+///
+/// It is a `Resume` of its own blocks, a runtime resume node (plan stage R0z
+/// Z4b, [`resume_term`]), or a `scope` whose scope body has one (plan stage
+/// R0z Z5, [`resume_scope`]).
 pub fn has_resume(p: &Program, cb: BodyId) -> bool {
     p.body(cb).is_some_and(|b| {
-        b.blocks.iter().any(|blk| {
+        b.blocks.iter().enumerate().any(|(i, blk)| {
+            let k = BlockId(u32::try_from(i).unwrap_or(u32::MAX));
             !blk.cleanup
-                && (matches!(blk.term.kind, TermKind::Resume { .. })
+                && (resume_term(p, cb, k, &blk.term.kind)
                     || resume_scope(p, cb, &blk.term.kind, cb).is_some())
         })
     })

@@ -1,0 +1,12 @@
+// z4b probe (ok): as t01 bad, but the clause reads the reference before the block of with_timeout.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    handle Tick { fn tick(r: &u64) {
+            print(r + 1)
+            with_timeout(50.ms) { resume(()) }
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}

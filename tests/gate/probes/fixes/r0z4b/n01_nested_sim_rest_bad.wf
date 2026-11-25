@@ -1,0 +1,13 @@
+// z4b probe (bad): the rest of the handled body runs a block of sim.run that clears `w`. The clause keeps a reference into `w` across its block of with_timeout, and reads it after.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        sim.run(seed: 2) { w.clear() }
+    }
+}

@@ -548,7 +548,8 @@ fn resume_parts(p: &Program, cb: BodyId, b: &weft_ir::Body) -> (Vec<bool>, Vec<b
                 work.extend(succ.iter().copied());
             }
             after.extend(succ);
-        } else if matches!(blk.term.kind, TermKind::Resume { .. }) {
+        } else if crate::analysis::clause::resume_term(p, cb, x, &blk.term.kind) {
+            // A `Resume`, or a runtime resume node (plan stage R0z Z4b).
             after.extend(succ);
         } else {
             work.extend(succ);

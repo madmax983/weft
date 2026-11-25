@@ -646,13 +646,17 @@ fn u32_of(n: usize) -> u32 {
 impl Comp {
     /// True if the nodes `group` of a frame are a `handle` or a `resume`:
     /// the frame waits for its handled body or for the rest of the handled
-    /// body (plan stage F14).
+    /// body (plan stage F14). A runtime resume node (plan stage R0z Z4b: a
+    /// call with `resumes_at`) is a `resume` here: the frames above it are
+    /// the marker frame of the call, the block, and the rest of the handled
+    /// body.
     fn waits(&self, group: &[NodeId]) -> bool {
         group.iter().any(|n| {
-            self.facts
-                .nodes
-                .get(n.index())
-                .is_some_and(|x| x.kind == "handle" || x.kind == "resume")
+            self.facts.nodes.get(n.index()).is_some_and(|x| {
+                x.kind == "handle"
+                    || x.kind == "resume"
+                    || (x.kind == "call" && self.facts.resumes_at.iter().any(|(m, _)| m == n))
+            })
         })
     }
 
@@ -2127,6 +2131,49 @@ impl FactOracle {
         heap: &Heap,
         task: usize,
     ) {
+        self.wait_begin_at(uid, (code, slots), heap, task, false);
+    }
+
+    /// True if the clause frame `uid` is at a runtime resume node (plan stage
+    /// R0z Z4b): a node of its current location has `resumes_at` in the
+    /// facts. The call of `sim.run` or `with_timeout` there runs a block that
+    /// resumes the continuation of the clause.
+    pub fn at_runtime_resume(&self, uid: u64) -> bool {
+        let Some(fr) = self.frames.get(&uid) else {
+            return false;
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return false;
+        };
+        comp.clause && !runtime_resume_nodes(comp, &fr.cur).is_empty()
+    }
+
+    /// A4 for a runtime resume node (plan stage R0z Z4b): the clause frame
+    /// `uid` waits at its call of `sim.run` or `with_timeout` while the block
+    /// resumes its continuation, as at a `resume` ([`Self::wait_begin`]). The
+    /// block runs in a frame above the clause frame and the marker frame of
+    /// the call.
+    pub fn runtime_wait_begin(
+        &mut self,
+        uid: u64,
+        code: &Code,
+        slots: &[Option<CellId>],
+        heap: &Heap,
+        task: usize,
+    ) {
+        self.wait_begin_at(uid, (code, slots), heap, task, true);
+    }
+
+    /// [`Self::wait_begin`] at a `resume`, or with `runtime` at a runtime
+    /// resume node ([`Self::runtime_wait_begin`]).
+    fn wait_begin_at(
+        &mut self,
+        uid: u64,
+        (code, slots): (&Code, &[Option<CellId>]),
+        heap: &Heap,
+        task: usize,
+        runtime: bool,
+    ) {
         self.drop_wait(uid);
         let Some(fr) = self.frames.get(&uid) else {
             return;
@@ -2134,13 +2181,17 @@ impl FactOracle {
         let Some(comp) = self.comps.get(fr.comp) else {
             return;
         };
-        // The `Main` node of the `resume`: its `lends_mut` and `releases_at`
-        // are the summary of the rest of the handled body.
-        let nodes: Vec<NodeId> = comp
-            .group(&fr.cur)
-            .into_iter()
-            .filter(|&n| comp.kind_of(n) == "resume" && comp.label_of(n) == "resume")
-            .collect();
+        // The `Main` node of the `resume` (or of the call of a runtime resume
+        // node): its `lends_mut` and `releases_at` are the summary of the rest
+        // of the handled body.
+        let nodes: Vec<NodeId> = if runtime {
+            runtime_resume_nodes(comp, &fr.cur)
+        } else {
+            comp.group(&fr.cur)
+                .into_iter()
+                .filter(|&n| comp.kind_of(n) == "resume" && comp.label_of(n) == "resume")
+                .collect()
+        };
         if !comp.clause || nodes.is_empty() {
             return;
         }
@@ -4590,4 +4641,17 @@ fn owner_of(
         }),
         _ => None,
     }
+}
+
+/// The nodes of the location `cur` of a frame of component `comp` with a
+/// `resumes_at` row (plan stage R0z Z4b): the `Main` node of a runtime resume
+/// node, a call of `sim.run` or `with_timeout` whose block resumes the
+/// continuation of the clause.
+fn runtime_resume_nodes(comp: &Comp, cur: &[NodeId]) -> Vec<NodeId> {
+    comp.group(cur)
+        .into_iter()
+        .filter(|&n| {
+            comp.kind_of(n) == "call" && comp.facts.resumes_at.iter().any(|(m, _)| *m == n)
+        })
+        .collect()
 }

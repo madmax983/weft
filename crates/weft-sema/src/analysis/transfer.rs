@@ -1432,6 +1432,11 @@ pub fn term(
         TermKind::Return => ret(st),
         TermKind::Unreachable | TermKind::UnwindExit => Ok(()),
         TermKind::Assert { cond, .. } => moves(cx.p, body, st, [cond]),
+        // A runtime resume node (plan stage R0z Z4b): a resume point of the
+        // clause, with no run of the block.
+        TermKind::Call { .. } if cx.p.resume_run_at(body, block).is_some() => {
+            super::clause::runtime_resume_term(cx, (body, block), st, t)
+        }
         TermKind::Call {
             callee: weft_ir::Callee::Fn(f, targs),
             args,
@@ -1605,7 +1610,14 @@ pub fn call_out(
 ) -> Result<CallOut, AlphaError> {
     let sums = cx.sums;
     let p = cx.p;
-    let summary = sums.get(f).map_err(AlphaError::Later)?.clone();
+    let mut summary = sums.get(f).map_err(AlphaError::Later)?.clone();
+    // A runtime resume node (plan stage R0z Z4b): the block of the call is a
+    // resumer, and its `resume` is the resume point of the node. Its code
+    // touches no place outside its own frame, so the call does not apply its
+    // summary.
+    if p.resume_run_at(body, block).is_some() {
+        summary.runs.clear();
+    }
     let decl = p
         .fns
         .get(f.index())
@@ -2019,7 +2031,7 @@ fn is_ref_ty(tys: &TyTable, t: TyId) -> bool {
 ///
 /// The errors of [`call_out`] and of α.
 #[allow(clippy::too_many_arguments)]
-fn call(
+pub(crate) fn call(
     cx: &mut Cx<'_>,
     body: BodyId,
     block: weft_ir::BlockId,

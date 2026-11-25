@@ -30,6 +30,31 @@ pub struct Program {
     /// The dispatches (plan stage R0z Z6). Only a program with the copies of the
     /// fact generator has them.
     pub dispatches: Vec<Dispatch>,
+    /// The runtime resume nodes (plan stage R0z Z4b). Only a program with the
+    /// copies of the fact generator has them.
+    pub resume_runs: Vec<ResumeRun>,
+}
+
+/// A runtime resume node (plan stage R0z Z4b, `docs/ir.md` 6.1).
+///
+/// The terminator of block [`ResumeRun::block`] of clause body
+/// [`ResumeRun::body`] is a call of `sim.run` or `with_timeout`. Its block
+/// argument is a closure value of [`ResumeRun::closure`] that the clause made
+/// just before the call, and the closure resumes the continuation of the
+/// clause. The runtime runs the block at the call, on this task. So the
+/// `resume` of the block is a resume point of the clause at the call node. The
+/// fact generator gives the call the facts of that resume point, and it does
+/// not apply the summary of the block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResumeRun {
+    /// The clause body.
+    pub body: BodyId,
+    /// The block of the call.
+    pub block: BlockId,
+    /// The closure of the block argument.
+    pub closure: ClosureId,
+    /// The index of the `Kont` capture of [`ResumeRun::closure`].
+    pub kont: u32,
 }
 
 /// A dispatch (plan stage R0z Z6, `docs/ir.md` 6.1).
@@ -309,6 +334,14 @@ pub struct CapEnv {
 }
 
 impl Program {
+    /// Returns the runtime resume node at the terminator of block `b` of body
+    /// `body` (plan stage R0z Z4b), if one is there.
+    pub fn resume_run_at(&self, body: BodyId, b: BlockId) -> Option<&ResumeRun> {
+        self.resume_runs
+            .iter()
+            .find(|r| r.body == body && r.block == b)
+    }
+
     /// Returns the dispatch of block `b` of body `body` (plan stage R0z Z6): a
     /// test block, an arm entry or the miss block of it.
     pub fn dispatch_at(&self, body: BodyId, b: BlockId) -> Option<&Dispatch> {

@@ -1,0 +1,14 @@
+// z4b probe (ok): as m01 bad, but the rest gives a copy of the length to the callee.
+effect Tick { fn tick(r: &u64) }
+fn show(n: usize) { print(n) }
+fn main() / clock {
+    let v = Vec.new()
+    v.push(5)
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&v[0])
+        show(v.len())
+    }
+}

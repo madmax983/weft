@@ -1,0 +1,13 @@
+// z4b probe (bad, refusal): as k01 ok, with a reference parameter. The rest clears `w`, and the clause reads its reference after the block of sim.run.
+effect Pick { multi fn pick(r: &u64) }
+fn main() / clock {
+    let w = Vec.new()
+    w.push(5)
+    handle Pick { fn pick(r: &u64) {
+            sim.run(seed: 1) { resume(()) }
+            print(r + 1)
+        } } in {
+        pick(&w[0])
+        w.clear()
+    }
+}

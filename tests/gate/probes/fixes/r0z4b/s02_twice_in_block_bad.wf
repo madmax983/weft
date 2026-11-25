@@ -1,0 +1,14 @@
+// z4b probe (bad, refusal): the block of sim.run resumes the `once` continuation two times (W0501). The block is not a resumer: the program keeps the fallback.
+effect Ask { fn ask() -> u64 }
+fn main() / clock {
+    let r = handle Ask {
+        fn ask() {
+            sim.run(seed: 1) { let v = resume(1); let u = resume(2); print("{v} {u}") }
+            0
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

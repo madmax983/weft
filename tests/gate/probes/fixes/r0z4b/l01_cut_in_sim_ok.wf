@@ -1,0 +1,17 @@
+// z4b probe (ok): the rest of the handled body sleeps longer than the deadline in a block of sim.run. The deadline cuts the rest there, and the call fails (`timeout`). The clause does not go on.
+effect Ask { fn ask() -> u64 }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            let x = with_timeout(5.ms) { resume(1) }
+            print("after {x}")
+            x
+        }
+    } in {
+        let a = ask()
+        sim.run(seed: 3) { sleep(10.ms); print("woke") }
+        print("rest done")
+        a + 1
+    }
+    print(r)
+}

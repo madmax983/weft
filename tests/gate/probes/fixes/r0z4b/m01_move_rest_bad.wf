@@ -1,0 +1,14 @@
+// z4b probe (bad): the rest of the handled body moves `v` into a callee. The clause keeps a reference into `v` across its block of sim.run, and reads it after.
+effect Tick { fn tick(r: &u64) }
+fn eat(v: Vec<u64>) { print(v.len()) }
+fn main() / clock {
+    let v = Vec.new()
+    v.push(5)
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&v[0])
+        eat(v)
+    }
+}

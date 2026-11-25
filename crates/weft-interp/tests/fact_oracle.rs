@@ -1859,3 +1859,69 @@ fn a_summary_with_no_slot_with_fails_the_with_check() {
         assert!(m.starts_with("fact oracle (with)"), "{name}: {m}");
     }
 }
+
+/// The probes of plan stage R0z Z4b (`fixes/r0z4b`: the runtime runs of
+/// `sim.run` and `with_timeout`). Each probe that the `ir` pipeline checks
+/// runs with no failure of the fact oracle (a bad probe can fault in the
+/// memory oracle). A4 checks the clause frame at a runtime resume node: the
+/// frame waits at its call while the block resumes (the hook in
+/// `Machine::resume`), so the checks of A4 are not zero.
+#[test]
+fn the_probes_of_the_runtime_resumes_pass_the_fact_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z4b");
+    let mut checked = 0;
+    let mut resume = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if c.ir.is_none() {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+        if let Ok(o) = &r {
+            resume += o.fact_oracle.as_ref().map_or(0, |f| f.resume);
+        }
+        checked += 1;
+    }
+    assert!(checked >= 20, "{checked}");
+    assert!(
+        resume > 0,
+        "A4 checks no clause frame at a runtime resume node"
+    );
+}
+
+/// Removes the `lends_mut` and `releases_at` facts at the runtime resume
+/// nodes (plan stage R0z Z4b): the calls with a `resumes_at` row.
+fn no_runtime_resume_region(f: &mut FnFacts) {
+    let rt: Vec<bool> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| n.kind == "call" && f.resumes_at.iter().any(|(m, _)| m.index() == i))
+        .collect();
+    let keep = |n: weft_facts::NodeId| !rt.get(n.index()).copied().unwrap_or(false);
+    f.lends_mut.retain(|&(n, _)| keep(n));
+    f.releases_at.retain(|&(n, _)| keep(n));
+}
+
+/// A4 at a runtime resume node (plan stage R0z Z4b), the mutation. In
+/// `t01_ref_rest_frees_ok` the parameter `r` of the clause points into a
+/// local of the handled body, and the rest of the handled body frees it
+/// while the clause frame waits at its call of `with_timeout`. With no
+/// region at the call the oracle fails A4.
+#[test]
+fn a_runtime_resume_node_with_no_region_fails_a4() {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0z4b")
+        .join("t01_ref_rest_frees_ok.wf");
+    let c = check(&fs::read_to_string(&p).unwrap());
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(r.is_ok(), "{:?}", r.err().map(|e| e.message));
+    let m = match run_main_with_facts(&c, &opts(), no_runtime_resume_region) {
+        Ok(_) => panic!("the facts with no region at the runtime resume node pass"),
+        Err(e) => e.message,
+    };
+    assert!(m.contains("A4"), "{m}");
+}

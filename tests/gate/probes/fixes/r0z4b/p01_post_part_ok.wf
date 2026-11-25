@@ -1,0 +1,14 @@
+// z4b probe (ok): the clause clears `w` after its block of with_timeout. The rest of the handled body reads its reference into `w` while the block runs, before that change: the code of the clause after the block runs after the end of the handled body.
+effect Tick { fn tick() }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick() {
+            with_timeout(50.ms) { resume(()) }
+            w.clear()
+        } } in {
+        let r = &w[0]
+        tick()
+        print(r + 1)
+    }
+}

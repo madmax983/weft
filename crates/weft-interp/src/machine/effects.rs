@@ -174,6 +174,24 @@ impl super::Machine<'_, '_> {
                     ));
                 }
             }
+            // A runtime resume node (plan stage R0z Z4b): the block of a call
+            // of `sim.run` or `with_timeout` resumes, and the facts take it as
+            // the continuation of the clause frame below the marker frame of
+            // the call.
+            if let Some(
+                [.., Frame::Clause { cont }, Frame::Code(cf), Frame::Timeout { .. } | Frame::Sim { .. }, Frame::Code(_)],
+            ) = frames
+            {
+                let at_node = self
+                    .facts
+                    .as_ref()
+                    .is_some_and(|fo| fo.at_runtime_resume(cf.uid));
+                if at_node && *cont != k {
+                    return Err(self.fault(
+                        "fact oracle (runtime resume): a block resumes a continuation that is not the continuation of the clause frame of its call",
+                    ));
+                }
+            }
         }
         let Some(rec) = self.conts.get_mut(k) else {
             return Err(self.fault("internal: bad continuation"));
@@ -195,6 +213,19 @@ impl super::Machine<'_, '_> {
         ) {
             if crate::oracle::facts::tracked(cf.uid) {
                 fo.wait_begin(cf.uid, &cf.code, &cf.slots, &self.heap, self.cur);
+            }
+        }
+        // A4 at a runtime resume node (plan stage R0z Z4b): the clause frame
+        // below the marker frame of the call waits while the rest runs.
+        if let (
+            Some(fo),
+            Some([.., Frame::Code(cf), Frame::Timeout { .. } | Frame::Sim { .. }, Frame::Code(_)]),
+        ) = (
+            self.facts.as_mut(),
+            self.tasks.get(self.cur).map(|t| t.frames.as_slice()),
+        ) {
+            if crate::oracle::facts::tracked(cf.uid) && fo.at_runtime_resume(cf.uid) {
+                fo.runtime_wait_begin(cf.uid, &cf.code, &cf.slots, &self.heap, self.cur);
             }
         }
         let Some(rec) = self.conts.get_mut(k) else {

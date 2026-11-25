@@ -3801,6 +3801,9 @@ fn emit_block(
                 local_code,
             };
             templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
+            // A runtime resume node (plan stage R0z Z4b): the resume point
+            // of the clause.
+            handlers::runtime_resume(em, &nodes, block);
             handlers::call_clauses(em, &nodes, &st, &blk.term.kind)?;
             templates::given_back_runs(em, &nodes, &st, block, blk.term.origin.span)?;
             templates::call_joins(em, &nodes, &st, &blk.term.kind)?;

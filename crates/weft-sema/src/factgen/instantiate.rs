@@ -3756,6 +3756,168 @@ impl Inst<'_> {
         Some(plan)
     }
 
+    /// The runtime resume node at the terminator of block `k` of body `b`
+    /// (plan stage R0z Z4b, `docs/ir.md` 6.1, "As built (plan stage R0z
+    /// Z4b)"): the call of `sim.run` or `with_timeout` runs its block at the
+    /// call, on this task, and the block resumes the continuation of the
+    /// clause. No copy: the runtime puts the simulation or the deadline around
+    /// the block. `None` for each refusal (the call keeps the summary of the
+    /// block, which notes `KONT_CAPTURED`):
+    ///
+    /// - R-RT-FORM: `b` is a clause body with a `once` continuation, and the
+    ///   terminator is a call of the intrinsic with an `unwind` block whose last
+    ///   argument is `move t`. The last statement of the block that is not
+    ///   `Live` or `Dead` is `t = closure c(move k)`, with `k` the continuation
+    ///   local of the clause. So the value of the block is this closure, and it
+    ///   holds the continuation of this activation of the clause.
+    /// - R-RESUMER: the closure has one capture (the `Kont` capture), no body
+    ///   inside its body, and no parameter. Its locals are plain data (no
+    ///   reference, no function value, no linear, `once` or immovable value).
+    ///   From the entry its normal blocks are one path, with no branch and no
+    ///   cycle, with exactly one `Resume` of the `Kont` capture (its argument a
+    ///   constant), up to a `Return`. Each statement there is `Live`, `Dead`,
+    ///   `print`, or a write of a whole local of the closure from constants and
+    ///   whole locals of the closure (no read of the environment). So the code
+    ///   of the block outside its `resume` touches no place outside its frame,
+    ///   and performs nothing.
+    /// - R-RT-MULTI: a handler of the program has a `multi` operation (a
+    ///   `multi` resume can copy the frames of the clause, issues #94, #95).
+    /// - R-RT-FAIL: a handler of the program handles `Fail`. The failure of
+    ///   the deadline then can run a clause of a local handler at the call.
+    /// - R-RT-TASK: the program has a spawn site, a `fork` or a `scope`. For
+    ///   `sim.run` the rest of the handled body would start its tasks on the
+    ///   scheduler of the simulation; for `with_timeout` the deadline can cut
+    ///   the rest while a task that it started lives on. The facts of the
+    ///   tasks have one runtime.
+    /// - R-RT-CLOCK: the program has an extern function `advance` (the
+    ///   function `sim.clock.advance` of the standard library, or any other
+    ///   extern function of that name). It moves the clock with no wait. A
+    ///   deadline that passes there does not cut the rest of the handled body
+    ///   (no wait), and it holds at the next `resume` (ADR 0010, the late
+    ///   timeout): an abort at a node of the rest that the facts give no abort
+    ///   edge (review round 1 of Z4b, `c05_nosim`).
+    /// - R-RT-UNWIND (review round 2 of Z4b): an `on abort` function of the
+    ///   program can wait ([`unwind_can_wait`]). A deadline that passes while
+    ///   an unwinding waits does not cut there: the cut comes at the end of the
+    ///   unwinding (`check_interrupt`), at a node that the facts give no abort
+    ///   edge. With R-RT-CLOCK and R-RT-TASK, the deadline then cuts the rest
+    ///   only at a wait of the rest, which has its abort edge.
+    /// - R-REC (as for a kont region): the `handle` of the handler is not in
+    ///   a function body, or in a function that can run again while it runs.
+    fn resume_run(&self, b: BodyId, k: BlockId) -> Option<weft_ir::ResumeRun> {
+        let p = &self.p;
+        let body = p.body(b)?;
+        let BodyKind::Clause(h, _) = body.kind else {
+            return None;
+        };
+        let (kl, false) = body.kont? else {
+            return None;
+        };
+        let blk = body.block(k)?;
+        if blk.cleanup {
+            return None;
+        }
+        let TermKind::Call {
+            callee: Callee::Fn(f, _),
+            args,
+            caps: CapArgs::Lexical(_),
+            unwind: Some(_),
+            ..
+        } = &blk.term.kind
+        else {
+            return None;
+        };
+        let intrinsic = p.fns.get(f.index()).and_then(|d| d.intrinsic);
+        if !matches!(
+            intrinsic,
+            Some(weft_ir::Intrinsic::SimRun | weft_ir::Intrinsic::WithTimeout)
+        ) {
+            return None;
+        }
+        let (Some(Operand::Move(t)), others) = (args.last(), args.split_last().map(|x| x.1)) else {
+            return None;
+        };
+        if !t.is_local()
+            || others.is_some_and(|o| {
+                o.iter()
+                    .any(|x| !matches!(x, Operand::Const(_) | Operand::Copy(_)))
+            })
+        {
+            return None;
+        }
+        // R-RT-FORM: the make of the block, the last statement that is not
+        // `Live` or `Dead`.
+        let made = blk
+            .stmts
+            .iter()
+            .rposition(|x| !matches!(x.kind, StmtKind::Live(_) | StmtKind::Dead(_)))?;
+        if blk
+            .stmts
+            .get(made + 1..)?
+            .iter()
+            .any(|x| matches!(x.kind, StmtKind::Live(l) | StmtKind::Dead(l) if l == t.local))
+        {
+            return None;
+        }
+        let StmtKind::Assign(q, Rvalue::Aggregate(weft_ir::AggKind::Closure(c), ops)) =
+            &blk.stmts.get(made)?.kind
+        else {
+            return None;
+        };
+        if q != t || ops.as_slice() != [Operand::Move(Place::local(kl))] {
+            return None;
+        }
+        let d = p.closures.get(c.index())?;
+        let [cap] = d.captures.as_slice() else {
+            return None;
+        };
+        if d.maker != b || cap.mode != weft_ir::CaptureMode::Kont || cap.source != Place::local(kl)
+        {
+            return None;
+        }
+        // R-RESUMER.
+        if !resumer(p, &self.tys, d.body) {
+            return None;
+        }
+        // R-RT-MULTI, R-RT-FAIL, R-RT-TASK.
+        if p.handlers.iter().any(|x| {
+            x.multi
+                || self
+                    .tys
+                    .effects()
+                    .get(x.effect.index())
+                    .is_none_or(|e| e.identity == super::frames::FAIL)
+        }) || !p.spawns.is_empty()
+            || !p.scopes.is_empty()
+        {
+            return None;
+        }
+        // R-RT-CLOCK: an extern function `advance` (`sim.clock.advance`).
+        if p.fns.iter().any(|d| {
+            d.body.is_none()
+                && d.intrinsic.is_none()
+                && d.name.rsplit('.').next() == Some("advance")
+        }) {
+            return None;
+        }
+        // R-RT-UNWIND: an `on abort` function that can wait.
+        if unwind_can_wait(p, &self.tys) {
+            return None;
+        }
+        // R-REC.
+        let site = p.handlers.get(h.index())?.site;
+        let f = top_fn(p, site)?;
+        if in_closure(p, site) || self.reentrant(f) {
+            return None;
+        }
+        Some(weft_ir::ResumeRun {
+            body: b,
+            block: k,
+            closure: *c,
+            kont: 0,
+        })
+    }
+
     /// True if function `f` can run again while a run of it is live (R-REC
     /// of the kont regions, plan stage R0z Z4): `f` can call itself through
     /// direct calls ([`Needs::recursive`]); or a function value of the
@@ -5259,7 +5421,24 @@ fn sweep(inst: &mut Inst<'_>) {
 /// The result of the sweeps of `inst` over the program of `built`
 /// ([`instantiate_mode`]).
 fn finish_inst(mut inst: Inst<'_>, orig: &Program, built: &Built) -> Option<Instantiated> {
-    if inst.calls + inst.closure_calls == 0 {
+    // The runtime resume nodes (plan stage R0z Z4b), in the mode of the kont
+    // copies only: no copy, a record of the node.
+    if inst.kont {
+        let mut runs = Vec::new();
+        for (bi, x) in inst.p.bodies.iter().enumerate() {
+            let b = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
+            for k in x.block_ids() {
+                if let Some(r) = inst.resume_run(b, k) {
+                    runs.push(r);
+                }
+            }
+        }
+        for r in &runs {
+            inst.covered.insert(r.closure);
+        }
+        inst.p.resume_runs = runs;
+    }
+    if inst.calls + inst.closure_calls == 0 && inst.p.resume_runs.is_empty() {
         return None;
     }
     // The closures whose only runs are copy regions.
@@ -6763,6 +6942,180 @@ fn in_closure(p: &Program, b: BodyId) -> bool {
         }
     }
     false
+}
+
+/// True if code that an unwinding runs can wait (plan stage R0z Z4b,
+/// R-RT-UNWIND of [`Inst::resume_run`]). The unwinder runs the `on abort`
+/// function of a linear value: each function of an `UnwindValue` with
+/// `OnAbort`, and the `on abort` function of each type of the type table
+/// (a value inside a container finishes with the function of its type; the
+/// `Task` of the prelude is out, as no value is a task under R-RT-TASK). The
+/// test is by the effects of the code, fail-closed: true if a type has an
+/// `on abort` that the runtime gives or whose function is not in the
+/// program, or if the code of such a function or of a function that it
+/// calls performs an operation, runs a function value, has a terminator of
+/// a task, a scope or a handler, or calls an extern function whose row is
+/// not stated or is not empty (`sleep` has `clock`, a blocking call
+/// `blocking`).
+fn unwind_can_wait(p: &Program, tys: &TyTable) -> bool {
+    let mut work: Vec<FnId> = Vec::new();
+    for b in &p.bodies {
+        for blk in &b.blocks {
+            for st in &blk.stmts {
+                if let StmtKind::UnwindValue(_, weft_ir::UnwindAction::OnAbort(f)) = &st.kind {
+                    work.push(*f);
+                }
+            }
+        }
+    }
+    for a in tys.adts() {
+        // A `Task` of the prelude: the runtime cancels it. R-RT-TASK refuses
+        // each program with a spawn site, so no value is a task.
+        if !(a.has_on_abort || a.on_abort.is_some()) || a.lang == Some(weft_ir::ty::Lang::Task) {
+            continue;
+        }
+        let Some(name) = &a.on_abort else {
+            return true;
+        };
+        let found: Vec<FnId> = p
+            .fns
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.name == *name)
+            .map(|(i, _)| FnId(u32::try_from(i).unwrap_or(u32::MAX)))
+            .collect();
+        if found.is_empty() {
+            return true;
+        }
+        work.extend(found);
+    }
+    let owner = body_fns(p);
+    let mut seen: BTreeSet<FnId> = BTreeSet::new();
+    while let Some(f) = work.pop() {
+        if !seen.insert(f) {
+            continue;
+        }
+        let Some(d) = p.fns.get(f.index()) else {
+            return true;
+        };
+        if d.body.is_none() {
+            if d.intrinsic.is_some() || d.stated_row.as_ref().is_none_or(|r| !r.is_empty()) {
+                return true;
+            }
+            continue;
+        }
+        for (i, b) in p.bodies.iter().enumerate() {
+            if owner.get(i).copied().flatten() != Some(f) {
+                continue;
+            }
+            for blk in &b.blocks {
+                match &blk.term.kind {
+                    TermKind::Goto(_)
+                    | TermKind::Switch { .. }
+                    | TermKind::Return
+                    | TermKind::Unreachable
+                    | TermKind::UnwindExit
+                    | TermKind::Assert { .. }
+                    | TermKind::IterNext { .. } => {}
+                    TermKind::Call {
+                        callee: Callee::Fn(g, _),
+                        ..
+                    } => work.push(*g),
+                    _ => return true,
+                }
+            }
+        }
+    }
+    false
+}
+
+/// True if closure body `cb` is a resumer (plan stage R0z Z4b, R-RESUMER of
+/// [`Inst::resume_run`]): it has no body inside it and no parameter, its
+/// locals but the environment are plain data, and its normal blocks are one
+/// path from the entry to a `Return` with exactly one `Resume` of field 0 of
+/// the environment, whose argument is a constant. Each statement there is
+/// `Live`, `Dead`, `print`, or a write of a whole local from constants and
+/// whole locals, none of them the environment.
+fn resumer(p: &Program, tys: &TyTable, cb: BodyId) -> bool {
+    let Some(b) = p.body(cb) else {
+        return false;
+    };
+    let [env] = b.params.as_slice() else {
+        return false;
+    };
+    let env = *env;
+    if b.local_kind(env) != Some(LocalKind::Env) || !inner_bodies(p, cb).is_empty() {
+        return false;
+    }
+    let plain = b.local_ids().filter(|&l| l != env).all(|l| {
+        b.local(l).is_some_and(|d| {
+            let x = crate::props::ir_props(tys, d.ty);
+            !(x.linear
+                || x.once
+                || x.immovable
+                || x.holds_refs
+                || x.callable
+                || crate::props::ir_has_fns(tys, d.ty))
+        })
+    });
+    if !plain {
+        return false;
+    }
+    let own = |o: &Operand| match o {
+        Operand::Const(_) => true,
+        Operand::Copy(q) | Operand::Move(q) => q.is_local() && q.local != env,
+    };
+    let mut resumes = 0usize;
+    let mut seen: BTreeSet<BlockId> = BTreeSet::new();
+    let mut at = b.entry;
+    loop {
+        if !seen.insert(at) {
+            return false;
+        }
+        let Some(blk) = b.block(at) else {
+            return false;
+        };
+        if blk.cleanup {
+            return false;
+        }
+        let stmts_ok = blk.stmts.iter().all(|x| match &x.kind {
+            StmtKind::Live(l) | StmtKind::Dead(l) => *l != env,
+            StmtKind::Print(ops) => ops.iter().all(own),
+            StmtKind::Assign(q, rv) => {
+                q.is_local()
+                    && q.local != env
+                    && match rv {
+                        Rvalue::Use(a) | Rvalue::Unary(_, _, a) => own(a),
+                        Rvalue::Binary(_, _, a, c) => own(a) && own(c),
+                        Rvalue::Concat(ops) => ops.iter().all(own),
+                        _ => false,
+                    }
+            }
+            _ => false,
+        });
+        if !stmts_ok {
+            return false;
+        }
+        match &blk.term.kind {
+            TermKind::Goto(n) => at = *n,
+            TermKind::Return => return resumes == 1,
+            TermKind::Resume {
+                kont,
+                arg: Operand::Const(_),
+                dest,
+                next,
+                ..
+            } if kont.local == env
+                && kont.proj.as_slice() == [Proj::Field(weft_ir::FieldIdx(0))]
+                && dest.is_local()
+                && dest.local != env =>
+            {
+                resumes += 1;
+                at = *next;
+            }
+            _ => return false,
+        }
+    }
 }
 
 /// The function whose body holds body `b`: the parent chain of `b` up to a

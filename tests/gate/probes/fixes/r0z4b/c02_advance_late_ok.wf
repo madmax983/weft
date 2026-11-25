@@ -1,0 +1,19 @@
+// z4b probe (ok, refusal R-RT-CLOCK): as c02 bad, but the rest moves the clock less than the deadline, so the deadline does not pass. The program keeps the fallback (an extern function `advance`).
+effect Ask { fn ask() -> u64 }
+effect N { fn n() }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn f() -> u64 / clock, fail {
+    let r = handle Ask { fn ask() { with_timeout(5.ms) { resume(1) } } } in {
+        let a = ask()
+        sim.clock.advance(1.ms)
+        let t = T { id: a }
+        handle N { fn n() { resume(()) } } in { n() }
+        done(t)
+        a + 1
+    }
+    r
+}
+fn main() / clock, fail {
+    print(f())
+}

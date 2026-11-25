@@ -1,0 +1,76 @@
+// Plan stage R0z Z4b: the runtime runs of `sim.run` and `with_timeout`.
+// The runtime runs the block of the call at the call, on this task. A block
+// that resumes the continuation of the clause (and does nothing else outside
+// its own frame) makes the call a resume point of the clause: the rest of
+// the handled body runs at the call node. The probes
+// `tests/gate/probes/fixes/r0z4b/` run these forms with `main`.
+
+effect Tick { fn tick(r: &u64) }
+
+effect Ask { fn ask() -> u64 }
+
+effect Note { fn note() }
+
+// The rest of the handled body ends it and frees `w`. Then the clause reads
+// its reference into `w`.
+fn timeout_frees() / clock, fail {
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            print(r + 1)   //~ W0301
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}
+
+// Clean: the clause reads its reference before the block.
+fn timeout_reads_first() / clock, fail {
+    handle Tick { fn tick(r: &u64) {
+            print(r + 1)
+            with_timeout(50.ms) { resume(()) }
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}
+
+// Clean: the block of `sim.run` gives the value of the handled body to its
+// own code, and the clause gives back its own value.
+fn sim_value() / clock {
+    let r = handle Ask {
+        fn ask() {
+            sim.run(seed: 1) { let v = resume(1); print("in sim {v}") }
+            0
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}
+
+// Clean: the clause clears `w` after its block. The rest of the handled body
+// reads its reference into `w` while the block runs, before that change: the
+// code of the clause after the block runs after the end of the handled body.
+// The old pipeline gives the change to the call node.
+fn after_the_block() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Note { fn note() {
+            with_timeout(50.ms) { resume(()) }
+            w.clear()
+        } } in {
+        let r = &w[0]
+        note()
+        print(r + 1)   //~ old: W0301
+    }
+}
+
+fn main() / clock, fail {
+    timeout_frees()
+    timeout_reads_first()
+    sim_value()
+    after_the_block()
+}

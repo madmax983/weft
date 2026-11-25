@@ -1,0 +1,14 @@
+// z4b probe (ok): the rest of the handled body performs the operation again. A second activation of the clause runs its block of with_timeout while the first one waits in its block.
+effect Ask { fn ask() -> u64 }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            with_timeout(50.ms) { resume(1) }
+        }
+    } in {
+        let a = ask()
+        let b = ask()
+        a + b
+    }
+    print(r)
+}

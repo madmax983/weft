@@ -720,6 +720,14 @@ pub fn run_from(
                     ends.resumes.insert(blk_id, st);
                     continue;
                 }
+                // A runtime resume node (plan stage R0z Z4b) is a resume
+                // point of the clause.
+                weft_ir::TermKind::Call { .. }
+                    if mode.stop_at_resume && cx.p.resume_run_at(body, blk_id).is_some() =>
+                {
+                    ends.resumes.insert(blk_id, st);
+                    continue;
+                }
                 _ => {}
             }
         }

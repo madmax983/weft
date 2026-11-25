@@ -1,0 +1,13 @@
+// z4b probe (ok, refusal): as n02 bad, but the rest does not change `w`.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { with_timeout(50.ms) { resume(()) } }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        print(w.len())
+    }
+}

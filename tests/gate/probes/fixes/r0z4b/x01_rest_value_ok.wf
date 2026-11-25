@@ -1,0 +1,15 @@
+// z4b probe (ok): as x01 bad, but the closure of the rest only prints.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    let f = || print(0)
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            f()
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        f = || print(1)
+    }
+}
