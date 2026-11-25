@@ -1,0 +1,17 @@
+// r0z4pb probe (bad): the linear value `t` of the clause is live across the nested `resume`, which can abort (W0602, a rule: the run is clean).
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            let t = T { id: 1 }
+            handle Other { fn other() { resume(()) } } in {
+                resume(())
+                done(t)
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

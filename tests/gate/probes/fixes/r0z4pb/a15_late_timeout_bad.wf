@@ -1,0 +1,18 @@
+// r0z4pb probe (bad): `with_timeout` is around the perform. The clause sleeps past the deadline, so the deadline holds at the nested `resume` (the late timeout): the abort ends the nested body while the linear value `t` with no `on abort` is live (W0602).
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() / clock, fail {
+    handle Tick { fn tick() {
+            sleep(10.ms)
+            handle Other { fn other() { resume(()) } } in {
+                let t = T { id: 1 }
+                resume(())
+                done(t)
+            }
+        } } in {
+        with_timeout(5.ms) { tick() }
+        print(1)
+    }
+}

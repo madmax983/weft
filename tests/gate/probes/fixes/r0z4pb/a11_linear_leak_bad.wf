@@ -1,0 +1,16 @@
+// r0z4pb probe (bad): the linear value `t` of the clause is not moved on each path (W0601 or W0602).
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            let t = T { id: 1 }
+            handle Other { fn other() { resume(()) } } in {
+                resume(())
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

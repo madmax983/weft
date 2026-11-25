@@ -1,0 +1,18 @@
+// r0z4pb probe (ok): the nested handled body runs a loop, then resumes one time.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                let i = 0
+                while i < 3 {
+                    i = i + 1
+                }
+                resume(())
+                print(i)
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

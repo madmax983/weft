@@ -1,0 +1,16 @@
+// r0z4pb probe (ok): the clause resumes in the handled body of a local `Fail` handler, and the rest fails. The failure goes to the outer `Fail` handler, not to the inner one.
+effect Peek { fn peek() }
+fn rest() / fail { fail("from the rest") }
+fn main() {
+    handle Fail { fn fail(m) { print("outer {m}") } } in {
+        handle Peek {
+            fn peek() {
+                handle Fail { fn fail(m) { print("inner {m}") } } in { resume(()) }
+                print("after the inner handle")
+            }
+        } in {
+            peek()
+            rest()
+        }
+    }
+}

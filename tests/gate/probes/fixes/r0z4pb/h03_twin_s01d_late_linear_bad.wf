@@ -1,0 +1,17 @@
+// r0z4pb probe (bad, an old hole of main; review round 1 of Z4 Part B, N1): the nested twin of `s01d_resume_linear_late_direct_bad` of review round 3 of Z4b. The clause sleeps past the deadline of `with_timeout` in the rest, then resumes with a linear value in the handled body of a local handler. The late timeout cuts the rest at `o()` while the value is live (the class of the late timeout, ADR 0010). The `ir` pipeline accepts it, as main accepts the direct form; the program faults.
+effect ZqNest { fn zq_nest() }
+// rev3 (bad?, main form): as s01 with a plain with_timeout around the rest.
+effect O { fn o() -> T }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn f() -> u64 / clock, fail, O {
+    with_timeout(5.ms) {
+        let t = o()
+        done(t)
+    }
+    1
+}
+fn main() / clock, fail {
+    let x = handle O { fn o() { sleep(10.ms); handle ZqNest { fn zq_nest() { resume(()) } } in { resume(T { id: 3 }) } } } in { f() }
+    print(x)
+}

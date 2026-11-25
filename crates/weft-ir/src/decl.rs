@@ -33,6 +33,28 @@ pub struct Program {
     /// The runtime resume nodes (plan stage R0z Z4b). Only a program with the
     /// copies of the fact generator has them.
     pub resume_runs: Vec<ResumeRun>,
+    /// The handled bodies of local handlers inside clauses that have a resume
+    /// point of the clause (plan stage R0z Z4 Part B). Only a program with the
+    /// copies of the fact generator has them.
+    pub resume_handles: Vec<ResumeHandle>,
+}
+
+/// A handled body with a resume point of a clause (plan stage R0z Z4 Part B,
+/// `docs/ir.md` 6.1).
+///
+/// The `handle` of handler [`ResumeHandle::handler`] is in clause body
+/// [`ResumeHandle::clause`], or in a handled body of another record of the
+/// same clause. A `Resume` of the continuation of the clause is in the handled
+/// body of the handler, or in a handled body of another record inside it. The
+/// handled body runs in the run of the clause, so that `Resume` is a resume
+/// point of the clause. The fact generator makes a record only if no clause of
+/// the handler can run (no code performs an operation of the handler).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResumeHandle {
+    /// The local handler.
+    pub handler: crate::HandlerId,
+    /// The clause body.
+    pub clause: BodyId,
 }
 
 /// A runtime resume node (plan stage R0z Z4b, `docs/ir.md` 6.1).
@@ -340,6 +362,12 @@ impl Program {
         self.resume_runs
             .iter()
             .find(|r| r.body == body && r.block == b)
+    }
+
+    /// Returns the record of handler `h` (plan stage R0z Z4 Part B), if its
+    /// handled body has a resume point of a clause.
+    pub fn resume_handle(&self, h: crate::HandlerId) -> Option<&ResumeHandle> {
+        self.resume_handles.iter().find(|r| r.handler == h)
     }
 
     /// Returns the dispatch of block `b` of body `body` (plan stage R0z Z6): a

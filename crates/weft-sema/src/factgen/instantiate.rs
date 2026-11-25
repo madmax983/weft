@@ -3626,11 +3626,16 @@ impl Inst<'_> {
     fn kont_region(&self, b: BodyId, k: BlockId) -> Option<RunPlan> {
         let body = self.p.body(b)?;
         // R-MAKER: the run node is in the clause body itself (not in a scope
-        // body of it: the summary oracle A3 fails there, issue #96).
-        if !matches!(body.kind, BodyKind::Clause(..)) {
-            return None;
-        }
-        let cb = b;
+        // body of it: the summary oracle A3 fails there, issue #96), or in a
+        // handled body of a local handler of the clause (plan stage R0z Z4
+        // Part B, through handled bodies only). The region there is a resume
+        // point of the clause only if the handled body gets a record
+        // ([`Inst::resume_handles`]); else its `Resume` keeps the reason.
+        let cb = match body.kind {
+            BodyKind::Clause(..) => b,
+            BodyKind::Handled(_) => handled_chain_clause(&self.p, b)?,
+            _ => return None,
+        };
         let TermKind::Call {
             callee: Callee::Value(op @ (Operand::Copy(q) | Operand::Move(q))),
             caps: CapArgs::Lexical(_),
@@ -3673,7 +3678,7 @@ impl Inst<'_> {
             return None;
         };
         let decl = self.p.closures.get(c.index())?;
-        if decl.maker != m || m != cb {
+        if decl.maker != m || m != b {
             return None;
         }
         let konts: Vec<usize> = decl
@@ -3916,6 +3921,292 @@ impl Inst<'_> {
             closure: *c,
             kont: 0,
         })
+    }
+
+    /// The handled bodies with a resume point of a clause (plan stage R0z Z4
+    /// Part B, `docs/ir.md` 6.1, "As built (plan stage R0z Z4 Part B)").
+    ///
+    /// A record names a local handler `g` whose `handle` is in a clause body
+    /// `cb`, or in the handled body of another record of `cb`. A `Resume` of
+    /// the continuation of `cb` is in the handled body of `g`, or in a handled
+    /// body of a record inside it. The handled body runs in the run of the
+    /// clause, so that `Resume` is a resume point of the clause. The items
+    /// below are the conditions of a record: each one must be true. If one is
+    /// false, there is no record (a refusal), and the `Resume` keeps the
+    /// reason `KONT_CAPTURED`:
+    ///
+    /// - R-PB-ONCE: the continuation of `cb` is `once` (the flag of
+    ///   `Body::kont` is `multi`, so it is false).
+    /// - R-PB-MULTI: no handler of the program has a `multi` operation (a
+    ///   `multi` resume can copy the frames of the clause and of the handled
+    ///   body, issues #94, #95).
+    /// - R-PB-CHAIN: the chain from the body of the `Resume` up to `cb` has
+    ///   only handled bodies of records (no scope body, closure body or
+    ///   clause body of another handler).
+    /// - R-INNER (by cause): no clause of `g` can run. Each terminator of the
+    ///   handled body of `g` and of each body inside it must pass
+    ///   [`Inst::quiet_term`]. Thus no perform goes through the row or through
+    ///   the capability of a handler of the effect of `g`. No call runs a
+    ///   function value. No call runs a function that can perform that effect
+    ///   through its row. No call reaches an intrinsic or an extern function
+    ///   with such a row. For `Fail`, no call can raise a failure of the
+    ///   runtime. No terminator there starts or ends a task or a scope. No
+    ///   closure that the handled body (or a body inside it) makes captures
+    ///   the capability of `g`. The rest of the handled body of the handler of
+    ///   `cb` performs through the handlers around its own `handle`. Thus
+    ///   nothing that runs while the handled body runs can run a clause of
+    ///   `g`. For a `g` of an effect other than `Fail`, a call of an extern
+    ///   function that waits (`sleep`, `FsCap.read`) is allowed. It cannot run
+    ///   a clause of `g`.
+    /// - R-REC (as for a kont region): the `handle` of the handler of `cb` is
+    ///   not in a closure body, and its function cannot run again while it
+    ///   runs.
+    /// - R-PB-CLOCK and R-PB-UNWIND (the predicates of R-RT-CLOCK and
+    ///   R-RT-UNWIND of [`Inst::resume_run`]): the program has no extern
+    ///   function `advance`, and no `on abort` function that can wait
+    ///   ([`unwind_can_wait`]). Else a deadline of `with_timeout` in the rest
+    ///   of the handled body can cut the rest at a node with no abort edge in
+    ///   the facts (an old gap of main for the plain forms, which a program
+    ///   with a record brings into scope: the probes `a26`, `a27`).
+    fn resume_handles(&self) -> Vec<weft_ir::ResumeHandle> {
+        let p = &self.p;
+        let mut out: Vec<weft_ir::ResumeHandle> = Vec::new();
+        // R-PB-MULTI.
+        if p.handlers.iter().any(|x| x.multi) {
+            return out;
+        }
+        // R-PB-CLOCK: an extern function `advance` (`sim.clock.advance`).
+        if p.fns.iter().any(|d| {
+            d.body.is_none()
+                && d.intrinsic.is_none()
+                && d.name.rsplit('.').next() == Some("advance")
+        }) {
+            return out;
+        }
+        // R-PB-UNWIND: an `on abort` function that can wait.
+        if unwind_can_wait(p, &self.tys) {
+            return out;
+        }
+        // From the outside in: a record needs the record of the handled body
+        // around its `handle` (R-PB-CHAIN).
+        loop {
+            let mut added = false;
+            for (hi, hd) in p.handlers.iter().enumerate() {
+                let g = HandlerId(u32::try_from(hi).unwrap_or(u32::MAX));
+                if out.iter().any(|r| r.handler == g) {
+                    continue;
+                }
+                let Some(site) = p.body(hd.site) else {
+                    continue;
+                };
+                let cb = match site.kind {
+                    BodyKind::Clause(..) => hd.site,
+                    BodyKind::Handled(g2) => {
+                        match out.iter().find(|r| r.handler == g2).map(|r| r.clause) {
+                            Some(c) => c,
+                            None => continue,
+                        }
+                    }
+                    _ => continue,
+                };
+                if self.resume_handle_ok(g, cb) {
+                    out.push(weft_ir::ResumeHandle {
+                        handler: g,
+                        clause: cb,
+                    });
+                    added = true;
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        // Keep the records on the chain of a body with a `Resume` of the
+        // continuation of the clause.
+        let handled_of = |b: BodyId| match p.body(b).map(|x| x.kind) {
+            Some(BodyKind::Handled(h)) => Some(h),
+            _ => None,
+        };
+        let mut keep: BTreeSet<HandlerId> = BTreeSet::new();
+        for (bi, x) in p.bodies.iter().enumerate() {
+            let b = BodyId(u32::try_from(bi).unwrap_or(u32::MAX));
+            let Some(g) = handled_of(b) else {
+                continue;
+            };
+            let Some(r) = out.iter().find(|r| r.handler == g) else {
+                continue;
+            };
+            let resumes = x.blocks.iter().any(|blk| {
+                !blk.cleanup
+                    && matches!(&blk.term.kind, TermKind::Resume { kont, .. }
+                        if crate::analysis::clause::kont_handler(p, b, kont)
+                            .is_some_and(|k| k.1 == r.clause))
+            });
+            if !resumes {
+                continue;
+            }
+            let mut at = b;
+            for _ in 0..=p.bodies.len() {
+                let Some(h) = handled_of(at) else {
+                    break;
+                };
+                keep.insert(h);
+                match p.body(at).and_then(|y| y.parent) {
+                    Some(up) if up != r.clause => at = up,
+                    _ => break,
+                }
+            }
+        }
+        out.retain(|r| keep.contains(&r.handler));
+        out
+    }
+
+    /// True if handler `g` (its `handle` in clause body `cb`, or in a handled
+    /// body of a record of `cb`) can get a record of [`Inst::resume_handles`]:
+    /// R-PB-ONCE, R-INNER and R-REC.
+    fn resume_handle_ok(&self, g: HandlerId, cb: BodyId) -> bool {
+        let p = &self.p;
+        let Some(hd) = p.handlers.get(g.index()) else {
+            return false;
+        };
+        let Some(cbody) = p.body(cb) else {
+            return false;
+        };
+        // R-PB-ONCE.
+        let (BodyKind::Clause(h, _), Some((_, false))) = (cbody.kind, cbody.kont) else {
+            return false;
+        };
+        // R-REC.
+        let Some(site) = p.handlers.get(h.index()).map(|d| d.site) else {
+            return false;
+        };
+        match top_fn(p, site) {
+            Some(f) if !in_closure(p, site) && !self.reentrant(f) => {}
+            _ => return false,
+        }
+        // R-INNER: no closure captures the capability of `g`. Only a closure
+        // that the handled body (or a body inside it) makes can capture it:
+        // a capture of a capability names a capability in the scope of the
+        // maker.
+        let inside_hb =
+            |m: BodyId| m == hd.handled || crate::analysis::clause::inside(p, m, hd.handled);
+        for (ci, c) in p.closures.iter().enumerate() {
+            if !inside_hb(c.maker) {
+                continue;
+            }
+            let cid = ClosureId(u32::try_from(ci).unwrap_or(u32::MAX));
+            for k in 0..c.captures.len() {
+                let k = u32::try_from(k).unwrap_or(u32::MAX);
+                if c.captures.get(k as usize).map(|x| x.mode) == Some(weft_ir::CaptureMode::Cap)
+                    && crate::analysis::clause::capture_handler(p, cid, k).is_none_or(|x| x == g)
+                {
+                    return false;
+                }
+            }
+        }
+        // R-INNER: the terminators of the handled body and of the bodies
+        // inside it.
+        let mut bodies = vec![hd.handled];
+        bodies.extend(inner_bodies(p, hd.handled));
+        for x in bodies {
+            let Some(xb) = p.body(x) else {
+                return false;
+            };
+            for blk in xb.blocks.iter().filter(|blk| !blk.cleanup) {
+                if !self.quiet_term(x, &blk.term.kind, hd.effect) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// True if terminator `t` of body `b` cannot run a clause of a handler of
+    /// effect `e` (R-INNER of [`Inst::resume_handles`]).
+    ///
+    /// A call of a function with a body: no function that it reaches through
+    /// direct calls (`Needs::calls`, the function too) performs `e` through
+    /// its row or runs a function value with no stated row (`Needs::row`,
+    /// `Needs::unknown`), or calls an intrinsic or an extern function whose
+    /// row is not stated or names `e` (`Needs::row` does not have the rows of
+    /// the extern callees). For a handler of `Fail`, each call of a function
+    /// with a body is a refusal, and a call of an extern function only if its
+    /// stated row is not empty: the runtime raises a failure in a function
+    /// with no `fail` in its row (a read of a file, a `join`, foreign code;
+    /// `FnDecl::stated_row` of the IR is `None` for a function that raises
+    /// with an empty row, but `Some` for one that raises with a row such as
+    /// `fs`). For an effect other than `Fail`, a call of an extern function
+    /// that waits (`sleep` with `clock`, `FsCap.read` with `fs`) passes: its
+    /// stated row does not name `e`, and it runs no clause of a handler of
+    /// `e`.
+    fn quiet_term(&self, b: BodyId, t: &TermKind, e: EffectId) -> bool {
+        let p = &self.p;
+        let fail = self
+            .tys
+            .effects()
+            .get(e.index())
+            .is_none_or(|x| x.identity == super::frames::FAIL);
+        let extern_ok = |d: &weft_ir::FnDecl| {
+            d.intrinsic.is_none()
+                && d.stated_row
+                    .as_ref()
+                    .is_some_and(|r| !r.contains(&e) && (!fail || r.is_empty()))
+        };
+        match t {
+            TermKind::Goto(_)
+            | TermKind::Switch { .. }
+            | TermKind::Return
+            | TermKind::Unreachable
+            | TermKind::UnwindExit
+            | TermKind::Assert { .. }
+            | TermKind::IterNext { .. }
+            | TermKind::Resume { .. }
+            | TermKind::Handle { .. } => true,
+            TermKind::Perform {
+                cap: weft_ir::CapOperand::Local(c),
+                ..
+            } => crate::analysis::clause::cap_handler(p, b, c)
+                .and_then(|h2| p.handlers.get(h2.index()))
+                .is_some_and(|d| d.effect != e),
+            TermKind::Call {
+                callee: Callee::Fn(f, _),
+                ..
+            } => {
+                let Some(d) = p.fns.get(f.index()) else {
+                    return false;
+                };
+                if d.body.is_none() {
+                    return extern_ok(d);
+                }
+                if fail {
+                    return false;
+                }
+                let mut seen: BTreeSet<FnId> = BTreeSet::new();
+                let mut work = vec![*f];
+                while let Some(g) = work.pop() {
+                    if !seen.insert(g) {
+                        continue;
+                    }
+                    let Some(gd) = p.fns.get(g.index()) else {
+                        return false;
+                    };
+                    if gd.body.is_none() {
+                        if !extern_ok(gd) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if self.needs.unknown.contains(&g)
+                        || self.needs.row.get(&g).is_some_and(|r| r.contains(&e))
+                    {
+                        return false;
+                    }
+                    work.extend(self.needs.calls.get(&g).into_iter().flatten().copied());
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// True if function `f` can run again while a run of it is live (R-REC
@@ -5437,8 +5728,14 @@ fn finish_inst(mut inst: Inst<'_>, orig: &Program, built: &Built) -> Option<Inst
             inst.covered.insert(r.closure);
         }
         inst.p.resume_runs = runs;
+        // The handled bodies with a resume point of a clause (plan stage R0z
+        // Z4 Part B): no copy, a record of each handler.
+        inst.p.resume_handles = inst.resume_handles();
     }
-    if inst.calls + inst.closure_calls == 0 && inst.p.resume_runs.is_empty() {
+    if inst.calls + inst.closure_calls == 0
+        && inst.p.resume_runs.is_empty()
+        && inst.p.resume_handles.is_empty()
+    {
         return None;
     }
     // The closures whose only runs are copy regions.
@@ -6942,6 +7239,22 @@ fn in_closure(p: &Program, b: BodyId) -> bool {
         }
     }
     false
+}
+
+/// The clause body above handled body `b` through handled bodies only (plan
+/// stage R0z Z4 Part B): `b` is a handled body, and its parent chain has only
+/// handled bodies up to a clause body.
+fn handled_chain_clause(p: &Program, b: BodyId) -> Option<BodyId> {
+    let mut at = b;
+    for _ in 0..=p.bodies.len() {
+        let x = p.body(at)?;
+        match (x.kind, x.parent) {
+            (BodyKind::Handled(_), Some(up)) => at = up,
+            (BodyKind::Clause(..), _) if at != b => return Some(at),
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// True if code that an unwinding runs can wait (plan stage R0z Z4b,

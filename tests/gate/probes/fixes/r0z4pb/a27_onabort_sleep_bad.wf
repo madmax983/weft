@@ -1,0 +1,22 @@
+// r0z4pb probe (bad, refusal R-PB-UNWIND): `with_timeout` is around the perform, and the clause resumes in a nested handled body. The rest runs a nested handler whose clause does not resume. The unwinding runs an `on abort` function that sleeps past the deadline, and the deadline cuts the rest at the end of the unwinding, while a linear value with no `on abort` is live. The program keeps the fallback.
+effect Tick { fn tick() }
+effect Other { fn other() }
+effect N { fn n() }
+linear struct T { id: u64 }
+linear struct U { id: u64 }
+    on abort = slow
+fn slow(u: U) / clock { sleep(10.ms); let U(i) = u }
+fn fin(u: U) { let U(i) = u }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+        } } in {
+        with_timeout(5.ms) {
+            tick()
+            let t = T { id: 1 }
+            handle N { fn n() { () } } in { let u = U { id: 1 }; n(); fin(u) }
+            done(t)
+        }
+    }
+}

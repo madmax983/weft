@@ -1,0 +1,15 @@
+// r0z4pb probe (ok, refusal R-INNER): a closure of the nested handled body holds the capability of the nested handler and runs after the `resume`. The program keeps the fallback.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { print(2); resume(()) } } in {
+                let f = || other()
+                resume(())
+                f()
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

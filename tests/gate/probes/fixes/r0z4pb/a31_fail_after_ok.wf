@@ -1,0 +1,19 @@
+// r0z4pb probe (ok, refusal R-INNER): the clean twin of a31_fail_after_bad. The `Fail` clause prints. The program keeps the fallback.
+effect Tick { fn tick() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Fail { fn fail(m) { print(m) } } in {
+                resume(())
+                fail("after")
+            }
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

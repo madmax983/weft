@@ -186,12 +186,58 @@ impl super::Machine<'_, '_> {
                     .facts
                     .as_ref()
                     .is_some_and(|fo| fo.at_runtime_resume(cf.uid));
+                // Strict in both ways: the record of the IR
+                // (`Program::resume_runs`) and `resumes_at` of the facts at
+                // the call must agree ([`runtime_check`]).
+                let record = self
+                    .facts
+                    .as_ref()
+                    .is_some_and(|fo| fo.runtime_record(cf.uid));
+                if let Err(m) = runtime_check(record, at_node) {
+                    return Err(self.fault(m));
+                }
                 if at_node && *cont != k {
                     return Err(self.fault(
                         "fact oracle (runtime resume): a block resumes a continuation that is not the continuation of the clause frame of its call",
                     ));
                 }
             }
+        }
+        // A resume point in a handled body of a clause (plan stage R0z Z4
+        // Part B): the frames from the frame of the handled body down to the
+        // clause frame, with only the marks of the `handle`s between them.
+        // The check is strict in both ways (review rounds 1 and 2): the
+        // record of the IR (`Program::resume_handles`) and `resumes_at` of
+        // the facts must agree ([`nested_check`]).
+        let nested = self.facts.as_ref().and_then(|fo| {
+            let frames = self.tasks.get(self.cur).map(|t| t.frames.as_slice())?;
+            let Some(Frame::Code(top)) = frames.last() else {
+                return None;
+            };
+            let below = frames.iter().map(|f| match f {
+                Frame::Code(cf) => Below::Code(cf.uid),
+                Frame::Handle(_) => Below::Mark,
+                Frame::Clause { cont } => Below::Clause(*cont),
+                _ => Below::Other,
+            });
+            Some(nested_check(
+                fo.nested_record(top.uid),
+                fo.at_nested_resume(top.uid),
+                nested_chain(below),
+            ))
+        });
+        let mut nested_uids: Option<Vec<u64>> = None;
+        match nested {
+            Some(Nested::Fail(m)) => return Err(self.fault(m)),
+            Some(Nested::Check(cont, uids)) => {
+                if cont != k {
+                    return Err(self.fault(
+                        "fact oracle (nested resume): a handled body of a clause resumes a continuation that is not the continuation of the clause frame below it",
+                    ));
+                }
+                nested_uids = Some(uids);
+            }
+            Some(Nested::Skip) | None => {}
         }
         let Some(rec) = self.conts.get_mut(k) else {
             return Err(self.fault("internal: bad continuation"));
@@ -227,6 +273,26 @@ impl super::Machine<'_, '_> {
             if crate::oracle::facts::tracked(cf.uid) && fo.at_runtime_resume(cf.uid) {
                 fo.runtime_wait_begin(cf.uid, &cf.code, &cf.slots, &self.heap, self.cur);
             }
+        }
+        // A4 at a resume point in a handled body of a clause (plan stage R0z
+        // Z4 Part B): the frame of the handled body and each code frame below
+        // it down to the clause frame wait while the rest runs.
+        if let (Some(fo), Some(uids), Some(frames)) = (
+            self.facts.as_mut(),
+            &nested_uids,
+            self.tasks.get(self.cur).map(|t| t.frames.as_slice()),
+        ) {
+            let codes: Vec<(u64, &crate::code::Code, &[Option<CellId>])> = frames
+                .iter()
+                .rev()
+                .filter_map(|f| match f {
+                    Frame::Code(cf) if uids.contains(&cf.uid) => {
+                        Some((cf.uid, cf.code.as_ref(), cf.slots.as_slice()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            fo.nested_wait_begin(&codes, &self.heap, self.cur);
         }
         let Some(rec) = self.conts.get_mut(k) else {
             return Err(self.fault("internal: bad continuation"));
@@ -1508,5 +1574,157 @@ fn owning_closures(v: &Value, out: &mut Vec<Value>) {
             Value::Enum(e) => work.extend(e.fields.iter()),
             _ => {}
         }
+    }
+}
+
+/// A frame of the walk from the frame of a handled body down to the clause
+/// frame (plan stage R0z Z4 Part B, [`nested_chain`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Below {
+    /// A code frame, with its `uid`.
+    Code(u64),
+    /// The mark of a `handle`.
+    Mark,
+    /// A clause frame, with its continuation.
+    Clause(ContId),
+    /// Another frame (a scope, a marker of `sim.run` or `with_timeout`, a
+    /// fork, an unwinding).
+    Other,
+}
+
+/// The chain below the frame of a handled body: `frames` are the frames of
+/// the task, the bottom first, and the last one is the frame of the handled
+/// body. From the top down, only code frames and marks come before the first
+/// clause frame. The result is the continuation of that clause frame and the
+/// `uid`s of the code frames (the top first). `None` if another frame comes
+/// first, if there is no clause frame, or if there are fewer than two code
+/// frames (the handled body and the clause body).
+fn nested_chain(frames: impl DoubleEndedIterator<Item = Below>) -> Option<(ContId, Vec<u64>)> {
+    let mut uids: Vec<u64> = Vec::new();
+    for f in frames.rev() {
+        match f {
+            Below::Code(uid) => uids.push(uid),
+            Below::Mark => {}
+            Below::Clause(cont) => return (uids.len() >= 2).then_some((cont, uids)),
+            Below::Other => return None,
+        }
+    }
+    None
+}
+
+/// What the hook of the fact oracle does at a `resume` in a frame that is
+/// not a clause frame (plan stage R0z Z4 Part B, [`nested_check`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Nested {
+    /// No record and no `resumes_at`: not a resume point of a clause here.
+    Skip,
+    /// The continuation of the clause frame and the code frames that wait.
+    Check(ContId, Vec<u64>),
+    /// A failure of the oracle, with its text.
+    Fail(&'static str),
+}
+
+/// The text of a record with no `resumes_at` ([`nested_check`]).
+const NESTED_NO_FACT: &str = "fact oracle (nested resume): a `resume` in a handled body with a record of the IR has no `resumes_at` in the facts";
+
+/// The text of a record whose frames below are wrong ([`nested_check`]).
+const NESTED_BAD_FRAMES: &str = "fact oracle (nested resume): below a `resume` in a handled body with a record of the IR, the frames down to the clause frame are not only the marks of the `handle`s and the code frames of the chain";
+
+/// The text of `resumes_at` with no record ([`nested_check`]).
+const NESTED_NO_RECORD: &str = "fact oracle (nested resume): the facts have `resumes_at` at a `resume` of a frame that is not a clause frame, and the IR has no record of a handled body there";
+
+/// The decision of the hook at a `resume` in a frame that is not a clause
+/// frame (plan stage R0z Z4 Part B, review rounds 1 and 2). `record` is true
+/// if the IR has a record of the handled body of the frame at a `Resume`
+/// (`FactOracle::nested_record`), `at` if the facts have `resumes_at` at a
+/// `resume` node of the location of the frame (`FactOracle::at_nested_resume`),
+/// and `chain` is [`nested_chain`]. Both must agree: a record needs
+/// `resumes_at` and a good chain, and `resumes_at` needs a record. No older
+/// stage gives `resumes_at` at a `resume` of such a frame: a `resume` of a
+/// clause body (also of a kont region of Z4 there) is in a clause frame, and
+/// a scope body of Z5 is a light frame that the oracle does not follow.
+fn nested_check(record: bool, at: bool, chain: Option<(ContId, Vec<u64>)>) -> Nested {
+    match (record, at, chain) {
+        (false, false, _) => Nested::Skip,
+        (true, false, _) => Nested::Fail(NESTED_NO_FACT),
+        (false, true, _) => Nested::Fail(NESTED_NO_RECORD),
+        (true, true, None) => Nested::Fail(NESTED_BAD_FRAMES),
+        (true, true, Some((cont, uids))) => Nested::Check(cont, uids),
+    }
+}
+
+/// The decision of the hook at a `resume` in the block of a call of
+/// `sim.run` or `with_timeout` (plan stage R0z Z4b, review rounds 1 and 2 of
+/// Z4 Part B): `record` is true if the IR has a record of a runtime resume
+/// node at the location of the clause frame (`FactOracle::runtime_record`),
+/// `at` if the facts have `resumes_at` at a call there
+/// (`FactOracle::at_runtime_resume`). Both must agree; only Z4b gives
+/// `resumes_at` at a call. `Ok(true)`: the checks of the node run.
+///
+/// # Errors
+///
+/// The text of a failure of the oracle.
+const fn runtime_check(record: bool, at: bool) -> Result<bool, &'static str> {
+    match (record, at) {
+        (true, false) => Err("fact oracle (runtime resume): a call with a record of the IR has no `resumes_at` in the facts"),
+        (false, true) => Err("fact oracle (runtime resume): the facts have `resumes_at` at a call, and the IR has no record of a runtime resume node there"),
+        (true, true) => Ok(true),
+        (false, false) => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{nested_chain, nested_check, runtime_check, Below, Nested};
+    use super::{NESTED_BAD_FRAMES, NESTED_NO_FACT, NESTED_NO_RECORD};
+
+    /// The walk below the frame of a handled body (plan stage R0z Z4 Part
+    /// B): code frames and marks down to the clause frame; another frame, no
+    /// clause frame, or one code frame only gives no chain.
+    #[test]
+    fn the_chain_below_a_handled_body() {
+        use Below::{Clause, Code, Mark, Other};
+        let good = [Code(1), Clause(7), Code(2), Mark, Code(3), Mark, Code(4)];
+        assert_eq!(nested_chain(good.into_iter()), Some((7, vec![4, 3, 2])));
+        let timeout = [Clause(7), Code(2), Other, Mark, Code(4)];
+        assert_eq!(nested_chain(timeout.into_iter()), None);
+        let none = [Code(2), Mark, Code(4)];
+        assert_eq!(nested_chain(none.into_iter()), None);
+        let one = [Clause(7), Mark, Code(4)];
+        assert_eq!(nested_chain(one.into_iter()), None);
+    }
+
+    /// The hook is strict in both ways (review rounds 1 and 2 of plan stage
+    /// R0z Z4 Part B): a record with no `resumes_at`, a record with bad frames
+    /// below it, and `resumes_at` with no record each fail.
+    #[test]
+    fn the_record_and_the_facts_must_agree() {
+        let chain = Some((7, vec![4, 2]));
+        assert_eq!(nested_check(false, false, None), Nested::Skip);
+        assert_eq!(nested_check(false, false, chain.clone()), Nested::Skip);
+        assert_eq!(
+            nested_check(true, true, chain.clone()),
+            Nested::Check(7, vec![4, 2])
+        );
+        assert_eq!(
+            nested_check(true, false, chain.clone()),
+            Nested::Fail(NESTED_NO_FACT)
+        );
+        assert_eq!(
+            nested_check(true, true, None),
+            Nested::Fail(NESTED_BAD_FRAMES)
+        );
+        assert_eq!(
+            nested_check(false, true, chain),
+            Nested::Fail(NESTED_NO_RECORD)
+        );
+        assert_eq!(
+            nested_check(false, true, None),
+            Nested::Fail(NESTED_NO_RECORD)
+        );
+        assert_eq!(runtime_check(true, true), Ok(true));
+        assert_eq!(runtime_check(false, false), Ok(false));
+        assert!(runtime_check(true, false).is_err());
+        assert!(runtime_check(false, true).is_err());
     }
 }

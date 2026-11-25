@@ -502,6 +502,10 @@ pub struct FactOracle {
     wait_cells: HashMap<CellId, Vec<(u64, usize)>>,
     /// The last key of a copy of a waiting frame.
     copy_keys: u64,
+    /// The waits that end with the wait of a frame (plan stage R0z Z4 Part
+    /// B): the frames below a handled body with a resume point of a clause,
+    /// by the frame of the handled body ([`Self::nested_wait_begin`]).
+    linked: HashMap<u64, Vec<u64>>,
     /// The frames of `multi` continuations with a `Copy` node (A4 of
     /// re-entries, stage R0k-c2), by frame.
     reentries: HashMap<u64, Reentry>,
@@ -1168,6 +1172,7 @@ impl FactOracle {
             waits: HashMap::new(),
             wait_cells: HashMap::new(),
             copy_keys: COPY_KEYS,
+            linked: HashMap::new(),
             reentries: HashMap::new(),
             reentry_cells: HashMap::new(),
             copy_invalid: HashMap::new(),
@@ -2118,6 +2123,9 @@ impl FactOracle {
         self.light.remove(&uid);
         self.activation.remove(&uid);
         self.drop_wait(uid);
+        for k in self.linked.remove(&uid).unwrap_or_default() {
+            self.drop_wait(k);
+        }
     }
 
     /// A4: the clause frame `uid` of task `task`, with the code `code` and
@@ -2162,6 +2170,145 @@ impl FactOracle {
         task: usize,
     ) {
         self.wait_begin_at(uid, (code, slots), heap, task, true);
+    }
+
+    /// The IR body and block of the current location of frame `uid`.
+    fn frame_block(&self, uid: u64) -> Option<(BodyId, weft_ir::BlockId)> {
+        let fr = self.frames.get(&uid)?;
+        let comp = self.comps.get(fr.comp)?;
+        let (b, _) = fr
+            .cur
+            .iter()
+            .find_map(|n| comp.loc.get(n.index()).copied().flatten())?;
+        Some((comp.body, weft_ir::BlockId(b)))
+    }
+
+    /// True if the IR has a record of a runtime resume node at the current
+    /// location of frame `uid` (plan stage R0z Z4b, `Program::resume_runs`).
+    /// The record does not depend on the facts.
+    pub fn runtime_record(&self, uid: u64) -> bool {
+        self.frame_block(uid)
+            .is_some_and(|(b, k)| self.input.built.program.resume_run_at(b, k).is_some())
+    }
+
+    /// True if frame `uid` is a frame of a handled body with a record of the
+    /// IR (plan stage R0z Z4 Part B, `Program::resume_handles`) at a block
+    /// whose terminator is a `Resume`. The record does not depend on the
+    /// facts.
+    pub fn nested_record(&self, uid: u64) -> bool {
+        let Some((b, k)) = self.frame_block(uid) else {
+            return false;
+        };
+        let p = &self.input.built.program;
+        let Some(body) = p.body(b) else {
+            return false;
+        };
+        let weft_ir::BodyKind::Handled(g) = body.kind else {
+            return false;
+        };
+        p.resume_handle(g).is_some()
+            && body
+                .block(k)
+                .is_some_and(|x| matches!(x.term.kind, weft_ir::TermKind::Resume { .. }))
+    }
+
+    /// True if frame `uid` (a frame of a handled body) is at a `resume` that
+    /// the facts take as a resume point of a clause (plan stage R0z Z4 Part
+    /// B): a `resume` node of its current location has `resumes_at`.
+    pub fn at_nested_resume(&self, uid: u64) -> bool {
+        let Some(fr) = self.frames.get(&uid) else {
+            return false;
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return false;
+        };
+        !comp.clause && !nested_resume_nodes(comp, &fr.cur).is_empty()
+    }
+
+    /// A4 at a resume point in a handled body of a clause (plan stage R0z Z4
+    /// Part B). `frames` are the code frames from the frame of the handled
+    /// body (first) down to the clause frame (last); between them are only
+    /// the marks of the `handle`s. Each of these frames of the unit of the
+    /// first one waits while the rest of the handled body of the handler of
+    /// the clause runs, as a clause frame at its `resume`
+    /// ([`Self::wait_begin`]): its references must be inside a place that the
+    /// `resume` node lends or frees. All these waits end when the first frame
+    /// goes on ([`Self::wait_end`] of its key).
+    pub fn nested_wait_begin(
+        &mut self,
+        frames: &[(u64, &Code, &[Option<CellId>])],
+        heap: &Heap,
+        task: usize,
+    ) {
+        let Some(&(top, ..)) = frames.first() else {
+            return;
+        };
+        self.drop_wait(top);
+        for k in self.linked.remove(&top).unwrap_or_default() {
+            self.drop_wait(k);
+        }
+        let Some(fr) = self.frames.get(&top) else {
+            return;
+        };
+        let Some(comp) = self.comps.get(fr.comp) else {
+            return;
+        };
+        let unit = comp.unit;
+        let nodes = nested_resume_nodes(comp, &fr.cur);
+        if comp.clause || nodes.is_empty() {
+            return;
+        }
+        let mut keys = Vec::new();
+        for &(uid, code, slots) in frames {
+            let Some(ci) = self.frames.get(&uid).map(|f| f.comp) else {
+                continue;
+            };
+            let Some(c) = self.comps.get(ci) else {
+                continue;
+            };
+            if c.unit != unit {
+                continue;
+            }
+            let mut refs = Vec::new();
+            for (s, cell) in slots.iter().enumerate() {
+                let (Some(cell), Some(&l)) = (cell, code.slot_locals.get(s)) else {
+                    continue;
+                };
+                let l = LocalId(l);
+                if !c.of_local.contains_key(&l) {
+                    continue;
+                }
+                let Ok(x) = heap.slot(*cell) else {
+                    continue;
+                };
+                let mut out = Vec::new();
+                refs_of(heap, &x.val, &mut Vec::new(), &[], false, 0, &mut out);
+                refs.extend(out.into_iter().map(|t| (t, l)));
+            }
+            if refs.is_empty() {
+                continue;
+            }
+            let key = if uid == top {
+                top
+            } else {
+                self.copy_keys += 1;
+                keys.push(self.copy_keys);
+                self.copy_keys
+            };
+            let w = Wait {
+                comp: ci,
+                nodes: nodes.clone(),
+                task,
+                uid,
+                refs,
+                hits: Vec::new(),
+                names: None,
+            };
+            self.add_wait(key, w);
+        }
+        if !keys.is_empty() {
+            self.linked.insert(top, keys);
+        }
     }
 
     /// [`Self::wait_begin`] at a `resume`, or with `runtime` at a runtime
@@ -2996,6 +3143,11 @@ impl FactOracle {
     ///
     /// The message of a failure.
     pub fn wait_end(&mut self, key: u64) -> Result<(), String> {
+        // The waits of the frames below a handled body (plan stage R0z Z4
+        // Part B) end with the wait of the frame of the handled body.
+        for k in self.linked.remove(&key).unwrap_or_default() {
+            self.wait_end(k)?;
+        }
         let Some(w) = self.drop_wait(key) else {
             return Ok(());
         };
@@ -4641,6 +4793,19 @@ fn owner_of(
         }),
         _ => None,
     }
+}
+
+/// The `resume` nodes with `resumes_at` of the location `cur` of a frame of
+/// a handled body (plan stage R0z Z4 Part B): a resume point of a clause.
+fn nested_resume_nodes(comp: &Comp, cur: &[NodeId]) -> Vec<NodeId> {
+    comp.group(cur)
+        .into_iter()
+        .filter(|&n| {
+            comp.kind_of(n) == "resume"
+                && comp.label_of(n) == "resume"
+                && comp.facts.resumes_at.iter().any(|(m, _)| *m == n)
+        })
+        .collect()
 }
 
 /// The nodes of the location `cur` of a frame of component `comp` with a

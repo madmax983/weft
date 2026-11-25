@@ -1,0 +1,13 @@
+// r0z4pb probe (bad): the parameter `r` points into `w` of the handled body. The clause resumes in a nested handled body, the rest ends and frees `w`, then the clause reads `r` (W0301).
+effect Tick { fn tick(r: &u64) }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick(r: &u64) {
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+            print(r + 1)
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}

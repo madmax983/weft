@@ -1,0 +1,17 @@
+// r0z4pb probe (bad): the clause resumes in a nested handled body with a reference into a local of the nested body. The rest keeps the reference in `keep`, a local of `main`. The nested body ends after the rest, so the read of `keep` after the `handle` is a read of a dead local.
+effect Ask { fn ask() -> &u64 }
+effect Other { fn other() }
+fn main() {
+    let u: u64 = 7
+    let keep = &u
+    handle Ask { fn ask() {
+            handle Other { fn other() { resume(()) } } in {
+                let z: u64 = 5
+                resume(&z)
+            }
+        } } in {
+        let r = ask()
+        keep = r
+    }
+    print(keep + 1)
+}

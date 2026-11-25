@@ -1,0 +1,14 @@
+// r0z4pb probe (ok): the form of `used_before` of tier 2 `p7154`. The clause uses its parameter, then resumes in the handled body of a local `Fail` handler.
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn main() {
+    handle Peek {
+        fn peek(e) {
+            print(e.hp)
+            handle Fail { fn fail(m) { print(m) } } in { resume(()) }
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}

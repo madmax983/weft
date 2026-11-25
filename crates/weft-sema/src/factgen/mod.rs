@@ -3080,7 +3080,10 @@ pub fn components_built(
             .iter()
             .filter_map(|c| inst.built.program.closures.get(c.index()).map(|d| d.body))
             .collect();
-        if covered.is_empty() {
+        // A program with no kont copy, but with a handled body with a resume
+        // point of a clause (plan stage R0z Z4 Part B), takes the program of
+        // the records too.
+        if covered.is_empty() && inst.built.program.resume_handles.is_empty() {
             return (built, first);
         }
         let second = {
@@ -5126,7 +5129,7 @@ fn kont_view(
         .iter()
         .filter_map(|c| inst.built.program.closures.get(c.index()).map(|d| d.body))
         .collect();
-    if covered.is_empty() {
+    if covered.is_empty() && inst.built.program.resume_handles.is_empty() {
         return None;
     }
     let _ = crate::analysis::clause::take_pending();

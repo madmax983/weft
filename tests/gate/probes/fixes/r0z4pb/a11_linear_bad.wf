@@ -1,0 +1,18 @@
+// r0z4pb probe (bad): the nested handled body moves the linear value `t` of the clause before its `resume`, and the clause uses `t` again after the nested `handle` (W0302).
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            let t = T { id: 1 }
+            handle Other { fn other() { resume(()) } } in {
+                done(t)
+                resume(())
+            }
+            done(t)
+        } } in {
+        tick()
+        print(1)
+    }
+}

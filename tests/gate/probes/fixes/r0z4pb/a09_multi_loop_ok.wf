@@ -1,0 +1,17 @@
+// r0z4pb probe (ok, refusal: a `multi` continuation): the nested handled body resumes a `multi` continuation two times in a loop. The program keeps the fallback.
+effect Tick { multi fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                let i = 0
+                while i < 2 {
+                    resume(())
+                    i = i + 1
+                }
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

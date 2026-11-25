@@ -174,7 +174,8 @@ the counts.
 - Tier 2: row 23 (`m3a/p5750`) is rejected in scope (W0301 at line 81, as the old pipeline);
   22 to 21 fallbacks.
 - The rows that stay: 82 and 83 (`c08_nested`) and tier 2 row 24 (`m3a/p7154`): a resume
-  point in a handled body inside the clause (Part B) is not built; 86 and 87 (`fd2_v2`,
+  point in a handled body inside the clause (Part B) is not built (built after Z4b: "Z4 Part B
+  (as built)"); 86 and 87 (`fd2_v2`,
   `fd2_v3`, both tiers): a `multi` operation of another handler (R-ROW-K, the IR engine
   keeps the old continuation record in a copied frame, issue #94) and a value in a `Vec`
   (Z3 part b); 88 and 89 (`rr3_v19`, `rr3_v20`, both tiers): the runtime runs of Z4b are
@@ -369,6 +370,32 @@ the counts.
   5 time-outs with Z4b. The rows that stay in tier 1 (14): 25, 47, 48, 72, 73, 82, 83, 86,
   87, 93, 94, 102, 103 and 105, with the reasons of the earlier stages.
 
+## Z4 Part B (as built)
+
+- Z4 Part B (a resume point in a handled body inside the clause: a record of the handled
+  body, with no copy) closes rows 82 and 83 of tier 1 (`c08_nested_bad`, `c08_nested_ok`;
+  14 to 12 fallbacks of the census rows) and row 24 of tier 2 (`m3a/p7154`; 7 to 6):
+  `docs/plan/core-ir.md`, "Z4 Part B as built". The handled body of a local handler of the
+  clause runs in the run of the clause, and no code can run a clause of that handler, so a
+  `resume` there (also the `resume` of a closure that the handled body makes and runs) is a
+  resume point of the clause. `c08_nested_bad` is rejected in scope (W0301 at line 22, as the
+  old pipeline), `c08_nested_ok` is in scope with no error, and `p7154` is rejected in scope
+  (W0301 at line 119, as the old pipeline). The cause of `p7154` is `used_before` (a `resume`
+  in the handled body of a local `Fail` handler); the call `Box.new` of the text of row 24
+  is not a cause. No new language rule.
+- Tier 1: 403 fallbacks of 6475 files with main, 352 with Z4 Part B (`check --reasons`,
+  `weft-work/z4pb/census/`). Of the 6395 files of Z4b, 331 with main and 324 with Z4 Part B:
+  rows 82 and 83 and the review probes `rev_b04`, `rev_d_b04` (bad and clean twins) and
+  `rev_b05` of `fixes/r0z4` leave the fallback. The new files are the 79 probes of
+  `fixes/r0z4pb` and the corpus program `214_handled_resumes`: 72 fallbacks with main, 28
+  with Z4 Part B (the refusal probes: a clause of the nested handler can run, a `multi`
+  operation, a scope body in the chain, a runtime resume node or a closure maker outside the
+  nested handled body, the `handle` in the block of `sim.run`, `sim.clock.advance` or an
+  `on abort` function that can wait in the program).
+- Tier 2 (the rows of the Z8 list): 7 fallbacks and 6 time-outs with main, 6 fallbacks and
+  6 time-outs with Z4 Part B. The rows that stay in tier 1 (12): 25, 47, 48, 72, 73, 86, 87,
+  93, 94, 102, 103 and 105, with the reasons of the earlier stages.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -482,8 +509,8 @@ the counts.
 | 79 | `fixes/r0kc/c06_call_between_ok.wf` | D1 | D1a refusal: a call between (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
 | 80 | `fixes/r0kc/c07_use_after_bad.wf` | D1 | D1a refusal: a borrow of the closure value | W0301 | fault | rejected | yes | Z4 (closed) |
 | 81 | `fixes/r0kc/c07_use_after_ok.wf` | D1 | D1a refusal: a borrow (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
-| 82 | `fixes/r0kc/c08_nested_bad.wf` | D1 | D1a refusal: a body inside the clause makes and runs the closure | W0301 | fault | rejected | yes | Z4 |
-| 83 | `fixes/r0kc/c08_nested_ok.wf` | D1 | D1a refusal: a body inside the clause (clean twin) | clean | no fault | clean | yes | Z4 |
+| 82 | `fixes/r0kc/c08_nested_bad.wf` | D1 | D1a refusal: a body inside the clause makes and runs the closure | W0301 | fault | rejected | yes | Z4 Part B (closed) |
+| 83 | `fixes/r0kc/c08_nested_ok.wf` | D1 | D1a refusal: a body inside the clause (clean twin) | clean | no fault | clean | yes | Z4 Part B (closed) |
 | 84 | `fixes/r0kc/c09_field_bad.wf` | D1 | D1a refusal: the closure goes through a field | W0301 | fault | rejected | yes | Z4 (closed) |
 | 85 | `fixes/r0kc/c09_field_ok.wf` | D1 | D1a refusal: a field (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
 | 86 | `verify/s5/R2c: .../p/fd2_v2_closure_resume.wf` | D1 | D1a in a `multi` clause: a perform between, two runs | clean | no fault | clean | no | Z4 |
@@ -564,7 +591,7 @@ The other 35 rows of tier 2:
 | 21 | `verify/s5/S5c/mut/progs/m02309_85_op_args.wf` | C2>D1 | as m00982 | W0313, 9xW0314 | no `main` | rejected | no | Z1-G (closed) |
 | 22 | `r2/oracle/runs/m1/p1669.wf` | D5 | a `multi` clause runs its parameter: a row that only the analysis finds | clean | no fault | clean | no | Z7 (closed) |
 | 23 | `r3/oracle/runs/m3a/p5750.wf` | D1 | D1a refusal: a call (`print(r)`) between the make and the run | W0301 | no fault | rejected | no | Z4 (closed) |
-| 24 | `r3/oracle/runs/m3a/p7154.wf` | D1 | D1a refusal: a call (`Box.new`) between, a `resume` in a nested handled body | W0301 | no fault | rejected | no | Z4 |
+| 24 | `r3/oracle/runs/m3a/p7154.wf` | D1 | D1a refusal: a call (`Box.new`) between, a `resume` in a nested handled body | W0301 | no fault | rejected | no | Z4 Part B (closed) |
 | 25 | `r2/oracle/runs/g2/p2515.wf` | esc | closures that capture a capability in a block of a closure body that no node runs (Z8: the cause is a closure body that runs a closure of its maker, `twice(f1)`) | clean | no fault | clean | no | Z8 (closed) |
 | 26 | `r2/oracle/runs/m2/p7046.wf` | E2 | a task runs `run_both(f1, f1)` | clean | no fault | clean | no | Z9a (closed) |
 | 27 | `r3/oracle/runs/g3b/p18574.wf` | VT | a function value runs a value of its arguments as a task | W0312 | no fault | rejected | no | Z9c-B (closed) |

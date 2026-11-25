@@ -1,0 +1,16 @@
+// r0z4pb probe (ok): the `resume` in the nested handled body gives back the value of the handled body, and the nested `handle` gives its value to the clause.
+effect Ask { fn ask() -> u64 }
+effect Other { fn other() }
+fn main() {
+    let r = handle Ask { fn ask() {
+            let x = handle Other { fn other() { resume(()) } } in {
+                let y = resume(5)
+                y + 1
+            }
+            x + 1
+        } } in {
+        let a = ask()
+        a * 2
+    }
+    print(r)
+}

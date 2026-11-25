@@ -332,6 +332,7 @@ pub struct Program {
     pub regions: Vec<CopyRegion>,   // the copy regions of the fact generator (6.1); none from the builder
     pub dispatches: Vec<Dispatch>,  // the dispatches of the fact generator (6.1, plan stage R0z Z6)
     pub resume_runs: Vec<ResumeRun>, // the runtime resume nodes of the fact generator (6.1, plan stage R0z Z4b)
+    pub resume_handles: Vec<ResumeHandle>, // the handled bodies with a resume point of a clause (6.1, plan stage R0z Z4 Part B)
 }
 /// A test block: its name (the interpreter runs tests by name) and its body.
 pub struct TestDecl { pub name: String, pub body: BodyId }
@@ -586,6 +587,7 @@ to V17; the others need the type table.
 | V20 | (Plan stage R0z Z6.) Each dispatch (`Program::dispatches`, 6.1) has two arms or more; its value is a whole local of its body (an upvar local has no `Live`, so the rule asks for none); the groups are not empty, do not meet, and name closures with distinct bodies (distinct code units) and one `once` flag. The last statement of each test block is `g = ClosureIs(value, group)` and its terminator is `switch g -> [1: entry, otherwise: next]` (the next test, or the miss block after the last arm). The miss block has only `Dead` statements (the end of the result of the last test, as each successor of a test has) and `Unreachable`. The one edge into an arm entry is from its test; a plain arm ends with a call of the value; the region of a copy arm copies the closures of the group, and its value is the value of the dispatch or the local of a `once` move of it. Each `ClosureIs` of the program is the test of an arm. | the interpreter tests the code of the closure value (8.4) |
 | V21 | (Plan stage R0z Z4.) The continuation of a `Resume` is a `Kont` local of a clause, an upvar local of a continuation type, a `Kont` field of a closure environment (V11), or the `Kont` field of the environment local of a kont region: a local of kind `CopyEnv(c)` that is the `env_local` of the region that holds the block, one `Field(i)` projection, `i` the `kont` of the region, and capture `i` of `c` of mode `Kont`. Else the rule `BadKont` breaks. | the interpreter reads the continuation from the cell of the closure value (8.4) |
 | V22 | (Plan stage R0z Z4b.) Each runtime resume node (`Program::resume_runs`, 6.1) names a block of a clause body whose terminator is a call of `sim.run` or `with_timeout` with an `unwind` block. The last argument of the call is a move of a whole local `t`, and the last statement of the block that is not `Live` or `Dead` is `t = closure c(move k)`, with `c` the closure of the record and `k` the continuation local of the clause, which is `once`. The clause body is the maker of `c`, and `c` has one capture, `kont` (index 0), a `Kont` capture of `k`. Two records do not name one block. (The form of the block, R-RESUMER of 6.1, is a rule of the fact generator at the one maker of `c`, not of V22.) Else the rule `BadResumeRun` breaks. | the runtime runs the block at the call, on this task (8.4) |
+| V23 | (Plan stage R0z Z4 Part B.) Each handled body with a resume point of a clause (`Program::resume_handles`, 6.1) names a handler whose `handle` is in the clause body of the record, or in the handled body of another record of the same clause, so the chain from the handled body up to the clause has only handled bodies of records. The clause body has a `once` continuation. At least one `Resume` of that continuation is in the handled body, or in a handled body of a record inside it: its place is an upvar local whose chain of `Upvar` kinds ends at the continuation local, or field `i` of the environment of a kont region of its body whose closure has a `Kont` capture `i` of such a place. One handler has one record. (The cause of a record, that no clause of the handler can run, is a rule of the fact generator, R-INNER of 6.1, not of V23.) Else the rule `BadResumeHandle` breaks. | the handled body runs in the run of the clause (8.1) |
 
 ---
 ## 5. Lowering rules: typed tree to IR
@@ -2759,9 +2761,9 @@ As built (plan stage R0z Z4, kont regions; `factgen/instantiate.rs`, `Inst::kont
   frame, so the clause frame waits there (A4) and A5 sees the clause run. New: with the
   fact oracle on, a clause frame resumes only the continuation of its own activation
   ("fact oracle (kont region)").
-- Not built: a resume point in a handled body inside the clause (Part B of the design),
-  a dispatch in the mode of R0k-c1, a `multi` re-entry of a kont region. The runtime runs
-  of `sim.run` and `with_timeout` are stage Z4b (below).
+- Not built: a dispatch in the mode of R0k-c1, a `multi` re-entry of a kont region. The
+  runtime runs of `sim.run` and `with_timeout` are stage Z4b, and a resume point in a
+  handled body inside the clause is stage Z4 Part B (below).
 
 As built (plan stage R0z Z4b, runtime resume nodes; `factgen/instantiate.rs`,
 `Inst::resume_run`, `analysis::clause::runtime_resume`):
@@ -2847,6 +2849,116 @@ As built (plan stage R0z Z4b, runtime resume nodes; `factgen/instantiate.rs`,
   runs (A4, `FactOracle::runtime_wait_begin`). The summary oracle A3 takes such a frame as a
   frame that waits at a `resume` (`Comp::waits`): the frames above it are the marker, the
   block and the rest of the handled body.
+
+As built (plan stage R0z Z4 Part B, a resume point in a handled body inside the clause;
+`factgen/instantiate.rs`, `Inst::resume_handles`, `analysis::clause`):
+
+- The form. A clause body `cb` runs a `handle` of a local handler `g`, and the handled body
+  of `g` (or a handled body of another such handler inside it) resumes the continuation of
+  `cb`: a direct `resume`, or the `resume` of a closure that the handled body makes and
+  runs (its run gets a kont region of Z4 in the handled body, R-MAKER: the maker and the
+  run node are that handled body). The handled body runs in the run of the clause, in
+  frames above the clause frame, and the rest of the handled body of the handler of `cb`
+  runs above them. So that `resume` is a resume point of the clause, as a `resume` in a
+  scope body of plan stage R0z Z5. In the mode of R0k-c1 (`instantiate_kont`) each such
+  handler gets a record (`weft_ir::ResumeHandle`, `Program::resume_handles`, V23), with no
+  copy.
+- The conditions of a record. Each one must be true; if one is false, the handler gets
+  no record (a refusal), the `resume` keeps the reason `KONT_CAPTURED`, and the program
+  keeps the fallback:
+  - R-PB-ONCE: the continuation of `cb` is `once` (the flag of `Body::kont` is `multi`, so
+    it is false).
+  - R-PB-MULTI: no handler of the program has a `multi` operation (a `multi` resume can
+    copy the frames of the clause and of the handled body, issues #94 and #95).
+  - R-PB-CHAIN: the chain from the body of the `resume` up to `cb` has only handled bodies
+    of records: no scope body (the tasks of Z5), no closure body, no clause body of another
+    handler. A `resume` of the continuation of `cb` in another body inside the handled body
+    (a clause of a handler inside it, a closure with no kont region) is not a resume point
+    (`clause::scope_resumes`).
+  - R-INNER (by cause): no clause of `g` can run. Thus the `handle` of `g` adds no code and
+    no abort to the run of the clause. The rule looks at each terminator of the handled
+    body of `g` and of each body inside it:
+    - A jump, a branch, a `resume` and a `handle` are allowed.
+    - A perform is allowed only through the capability of a local handler of another
+      effect. A perform through the row is a refusal.
+    - A call of a function value is a refusal.
+    - A call of a function with a body is allowed only if it cannot perform the effect of
+      `g`. No function that it reaches through direct calls can perform that effect
+      through its row. No such function can run a function value with no stated row. No
+      intrinsic or extern function that it reaches can have a row that is not stated or
+      that names the effect.
+    - A call of an extern function is allowed only if its stated row does not name the
+      effect of `g`.
+    - A terminator that starts or ends a task or a scope is a refusal.
+    - For a handler of `Fail`, each call of a function with a body is a refusal. A call of
+      an extern function is a refusal if its stated row is not empty. The runtime can raise
+      a failure in a function with no `fail` in its row (a read of a file, a `join`,
+      foreign code). The IR has `stated_row: None` only for such a function with an empty
+      row.
+    - For a `g` of another effect, a call of an extern function that waits (`sleep`,
+      `FsCap.read`) is allowed. It runs no clause of `g`.
+
+    No closure that the handled body (or a body inside it) makes can capture the
+    capability of `g`. The rest of the handled body of the handler of `cb` performs
+    through the handlers around its own `handle`. The handlers are lexical (8.1), so the
+    rest cannot reach `g`.
+  - R-REC (as for a kont region): the `handle` of the handler of `cb` is not in a closure
+    body (also the block of `sim.run`), and its function cannot run again while it runs.
+  - R-PB-CLOCK and R-PB-UNWIND (the predicates of R-RT-CLOCK and R-RT-UNWIND of Z4b): no
+    extern function `advance`, and no `on abort` function that can wait. With one of them
+    a deadline of `with_timeout` in the rest of the handled body can cut the rest at a node
+    with no abort edge in the facts (an old gap of the plain forms, which a record brings
+    into scope: the probes `a26_advance_late`, `a27_onabort_sleep` failed trace conformance
+    before the refusal).
+- The analysis. The view functions of Z5 take a handled body of a record as a body of the
+  chain of the clause (`clause::scope_chain_clause`, a chain of handled bodies only, and
+  `clause::resume_scope`, a `handle` terminator too); so `resume_point`, `lands_in`,
+  `has_resume`, `frames::resume_parts`, `frames::clause_rows`, `handlers::regions` and
+  `handlers::clause_nodes` see the resume point through the `handle`. The run of the
+  clause up to its resume points runs such a handled body up to its `Resume`s
+  (`run_handled` with `Mode::stop_at_resume` when the clause is the innermost of
+  `Handlers::pre_stop`; the states go to `Handlers::pre_resumes`), and a `handle` whose
+  handled body stops on each path has no normal successor in that run
+  (`HandleOut::no_normal`). The code after the resume point runs from the end of the
+  handled body of the handler of the clause to the end of the handled body of `g`; then the
+  `handle` of `g` ends (`clause::handled_after`: no local of the handled body or of a clause
+  of `g`, but the locals that a closure of the handled body captures, and the value of the
+  handled body) and the run goes on in the body around it (`clause::post_run`). A `resume`
+  in a handled body is not a `resume` of a scope body for the tasks of Z5
+  (`Handlers::scope_resumes`).
+- V23 checks the form of a record only (the chain, the `once` continuation, the
+  `Resume`). It cannot check R-INNER, R-REC, R-PB-MULTI, R-PB-CLOCK or R-PB-UNWIND, and it
+  is weaker than R-MAKER: for the `Resume` of a kont region it accepts a closure whose
+  maker is outside the handled body (with an upvar chain to the continuation), but the
+  fact generator makes a kont region only where the maker is the run body. Its walk of the
+  `Upvar` chain needs a parent id lower than the id of the body (a copy body that comes
+  after the bodies inside it breaks V23: a verify error, fail-closed).
+- The facts. The `resume` node in the handled body has the facts of a resume point of the
+  clause (`handlers::resume`): `resumes_at` of the capability of the handler, the region of
+  the rest of the handled body, the move of the continuation. The `pre` part of the clause
+  stops at the `handle` of `g`; the nodes of the handled body after the resume point and
+  the nodes of the `handle` after the handled body (`Exit`, `Post`) are in the `post` part.
+- The fact oracle. The `resume` runs in the frame of the handled body, above the marks of
+  the `handle`s and the clause frame. If the facts of that frame have a `resume` node with
+  `resumes_at` at its location (`FactOracle::at_nested_resume`), `Machine::resume` checks
+  that the continuation is the continuation of the clause frame below ("fact oracle (nested
+  resume)"), and each code frame from the frame of the handled body down to the clause
+  frame waits at that node while the rest runs (A4, `FactOracle::nested_wait_begin`). These
+  waits end together when the frame of the handled body goes on (the linked keys of
+  `FactOracle::wait_end`). A3 takes the clause frame at the `handle` node as a frame that
+  waits (`Comp::waits`). The hook is strict (review round 1, N2): it keys on the record of
+  the IR (`FactOracle::nested_record`: the frame is of a handled body with a record, at a
+  `Resume`), not on the facts. A `Resume` with a record but no `resumes_at` in the facts, or
+  with frames below it that are not the marks and the frames of the chain, fails ("fact
+  oracle (nested resume)"). The check of Z4b is strict in the same way: a call with a record
+  of `Program::resume_runs` and no `resumes_at` fails ("fact oracle (runtime resume)",
+  `FactOracle::runtime_record`). From review round 2 both checks are strict in the other
+  way too: `resumes_at` at a `resume` of a frame that is not a clause frame with no record of
+  a handled body, and `resumes_at` at a call below a marker of `sim.run` or `with_timeout`
+  with no record of a runtime resume node, fail (`machine::effects::nested_check`,
+  `runtime_check`). No older stage gives `resumes_at` there: a `resume` of a clause body
+  (also of a kont region of Z4) is in a clause frame, a scope body of Z5 is a light frame
+  that the oracle does not follow, and only Z4b gives `resumes_at` at a call.
 
 ### 6.2 Nodes and phases
 
@@ -7217,6 +7329,25 @@ a `Resume` of the clause. The test `a_runtime_resume_node_with_no_region_fails_a
 (`fact_oracle.rs`) removes the region of the rest at the call node: A4 then fails on
 `fixes/r0z4b/t01_ref_rest_frees_ok`. The summary oracle A3 takes the clause frame at such a
 node as a frame that waits at a `resume` (`Comp::waits`).
+
+**As built (plan stage R0z Z4 Part B): A4 at a resume point in a handled body inside the
+clause.** The `resume` runs in the frame of the handled body, above the marks of the
+`handle`s and the clause frame (6.1). At that `resume`, if the facts of the frame of the
+handled body have a `resume` node with `resumes_at` at its location, `Machine::resume`
+checks that the continuation is the continuation of the clause frame below ("fact oracle
+(nested resume)"), and each code frame from the frame of the handled body down to the
+clause frame waits at that node (`FactOracle::nested_wait_begin`); the waits of the frames
+below end with the wait of the frame of the handled body. Before the stage the component of
+a handled body is not a clause, so A4 checked no frame there. The test
+`a_resume_in_a_handled_body_with_no_region_fails_a4` (`fact_oracle.rs`) removes the region
+of the rest at the `resume` nodes: A4 then fails on `fixes/r0z4pb/a02_param_after_ok`; with
+the hook off, A4 does not see the change (the test fails). The hook keys on the records of
+the IR (`Program::resume_handles`, and `Program::resume_runs` of Z4b): the test
+`a_record_with_no_resumes_at_fails_the_oracle` removes the `resumes_at` facts, and the
+oracle fails at the `resume` (with the check of the records off, the test fails). The unit
+tests of `machine::effects` (`the_chain_below_a_handled_body`,
+`the_record_and_the_facts_must_agree`) check each branch of the decision: a record with no
+`resumes_at`, a record with bad frames below it, and `resumes_at` with no record.
 
 **As built (F17.1): A4 of copies (ORACLE-GAP-2 of the second review of group D).** When a
 `multi` operation takes frames into its continuation, each frame `g` of the continuation

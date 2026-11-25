@@ -1,0 +1,14 @@
+// r0z4pb probe (bad): the clause resumes the `once` continuation in the nested handled body and again after the nested `handle` (W0501).
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                resume(())
+            }
+            resume(())
+        } } in {
+        tick()
+        print(1)
+    }
+}

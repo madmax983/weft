@@ -1,0 +1,21 @@
+// r0z4pb probe (bad): the rest performs `stop`, whose clause does not resume. The abort ends the nested body while the linear value `t` with no `on abort` is live (W0602).
+effect Stop { fn stop() }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Stop { fn stop() { print(9) } } in {
+        handle Tick { fn tick() {
+                handle Other { fn other() { resume(()) } } in {
+                    let t = T { id: 1 }
+                    resume(())
+                    done(t)
+                }
+            } } in {
+            tick()
+            stop()
+            print(1)
+        }
+    }
+}

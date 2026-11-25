@@ -1,0 +1,14 @@
+// r0z4pb probe (bad): the nested handled body resumes the `once` continuation two times (W0501).
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                resume(())
+                resume(())
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}
