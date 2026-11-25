@@ -1,0 +1,12 @@
+// z4b probe (ok): as s01 bad, but the clause reads the reference before the block of sim.run.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock {
+    handle Tick { fn tick(r: &u64) {
+            print(r + 1)
+            sim.run(seed: 1) { resume(()) }
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}

@@ -155,6 +155,12 @@ pub enum Rule {
     /// arm, the miss block or a group is not as `docs/ir.md` 6.1 gives, or a
     /// `ClosureIs` is not the test of a dispatch.
     BadDispatch,
+    /// V22: a runtime resume node (plan stage R0z Z4b) is not well formed: its
+    /// block does not end with a call of `sim.run` or `with_timeout` in a clause
+    /// body whose last argument is a move of a whole local that the block makes a
+    /// closure of the record in, or the capture of the record is not a `Kont`
+    /// capture of the continuation of that clause.
+    BadResumeRun,
 }
 
 impl Rule {
@@ -181,6 +187,7 @@ impl Rule {
             Self::ReturnOrigin => 18,
             Self::BadRegion => 19,
             Self::BadDispatch => 20,
+            Self::BadResumeRun => 22,
         }
     }
 
@@ -228,6 +235,7 @@ impl Rule {
             }
             Self::BadRegion => "a copy region is not well formed".to_string(),
             Self::BadDispatch => "a dispatch is not well formed".to_string(),
+            Self::BadResumeRun => "a runtime resume node is not well formed".to_string(),
         }
     }
 }
@@ -255,6 +263,7 @@ pub fn verify_program(p: &Program, tys: &TyTable) -> Vec<Broken> {
     once_run(p, &mut out);
     regions(p, &mut out);
     dispatches(p, &mut out);
+    resume_runs(p, &mut out);
     let views = env_views(p);
     let made = closure_sites(p);
     for (ci, c) in p.closures.iter().enumerate() {
@@ -2521,6 +2530,92 @@ fn kept(
             });
         }
     }
+}
+
+/// V22 (plan stage R0z Z4b): each runtime resume node (`Program::resume_runs`,
+/// `docs/ir.md` 6.1) is the terminator of a block of a clause body, and the
+/// terminator is a call of `sim.run` or `with_timeout` with an `unwind` block.
+/// The last argument of the call is a move of a whole local `t`, and the last
+/// statement of the block that is not `Live` or `Dead` is `t = closure c(move k)`,
+/// with `c` the closure of the record and `k` the continuation local of the
+/// clause, which is `once`. The clause body is the maker of `c`, and `c` has one
+/// capture, `kont` (index 0), of the mode `Kont` with the source `k`. Two records
+/// do not name one block. The form of the block (R-RESUMER) is a rule of the
+/// fact generator at the one maker of `c` (`Inst::resume_run`), not of V22.
+fn resume_runs(p: &Program, out: &mut Vec<Broken>) {
+    let mut seen: HashSet<(BodyId, BlockId)> = HashSet::new();
+    for r in &p.resume_runs {
+        let ok = seen.insert((r.body, r.block)) && resume_run_ok(p, r);
+        if !ok {
+            out.push(Broken {
+                body: r.body,
+                block: Some(r.block),
+                local: None,
+                rule: Rule::BadResumeRun,
+            });
+        }
+    }
+}
+
+/// True if the runtime resume node `r` has the form of V22 ([`resume_runs`]).
+fn resume_run_ok(p: &Program, r: &crate::ResumeRun) -> bool {
+    let Some(body) = p.body(r.body) else {
+        return false;
+    };
+    let Some((kont, false)) = body.kont else {
+        return false;
+    };
+    if !matches!(body.kind, BodyKind::Clause(..)) {
+        return false;
+    }
+    let Some(blk) = body.block(r.block) else {
+        return false;
+    };
+    let TermKind::Call {
+        callee: Callee::Fn(f, _),
+        args,
+        unwind: Some(_),
+        ..
+    } = &blk.term.kind
+    else {
+        return false;
+    };
+    let intrinsic = p.fns.get(f.index()).and_then(|d| d.intrinsic);
+    if !matches!(
+        intrinsic,
+        Some(crate::Intrinsic::SimRun | crate::Intrinsic::WithTimeout)
+    ) {
+        return false;
+    }
+    let Some(Operand::Move(t)) = args.last() else {
+        return false;
+    };
+    if !t.is_local() {
+        return false;
+    }
+    let made = blk
+        .stmts
+        .iter()
+        .rev()
+        .find(|x| !matches!(x.kind, StmtKind::Live(_) | StmtKind::Dead(_)));
+    let Some(StmtKind::Assign(q, Rvalue::Aggregate(crate::AggKind::Closure(c), ops))) =
+        made.map(|x| &x.kind)
+    else {
+        return false;
+    };
+    if q != t || *c != r.closure || ops.as_slice() != [Operand::Move(Place::local(kont))] {
+        return false;
+    }
+    let Some(d) = p.closures.get(c.index()) else {
+        return false;
+    };
+    let ([cap], 0) = (d.captures.as_slice(), r.kont) else {
+        return false;
+    };
+    d.maker == r.body
+        && cap.mode == CaptureMode::Kont
+        && cap.source.is_local()
+        && cap.source.local == kont
 }
 
 #[cfg(test)]

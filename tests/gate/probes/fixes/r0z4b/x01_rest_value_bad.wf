@@ -1,0 +1,15 @@
+// z4b probe (bad): the rest of the handled body gives the site local `f` a closure that pushes to `w`. The code of the clause after its block of with_timeout runs `f` (the value of the rest), then reads its reference into `w`.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    let f = || print(0)
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            f()
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        f = || w.push(6)
+    }
+}

@@ -344,7 +344,7 @@ impl Cycles {
                 }
             }
         }
-        if matches!(kind, weft_ir::TermKind::Resume { .. }) {
+        if super::clause::resume_term(p, b, x, kind) {
             if let Some(h) = self.clause_of(b) {
                 if let Some(hb) = p.bodies.get(h.index()) {
                     out.push((h, hb.entry));

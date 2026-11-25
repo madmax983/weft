@@ -1,0 +1,17 @@
+// z4b probe (bad): as n03 ok, but the rest of the handled body of Note clears `w`. The clause of Tick reads its reference into `w` after its block.
+effect Tick { fn tick(r: &u64) }
+effect Note { fn note() }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        handle Note { fn note() { sim.run(seed: 2) { resume(()) } } } in {
+            note()
+            w.clear()
+        }
+    }
+}

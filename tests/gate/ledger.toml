@@ -11940,3 +11940,93 @@ files = [
 codes = ["W0301"]
 reason = "plan stage R0z Z10: the bottom of a chain of closures in a handled body performs through the capability of the local handler, and the handled body puts the top into a local of `main`. Both pipelines reject the program with W0313 at line 5 (the `handle`); the old pipeline also gives W0301 at the run of the local after the `handle` (its value points into the locals of the handled body). The `ir` pipeline gives W0313 only, as on main for the chain of 12 levels; the chains of 70 and 100 kept the fallback on main. Each program faults (no handler for `N.note` on the task)"
 stage = "R0z"
+
+# Plan stage R0z Z4b: the runtime runs of `sim.run` and `with_timeout` (a runtime
+# resume node). The probes of `fixes/r0z4b` and the corpus program of the stage.
+[[entry]]
+class = "changed"
+files = ["tests/programs/213_runtime_resumes.wf"]
+codes = ["W0301"]
+reason = "plan stage R0z Z4b: the corpus program of the stage. Both pipelines give W0301 at line 19 (the rest of the handled body frees `w`, and the clause reads its reference after its block of `with_timeout`). The old pipeline also gives W0301 at line 67 (the marker `old:`): it puts the change of `w` by the code of the clause after the block at the perform. The `ir` pipeline splits the clause at the runtime resume node: that code runs at `Post`, after the end of the handled body, so the read in the handled body comes before the change. `after_the_block` alone is the probe `p01_post_part_ok` (no fault with the oracle)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0z4b/b01_block_mut_bad.wf"]
+codes = ["W0301", "W0312"]
+reason = "plan stage R0z Z4b (a refusal probe, R-RESUMER: the block of `sim.run` changes `w` before its resume, so the call gets no runtime resume node). Both pipelines reject the program with W0312 at line 10 (`tick` changes `w` while its argument points into `w`); the old pipeline also gives W0301 at line 8. The `ir` pipeline of main gives the same (W0312 only: the facts with no copy reject it, the rule of stage R0g). The program faults (a read of a freed cell)"
+stage = "R0z"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/r0z4b/v01_value_bad.wf"]
+codes = ["W0301"]
+reason = "plan stage R0z Z4b: the block of `with_timeout` gives the value of its resume back, and the rest of the handled body moves `v` into a callee. Both pipelines reject the program with W0301: the `ir` pipeline at the use of `r` (line 9), the old pipeline at the end of the clause (line 10). The program faults (a read of a freed cell, line 9); main keeps the fallback (the old pipeline)"
+stage = "R0z"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/fixes/r0z4b/p01_post_part_ok.wf"]
+reason = "plan stage R0z Z4b: the clause of `tick` clears `w` after its block of `with_timeout`, and the handled body reads its reference into `w` after the perform. The block resumes, so the read runs while the block runs, and the code of the clause after the block runs after the end of the handled body (`Post`). The old pipeline gives W0301 at line 12 (it puts the change of the clause at the perform); the `ir` pipeline splits the clause at the runtime resume node and gives no error. Main keeps the fallback (the old pipeline, W0301)"
+signed_by = "review round 1 of stage R0z Z4b (independent reviewer, weft-work/z4brev1): the program is clean (one task; the block resumes at once, `w.clear()` runs only after the handled body ends, when `r` is dead; a deadline cut aborts the task, so the post part never runs); it runs clean on the ast and ir engines (seeds 1 to 8; 1, 2 and 4 workers) and with the fact oracle; the old W0301 puts the post part of the clause at the perform"
+stage = "R0z"
+
+[[entry]]
+class = "sig"
+parts = ["raises"]
+files = [
+    "tests/gate/probes/fixes/r0z4/rev_z03_timeout_ref_bad.wf",
+    "tests/gate/probes/fixes/r0z4/rev_z03_timeout_ref_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/l01_cut_in_sim_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/n01_nested_sim_rest_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/n01_nested_sim_rest_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/n03_two_runtime_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/n03_two_runtime_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/p01_post_part_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/p01_post_part_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/r01_again_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/r01_again_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/t01_ref_rest_frees_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/t01_ref_rest_frees_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/t02_twice_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/t02_twice_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/t03_resume_after_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/t03_resume_after_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/t04_cut_linear_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/t04_cut_linear_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/t05_clause_linear_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/t05_clause_linear_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/v01_value_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/v01_value_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/u01c_onabort_nosleep_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/x01_rest_value_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/x01_rest_value_ok.wf",
+    "tests/gate/probes/fixes/r0z4b/x02_rest_push_bad.wf",
+    "tests/gate/probes/fixes/r0z4b/x02_rest_push_ok.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v20_with_timeout.wf",
+    "tests/programs/213_runtime_resumes.wf",
+    "verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v20_with_timeout.wf",
+]
+reason = "class F19-SIG-RAISES (stage F19), for the programs that plan stage R0z Z4b brings into scope (a runtime resume node: a block of `with_timeout` that resumes the continuation of the clause): `with_timeout` performs `Fail` through the row (a local `Fail` handler stops it, 5.31) and does not raise; the old inference gives `raises` to each `with_timeout`. No check of the `ir` pipeline reads `raises` of these bodies but W0118"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/r0z4b/c02_advance_late_bad.wf"]
+finding = "R0z4b-ADVANCE-LATE"
+reason = "plan stage R0z Z4b (review round 1, `c05_nosim`; refusal R-RT-CLOCK): the rest of the handled body moves the clock past the deadline of the block of `with_timeout` with `sim.clock.advance` (no wait), makes a linear value with no `on abort`, and a clause of a nested handler resumes: the deadline holds at that `resume` (the late timeout of ADR 0010), and the unwinder cannot finish the value. The old pipeline accepts it (a hole of main and of the old pipeline). With the refusal the program keeps the D1 fallback, as with main. The direct form (a plain block of `with_timeout`) has the same gap in the facts of the `ir` pipeline of main (an issue)"
+stage = "R0z"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/r0z4b/u01_onabort_sleep_bad.wf"]
+finding = "R0z4b-UNWIND-LATE"
+reason = "plan stage R0z Z4b (review round 2, `c01_onabort_sleep_bad`; refusal R-RT-UNWIND): the rest of the handled body runs a nested handler whose clause does not resume, and the unwinding runs an `on abort` function that sleeps past the deadline of the block of `with_timeout`. The deadline is only marked during the unwinding and cuts the rest at its end, while a linear value with no `on abort` is live. The old pipeline accepts it (a hole of main and of the old pipeline). With the refusal the program keeps the D1 fallback, as with main. The direct form (a plain block of `with_timeout`) has the same gap in the facts of the `ir` pipeline of main (an issue)"
+stage = "R0z"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/fixes/r0z4b/x01_rest_value_bad.wf"]
+codes = ["W0312"]
+reason = "plan stage R0z Z4b (review round 2, the test of `rest_exit`): the rest of the handled body gives the site local `f` a closure that pushes to `w`, and the code of the clause after its block of `with_timeout` runs `f`, then reads its reference into `w`. Both pipelines give W0301 at line 10. The old pipeline also gives W0312 at line 12 (`tick` with an argument into `w`): it puts the code of the clause after the block at the perform; that code runs after the end of the handled body. The program faults (a read of a freed cell)"
+stage = "R0z"

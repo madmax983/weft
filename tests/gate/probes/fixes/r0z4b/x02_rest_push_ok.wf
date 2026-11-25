@@ -1,0 +1,14 @@
+// z4b probe (ok): as x02 bad, but the clause reads its reference before its block. The rest pushes to `w` while the reference of the clause lives.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            print(r + 1)
+            with_timeout(50.ms) { resume(()) }
+        } } in {
+        tick(&w[0])
+        w.push(6)
+        w.push(7)
+    }
+}

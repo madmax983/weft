@@ -1,0 +1,14 @@
+// z4b probe (bad): as p01 ok, but the clause clears `w` before its block of with_timeout. The rest of the handled body reads its reference into `w` after that change.
+effect Tick { fn tick() }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick() {
+            w.clear()
+            with_timeout(50.ms) { resume(()) }
+        } } in {
+        let r = &w[0]
+        tick()
+        print(r + 1)
+    }
+}

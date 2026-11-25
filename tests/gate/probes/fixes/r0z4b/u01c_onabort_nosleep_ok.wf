@@ -1,0 +1,19 @@
+// z4b probe (ok; review round 2, c01c): as u01 ok, but the `on abort` function does not wait. The runtime resume node stays (R-RT-UNWIND does not apply).
+effect Ask { fn ask() -> u64 }
+effect N { fn n() }
+linear struct T { id: u64 }
+linear struct U { id: u64 }
+    on abort = slow
+fn slow(u: U) { let U(i) = u }
+fn fin(u: U) { let U(i) = u }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    let r = handle Ask { fn ask() { with_timeout(5.ms) { resume(1) } } } in {
+        let a = ask()
+        let t = T { id: a }
+        done(t)
+        handle N { fn n() { () } } in { let u = U { id: 1 }; n(); fin(u) }
+        a + 1
+    }
+    print(r)
+}

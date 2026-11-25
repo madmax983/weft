@@ -1,0 +1,14 @@
+// z4b probe (ok): as t03 bad, but the clause gives the value of the block back, with no second resume.
+effect Ask { fn ask() -> u64 }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            let a = with_timeout(50.ms) { resume(1) }
+            a
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

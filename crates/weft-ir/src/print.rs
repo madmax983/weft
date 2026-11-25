@@ -205,6 +205,13 @@ impl<'a> Printer<'a> {
                 d.miss.0
             );
         }
+        for r in &self.p.resume_runs {
+            let _ = writeln!(
+                out,
+                "resume run: body b{}, bb{}, closure c{}, kont {}",
+                r.body.0, r.block.0, r.closure.0, r.kont
+            );
+        }
     }
 
     /// Returns the text of body `id`: a header line, the locals and the blocks.

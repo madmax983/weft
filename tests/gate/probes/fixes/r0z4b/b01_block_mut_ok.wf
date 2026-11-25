@@ -1,0 +1,12 @@
+// z4b probe (ok, refusal): as b01 bad, but the block of sim.run reads `w` only.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { print(w.len()); resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+    }
+}

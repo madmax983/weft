@@ -1,0 +1,14 @@
+// z4b probe (ok): as t02 bad, but one block of with_timeout resumes the continuation.
+effect Ask { fn ask() -> u64 }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            let a = with_timeout(50.ms) { resume(1) }
+            a + 2
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

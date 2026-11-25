@@ -1,0 +1,19 @@
+// z4b probe (bad): the clause holds a linear value with no `on abort` across the block of with_timeout. The deadline can abort the clause there (W0602).
+effect Ask { fn ask() -> u64 }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            let t = T { id: 1 }
+            let a = with_timeout(5.ms) { resume(1) }
+            done(t)
+            a
+        }
+    } in {
+        let a = ask()
+        sleep(10.ms)
+        a + 1
+    }
+    print(r)
+}

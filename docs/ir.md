@@ -330,6 +330,8 @@ pub struct Program {
     pub cap_envs: Vec<CapEnv>,      // index: CapEnvId
     pub tests: Vec<TestDecl>,       // index: TestId
     pub regions: Vec<CopyRegion>,   // the copy regions of the fact generator (6.1); none from the builder
+    pub dispatches: Vec<Dispatch>,  // the dispatches of the fact generator (6.1, plan stage R0z Z6)
+    pub resume_runs: Vec<ResumeRun>, // the runtime resume nodes of the fact generator (6.1, plan stage R0z Z4b)
 }
 /// A test block: its name (the interpreter runs tests by name) and its body.
 pub struct TestDecl { pub name: String, pub body: BodyId }
@@ -583,6 +585,7 @@ to V17; the others need the type table.
 | V19 | (Plan stage R0k-b1'.) Each copy region (`Program::regions`, 6.1) is in one body: its blocks and its value exist, only its entry has an edge from a block outside it, each edge out of it is a `Goto`, and two regions share no block. In a region, V11 reads the capability environment of the region: `Row(E)` is valid there if the region does not bind `E`, also in a handled body of `E`. (Plan stage R0k-b2.) The environment local of a region is a local of kind `CopyEnv` of the closure of the region, and the value of the region is a whole local; a `CopyEnv` local that no region of its body names breaks V14, and so does its `Live` or `Dead`; a move below it breaks V14 (`EnvMove`), but in a region of a `once` closure (plan stage R0z Z3). | the interpreter takes the handlers of the closure value at the entry and gives them back at each exit (8.4) |
 | V20 | (Plan stage R0z Z6.) Each dispatch (`Program::dispatches`, 6.1) has two arms or more; its value is a whole local of its body (an upvar local has no `Live`, so the rule asks for none); the groups are not empty, do not meet, and name closures with distinct bodies (distinct code units) and one `once` flag. The last statement of each test block is `g = ClosureIs(value, group)` and its terminator is `switch g -> [1: entry, otherwise: next]` (the next test, or the miss block after the last arm). The miss block has only `Dead` statements (the end of the result of the last test, as each successor of a test has) and `Unreachable`. The one edge into an arm entry is from its test; a plain arm ends with a call of the value; the region of a copy arm copies the closures of the group, and its value is the value of the dispatch or the local of a `once` move of it. Each `ClosureIs` of the program is the test of an arm. | the interpreter tests the code of the closure value (8.4) |
 | V21 | (Plan stage R0z Z4.) The continuation of a `Resume` is a `Kont` local of a clause, an upvar local of a continuation type, a `Kont` field of a closure environment (V11), or the `Kont` field of the environment local of a kont region: a local of kind `CopyEnv(c)` that is the `env_local` of the region that holds the block, one `Field(i)` projection, `i` the `kont` of the region, and capture `i` of `c` of mode `Kont`. Else the rule `BadKont` breaks. | the interpreter reads the continuation from the cell of the closure value (8.4) |
+| V22 | (Plan stage R0z Z4b.) Each runtime resume node (`Program::resume_runs`, 6.1) names a block of a clause body whose terminator is a call of `sim.run` or `with_timeout` with an `unwind` block. The last argument of the call is a move of a whole local `t`, and the last statement of the block that is not `Live` or `Dead` is `t = closure c(move k)`, with `c` the closure of the record and `k` the continuation local of the clause, which is `once`. The clause body is the maker of `c`, and `c` has one capture, `kont` (index 0), a `Kont` capture of `k`. Two records do not name one block. (The form of the block, R-RESUMER of 6.1, is a rule of the fact generator at the one maker of `c`, not of V22.) Else the rule `BadResumeRun` breaks. | the runtime runs the block at the call, on this task (8.4) |
 
 ---
 ## 5. Lowering rules: typed tree to IR
@@ -2062,12 +2065,17 @@ As built (`irbuild/task.rs`, plan stage B11):
 has an `unwind` block (V10). The fact generator
 emits `sim_run_at`, the `handler` and `sim_root` facts of the root handlers of the
 simulation, and applies the summary of the closure with those handlers as its
-capabilities.
+capabilities. A block that resumes the continuation of the clause around the call is a
+runtime resume node of plan stage R0z Z4b (6.1): the call is a resume point of the clause,
+and the call applies no summary of the block.
 
 ### 5.31 `with_timeout` [2.30]
 
 A call. Its summary runs the closure exactly once; the call can abort and perform `fail`
-through the capabilities at the call.
+through the capabilities at the call. A block that resumes the continuation of the clause
+around the call is a runtime resume node (plan stage R0z Z4b, 6.1); the deadline then
+cuts the rest of the handled body at a wait, or holds when the `resume` returns (ADR
+0010), and the call fails.
 
 ### 5.32 `Rc`, `Box`, `Weak` [2.32]
 
@@ -2752,8 +2760,93 @@ As built (plan stage R0z Z4, kont regions; `factgen/instantiate.rs`, `Inst::kont
   fact oracle on, a clause frame resumes only the continuation of its own activation
   ("fact oracle (kont region)").
 - Not built: a resume point in a handled body inside the clause (Part B of the design),
-  the runtime runs of `sim.run` and `with_timeout` (Z4b), a dispatch in the mode of
-  R0k-c1, a `multi` re-entry of a kont region.
+  a dispatch in the mode of R0k-c1, a `multi` re-entry of a kont region. The runtime runs
+  of `sim.run` and `with_timeout` are stage Z4b (below).
+
+As built (plan stage R0z Z4b, runtime resume nodes; `factgen/instantiate.rs`,
+`Inst::resume_run`, `analysis::clause::runtime_resume`):
+
+- The form. `sim.run(seed, workers) { block }` and `with_timeout(d) { block }` are calls of
+  intrinsics (5.30, 5.31), and the runtime runs the block at the call, on this task: it
+  pushes a marker frame (`Frame::Sim`, `Frame::Timeout`), then the frame of the closure. A
+  copy is not possible: the runtime puts the simulation or the deadline around the block.
+  So, in the mode of R0k-c1 (`instantiate_kont`), a call in a clause body whose block
+  resumes the continuation of the clause gets a record (`weft_ir::ResumeRun`,
+  `Program::resume_runs`, V22), not a copy: the call node is a resume point of the clause
+  (form 2 of the design of Z4, `weft-work/z4/design.md` 2.11).
+- The rules of the record (each refusal keeps the summary of the block, which notes
+  `KONT_CAPTURED`, so the program keeps the fallback):
+  - R-RT-FORM: the clause has a `once` continuation; the terminator is a call of the
+    intrinsic with an `unwind` block, its last argument is `move t`, and the last
+    statement of the block that is not `Live` or `Dead` is `t = closure c(move k)`, with
+    `k` the continuation local of the clause. So the value of the block is this closure,
+    and it holds the continuation of this activation. A call in a handled body or a scope
+    body inside the clause gets no record.
+  - R-RESUMER: `c` has one capture (the `Kont` capture), no parameter and no body inside
+    its body. Its locals are plain data (no reference, no function value, no linear,
+    `once` or immovable value). Its normal blocks are one path from the entry to a
+    `Return`, with no branch and no cycle, and with exactly one `Resume` of the capture,
+    whose argument is a constant. Each statement there is `Live`, `Dead`, `print`, or a
+    write of a whole local of `c` from constants and whole locals of `c` (no read of the
+    environment). So the code of the block outside its `resume` touches no place outside
+    its frame and performs nothing.
+  - R-RT-MULTI: a handler of the program has a `multi` operation (a `multi` resume can
+    copy the frames of the clause, issues #94 and #95).
+  - R-RT-FAIL: a handler of the program handles `Fail` (the failure of the deadline could
+    run a clause of a local handler at the call).
+  - R-RT-TASK: the program has a spawn site, a `fork` or a `scope`. For `sim.run` the
+    rest of the handled body would start its tasks on the scheduler of the simulation,
+    and for `with_timeout` the deadline can cut the rest while a task that it started
+    lives on; the facts of the tasks have one runtime.
+  - R-RT-CLOCK (review round 1 of Z4b): the program has an extern function `advance`
+    (`sim.clock.advance`). It moves the clock with no wait, so a deadline that passes there
+    does not cut the rest of the handled body; it holds at the next `resume` (the late
+    timeout of ADR 0010), an abort at a node of the rest with no abort edge in the facts
+    (`c05_nosim` of the review: a trace conformance failure).
+  - R-RT-UNWIND (review round 2 of Z4b): an `on abort` function of the program can wait
+    (`instantiate::unwind_can_wait`, by the effects of the code, fail-closed: the function
+    or a callee performs, runs a function value, has a task, scope or handler terminator,
+    or calls an extern function whose row is not stated or not empty, as `sleep` with
+    `clock`; a type whose `on abort` the runtime gives or whose function is not in the
+    program counts too, but the `Task` of the prelude, as R-RT-TASK leaves no task). A
+    deadline that passes while an unwinding waits does not cut there: the timeout is only
+    marked, and the cut comes at the end of the unwinding (`check_interrupt`), at a node
+    with no abort edge in the facts (`c01_onabort_sleep` of the review).
+  - The property that R-RT-CLOCK, R-RT-UNWIND and R-RT-TASK give: the deadline cuts the
+    rest of the handled body only at a wait of the rest itself, and each such wait has an
+    abort edge in the facts. In the interpreter (`fire_timers`, `late_timeout`) the clock
+    moves only at a wait, by another task, or by `sim.clock.advance`. A passed deadline
+    cuts a blocked task at its wait; it waits only for the end of an unwinding
+    (`live_base`), or for the `resume` of a continuation that holds the `Timeout` frame
+    (the rest performs an operation of an outer handler whose clause waits: the cut is at
+    that perform, a node with `may_abort`). The refusals apply to `sim.run` nodes too.
+  - R-REC (as for a kont region): the `handle` of the handler is in a function body, and
+    that function cannot run again while it runs.
+- The analysis. A runtime resume node is a resume point of its clause wherever a
+  `Resume` of the clause body is one (`clause::resume_term`): the run of the code before
+  the resume points stops there (`Mode::stop_at_resume`), `lands_in`, `has_resume` and
+  the widening cycles see it. After the handled body, the code after the node starts from
+  the state there with the call (`transfer::call`; `call_out` applies no run of the block
+  at the node) and the rest of the handled body (`clause::rest_exit`, the transfer of a
+  `Resume`). The destination gets the value of the call: plain data, by R-RESUMER.
+- The facts. The node has the facts of the call with no summary of the block, and the
+  facts of a resume point: `resumes_at` of the capability of the handler and the region
+  of the rest of the handled body (`handlers::runtime_resume`, `Handlers::resumes`). The
+  `pre` and `post` parts of the clause split there (`frames::resume_parts`,
+  `handlers::regions`): `Main` is in the `pre` part, `Ret` and the abort nodes in the
+  `post` part. The continuation local moved at the make of the closure, so a second use of
+  it is W0501. Unlike a `Resume`, the abort of the node is an abort of the clause too (the
+  deadline): `frames::past_clauses` and the `abort` flag of `project` keep it. A cut rest
+  changes and frees less than the whole rest, and its frames end at the unwind, as at the
+  normal end; the facts of the handled body have the abort edge of the wait where the
+  deadline cuts it.
+- The fact oracle. The block resumes in the frame of the closure, above the marker frame
+  of the call. With the facts of the clause frame below at a runtime resume node (a node
+  `call` with `resumes_at`): the continuation must be the continuation of that clause frame
+  ("fact oracle (runtime resume)"), and the clause frame waits at the node while the rest
+  runs (A4, `FactOracle::runtime_wait_begin`). The summary oracle A3 takes such a frame as a
+  frame that waits at a `resume` (`Comp::waits`): the frames above it are the marker, the
+  block and the rest of the handled body.
 
 ### 6.2 Nodes and phases
 
@@ -7113,6 +7206,17 @@ at its `resume` with the nodes of the frame above it, not with the `Resume` node
 A4 failed on each hole program of the review (D-CONT-RUN, D-CONT-NEST, D-CONT-UNWIND,
 D-COPY-WAIT) before the fix of the region, and on the clean twins whose write after the
 perform the region did not have.
+
+**As built (plan stage R0z Z4b): A4 at a runtime resume node.** The block of a call of
+`sim.run` or `with_timeout` resumes in the frame of its closure, above the marker frame of
+the call and the clause frame (6.1). At that `resume`, if the facts of the clause frame
+have a `resumes_at` row at a `call` node of its location, `Machine::resume` checks that the
+continuation is the continuation of that clause frame ("fact oracle (runtime resume)") and
+starts the wait of the clause frame at that node (`FactOracle::runtime_wait_begin`), as for
+a `Resume` of the clause. The test `a_runtime_resume_node_with_no_region_fails_a4`
+(`fact_oracle.rs`) removes the region of the rest at the call node: A4 then fails on
+`fixes/r0z4b/t01_ref_rest_frees_ok`. The summary oracle A3 takes the clause frame at such a
+node as a frame that waits at a `resume` (`Comp::waits`).
 
 **As built (F17.1): A4 of copies (ORACLE-GAP-2 of the second review of group D).** When a
 `multi` operation takes frames into its continuation, each frame `g` of the continuation

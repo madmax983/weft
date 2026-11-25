@@ -1,0 +1,18 @@
+// z4b probe (ok): as t04 bad, but the rest consumes the linear value before `sleep`. The deadline cuts the rest at `sleep` (the run fails with `timeout`).
+effect Ask { fn ask() -> u64 }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    let r = handle Ask {
+        fn ask() {
+            with_timeout(5.ms) { resume(1) }
+        }
+    } in {
+        let a = ask()
+        let t = T { id: a }
+        done(t)
+        sleep(10.ms)
+        a + 1
+    }
+    print(r)
+}

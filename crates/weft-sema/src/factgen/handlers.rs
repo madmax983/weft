@@ -1232,6 +1232,26 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
     Ok(())
 }
 
+/// The facts of a runtime resume node at its `Main` node (plan stage R0z
+/// Z4b, `clause::runtime_resume`).
+///
+/// They come after the facts of the call (which apply no summary of the
+/// block): `resumes_at` of the capability of the handler,
+/// and the region of the rest of the handled body ([`continuations`] reads
+/// `Handlers::resumes`). The call has `may_abort` already (the deadline of
+/// `with_timeout`, and an abort of the rest). The continuation local of the
+/// clause moved at the make of the closure of the block (W0501 for a second
+/// use), and the call moves the closure value.
+pub fn runtime_resume(em: &mut Em<'_>, nodes: &CallNodes, block: BlockId) {
+    let Some(rt) = clause::runtime_resume(em.p, em.body, block) else {
+        return;
+    };
+    let n = nodes.main;
+    let (_, cap_id) = ids(em, rt.h);
+    em.facts.resumes_at.push((n, cap_id));
+    em.hx.resumes.push((n, rt.h, rt.cb));
+}
+
 /// The `Copy` node `c` of a node of a handled body that runs a clause that
 /// can resume more than once (`docs/ir.md` 6.5, plan stage F16).
 ///
@@ -2700,7 +2720,7 @@ fn regions(
             let Some(blk) = b.blocks.get(x.index()) else {
                 continue;
             };
-            if stop && matches!(blk.term.kind, TermKind::Resume { .. }) {
+            if stop && clause::resume_term(p, bid, x, &blk.term.kind) {
                 continue;
             }
             if stop {
@@ -2718,8 +2738,16 @@ fn regions(
     let nexts: Vec<BlockId> = b
         .blocks
         .iter()
-        .flat_map(|blk| match blk.term.kind {
+        .enumerate()
+        .flat_map(|(i, blk)| match blk.term.kind {
             TermKind::Resume { next, .. } => vec![next],
+            // A runtime resume node (plan stage R0z Z4b).
+            ref t
+                if p.resume_run_at(bid, BlockId(u32::try_from(i).unwrap_or(u32::MAX)))
+                    .is_some() =>
+            {
+                t.normal_successors()
+            }
             ref t if clause::resume_scope(p, bid, t, c).is_some() => t.normal_successors(),
             _ => Vec::new(),
         })
@@ -2811,8 +2839,9 @@ fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet
                     .blocks
                     .iter()
                     .enumerate()
-                    .filter(|(_, blk)| {
-                        matches!(blk.term.kind, TermKind::Resume { .. })
+                    .filter(|(i, blk)| {
+                        let k = BlockId(u32::try_from(*i).unwrap_or(u32::MAX));
+                        clause::resume_term(p, x, k, &blk.term.kind)
                             || clause::resume_scope(p, x, &blk.term.kind, c).is_some()
                     })
                     .map(|(i, _)| BlockId(u32::try_from(i).unwrap_or(u32::MAX)))

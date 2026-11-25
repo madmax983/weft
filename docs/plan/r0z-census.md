@@ -346,6 +346,29 @@ the counts.
 - Tier 2 (the rows of the Z8 list): 13 fallbacks and 6 time-outs with main, 9 fallbacks and
   6 time-outs with Z10.
 
+## Z4b (as built)
+
+- Z4b (the runtime runs of `sim.run` and `with_timeout`: a runtime resume node with no copy)
+  closes rows 88 and 89 of tier 1 (`rr3_v19_sim_run_closure`, `rr3_v20_with_timeout`; 16 to
+  14 fallbacks of the census rows) and their copies in tier 2 (9 to 7):
+  `docs/plan/core-ir.md`, "Z4b as built". The block of the call resumes the continuation of
+  the clause and does nothing else outside its frame, so the call node is a resume point of
+  the clause. Each row is in scope with no error, as the old pipeline gives. No new language
+  rule: the possible W0314 for a `resume` in the block of `sim.run` is not necessary.
+- Tier 1 (after review round 2): 368 fallbacks of 6395 files with main, 331 with Z4b (`check --reasons`,
+  `weft-work/z4b/census/`). Of the 6346 files of Z10, 324 with main and 318 with Z4b: rows
+  88 and 89 and the review probes `rev_z03` and `rev_z07` of `fixes/r0z4` (bad and clean
+  twins) leave the fallback; the census rows: 16 to 14. The new files are the 48 probes of
+  `fixes/r0z4b` and the corpus program `213_runtime_resumes`: 44 fallbacks with main, 13 with
+  Z4b (the refusal probes: a `multi` operation, a block that is not a resumer, a handler of
+  `Fail`, and R-RT-CLOCK of review round 1: `sim.clock.advance` moves the clock with no wait,
+  so the late timeout can fire at a later `resume` of the rest, `c02_advance_late`; and
+  R-RT-UNWIND of review round 2: an `on abort` function that can wait, so the deadline cuts
+  the rest at the end of the unwinding, `u01_onabort_sleep`, `u01e`).
+- Tier 2 (the rows of the Z8 list): 9 fallbacks and 5 time-outs with main, 7 fallbacks and
+  5 time-outs with Z4b. The rows that stay in tier 1 (14): 25, 47, 48, 72, 73, 82, 83, 86,
+  87, 93, 94, 102, 103 and 105, with the reasons of the earlier stages.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -465,8 +488,8 @@ the counts.
 | 85 | `fixes/r0kc/c09_field_ok.wf` | D1 | D1a refusal: a field (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
 | 86 | `verify/s5/R2c: .../p/fd2_v2_closure_resume.wf` | D1 | D1a in a `multi` clause: a perform between, two runs | clean | no fault | clean | no | Z4 |
 | 87 | `verify/s5/R2c: .../p/fd2_v3_vec_of_closures.wf` | D1 | D1a through a `Vec` (heap slot), a perform between | clean | no fault | clean | no | Z4 |
-| 88 | `verify/s5/R2c: .../p/rr3_v19_sim_run_closure.wf` | D1 | runtime run: `resume` in the block of `sim.run` | clean | no fault | clean | no | Z4b |
-| 89 | `verify/s5/R2c: .../p/rr3_v20_with_timeout.wf` | D1 | runtime run: `resume` in the block of `with_timeout` | clean | no fault | clean | no | Z4b |
+| 88 | `verify/s5/R2c: .../p/rr3_v19_sim_run_closure.wf` | D1 | runtime run: `resume` in the block of `sim.run` | clean | no fault | clean | no | Z4b (closed) |
+| 89 | `verify/s5/R2c: .../p/rr3_v20_with_timeout.wf` | D1 | runtime run: `resume` in the block of `with_timeout` | clean | no fault | clean | no | Z4b (closed) |
 | 90 | `fixes/r0kd1/d02_multi_weak.wf` | esc | D4 multi: the update after a `multi` resume stays weak, so a closure seems to run outside its handler | clean | no fault | clean | yes | Z8 (closed) |
 | 91 | `verify/partb/p/g2_lexical.wf` | D3 | a value through a `resume`: the inner clause gives back a closure that performs to the outer handler | clean | no fault | clean | no | Z8 (closed) |
 | 92 | `fixes/r0kd2/s4_spawn_in_closure_ok.wf` | E4 | a spawn in a closure on the scope of the outer body; two writes of `f` | clean | no fault | clean | yes | Z9b (closed) |

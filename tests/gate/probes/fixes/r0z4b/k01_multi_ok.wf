@@ -1,0 +1,14 @@
+// z4b probe (ok, refusal): a `multi` operation resumes in the block of sim.run. A `multi` continuation is not a runtime resume: the program keeps the fallback.
+effect Pick { multi fn pick() -> u64 }
+fn main() / clock {
+    let r = handle Pick {
+        fn pick() {
+            sim.run(seed: 1) { let v = resume(1); print("in sim {v}") }
+            0
+        }
+    } in {
+        let a = pick()
+        a + 1
+    }
+    print(r)
+}

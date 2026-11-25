@@ -5761,3 +5761,263 @@ mod r0z10 {
         assert!(text.contains("as a task"), "{text}");
     }
 }
+
+/// The runtime runs of `sim.run` and `with_timeout` (plan stage R0z Z4b,
+/// `docs/ir.md` 6.1, "As built (plan stage R0z Z4b)"): a call whose block
+/// resumes the continuation of the clause is a runtime resume node.
+mod r0z4b {
+    use weft_facts::FnFacts;
+    use weft_ir::verify::{verify_program, Rule};
+    use weft_sema::factgen::instantiate::{instantiate_kont, Instantiated};
+
+    /// The source of the probe `path` of `tests/gate/probes`.
+    fn source(path: &str) -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(path);
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    /// The analysis of `src` and its IR.
+    fn built(src: &str) -> (weft_sema::Analysis, weft_sema::irbuild::Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The program of the kont mode of `src`, if it has a copy or a runtime
+    /// resume node.
+    fn kont(src: &str) -> Option<Instantiated> {
+        let (_, b) = built(src);
+        instantiate_kont(&b)
+    }
+
+    /// The runtime resume nodes of the kont mode of `src`.
+    fn runs(src: &str) -> usize {
+        kont(src).map_or(0, |i| i.built.program.resume_runs.len())
+    }
+
+    /// True if the old pipeline checks the program `src`: the scope of the
+    /// `ir` pipeline has a fallback, or a pending construct with no view of
+    /// the copies.
+    fn falls_back(src: &str) -> bool {
+        let (a, _) = built(src);
+        a.ir_scope.as_ref().is_none_or(|s| {
+            s.fallback.is_some() || s.pending.as_ref().is_some_and(|p| p.copy.is_none())
+        })
+    }
+
+    /// The rows 88 and 89 of the census and the forms of the probes (a
+    /// reference of the clause across the block, the value of the block, a
+    /// second activation, a change in the rest, the code of the clause
+    /// after the block) get a runtime resume node. The program verifies (V22)
+    /// and the `ir` pipeline checks it. With the fix off, each one keeps the
+    /// fallback.
+    #[test]
+    fn the_rows_of_the_census_get_a_runtime_resume_node() {
+        let r2c = "verify/s5/R2c: effects, continuations, on abort and drops/p";
+        let mut paths = vec![
+            format!("{r2c}/rr3_v19_sim_run_closure.wf"),
+            format!("{r2c}/rr3_v20_with_timeout.wf"),
+        ];
+        for n in [
+            "t01_ref_rest_frees",
+            "s01_ref_rest_frees",
+            "r01_again",
+            "m01_move_rest",
+            "n01_nested_sim_rest",
+            "v01_value",
+            "p01_post_part",
+            "t04_cut_linear",
+            "n03_two_runtime",
+            "x01_rest_value",
+            "x02_rest_push",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z4b/{n}_{twin}.wf"));
+            }
+        }
+        for path in &paths {
+            let src = source(path);
+            let inst = kont(&src).unwrap_or_else(|| panic!("{path}: no kont mode"));
+            let p = &inst.built.program;
+            assert!(!p.resume_runs.is_empty(), "{path}: no runtime resume node");
+            assert!(
+                verify_program(p, &inst.built.tys)
+                    .iter()
+                    .all(|x| x.rule != Rule::BadResumeRun),
+                "{path}: {:?}",
+                verify_program(p, &inst.built.tys)
+            );
+            if path.ends_with("_ok.wf") || path.starts_with("verify") {
+                assert!(!falls_back(&src), "{path}: a fallback");
+            }
+        }
+        // An `on abort` function that does not wait keeps the node
+        // (R-RT-UNWIND is by the effects of the code).
+        let src = source("fixes/r0z4b/u01c_onabort_nosleep_ok.wf");
+        assert!(runs(&src) > 0, "u01c: no runtime resume node");
+        assert!(!falls_back(&src), "u01c: a fallback");
+    }
+
+    /// The code of the clause after the node starts from the state at the end
+    /// of the handled body (`clause::rest_exit`): the rest gives the site local
+    /// `f` a closure that pushes to `w`, so the run of `f` after the block
+    /// changes `w` in the facts of `main`.
+    #[test]
+    fn the_code_after_the_node_sees_the_values_of_the_rest() {
+        let f = facts_of("fixes/r0z4b/x01_rest_value_bad.wf");
+        let changes = f
+            .mutates_at
+            .iter()
+            .any(|&(n, q)| f.node(n).label == "f" && f.place(q).display.starts_with('w'));
+        assert!(changes, "the run of `f` changes no place of `w`");
+    }
+
+    /// The facts of `main` of the probe `path` in the program of the kont
+    /// mode (`Pending::copy`: the facts of the `ir` pipeline that check the
+    /// program).
+    fn facts_of(path: &str) -> FnFacts {
+        let src = source(path);
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        let a = weft_sema::analyze_source(&src, opts)
+            .unwrap_or_else(|d| panic!("{path}: {}", d.message));
+        let copy = a
+            .ir_scope
+            .and_then(|s| s.pending)
+            .and_then(|p| p.copy)
+            .unwrap_or_else(|| panic!("{path}: no facts of the kont mode"));
+        copy.bodies
+            .into_iter()
+            .find(|b| b.facts.name == "main")
+            .map_or_else(|| panic!("{path}: no `main`"), |b| b.facts)
+    }
+
+    /// The call of a runtime resume node is a resume point of the clause: its
+    /// `Main` node has `resumes_at`, and the region of the rest of the handled
+    /// body (the rest frees `w`: a `releases_at` there). The block applies no
+    /// summary: no node of the block is a node of `main`.
+    #[test]
+    fn a_runtime_resume_node_is_a_resume_point_in_the_facts() {
+        for (path, label) in [
+            ("fixes/r0z4b/t01_ref_rest_frees_bad.wf", "with_timeout"),
+            ("fixes/r0z4b/s01_ref_rest_frees_bad.wf", "run"),
+        ] {
+            let f = facts_of(path);
+            let calls: Vec<weft_facts::NodeId> = f
+                .resumes_at
+                .iter()
+                .map(|&(n, _)| n)
+                .filter(|&n| f.node(n).kind == "call" && f.node(n).label == label)
+                .collect();
+            assert!(
+                !calls.is_empty(),
+                "{path}: no resumes_at at the call: {:?}",
+                f.resumes_at
+                    .iter()
+                    .map(|&(n, _)| (f.node(n).kind.clone(), f.node(n).label.clone()))
+                    .collect::<Vec<_>>()
+            );
+            let frees: Vec<String> = f
+                .releases_at
+                .iter()
+                .filter(|(n, _)| calls.contains(n))
+                .map(|&(_, q)| f.place(q).display.clone())
+                .collect();
+            assert!(
+                frees.iter().any(|q| q.starts_with('w')),
+                "{path}: {frees:?}"
+            );
+        }
+    }
+
+    /// Each refusal keeps the fallback (the reason of main): R-RT-MULTI (a
+    /// `multi` operation), R-RESUMER (the block changes or reads a place
+    /// outside its frame, runs a closure, has a block inside it, calls a
+    /// function, resumes two times), R-RT-TASK (the rest starts a task in a
+    /// scope), R-RT-FORM and R-RT-FAIL (the call is in a handled body of a
+    /// local `Fail` handler inside the clause), R-RT-FAIL (a local `Fail`
+    /// handler around the `handle`), R-RT-CLOCK (`sim.clock.advance` moves
+    /// the clock with no wait: the late timeout at a later `resume`),
+    /// R-RT-UNWIND (an `on abort` function that can wait: the cut at the end
+    /// of the unwinding).
+    #[test]
+    fn the_refusals_keep_the_fallback() {
+        for path in [
+            "fixes/r0z4b/k01_multi_ok.wf",
+            "fixes/r0z4b/k01_multi_bad.wf",
+            "fixes/r0z4b/b01_block_mut_ok.wf",
+            "fixes/r0z4b/c01_closure_in_block_ok.wf",
+            "fixes/r0z4b/c01_closure_in_block_bad.wf",
+            "fixes/r0z4b/n02_nested_blocks_ok.wf",
+            "fixes/r0z4b/n02_nested_blocks_bad.wf",
+            "fixes/r0z4b/s02_twice_in_block_bad.wf",
+            "fixes/r0z4b/f01_outer_fail_ok.wf",
+            "fixes/r0z4b/c02_advance_late_ok.wf",
+            "fixes/r0z4b/c02_advance_late_bad.wf",
+            "fixes/r0z4b/u01_onabort_sleep_ok.wf",
+            "fixes/r0z4b/u01_onabort_sleep_bad.wf",
+            "fixes/r0z4b/u01e_onabort_short_ok.wf",
+            "fixes/r0z4/rev_z01_timeout_spawn_ok.wf",
+            "fixes/r0z4/rev_z02_block_calls_ok.wf",
+            "fixes/r0z4/rev_z04_timeout_local_fail_ok.wf",
+            "fixes/r0z4/rev_z05_timeout_cut_ref_bad.wf",
+            "fixes/r0z4/rev_z06_sim_task_ok.wf",
+        ] {
+            let src = source(path);
+            assert_eq!(runs(&src), 0, "{path}: a runtime resume node");
+            if path.ends_with("_ok.wf") {
+                assert!(falls_back(&src), "{path}: no fallback");
+            }
+        }
+    }
+
+    /// V22: a record of a runtime resume node that names another closure, or
+    /// a block with no call of `sim.run` or `with_timeout`, breaks
+    /// `BadResumeRun`.
+    #[test]
+    fn a_wrong_record_breaks_v22() {
+        let src = source("fixes/r0z4b/t01_ref_rest_frees_ok.wf");
+        let inst = kont(&src).expect("a kont mode");
+        let tys = &inst.built.tys;
+        let mut p = inst.built.program.clone();
+        assert!(verify_program(&p, tys)
+            .iter()
+            .all(|x| x.rule != Rule::BadResumeRun));
+        let mut wrong = p.resume_runs[0].clone();
+        wrong.closure = weft_ir::ClosureId(wrong.closure.0 + 1);
+        p.resume_runs = vec![wrong];
+        assert!(verify_program(&p, tys)
+            .iter()
+            .any(|x| x.rule == Rule::BadResumeRun));
+        let mut p = inst.built.program.clone();
+        let mut moved = p.resume_runs[0].clone();
+        moved.block = weft_ir::BlockId(moved.block.0 + 1);
+        p.resume_runs = vec![moved];
+        assert!(verify_program(&p, tys)
+            .iter()
+            .any(|x| x.rule == Rule::BadResumeRun));
+        // A `multi` continuation of the clause.
+        let mut p = inst.built.program.clone();
+        let b = p.resume_runs[0].body;
+        if let Some(x) = p.bodies.get_mut(b.index()).and_then(|x| x.kont.as_mut()) {
+            x.1 = true;
+        }
+        assert!(verify_program(&p, tys)
+            .iter()
+            .any(|x| x.rule == Rule::BadResumeRun));
+    }
+}

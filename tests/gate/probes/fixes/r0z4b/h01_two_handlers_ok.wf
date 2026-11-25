@@ -1,0 +1,16 @@
+// z4b probe (ok): the rest of the handled body has a handler of another effect, and the clause of that handler resumes directly.
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(n: u64) }
+fn main() / clock {
+    let r = handle Ask {
+        fn ask() {
+            sim.run(seed: 1) { let v = resume(1); print("in sim {v}") }
+            0
+        }
+    } in {
+        let a = ask()
+        handle Note { fn note(n: u64) { print(n); resume(()) } } in { note(a) }
+        a + 1
+    }
+    print(r)
+}

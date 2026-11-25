@@ -1,0 +1,19 @@
+// z4b probe (bad, refusal R-RT-CLOCK; review round 1, c05_nosim): the rest of the handled body moves the clock past the deadline with sim.clock.advance (no wait), makes a linear value, then a nested clause resumes. The deadline holds at that resume (the late timeout), and the unwinder cannot finish the linear value. The program keeps the fallback.
+effect Ask { fn ask() -> u64 }
+effect N { fn n() }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn f() -> u64 / clock, fail {
+    let r = handle Ask { fn ask() { with_timeout(5.ms) { resume(1) } } } in {
+        let a = ask()
+        sim.clock.advance(10.ms)
+        let t = T { id: a }
+        handle N { fn n() { resume(()) } } in { n() }
+        done(t)
+        a + 1
+    }
+    r
+}
+fn main() / clock, fail {
+    print(f())
+}

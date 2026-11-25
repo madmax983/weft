@@ -1,0 +1,12 @@
+// z4b probe (bad, refusal): the block of sim.run changes `w` before its resume, and the clause keeps a reference into `w`. The block is not a resumer: the program keeps the fallback.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { w.clear(); resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+    }
+}

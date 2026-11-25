@@ -1,0 +1,12 @@
+// z4b probe (bad): as t01 bad, with sim.run. The rest ends the handled body and frees `w`. Then the clause reads the reference.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock {
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { resume(()) }
+            print(r + 1)
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}

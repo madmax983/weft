@@ -1,0 +1,14 @@
+// z4b probe (bad): as h01 ok, with a reference parameter. The clause of Note in the rest clears `w`, and the clause of Tick reads its reference after its block of sim.run.
+effect Tick { fn tick(r: &u64) }
+effect Note { fn note(n: u64) }
+fn main() / clock {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            sim.run(seed: 1) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        handle Note { fn note(n: u64) { w.clear(); resume(()) } } in { note(1) }
+    }
+}

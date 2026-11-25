@@ -1,0 +1,12 @@
+// z4b probe (ok, refusal): a local handler of Fail around the handle gets the timeout of the block of with_timeout. A handler of Fail in the program is a refusal (R-RT-FAIL): the program keeps the fallback.
+effect Ask { fn ask() -> u64 }
+fn main() / clock {
+    let r = handle Fail { fn fail(m) { print("cut: {m}"); 0 } } in {
+        handle Ask { fn ask() { with_timeout(5.ms) { resume(1) } } } in {
+            let a = ask()
+            sleep(10.ms)
+            a + 1
+        }
+    }
+    print(r)
+}

@@ -1,0 +1,14 @@
+// z4b probe (bad): as r01 ok, with a reference parameter. The rest performs the operation again, then clears `w`. Each activation reads its reference after its block of with_timeout.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        tick(&w[0])
+        w.clear()
+    }
+}

@@ -1,0 +1,17 @@
+// z4b probe (ok): the rest of the handled body of Tick has a handler of Note whose clause resumes in a block of sim.run too. The two runtime resume nodes are nested at run time.
+effect Tick { fn tick(r: &u64) }
+effect Note { fn note() }
+fn main() / clock, fail {
+    let w = Vec.new()
+    w.push(5)
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            print(r + 1)
+        } } in {
+        tick(&w[0])
+        handle Note { fn note() { sim.run(seed: 2) { resume(()) } } } in {
+            note()
+            print(w.len())
+        }
+    }
+}

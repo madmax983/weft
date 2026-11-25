@@ -1,0 +1,15 @@
+// z4b probe (bad): the block of with_timeout gives the value of its resume back, and the clause uses a reference parameter after the block. The rest moves the vector into a callee.
+effect Tick { fn tick(r: &u64) -> u64 }
+fn eat(v: Vec<u64>) -> u64 { let n = 0; for x in v { n += x }; n }
+fn main() / clock, fail {
+    let v = Vec.new()
+    v.push(5)
+    let n = handle Tick { fn tick(r: &u64) {
+            let x = with_timeout(50.ms) { resume(1) }
+            x + r
+        } } in {
+        let a = tick(&v[0])
+        eat(v) + a
+    }
+    print(n)
+}

@@ -1,0 +1,12 @@
+// z4b probe (bad): the clause keeps a reference into the handled body across the block of with_timeout. The rest ends the handled body and frees `w`. Then the clause reads the reference.
+effect Tick { fn tick(r: &u64) }
+fn main() / clock, fail {
+    handle Tick { fn tick(r: &u64) {
+            with_timeout(50.ms) { resume(()) }
+            print(r + 1)
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}
