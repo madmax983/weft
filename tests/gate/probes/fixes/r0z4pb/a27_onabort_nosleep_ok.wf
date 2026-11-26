@@ -1,0 +1,22 @@
+// r0z4pb probe (ok): as a27_onabort_sleep_bad, but the `on abort` function does not wait (R-PB-UNWIND is by the effects of the code), so the program is in scope. The linear value `t` has no `on abort`, and no abort ends the rest.
+effect Tick { fn tick() }
+effect Other { fn other() }
+effect N { fn n() }
+linear struct T { id: u64 }
+linear struct U { id: u64 }
+    on abort = slow
+fn slow(u: U) / clock { let U(i) = u }
+fn fin(u: U) { let U(i) = u }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+        } } in {
+        with_timeout(5.ms) {
+            tick()
+            let t = T { id: 1 }
+            handle N { fn n() { () } } in { let u = U { id: 1 }; n(); fin(u) }
+            done(t)
+        }
+    }
+}

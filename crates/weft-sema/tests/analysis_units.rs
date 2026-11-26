@@ -3123,14 +3123,20 @@ mod kont_copies {
     /// make and the run, a call that can abort between them, a borrow of the
     /// closure value and a field on the chain get a kont region from plan
     /// stage R0z Z4 (`r0z4::`). A make and a run in a handled body inside the
-    /// clause get no copy (a resume point in a handled body inside the clause
-    /// is not built).
+    /// clause get a kont region in that handled body from plan stage R0z Z4
+    /// Part B, and the handled body gets a record (`r0z4pb::`).
     #[test]
     fn the_probes_of_a_refusal_get_no_copy() {
         for name in ["c08_nested_ok.wf", "c08_nested_bad.wf"] {
-            assert!(copies(&probe(name)).is_none(), "{name}: a copy");
+            let inst = copies(&probe(name)).unwrap_or_else(|| panic!("{name}: no copy"));
+            assert!(
+                !inst.built.program.resume_handles.is_empty(),
+                "{name}: no record of the handled body"
+            );
         }
         for name in [
+            "c08_nested_ok.wf",
+            "c08_nested_bad.wf",
             "c03_two_runs_ok.wf",
             "c05_perform_between_ok.wf",
             "c06_call_between_ok.wf",
@@ -3228,7 +3234,19 @@ fn main() {
             .and_then(|s| s.pending.as_ref())
             .expect("pending");
         assert!(p.copy.is_some(), "no view of the copies");
-        let (a, _) = built(&probe("c08_nested_ok.wf"));
+        // The clause makes the closure, and a handled body inside the clause
+        // runs it: no copy and no record (plan stage R0z Z4 Part B, the probe
+        // `fixes/r0z4pb/a20_make_outside_ok`).
+        let src = "effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            let k = || resume(())
+            handle Other { fn other() { resume(()) } } in { k() }
+        } } in { tick() }
+}
+";
+        let (a, _) = built(src);
         let p = a
             .ir_scope
             .as_ref()
@@ -6019,5 +6037,273 @@ mod r0z4b {
         assert!(verify_program(&p, tys)
             .iter()
             .any(|x| x.rule == Rule::BadResumeRun));
+    }
+}
+
+/// Plan stage R0z Z4 Part B: a resume point in a handled body inside the
+/// clause (`weft_ir::ResumeHandle`, `Inst::resume_handles` in the kont mode).
+mod r0z4pb {
+    use weft_facts::FnFacts;
+    use weft_ir::verify::{verify_program, Rule};
+    use weft_sema::factgen::instantiate::{instantiate_kont, Instantiated};
+
+    /// The source of the probe `path` of `tests/gate/probes`.
+    fn source(path: &str) -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes")
+            .join(path);
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    /// The analysis of `src` and its IR.
+    fn built(src: &str) -> (weft_sema::Analysis, weft_sema::irbuild::Built) {
+        let prelude = weft_sema::prelude_unit().unwrap_or_else(|e| panic!("{}", e.message));
+        let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("{}", e.message));
+        let units = vec![
+            prelude,
+            weft_sema::Unit {
+                name: String::new(),
+                file,
+                is_std: false,
+            },
+        ];
+        let a = weft_sema::analyze(&units, weft_sema::Options::default());
+        let b = weft_sema::irbuild::build(&a);
+        (a, b)
+    }
+
+    /// The program of the kont mode of `src`, if it has a copy or a record.
+    fn kont(src: &str) -> Option<Instantiated> {
+        let (_, b) = built(src);
+        instantiate_kont(&b)
+    }
+
+    /// The records of the handled bodies with a resume point of a clause in
+    /// the kont mode of `src`.
+    fn handles(src: &str) -> usize {
+        kont(src).map_or(0, |i| i.built.program.resume_handles.len())
+    }
+
+    /// True if the old pipeline checks the program `src`: the scope of the
+    /// `ir` pipeline has a fallback, or a pending construct with no view of
+    /// the copies.
+    fn falls_back(src: &str) -> bool {
+        let (a, _) = built(src);
+        a.ir_scope.as_ref().is_none_or(|s| {
+            s.fallback.is_some() || s.pending.as_ref().is_some_and(|p| p.copy.is_none())
+        })
+    }
+
+    /// The rows 82 and 83 of the census (`c08_nested`: the handled body makes
+    /// and runs a closure that resumes), the form of `used_before` of tier 2
+    /// `p7154` (a `resume` in the handled body of a local `Fail` handler,
+    /// `a19`), and the forms of the probes get a record: a reference of the
+    /// clause or of the handled body across the `resume`, a change after the
+    /// nested `handle`, two levels, a branch, a second activation, a perform
+    /// to an outer handler, `with_timeout` in the rest. The program verifies
+    /// (V23) and the `ir` pipeline checks it. With the fix off (no record),
+    /// each one keeps the fallback.
+    #[test]
+    fn the_rows_of_the_census_get_a_resume_handle() {
+        let mut paths = vec![
+            "fixes/r0kc/c08_nested_ok.wf".to_string(),
+            "fixes/r0kc/c08_nested_bad.wf".to_string(),
+            "fixes/r0z4/rev_d_b04_ok.wf".to_string(),
+            "fixes/r0z4/rev_d_b04_bad.wf".to_string(),
+            "fixes/r0z4/rev_b04_branch_lands_ok.wf".to_string(),
+            "fixes/r0z4/rev_b04_branch_lands_bad.wf".to_string(),
+        ];
+        for n in [
+            "a01_direct",
+            "a02_param_after",
+            "a03_inner_local",
+            "a08_outer_before",
+            "a08_outer_after",
+            "a10_borrow",
+            "a13_two_levels",
+            "a15c_timeout_in_rest",
+            "a19_fail_inner",
+            "a21_closure_inner_local",
+            "a22_branch",
+            "a24_again",
+            "a25_inner_clears",
+            "a28_ref_value",
+            "a29_two_points",
+            "a30_inner_runs",
+        ] {
+            for twin in ["ok", "bad"] {
+                paths.push(format!("fixes/r0z4pb/{n}_{twin}.wf"));
+            }
+        }
+        // An `on abort` function that does not wait keeps the record
+        // (R-PB-UNWIND is by the effects of the code).
+        paths.push("fixes/r0z4pb/a27_onabort_nosleep_ok.wf".to_string());
+        for path in &paths {
+            let src = source(path);
+            let inst = kont(&src).unwrap_or_else(|| panic!("{path}: no kont mode"));
+            let p = &inst.built.program;
+            assert!(!p.resume_handles.is_empty(), "{path}: no record");
+            assert!(
+                verify_program(p, &inst.built.tys)
+                    .iter()
+                    .all(|x| x.rule != Rule::BadResumeHandle),
+                "{path}: {:?}",
+                verify_program(p, &inst.built.tys)
+            );
+            assert!(!falls_back(&src), "{path}: a fallback");
+        }
+        // Two levels: a record of each nested handler.
+        assert_eq!(handles(&source("fixes/r0z4pb/a13_two_levels_ok.wf")), 2);
+    }
+
+    /// The facts of `main` of the probe `path` in the program of the kont
+    /// mode (`Pending::copy`: the facts of the `ir` pipeline that check the
+    /// program).
+    fn facts_of(path: &str) -> FnFacts {
+        let src = source(path);
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ..weft_sema::Options::from_markers(&src)
+        };
+        let a = weft_sema::analyze_source(&src, opts)
+            .unwrap_or_else(|d| panic!("{path}: {}", d.message));
+        let copy = a
+            .ir_scope
+            .and_then(|s| s.pending)
+            .and_then(|p| p.copy)
+            .unwrap_or_else(|| panic!("{path}: no facts of the kont mode"));
+        copy.bodies
+            .into_iter()
+            .find(|b| b.facts.name == "main")
+            .map_or_else(|| panic!("{path}: no `main`"), |b| b.facts)
+    }
+
+    /// The `resume` in the handled body is a resume point of the clause: its
+    /// `Main` node has `resumes_at`, and the region of the rest of the
+    /// handled body (the rest frees `w`: a `releases_at` there).
+    #[test]
+    fn a_resume_in_a_handled_body_is_a_resume_point_in_the_facts() {
+        for path in [
+            "fixes/r0z4pb/a02_param_after_bad.wf",
+            "fixes/r0z4pb/a21_closure_inner_local_bad.wf",
+        ] {
+            let f = facts_of(path);
+            let resumes: Vec<weft_facts::NodeId> = f
+                .resumes_at
+                .iter()
+                .map(|&(n, _)| n)
+                .filter(|&n| f.node(n).kind == "resume")
+                .collect();
+            assert!(!resumes.is_empty(), "{path}: no resumes_at at a resume");
+            let frees: Vec<String> = f
+                .releases_at
+                .iter()
+                .filter(|(n, _)| resumes.contains(n))
+                .map(|&(_, q)| f.place(q).display.clone())
+                .collect();
+            assert!(
+                frees.iter().any(|q| q.starts_with('w')),
+                "{path}: {frees:?}"
+            );
+        }
+    }
+
+    /// Each refusal keeps the fallback (the reason of main): R-INNER (the
+    /// handled body performs the operation of the nested handler before or
+    /// after its `resume`, or a closure holds its capability), a `resume` in
+    /// a clause of the nested handler, R-PB-MULTI (a `multi` operation),
+    /// R-PB-CHAIN (a scope body in the chain), a runtime resume node in the
+    /// nested handled body, R-REC (the `handle` is in the block of `sim.run`),
+    /// the maker of the closure outside the handled body, a callee that runs
+    /// the closure, R-PB-CLOCK (`sim.clock.advance` in the program) and
+    /// R-PB-UNWIND (an `on abort` function that sleeps), a failure to a local
+    /// `Fail` handler after the `resume` (a `fail`, a read of a file that
+    /// raises with no `fail` in its row, and a callee that reads one).
+    #[test]
+    fn the_refusals_keep_the_fallback() {
+        for (path, record) in [
+            ("fixes/r0z4pb/a06_inner_before_ok.wf", false),
+            ("fixes/r0z4pb/a06_inner_before_bad.wf", false),
+            ("fixes/r0z4pb/a06_inner_after_ok.wf", false),
+            ("fixes/r0z4pb/a06_inner_after_bad.wf", false),
+            ("fixes/r0z4pb/a14_no_resume_after_ok.wf", false),
+            ("fixes/r0z4pb/a14_no_resume_after_bad.wf", false),
+            ("fixes/r0z4pb/a18_cap_closure_ok.wf", false),
+            ("fixes/r0z4/rev_b03_inner_cap_closure_ok.wf", false),
+            ("fixes/r0z4/rev_b07_g_post_after_rest_ok.wf", false),
+            ("fixes/r0z4/rev_b07_g_post_after_rest_bad.wf", false),
+            ("fixes/r0z4/rev_b08_g_post_direct_bad.wf", false),
+            ("fixes/r0z4pb/a07_in_inner_clause_ok.wf", false),
+            ("fixes/r0z4pb/a07_in_inner_clause_bad.wf", false),
+            ("fixes/r0z4pb/a09_multi_loop_ok.wf", false),
+            ("fixes/r0z4pb/a23_scope_inside_ok.wf", false),
+            ("fixes/r0z4pb/a23_scope_around_ok.wf", false),
+            ("fixes/r0z4pb/a15b_timeout_inside_ok.wf", false),
+            ("fixes/r0z4pb/a16b_sim_inside_ok.wf", false),
+            ("fixes/r0z4pb/a16_sim_around_ok.wf", false),
+            ("fixes/r0z4pb/a16_sim_around_bad.wf", false),
+            ("fixes/r0z4pb/a20_make_outside_ok.wf", false),
+            ("fixes/r0z4pb/a20_make_outside_bad.wf", false),
+            ("fixes/r0z4pb/a26_advance_late_ok.wf", false),
+            ("fixes/r0z4pb/a26_advance_late_bad.wf", false),
+            ("fixes/r0z4pb/a27_onabort_sleep_bad.wf", false),
+            ("fixes/r0z4pb/a31_fail_after_ok.wf", false),
+            ("fixes/r0z4pb/a31_fail_after_bad.wf", false),
+            ("fixes/r0z4pb/a32_fail_read_ok.wf", false),
+            ("fixes/r0z4pb/a32_fail_read_bad.wf", false),
+            ("fixes/r0z4pb/a33_fail_callee_bad.wf", false),
+            ("fixes/r0z4pb/a12_callee_ok.wf", true),
+            ("fixes/r0z4pb/a12_callee_bad.wf", true),
+        ] {
+            let src = source(path);
+            if !record {
+                assert_eq!(handles(&src), 0, "{path}: a record");
+            }
+            if path.ends_with("_ok.wf") {
+                assert!(falls_back(&src), "{path}: no fallback");
+            }
+        }
+    }
+
+    /// V23: a record of a handler whose handled body has no `resume` of the
+    /// clause, two records of one handler, or a clause with a `multi`
+    /// continuation breaks `BadResumeHandle`.
+    #[test]
+    fn a_wrong_record_breaks_v23() {
+        let src = source("fixes/r0z4pb/a01_direct_ok.wf");
+        let inst = kont(&src).expect("a kont mode");
+        let tys = &inst.built.tys;
+        let ok = |p: &weft_ir::Program| {
+            verify_program(p, tys)
+                .iter()
+                .all(|x| x.rule != Rule::BadResumeHandle)
+        };
+        let p = inst.built.program.clone();
+        assert!(ok(&p));
+        let r = p.resume_handles[0].clone();
+        // The other handler (the handler of the clause): its handled body is
+        // not inside the clause.
+        let mut wrong = p.clone();
+        let other = (0..p.handlers.len())
+            .map(|i| weft_ir::HandlerId(u32::try_from(i).expect("an id")))
+            .find(|&h| h != r.handler)
+            .expect("two handlers");
+        wrong.resume_handles = vec![weft_ir::ResumeHandle {
+            handler: other,
+            clause: r.clause,
+        }];
+        assert!(!ok(&wrong));
+        let mut two = p.clone();
+        two.resume_handles = vec![r.clone(), r.clone()];
+        assert!(!ok(&two));
+        let mut multi = p;
+        if let Some(x) = multi
+            .bodies
+            .get_mut(r.clause.index())
+            .and_then(|x| x.kont.as_mut())
+        {
+            x.1 = true;
+        }
+        assert!(!ok(&multi));
     }
 }

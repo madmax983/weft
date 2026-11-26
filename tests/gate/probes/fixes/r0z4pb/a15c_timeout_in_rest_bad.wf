@@ -1,0 +1,14 @@
+// r0z4pb probe (bad): the clause keeps the parameter `r` across the nested `resume`. The rest runs `with_timeout`, ends and frees `w`, then the clause reads `r` (W0301).
+effect Tick { fn tick(r: &u64) }
+effect Other { fn other() }
+fn main() / clock, fail {
+    handle Tick { fn tick(r: &u64) {
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+            print(r + 1)
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+        with_timeout(50.ms) { sleep(1.ms) }
+    }
+}

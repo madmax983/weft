@@ -1,0 +1,232 @@
+# Handoff: Weft core IR migration (Phase R, stage R0z)
+
+This is the handoff for a new session. Paste the prompt of section 0 into the new
+session; it tells the session to read this file.
+
+Date: 2026-11-26. Repo: `madmax983/weft`. Branch: `claude/epic-dirac-31neay`.
+
+## 0. Prompt for the new session
+
+> Read docs/plan/handoff.md. Continue the Weft core IR migration (ADR 0012,
+> docs/plan/core-ir.md), Phase R stage R0z, from that handoff. Read CLAUDE.md,
+> docs/plan/core-ir.md ("Z4 Part B as built" and the R0z rows) and
+> docs/plan/r0z-census.md first. Build the binaries of section 5 (the scripts are
+> in tools/gate/work). Then do the first item of section 3. Follow the rules of
+> section 2 exactly.
+
+## 1. State now
+
+- **PR open:** [madmax983/weft#110](https://github.com/madmax983/weft/pull/110),
+  "IR R0z Z4 Part B". Base main `280b634`. The stage commit is `ad048e2`; the
+  commit after it adds only this handoff and `tools/gate/work`.
+  - The old session watches it and has a check-in trigger `trig_01WDaSLyfCdTyZYcUsn3Szwe`
+    (2026-11-26 03:51Z). If the old session is closed, the new session must
+    subscribe to #110 (`subscribe_pr_activity`) and own it until it merges.
+  - If CI goes red, fix it. CI on a PR that this work opened is always ours to fix.
+- **Merged so far:** #45, #70, #75, #80–#90, #92, #93, #98–#100, #102, #103,
+  #105–#109. Main is `280b634` (#109, Z4b).
+- **When #110 merges:**
+  1. Fast-forward the branch to main and push.
+  2. Delete any pending check-in trigger, and unsubscribe.
+  3. Start the next stage (section 3).
+- **Z4 Part B, in short:** a `resume` in the handled body of a local handler, inside
+  a clause, is a resume point of the clause.
+  - The record is `weft_ir::ResumeHandle` (`Program::resume_handles`), checked by V23.
+  - The conditions to get a record: R-PB-ONCE, R-PB-MULTI, R-PB-CHAIN, R-INNER,
+    R-REC, R-PB-CLOCK and R-PB-UNWIND.
+  - The fact-oracle hook keys on the IR records and is strict in both directions
+    (`nested_check` and `runtime_check` in `weft-interp/src/machine/effects.rs`).
+  - Tier-1 census rows went from 14 to 12; the tier-2 fallbacks from 7 to 6.
+  - There were 3 review rounds. All said SHIP.
+
+## 2. Rules (from the user; follow exactly)
+
+**What the user wants**
+- Scope: "Close all gaps, then delete". Run the R0z stages until there are 0
+  fallbacks, then the R0z baseline, then R1–R5.
+- "WHEN AUTO-FIX CI IS ON, FIX CI. DO NOT WORRY IF IT WAS SOMETHING YOU DIDN'T
+  BREAK. GET IT GREEN."
+- Pace: "Continue as before". The user says "merged, next" after each merge.
+
+**The flow of each stage**
+1. A builder agent writes the probes first (`tests/gate/probes/fixes/r0z<stage>/`).
+2. It does the build, the full gates, and ev and fo, and makes one local commit.
+3. I verify the commit. Then up to 3 independent review rounds (new reviewer agents;
+   each round gets the earlier reports so it does not repeat them). The builder fixes
+   the findings between rounds and amends the unpushed commit.
+4. My own check.
+5. Push, PR (ready, not draft), subscribe, and a `send_later` check-in 50 minutes
+   later, then about every 4 hours. Stop after 3 empty check-ins in a row, or at once
+   if the user has not written since the PR went up and the first check-in found
+   nothing.
+- Review rounds: stop at 2–3. If a 4th round still finds large bugs, file an issue.
+
+**What blocks a stage (the ship rule)**
+- A realistic soundness HOLE that is new against main, or a lost diagnostic.
+- A new FP on a clean program that main accepted.
+- A fact-oracle failure (facts, summary or trace conformance) on a program newly in
+  scope.
+
+Exceptions:
+- A new FP from an old IR gap gets a narrow refusal.
+- A rejection that is clean only because of run-time values or the schedule is
+  correct.
+
+**Where gaps go**
+- Pre-existing holes go to #78. Precision gaps go to #79 and #91.
+- Old fact-oracle gaps: #95, #96, #97.
+- #101 is the A3 gap. #104 is the store/result-at-Ret root. #94 is the engine fix that
+  Z4 Part C needs.
+- The late-timeout class (ADR 0010) is pre-existing on main and tracked in #78. It has
+  three sub-forms: `sim.clock.advance`; a cut deferred to the end of an unwinding; a
+  linear value on the operand stack at a perform.
+
+**Big decisions go to the user.** Examples: a new language rule such as W0706 or
+W0314 (it needs an ADR); static rules that are lost and not already covered by
+signed classes.
+
+**Git and posting**
+- Push only reviewed, gated commits. Hold stop-hook push requests and give the reason
+  each time.
+- Push only to `claude/epic-dirac-31neay`. Never merge. Never rewrite pushed history.
+  Amending an unpushed local commit is OK.
+- Commit trailer, exact:
+  ```
+  Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+  Claude-Session: <the new session's URL>
+  ```
+- The PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`,
+  a blank line, then the session URL.
+- GitHub comments and issues end with `\n---\n_Generated by [Claude Code](https://claude.ai/code)_`.
+- No model identifiers in commits, PRs or code. Never skip or disable tests.
+- The user's email is private.
+
+**CLAUDE.md**
+- TDD and the 8-step rule-change list of ADR 0002.
+- No `unwrap()` in production code, no `unsafe`. Docs in ASD-STE100.
+- Before a commit, all clean:
+  - `cargo fmt --all`
+  - `cargo clippy --workspace --all-targets -- -D warnings`
+  - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+  - `cargo test --workspace` (1733 pass, 5 ignored at `ad048e2`)
+- Verified code: no assume, admit or external_body. Run `proofs/verify-all.sh`. Verus
+  was built from source in `/home/user/verus-src`:
+  ```
+  export PATH=/home/user/verus-src/source/target-verus/release:$PATH
+  export VERUS_Z3_PATH=/home/user/verus-src/source/z3
+  ```
+  A new container does not have it, so rebuild Verus if a stage touches
+  `weft-verified`.
+
+**Machine limits**
+- Disk: keep at least 8 GB free.
+- Builds: `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0`
+  and `-j 2`. Run one cargo at a time.
+- Use release builds for the gates, and run tier 2 alone.
+
+## 3. What is left (in order)
+
+**R0z census rows still open** (the rows are in docs/plan/r0z-census.md).
+
+Tier 1:
+- 25: `q01_85`.
+- 47 and 48: **Z3 part b**. Do this next. Z4 Part C needs it.
+- 72 and 73: **Z6 part C** (`a03_put_fns`).
+- 86 and 87: **Z4 Part C** (`fd2_v2`, `fd2_v3`). It needs #94 and Z3 part b first.
+- 93 and 94: `c09`, `j01` (R-CODE).
+- 102 and 103: `c16`.
+- 105: `c10`.
+
+Tier 2:
+- 6 fallbacks: rows 28, 29 and 31 (R-NREF locals), and others.
+- 6 edge timeouts.
+
+**After 0 fallbacks:** the R0z baseline, then R1–R5 (docs/plan/core-ir.md).
+
+**Follow-ups from the Z4 Part B reviews (not blocking, not filed):**
+- R-REC misses re-entry through a clause in a caller. Main is the same, and the
+  verdicts are correct.
+- V23 checks form only and is weaker than R-MAKER.
+- The `choice-a` evaluation-order label: in `r + resume(4)` the AST engine reads `r`
+  late. If that shape enters a tier, it needs a `choice-a` ledger entry.
+
+## 4. How to verify a builder's commit
+
+```bash
+git cat-file -p HEAD | head -1                 # tree
+git diff <main-sha> -- crates/*/src | sha256sum  # UNQUOTED glob; quoted gives an empty diff
+cat <work>/bin/BUILT_FROM                      # must hold the same sha
+```
+
+The gate binary is the release `weft-gate`, built from the same source.
+
+## 5. Work tools
+
+The scripts are in `tools/gate/work/` (see its README). The work dir
+`/home/user/weft-work` is not in the repo, so a new container must make it again.
+
+**Binaries**
+```bash
+cd /home/user/weft
+export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+git checkout <sha> && cargo build --release -j 2 -p weft-cli -p weft-gate
+mkdir -p /home/user/weft-work/<stage>/bin
+cp target/release/weft      /home/user/weft-work/<stage>/bin/weft-<stage>
+cp target/release/weft-gate /home/user/weft-work/<stage>/bin/weft-gate-<stage>
+```
+- Build one binary for main (the base) and one for the stage. Put
+  `sha256(git diff <main> -- crates/*/src)` in `BUILT_FROM`.
+- Tier 2 probes: `tests/gate/probes-tier2.tar.zst`, unpacked into
+  `target/gate/probes-tier2` (the gate does this).
+
+**Gates.** Run these in the root of the repo:
+- `bash tools/gate/work/gates-t1.sh <weft-gate> <out>`: 0 blockers, sigdiff 0 rows
+  with no entry, fact oracle 0 failures.
+- `bash tools/gate/work/gates-t2.sh <weft-gate> <out>`: run it alone; 0 blockers.
+
+**The ledger** is tests/gate/ledger.toml.
+- A `lost-clean` entry needs `signed_by` from an independent reviewer.
+- The probe hashes are pinned in tests/gate/oracle-ir.tsv, oracle-ast.tsv,
+  baseline-tier1.jsonl and manifest-tier1.tsv.
+
+**`weft check --reasons FILE`** says whether the IR or the old pipeline (the fallback)
+decides, and why. Other flags: `--facts=old|ir|both`.
+
+**Census**
+- Tier 1: `bash tools/gate/work/census.sh <weft> . <list> <out.tsv>`, with the list
+  from the README.
+- Tier 2: `bash tools/gate/work/census.sh <weft> target/gate/probes-tier2
+  tools/gate/work/census-t2-fb.txt <out.tsv>`.
+- Run each one with the main binary and with the stage binary.
+- At `ad048e2`: tier 1 has 406 fallbacks on main and 352 with the stage. In
+  `census-t2-fb.txt`, main has 7 fallbacks and 6 timeouts; the stage has 6 and 6,
+  because p7154 left the fallback.
+
+**ev and fo**
+- `WEFT=<weft> bash tools/gate/work/ev.sh FILE... > x.tsv` with each binary, then
+  `python3 tools/gate/work/evcmp.py main.tsv stage.tsv`.
+- `WEFT=<stage weft> bash tools/gate/work/fo.sh FILE...` on every file that is newly
+  in scope.
+
+## 6. Briefs that worked
+
+**Builder brief** (one agent per stage):
+- The goal: the census rows to close.
+- No new language rule.
+- Write the probes first, in `tests/gate/probes/fixes/r0z<x>/`, with bad and clean
+  twins.
+- Keep fail-closed refusals.
+- Run fo.sh in 3 configurations on every in-scope probe.
+- Run the full gates.
+- Build into `<work>/bin` with `BUILT_FROM`.
+- Make one local commit, not pushed.
+- Report in under 40 lines.
+
+**Reviewer brief** (one agent per round):
+- Give it the diff range, the binaries of the stage and of main, the ship rule, the
+  known old classes, and the reports of the earlier rounds.
+- Ask for adversarial probes, ev and fo on everything newly in scope, a check of the
+  ledger entries (and a signature for any `lost-clean` entry), and a check of the docs
+  and code style.
+- Ask for a verdict (SHIP or BLOCK) in under 40 lines.
+- The reviewer must not change the repo.

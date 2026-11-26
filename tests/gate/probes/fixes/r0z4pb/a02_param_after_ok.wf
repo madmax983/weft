@@ -1,0 +1,13 @@
+// r0z4pb probe (ok): the clean twin of a02_param_after_bad. The clause reads `r` before the nested `handle`.
+effect Tick { fn tick(r: &u64) }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick(r: &u64) {
+            print(r + 1)
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}

@@ -1,0 +1,21 @@
+// r0z4pb probe (ok): the rest performs `tick` again; each activation resumes in its nested handled body. The clause does not clear `v`.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                resume(())
+            }
+            print(v.len())
+        } } in {
+        tick()
+        keep = &v[0]
+        tick()
+    }
+    print(keep + 1)
+}

@@ -1,0 +1,15 @@
+// r0z4pb probe (ok, refusal: a scope body in the chain): the clause resumes in a nested handled body inside a scope body. The program keeps the fallback.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            scope { s =>
+                handle Other { fn other() { resume(()) } } in {
+                    resume(())
+                }
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

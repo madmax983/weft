@@ -1,0 +1,21 @@
+// r0z4pb probe (bad): a callee in the nested handled body runs the closure that resumes. After the nested `handle` the clause clears `v`, which the rest borrowed (W0301).
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn call_it(f: fn()) { f() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                call_it(|| resume(()))
+            }
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

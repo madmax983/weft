@@ -1,0 +1,22 @@
+// r0z4pb probe (bad): the nested handled body runs a clause of a handler inside it (another effect), then resumes. After the nested `handle` the clause clears `v`, which the rest borrowed (W0301).
+effect Tick { fn tick() }
+effect Other { fn other() }
+effect Inner { fn inner() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                handle Inner { fn inner() { resume(()); print(v.len()) } } in { inner() }
+                resume(())
+            }
+            v.clear()
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

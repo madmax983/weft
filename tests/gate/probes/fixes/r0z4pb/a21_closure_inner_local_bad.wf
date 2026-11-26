@@ -1,0 +1,17 @@
+// r0z4pb probe (bad): the c08 form. A local `q` of the nested handled body points into `w` of the handled body. The closure resumes, the rest frees `w`, then the nested body reads `q` (W0301).
+effect Tick { fn tick(r: &u64) }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick(r: &u64) {
+            handle Other { fn other() { resume(()) } } in {
+                let q = r
+                let k = || resume(())
+                k()
+                print(q + 1)
+            }
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}

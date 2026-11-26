@@ -161,6 +161,13 @@ pub enum Rule {
     /// closure of the record in, or the capture of the record is not a `Kont`
     /// capture of the continuation of that clause.
     BadResumeRun,
+    /// V23: a handled body with a resume point of a clause (plan stage R0z Z4
+    /// Part B) is not well formed: two records name one handler, the `handle`
+    /// of the handler is not in the clause body or in a handled body of another
+    /// record of the clause, the continuation of the clause is not `once`, or
+    /// no `Resume` of the continuation of the clause is in the handled body or
+    /// in a handled body of a record inside it.
+    BadResumeHandle,
 }
 
 impl Rule {
@@ -188,6 +195,7 @@ impl Rule {
             Self::BadRegion => 19,
             Self::BadDispatch => 20,
             Self::BadResumeRun => 22,
+            Self::BadResumeHandle => 23,
         }
     }
 
@@ -236,6 +244,9 @@ impl Rule {
             Self::BadRegion => "a copy region is not well formed".to_string(),
             Self::BadDispatch => "a dispatch is not well formed".to_string(),
             Self::BadResumeRun => "a runtime resume node is not well formed".to_string(),
+            Self::BadResumeHandle => {
+                "a handled body with a resume point of a clause is not well formed".to_string()
+            }
         }
     }
 }
@@ -264,6 +275,7 @@ pub fn verify_program(p: &Program, tys: &TyTable) -> Vec<Broken> {
     regions(p, &mut out);
     dispatches(p, &mut out);
     resume_runs(p, &mut out);
+    resume_handles(p, &mut out);
     let views = env_views(p);
     let made = closure_sites(p);
     for (ci, c) in p.closures.iter().enumerate() {
@@ -2616,6 +2628,161 @@ fn resume_run_ok(p: &Program, r: &crate::ResumeRun) -> bool {
         && cap.mode == CaptureMode::Kont
         && cap.source.is_local()
         && cap.source.local == kont
+}
+
+/// V23 (plan stage R0z Z4 Part B): each handled body with a resume point of a
+/// clause (`Program::resume_handles`, `docs/ir.md` 6.1). The `handle` of the
+/// handler of the record is in the clause body of the record, or in the handled
+/// body of another record of the same clause (so the chain from the handled
+/// body up to the clause has only handled bodies of records). The clause body
+/// has a `once` continuation. At least one `Resume` of that continuation is in the
+/// handled body, or in a handled body of a record inside it: its place is an
+/// upvar local whose chain of `Upvar` kinds ends at the continuation local, or
+/// field `i` of the environment of a kont region of its body whose closure has
+/// a `Kont` capture `i` of such a place. One handler has one record. The cause
+/// of a record (no clause of the handler can run) is a rule of the fact
+/// generator (`Inst::resume_handles`), not of V23.
+fn resume_handles(p: &Program, out: &mut Vec<Broken>) {
+    let mut seen: HashSet<crate::HandlerId> = HashSet::new();
+    for r in &p.resume_handles {
+        let ok = seen.insert(r.handler) && resume_handle_ok(p, r);
+        if !ok {
+            out.push(Broken {
+                body: r.clause,
+                block: None,
+                local: None,
+                rule: Rule::BadResumeHandle,
+            });
+        }
+    }
+}
+
+/// True if the record `r` has the form of V23 ([`resume_handles`]).
+fn resume_handle_ok(p: &Program, r: &crate::ResumeHandle) -> bool {
+    let Some(cb) = p.body(r.clause) else {
+        return false;
+    };
+    let Some((kont, false)) = cb.kont else {
+        return false;
+    };
+    if !matches!(cb.kind, BodyKind::Clause(..)) {
+        return false;
+    }
+    let Some(hb) = p.handlers.get(r.handler.index()).map(|d| d.handled) else {
+        return false;
+    };
+    // The chain from the handled body up to the clause body: only handled
+    // bodies of records of the clause.
+    let of_clause = |b: BodyId| -> bool {
+        p.body(b).is_some_and(|x| match x.kind {
+            BodyKind::Handled(h) => p
+                .resume_handles
+                .iter()
+                .any(|y| y.handler == h && y.clause == r.clause),
+            _ => false,
+        })
+    };
+    let mut at = hb;
+    let mut chain = vec![hb];
+    for _ in 0..=p.bodies.len() {
+        let Some(up) = p.body(at).and_then(|x| x.parent) else {
+            return false;
+        };
+        if up == r.clause {
+            break;
+        }
+        if !of_clause(up) {
+            return false;
+        }
+        chain.push(up);
+        at = up;
+    }
+    if !chain.iter().all(|&b| of_clause(b)) {
+        return false;
+    }
+    // A `Resume` of the continuation in the handled body or in a handled body
+    // of a record inside it.
+    let kont_of = |b: BodyId, place: &Place| -> bool {
+        let Some(x) = p.body(b) else {
+            return false;
+        };
+        let upvar_of = |b0: BodyId, l0: crate::LocalId| -> bool {
+            let (mut at, mut l) = (b0, l0);
+            for _ in 0..=p.bodies.len() {
+                let Some(y) = p.body(at) else {
+                    return false;
+                };
+                if at == r.clause {
+                    return l == kont;
+                }
+                let Some(LocalKind::Upvar(src)) = y.local_kind(l) else {
+                    return false;
+                };
+                let Some(up) = y.parent.filter(|u| u.index() < at.index()) else {
+                    return false;
+                };
+                at = up;
+                l = src;
+            }
+            false
+        };
+        match place.proj.as_slice() {
+            [] => {
+                matches!(x.local_kind(place.local), Some(LocalKind::Upvar(_)))
+                    && upvar_of(b, place.local)
+            }
+            [crate::Proj::Field(i)] => {
+                let Some(LocalKind::CopyEnv(c)) = x.local_kind(place.local) else {
+                    return false;
+                };
+                let region = p.regions.iter().any(|g| {
+                    g.body == b
+                        && g.env_local == Some(place.local)
+                        && g.closure == c
+                        && g.kont == Some(i.0)
+                });
+                let Some(d) = p.closures.get(c.index()) else {
+                    return false;
+                };
+                let Some(cap) = d.captures.get(i.index()) else {
+                    return false;
+                };
+                region
+                    && cap.mode == CaptureMode::Kont
+                    && cap.source.is_local()
+                    && (d.maker == r.clause && cap.source.local == kont
+                        || d.maker != r.clause && upvar_of(d.maker, cap.source.local))
+            }
+            _ => false,
+        }
+    };
+    p.bodies.iter().enumerate().any(|(i, x)| {
+        let b = BodyId(id_of(i));
+        let in_chain = b == hb
+            || (of_clause(b) && {
+                let mut at = b;
+                let mut hit = false;
+                for _ in 0..=p.bodies.len() {
+                    if at == hb {
+                        hit = true;
+                        break;
+                    }
+                    let Some(up) = p.body(at).and_then(|y| y.parent) else {
+                        break;
+                    };
+                    if !of_clause(up) && up != hb {
+                        break;
+                    }
+                    at = up;
+                }
+                hit
+            });
+        in_chain
+            && x.blocks.iter().any(|blk| {
+                !blk.cleanup
+                    && matches!(&blk.term.kind, TermKind::Resume { kont: k, .. } if kont_of(b, k))
+            })
+    })
 }
 
 #[cfg(test)]

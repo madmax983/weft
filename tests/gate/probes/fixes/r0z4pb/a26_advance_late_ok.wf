@@ -1,0 +1,19 @@
+// r0z4pb probe (ok, refusal R-PB-CLOCK): the clean twin of a26_advance_late_bad. The rest moves the clock less than the deadline. The program keeps the fallback.
+effect Tick { fn tick() }
+effect Other { fn other() }
+effect N { fn n() }
+linear struct T { id: u64 }
+fn done(t: T) { let T(i) = t }
+fn main() / clock, fail {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+        } } in {
+        with_timeout(5.ms) {
+            tick()
+            sim.clock.advance(1.ms)
+            let t = T { id: 1 }
+            handle N { fn n() { resume(()) } } in { n() }
+            done(t)
+        }
+    }
+}

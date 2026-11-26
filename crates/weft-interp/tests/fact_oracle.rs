@@ -1925,3 +1925,147 @@ fn a_runtime_resume_node_with_no_region_fails_a4() {
     };
     assert!(m.contains("A4"), "{m}");
 }
+
+/// The probes of plan stage R0z Z4 Part B (`fixes/r0z4pb`: a resume point in
+/// a handled body inside the clause). Each probe that the `ir` pipeline checks
+/// runs with no failure of the fact oracle (a bad probe can fault in the
+/// memory oracle). A4 checks the frames from the handled body down to the
+/// clause frame at such a `resume` (the hook in `Machine::resume`), so the
+/// checks of A4 are not zero.
+#[test]
+fn the_probes_of_the_handled_resumes_pass_the_fact_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/r0z4pb");
+    let mut checked = 0;
+    let mut resume = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        if c.ir.is_none() {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+        if let Ok(o) = &r {
+            resume += o.fact_oracle.as_ref().map_or(0, |f| f.resume);
+        }
+        checked += 1;
+    }
+    assert!(checked >= 30, "{checked}");
+    assert!(
+        resume > 0,
+        "A4 checks no frame at a resume in a handled body"
+    );
+}
+
+/// A4 at a resume point in a handled body inside the clause (plan stage R0z
+/// Z4 Part B), the mutation. In `a02_param_after_ok` the parameter `r` of the
+/// clause points into a local of the handled body, and the rest of the
+/// handled body frees it while the clause frame waits below the nested
+/// handled body. With no region at the `resume` nodes the oracle fails A4.
+#[test]
+fn a_resume_in_a_handled_body_with_no_region_fails_a4() {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0z4pb")
+        .join("a02_param_after_ok.wf");
+    let c = check(&fs::read_to_string(&p).unwrap());
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(r.is_ok(), "{:?}", r.err().map(|e| e.message));
+    let m = match run_main_with_facts(&c, &opts(), no_resume_region) {
+        Ok(_) => panic!("the facts with no region at the resume pass"),
+        Err(e) => e.message,
+    };
+    assert!(m.contains("A4"), "{m}");
+}
+
+/// Removes the `resumes_at` facts at the nodes of kind `kind`.
+fn no_resumes_at(f: &mut FnFacts, kind: &str) {
+    let drop: Vec<bool> = f.nodes.iter().map(|n| n.kind == kind).collect();
+    f.resumes_at
+        .retain(|&(n, _)| !drop.get(n.index()).copied().unwrap_or(false));
+}
+
+/// Adds `resumes_at` at each `resume` node of the facts. The cap is the cap
+/// of the first `resumes_at` fact that the facts already have. Facts with no
+/// `resumes_at` fact do not change.
+fn more_resumes_at(f: &mut FnFacts) {
+    let Some(&(_, cap)) = f.resumes_at.first() else {
+        return;
+    };
+    let extra: Vec<_> = f
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.kind == "resume")
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .filter(|n| !f.resumes_at.iter().any(|&(m, _)| m == *n))
+        .collect();
+    assert!(!extra.is_empty(), "the facts have no `resume` node to mark");
+    f.resumes_at.extend(extra.into_iter().map(|n| (n, cap)));
+}
+
+/// The hook of the fact oracle is strict in the other direction too (review
+/// round 3 of plan stage R0z Z4 Part B). In `t01_ref_rest_frees_ok` the
+/// `resume` is in the block of `with_timeout`. The frame of the block is not
+/// a clause frame, and the IR has no record of a handled body there. With
+/// `resumes_at` added at that `resume`, the oracle fails.
+#[test]
+fn resumes_at_with_no_record_fails_the_oracle() {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/fixes/r0z4b")
+        .join("t01_ref_rest_frees_ok.wf");
+    let c = check(&fs::read_to_string(&p).unwrap());
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(r.is_ok(), "{:?}", r.err().map(|e| e.message));
+    let m = match run_main_with_facts(&c, &opts(), more_resumes_at) {
+        Ok(_) => panic!("the facts with `resumes_at` at the resume and no record pass"),
+        Err(e) => e.message,
+    };
+    assert!(
+        m.contains("the IR has no record of a handled body there"),
+        "{m}"
+    );
+}
+
+/// The hook of the fact oracle is strict (review round 1 of plan stage R0z
+/// Z4 Part B, N2): it keys on the records of the IR, not on the facts. A
+/// `resume` in a handled body with a record (`Program::resume_handles`) and a
+/// call with a record (`Program::resume_runs`, Z4b) need `resumes_at` in the
+/// facts. With the `resumes_at` facts removed, the oracle fails at the
+/// `resume` (before, it skipped the checks of the clause frame).
+#[test]
+fn a_record_with_no_resumes_at_fails_the_oracle() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes");
+    for (path, kind, text) in [
+        (
+            "r0z4pb/a02_param_after_ok.wf",
+            "resume",
+            "fact oracle (nested resume)",
+        ),
+        (
+            "r0z4pb/a21_closure_inner_local_ok.wf",
+            "resume",
+            "fact oracle (nested resume)",
+        ),
+        (
+            "r0z4b/t01_ref_rest_frees_ok.wf",
+            "call",
+            "fact oracle (runtime resume)",
+        ),
+    ] {
+        let c = check(&fs::read_to_string(dir.join(path)).unwrap());
+        assert!(
+            c.ir.as_ref().is_some_and(|ir| ir.ok()),
+            "{path}: {:?}",
+            c.diags
+        );
+        let r = run_main(&c, &opts());
+        assert!(r.is_ok(), "{path}: {:?}", r.err().map(|e| e.message));
+        let m = match run_main_with_facts(&c, &opts(), |f| no_resumes_at(f, kind)) {
+            Ok(_) => panic!("{path}: the facts with no `resumes_at` pass"),
+            Err(e) => e.message,
+        };
+        assert!(m.contains(text), "{path}: {m}");
+    }
+}

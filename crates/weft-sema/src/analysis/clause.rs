@@ -1163,13 +1163,26 @@ fn region_kont(p: &Program, body: BodyId, place: &Place) -> Option<(HandlerId, B
 /// The clause body above body `b` through scope bodies only (plan stage R0z
 /// Z5): `b` is a scope body, and its parent chain has only scope bodies up
 /// to a clause body.
+///
+/// From plan stage R0z Z4 Part B also through handled bodies only: `b` is a
+/// handled body of a record of [`weft_ir::ResumeHandle`], and its parent
+/// chain has only handled bodies of records of that clause up to it. A chain
+/// with scope bodies and handled bodies is not a chain here.
 pub fn scope_chain_clause(p: &Program, b: BodyId) -> Option<BodyId> {
+    let handled = matches!(p.body(b)?.kind, BodyKind::Handled(_));
     let mut at = b;
+    let mut records: Vec<BodyId> = Vec::new();
     for _ in 0..=p.bodies.len() {
         let x = p.body(at)?;
         match (x.kind, x.parent) {
-            (BodyKind::Scope(_), Some(up)) => at = up,
-            (BodyKind::Clause(..), _) if at != b => return Some(at),
+            (BodyKind::Scope(_), Some(up)) if !handled => at = up,
+            (BodyKind::Handled(g), Some(up)) if handled => {
+                records.push(p.resume_handle(g)?.clause);
+                at = up;
+            }
+            (BodyKind::Clause(..), _) if at != b => {
+                return records.iter().all(|&c| c == at).then_some(at);
+            }
             _ => return None,
         }
     }
@@ -1296,11 +1309,19 @@ pub fn scope_resumes(p: &Program, sb: BodyId, cb: BodyId) -> bool {
 /// The scope body of the `scope` terminator `t` of body `b` of clause
 /// chain `cb` if [`scope_resumes`] is true for it: the terminator runs a
 /// resume point of the clause (plan stage R0z Z5).
+///
+/// From plan stage R0z Z4 Part B also the handled body of a `handle`
+/// terminator `t` whose handler has a record ([`weft_ir::ResumeHandle`]) if
+/// [`scope_resumes`] is true for that handled body.
 pub fn resume_scope(p: &Program, b: BodyId, t: &TermKind, cb: BodyId) -> Option<BodyId> {
-    let TermKind::Scope { scope, .. } = t else {
-        return None;
+    let sb = match t {
+        TermKind::Scope { scope, .. } => p.scopes.get(scope.index())?.body,
+        TermKind::Handle { handler, .. } => {
+            p.resume_handle(*handler)?;
+            p.handlers.get(handler.index())?.handled
+        }
+        _ => return None,
     };
-    let sb = p.scopes.get(scope.index())?.body;
     (p.body(sb)?.parent == Some(b) && scope_resumes(p, sb, cb)).then_some(sb)
 }
 
@@ -1559,6 +1580,10 @@ pub struct HandleOut {
     /// state before its `Copy` node, and the values that the later
     /// `resume`s give to a perform.
     pub reentries: Vec<(BodyId, BlockId, State, Tree)>,
+    /// The handled body stops at a resume point of a clause on each path
+    /// (plan stage R0z Z4 Part B): the `handle` has no normal successor in
+    /// this run of the clause up to its resume points.
+    pub no_normal: bool,
 }
 
 /// The run of a `handle` of handler `h` in body `body`, from the state `st`
@@ -1721,6 +1746,9 @@ struct HandledRun {
     reentries: Vec<Reentry>,
     /// Such a node is in a body inside the handled body.
     nested: bool,
+    /// The run stopped at resume points of a clause on each path (plan stage
+    /// R0z Z4 Part B, [`HandleOut::no_normal`]).
+    stopped: bool,
 }
 
 /// One run of the handled body `hb` of handler `h` from the states `seeds`
@@ -1739,10 +1767,30 @@ fn run_handled(
 ) -> Result<HandledRun, AlphaError> {
     let p = cx.p;
     let hbody = body_of(p, hb)?;
+    // The code of a clause before its resume points (plan stage R0z Z4 Part
+    // B): a handled body with a record whose chain reaches the clause stops
+    // at its `Resume`s, and the clause gets their states
+    // (`Handlers::pre_resumes`), as for a scope body of Z5.
+    let stop = p.resume_handle(h).is_some()
+        && cx
+            .hx
+            .pre_stop
+            .last()
+            .is_some_and(|&c| scope_resumes(p, hb, c));
+    let mode = Mode {
+        all: false,
+        stop_at_resume: stop,
+    };
     cx.hx.open.push(Open::new(h));
-    let run = run_from(cx, hb, seeds, Mode::default());
+    let run = run_from(cx, hb, seeds, mode);
     let open = cx.hx.open.pop();
     let (states, ends) = run?;
+    if stop {
+        for (rb, s) in &ends.resumes {
+            cx.hx.pre_resumes.push((hb, *rb, s.clone()));
+        }
+    }
+    let stopped = stop && ends.returns.is_empty() && !ends.resumes.is_empty();
     let mut open = open.ok_or_else(|| AlphaError::BadPlace("no open handler".to_string()))?;
     let mut exit: Option<State> = None;
     for s in ends.returns.values() {
@@ -1828,6 +1876,7 @@ fn run_handled(
         again,
         reentries,
         nested,
+        stopped,
     })
 }
 
@@ -1948,6 +1997,7 @@ fn finish_handle(
         value,
         landing,
         reentries,
+        no_normal: r.stopped,
     }
 }
 
@@ -2326,6 +2376,39 @@ fn post_run(
     for _ in 0..=p.bodies.len() {
         let (_, ends) = run_from(cx, at, seeds, Mode::default())?;
         let b = body_of(p, at)?;
+        // A handled body of a record (plan stage R0z Z4 Part B): from its
+        // `Return`s the `handle` ends ([`handled_after`]), and the run goes on
+        // after it in the body around it.
+        if let (BodyKind::Handled(g), Some(up)) = (b.kind, b.parent) {
+            if p.resume_handle(g).is_some() {
+                let mut exit: Option<State> = None;
+                for s in ends.returns.values() {
+                    match &mut exit {
+                        Some(e) => {
+                            e.join(s);
+                        }
+                        None => exit = Some(s.clone()),
+                    }
+                }
+                let ub = body_of(p, up)?;
+                let site = ub.blocks.iter().find_map(|blk| match &blk.term.kind {
+                    TermKind::Handle { handler, dest, .. } if *handler == g => {
+                        Some((dest, blk.term.kind.normal_successors()))
+                    }
+                    _ => None,
+                });
+                let (Some(exit), Some((dest, next))) = (exit, site) else {
+                    // The handled body does not end: the clause does not go on.
+                    let top = scope_chain_clause(p, at).unwrap_or(up);
+                    return Ok((top, Vec::new()));
+                };
+                let (mut after, value) = handled_after(p, g, &exit)?;
+                transfer::bind_result(cx, up, &mut after, &[], dest, value)?;
+                seeds = next.into_iter().map(|x| (x, after.clone())).collect();
+                at = up;
+                continue;
+            }
+        }
         let (BodyKind::Scope(k), Some(up)) = (b.kind, b.parent) else {
             return Ok((at, ends.returns.into_values().collect()));
         };
@@ -2358,6 +2441,35 @@ fn post_run(
     Err(AlphaError::BadPlace(
         "a chain of scope bodies with no end".to_string(),
     ))
+}
+
+/// The end of the `handle` of handler `g` of a record (plan stage R0z Z4
+/// Part B) from the state `exit` at the `Return`s of its handled body: the
+/// state after the `handle` (with no local of the handled body or of a clause
+/// of `g`, but the locals that a closure of the handled body captures, as
+/// [`finish_handle`]), and the value of the `handle` (the value of the handled
+/// body: no clause of `g` runs).
+///
+/// # Errors
+///
+/// Returns [`AlphaError::BadPlace`] if the handler or a body does not exist.
+fn handled_after(p: &Program, g: HandlerId, exit: &State) -> Result<(State, Tree), AlphaError> {
+    let hd = handler(p, g)?;
+    let hb = hd.handled;
+    let value = exit.value((hb, body_of(p, hb)?.ret), &[]);
+    let mut after = exit.clone();
+    let captured: Vec<(super::Key, Tree)> = captured_locals(p, hb)
+        .into_iter()
+        .filter_map(|k| after.tree(k).map(|t| (k, t.clone())))
+        .collect();
+    let mut roots: Vec<BodyId> = hd.clauses.iter().map(|(_, c)| *c).collect();
+    roots.push(hb);
+    let frame = InsideAny::new(p, roots);
+    after.remove_bodies(&|b| frame.test(b));
+    for (k, t) in captured {
+        after.keep_value(k, t);
+    }
+    Ok((after, value))
 }
 
 /// The transfer of a `Resume` of body `body` in state `st`: the argument
@@ -2619,7 +2731,12 @@ pub fn handle(
 ) -> Result<(), AlphaError> {
     let out = handle_run(cx, body, st, h)?;
     *st = out.after;
-    transfer::bind_result(cx, body, st, &[], dest, out.value)
+    let no_normal = out.no_normal;
+    transfer::bind_result(cx, body, st, &[], dest, out.value)?;
+    // A handled body that stops at a resume point of a clause on each path
+    // (plan stage R0z Z4 Part B): `super::edges` takes it.
+    cx.hx.no_normal = no_normal;
+    Ok(())
 }
 
 /// What a perform through the capability of a local handler gives

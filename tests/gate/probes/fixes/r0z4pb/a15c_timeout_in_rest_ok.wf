@@ -1,0 +1,14 @@
+// r0z4pb probe (ok): the clean twin of a15c_timeout_in_rest_bad. The clause reads `r` before the nested `handle`.
+effect Tick { fn tick(r: &u64) }
+effect Other { fn other() }
+fn main() / clock, fail {
+    handle Tick { fn tick(r: &u64) {
+            print(r + 1)
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+        with_timeout(50.ms) { sleep(1.ms) }
+    }
+}

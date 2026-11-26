@@ -1,0 +1,13 @@
+// r0z4pb probe (bad, an old hole of main; review round 1 of Z4 Part B, N1): the nested twin of `fixes/r0z9c/a10_item_clause_bad`. The `resume` of the clause is in the handled body of a local handler. The clause runs `k` while the task of `h` runs (the race of class R0z-Z9c-A-B1). The `ir` pipeline accepts it, as main accepts the original; the program faults (the race oracle).
+effect ZqNest { fn zq_nest() }
+// R0z Z9c-A (review probe, R0f item slot, baseline of n18): a clause of a local handler of par runs k while the task of h (in a callee) runs.
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+fn sp(h: fn()) / async, Note { scope { s => s.spawn(h); note(1) } }
+fn par(h: fn(), k: fn()) / async {
+    handle Note { fn note(x) { k(); handle ZqNest { fn zq_nest() { resume(()) } } in { resume(()) } } } in { sp(h) }
+}
+fn main() / async {
+    let c = C { k: 0 }
+    par(|| print(c.k), || c.k += 1)
+}

@@ -1,0 +1,17 @@
+// r0z4pb probe (ok): the clean twin of a21_closure_inner_local_bad. The nested body reads `q` before the run of the closure.
+effect Tick { fn tick(r: &u64) }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick(r: &u64) {
+            handle Other { fn other() { resume(()) } } in {
+                let q = r
+                print(q + 1)
+                let k = || resume(())
+                k()
+            }
+        } } in {
+        let w = Vec.new()
+        w.push(5)
+        tick(&w[0])
+    }
+}

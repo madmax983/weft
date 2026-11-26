@@ -212,6 +212,13 @@ impl<'a> Printer<'a> {
                 r.body.0, r.block.0, r.closure.0, r.kont
             );
         }
+        for r in &self.p.resume_handles {
+            let _ = writeln!(
+                out,
+                "resume handle: handler h{}, clause b{}",
+                r.handler.0, r.clause.0
+            );
+        }
     }
 
     /// Returns the text of body `id`: a header line, the locals and the blocks.

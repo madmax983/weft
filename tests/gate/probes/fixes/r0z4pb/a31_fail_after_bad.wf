@@ -1,0 +1,19 @@
+// r0z4pb probe (bad, refusal R-INNER): the clause resumes in the handled body of a local `Fail` handler, then fails. The `Fail` clause clears `v` after the rest borrowed it (W0301). The program keeps the fallback.
+effect Tick { fn tick() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Fail { fn fail(m) { v.clear() } } in {
+                resume(())
+                fail("after")
+            }
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

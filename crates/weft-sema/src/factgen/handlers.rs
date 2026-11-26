@@ -1222,7 +1222,11 @@ pub fn resume(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R
         em.facts.may_abort.push(n);
     }
     em.hx.resumes.push((n, h, cb));
-    if body != cb {
+    // A `resume` in a scope body of the clause (plan stage R0z Z5). A
+    // `resume` in a handled body of the clause (plan stage R0z Z4 Part B, a
+    // chain of handled bodies only) is not one: no task of a scope of the
+    // clause is active there.
+    if body != cb && matches!(em.p.body(body).map(|b| b.kind), Some(BodyKind::Scope(_))) {
         em.hx.scope_resumes.push(n);
     }
     if let Some(r) = nodes.ret {
@@ -2825,8 +2829,10 @@ fn clause_nodes(p: &Program, ix: &Index, c: BodyId) -> (HashSet<NodeId>, HashSet
         for &(x, block, at, phase) in chain.iter().rev() {
             let own = x == c
                 || *own_scope.entry(x).or_insert_with(|| {
-                    matches!(p.body(x).map(|d| d.kind), Some(BodyKind::Scope(_)))
-                        && clause::scope_resumes(p, x, c)
+                    matches!(
+                        p.body(x).map(|d| d.kind),
+                        Some(BodyKind::Scope(_) | BodyKind::Handled(_))
+                    ) && clause::scope_resumes(p, x, c)
                 });
             if !own {
                 // A body with no resume point runs where its site runs.

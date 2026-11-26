@@ -1,0 +1,20 @@
+// r0z4pb probe (bad): the nested handled body resumes on one path only. On the path with the `resume`, the clause clears `v` after the rest took `keep = &v[0]` (W0301).
+effect Ask { fn ask(b: bool) }
+effect Other { fn other() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Ask { fn ask(b: bool) {
+            handle Other { fn other() { resume(()) } } in {
+                if b { resume(()) } else { print(0) }
+            }
+            v.clear()
+        } } in {
+        ask(true)
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

@@ -1,0 +1,17 @@
+// r0z4pb probe (bad): the nested handled body resumes the `once` continuation in a loop (W0501). The loop runs one time at run time, so the run is clean: the rejection is by the rule.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                let i = 0
+                while i < 1 {
+                    resume(())
+                    i = i + 1
+                }
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

@@ -1,0 +1,21 @@
+// r0z4pb probe (ok): the nested handled body clears `v` before its `resume`, and the rest borrows `v[0]` after it. The rest pushes to `v` first, so the read of `keep` is clean.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                v.clear()
+                resume(())
+            }
+        } } in {
+        tick()
+        v.push(2)
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

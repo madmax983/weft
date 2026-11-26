@@ -1,0 +1,15 @@
+// r0z4pb probe (ok): the clean twin of a10_borrow_bad. The rest only reads `v`.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Tick { fn tick() {
+            let r = &v[0]
+            handle Other { fn other() { resume(()) } } in { resume(()) }
+            print(r + 1)
+        } } in {
+        tick()
+        print(v.len())
+    }
+}

@@ -1,0 +1,14 @@
+// r0z4pb probe (ok): the clause resumes in a nested handled body with a reference into a local of the nested body. The rest reads the reference while the nested body waits.
+effect Ask { fn ask() -> &u64 }
+effect Other { fn other() }
+fn main() {
+    handle Ask { fn ask() {
+            handle Other { fn other() { resume(()) } } in {
+                let z: u64 = 5
+                resume(&z)
+            }
+        } } in {
+        let r = ask()
+        print(r + 1)
+    }
+}

@@ -1,0 +1,21 @@
+// r0z4pb probe (ok): the clean twin of a16_sim_around_bad.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() / clock {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    sim.run(seed: 1) {
+        handle Tick { fn tick() {
+                handle Other { fn other() { resume(()) } } in {
+                    resume(())
+                }
+            } } in {
+            tick()
+            keep = &v[0]
+        }
+    }
+    print(keep + 1)
+}

@@ -1,0 +1,23 @@
+// r0z4pb probe (bad): the clause resumes in a handled body inside a handled body. Between the two nested ends the clause clears `v`, which the rest borrowed (W0301).
+effect Tick { fn tick() }
+effect A { fn a() }
+effect B { fn b() }
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle A { fn a() { resume(()) } } in {
+                handle B { fn b() { resume(()) } } in {
+                    resume(())
+                }
+                v.clear()
+            }
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

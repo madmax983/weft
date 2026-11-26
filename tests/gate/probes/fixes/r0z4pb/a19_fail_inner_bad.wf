@@ -1,0 +1,14 @@
+// r0z4pb probe (bad): the clause resumes in the handled body of a local `Fail` handler, then uses its parameter. The parameter points into `local` of the handled body, which ended (W0301).
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn main() {
+    handle Peek {
+        fn peek(e) {
+            handle Fail { fn fail(m) { print(m) } } in { resume(()) }
+            print(e.hp)
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}

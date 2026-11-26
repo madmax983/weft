@@ -1,0 +1,29 @@
+r2/oracle/runs/g2/p2515.wf
+r2/oracle/runs/m2/p7046.wf
+r3/oracle/probes/i9_kept_write.wf
+r3/oracle/probes/s8_steal_fnparam.wf
+r3/oracle/probes/s9_steal_stored.wf
+r3/oracle/runs/g3b/p18574.wf
+r3/oracle/runs/g4p/p25005.wf
+r3/oracle/runs/m3a/p5750.wf
+r3/oracle/runs/m3a/p7154.wf
+r3/oracle/runs/t3/p148.wf
+r3/oracle/seeds3/gen3_15687.wf
+r3/oracle/seeds3/gen3_18180.wf
+r3/quality/big/all_2.wf
+r3/quality/big/all_4.wf
+r3/quality/big/all_8.wf
+r3/quality/gen3/closure_chain_100.wf
+r3/quality/gen3/closure_chain_200.wf
+r3/quality/gen3/closure_chain_400.wf
+r3/quality/gen3/closure_chain_800.wf
+r3/quality/gen3/ring_effects_2000.wf
+r3/quality/gen3/stored_vec_800.wf
+verify/partb/p/g2_lexical.wf
+verify/review_core/Core_S2/probes/crash/c10.wf
+verify/s5/R2c: effects, continuations, on abort and drops/p/fd2_v2_closure_resume.wf
+verify/s5/R2c: effects, continuations, on abort and drops/p/fd2_v3_vec_of_closures.wf
+verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v19_sim_run_closure.wf
+verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v20_with_timeout.wf
+verify/s5/S5c_diff/scale/c8000.wf
+verify/s5/S5c_diff/scale/h8000.wf

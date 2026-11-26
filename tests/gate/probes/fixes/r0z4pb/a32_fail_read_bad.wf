@@ -1,0 +1,20 @@
+// r0z4pb probe (bad, refusal R-INNER): the clause resumes in the handled body of a local `Fail` handler, then reads a file that does not exist. The runtime raises the failure to the local handler (no `fail` in the row of `read`), whose clause clears `v` after the rest borrowed it (W0301). The program keeps the fallback.
+effect Tick { fn tick() }
+fn main(env: Env) / fs {
+    let fs = env.fs
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() {
+            handle Fail { fn fail(m) { v.clear() } } in {
+                resume(())
+                print(fs.read("/nonexistent/z4pb.txt"))
+            }
+        } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

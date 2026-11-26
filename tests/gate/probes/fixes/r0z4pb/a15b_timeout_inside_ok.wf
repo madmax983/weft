@@ -1,0 +1,13 @@
+// r0z4pb probe (ok, refusal): the nested handled body resumes in the block of `with_timeout` (a runtime resume node in a nested handled body). The program keeps the fallback.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() / clock, fail {
+    handle Tick { fn tick() {
+            handle Other { fn other() { resume(()) } } in {
+                with_timeout(50.ms) { resume(()) }
+            }
+        } } in {
+        tick()
+        print(1)
+    }
+}

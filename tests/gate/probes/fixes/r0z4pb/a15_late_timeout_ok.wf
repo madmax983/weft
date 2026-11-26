@@ -1,0 +1,15 @@
+// r0z4pb probe (ok): the clean twin of a15_late_timeout_bad. The nested body has no linear value.
+effect Tick { fn tick() }
+effect Other { fn other() }
+fn main() / clock, fail {
+    handle Tick { fn tick() {
+            sleep(10.ms)
+            handle Other { fn other() { resume(()) } } in {
+                resume(())
+                print(2)
+            }
+        } } in {
+        with_timeout(5.ms) { tick() }
+        print(1)
+    }
+}
