@@ -1,0 +1,23 @@
+// Issue #94 (form A; the `ir` pipeline rejects it with W0301, the run is clean): two nested
+// `multi` handlers, a closure of each handled body, a copy of a copy. The IR engine gives
+// the output of the AST engine.
+effect C { multi fn c() -> bool }
+effect D { multi fn d() -> u64 }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || n.len()
+        handle D { fn d() { resume(1); resume(2) } } in {
+            let m: Vec<u64> = Vec.new()
+            let g = || m.len() + n.len()
+            let x = d()
+            m.push(x)
+            let b = c()
+            n.push(1)
+            let y = g()
+            print(x, b, y)
+        }
+        let z = f()
+        print(z)
+    }
+}

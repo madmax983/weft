@@ -1,0 +1,13 @@
+// Issue #94 (ok, form A): one closure with a kept capture (`cnt`) and a capture by reference
+// (`n`). Output: 2 1, 2 1 (the IR engine of main: 1 1, 1 1).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let cnt = 0
+        let f = || { cnt += 1; n.len() + cnt }
+        let b = c()
+        n.push(1)
+        print(f(), cnt)
+    }
+}

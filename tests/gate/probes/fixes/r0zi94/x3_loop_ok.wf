@@ -1,0 +1,14 @@
+// Issue #94 (ok, form A): the `multi` operation is in a loop, so a copy of a frame is copied
+// again. Output: 1, 2, 2, 1, 2, 2 (the IR engine of main: six times 0).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || n.len()
+        for i in 0..2 {
+            let b = c()
+            n.push(1)
+            print(f())
+        }
+    }
+}

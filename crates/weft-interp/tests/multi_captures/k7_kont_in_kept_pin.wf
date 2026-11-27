@@ -1,0 +1,26 @@
+// Issue #94, the rest that stays (form D for a continuation, a pin; in the fallback): the
+// closure `k` of `e01` goes through `wrap`, so only a kept cell of the ended frame of `wrap`
+// holds it. Both engines resume the continuation record of the frame before the copy.
+// Output: [1], [1, 5], [1, 5, 10] on both engines, before and after the fix (`e01`: [1], [5],
+// [5, 10]). Plan stage Z4 Part C must keep this form in the fallback.
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn wrap(f: fn(u64) -> ()) -> fn(u64) -> () { |x: u64| f(x) }
+fn run() -> u64 / Choice {
+    let acc: Vec<u64> = Vec.new()
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            let g = wrap(k)
+            let b = choose()
+            if b { g(1) } else { g(5); g(10) }
+        }
+    } in {
+        acc.push(pick())
+        print(acc)
+    }
+    0
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in { let r = run() }
+}

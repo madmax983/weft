@@ -1,0 +1,18 @@
+// Issue #94 (ok, forms A and C): the `once` closure `f` moves `n`, and its frame owns the cell
+// at the run. The inner closure `h` holds a reference to that cell. Output: 1, 1, 1, 1 (the IR
+// engine of main: 0, 1, 0, 1).
+effect C { multi fn c() -> bool }
+fn eat(v: Vec<u64>) -> usize { v.len() }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || {
+            let h = || n.len()
+            let b = c()
+            n.push(1)
+            print(h())
+            eat(n)
+        }
+        print(f())
+    }
+}

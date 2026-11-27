@@ -1,0 +1,22 @@
+// Issue #94 (bad, W0503): a closure that holds a `once` continuation is live across the
+// `multi` operation of an outer handler. The copies share the cell of the continuation on
+// both engines, so the second run faults. The fix does not change it.
+effect Choice { multi fn choose() -> bool }
+effect Pick { fn pick() -> u64 }
+fn run() -> u64 / Choice {
+    let acc: Vec<u64> = Vec.new()
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            let b = choose()
+            if b { k(1) } else { k(5) }
+        }
+    } in {
+        acc.push(pick())
+        print(acc)
+    }
+    0
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in { let r = run() }
+}

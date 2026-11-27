@@ -1,0 +1,15 @@
+// Issue #94 (ok, control): the closure holds only the capability of the handler of `D`. The
+// copy of its cell has the same content. Output: [3], [3] on both engines, also on main.
+effect C { multi fn c() -> bool }
+effect D { fn d() -> u64 }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let acc: Vec<u64> = Vec.new()
+        handle D { fn d() { resume(3) } } in {
+            let f = || d()
+            let b = c()
+            acc.push(f())
+            print(acc)
+        }
+    }
+}

@@ -1,0 +1,14 @@
+// Issue #94 (bad, W0503): a `once` closure that moved `n` is live across the `multi`
+// operation. The copies share the cell of the moved capture on both engines, so the second
+// run faults: "a value is used after it was moved". The fix does not change it.
+effect C { multi fn c() -> bool }
+fn eat(v: Vec<u64>) -> usize { v.len() }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        n.push(7)
+        let f = || eat(n)
+        let b = c()
+        print(f())
+    }
+}

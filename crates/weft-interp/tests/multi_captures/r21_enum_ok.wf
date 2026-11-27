@@ -1,0 +1,13 @@
+// Issue #94 (ok, form A): the closure is in the payload of `Some`. Output: 1, 1 (the IR engine
+// of main: 0, 0). The old pipeline rejects the program (W0301, a false positive), so it is
+// not a probe of the gate.
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let o: Option<fn() -> usize> = Some(|| n.len())
+        let b = c()
+        n.push(1)
+        match o { Some(g) => print(g()), None => print(99) }
+    }
+}

@@ -1,0 +1,16 @@
+// Issue #94 (ok, form A): the closure and its variable are in the frame of a callee that
+// performs the `multi` operation. Output: 2, 1 (the IR engine of main: 0, 0).
+effect C { multi fn c() -> bool }
+fn work() -> usize / C {
+    let n: Vec<u64> = Vec.new()
+    let f = || n.len()
+    let b = c()
+    n.push(1)
+    if b { n.push(2) }
+    f()
+}
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        print(work())
+    }
+}

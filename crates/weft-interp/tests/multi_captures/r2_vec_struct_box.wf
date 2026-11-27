@@ -1,0 +1,21 @@
+// Issue #94 (form A; both pipelines reject it with W0301, the run is clean): the closure is
+// in a struct in a `Box` in a `Vec`, and the `multi` operation runs two times, so a copy is
+// copied again: the copy of a capture cell is a capture cell. Output: 1, 2, 2, 1, 2, 2 on
+// both engines (the IR engine of main: six times 0).
+effect C { multi fn c() -> bool }
+struct H { f: fn() -> usize, id: u64 }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let hs: Vec<Box<H>> = Vec.new()
+        hs.push(Box.new(H { f: || n.len(), id: 1 }))
+        let b = c()
+        n.push(1)
+        let g = hs[0].f
+        print(g())
+        let b2 = c()
+        n.push(2)
+        let g2 = hs[0].f
+        print(g2())
+    }
+}

@@ -104,6 +104,27 @@ fn a_clean_program_runs_the_same_on_both_engines() {
     assert_eq!(engines::compare(&runs.ast, &runs.ir), None);
 }
 
+/// Issue #94: a closure value in a frame that a `multi` resume copies holds
+/// a reference, or a continuation, in a cell of its own on the IR engine. The
+/// copy of the frame gets a copy of the cell. Before the fix the IR engine
+/// printed `true 0` first: the closure of the copy read the frame before the
+/// copy.
+#[test]
+fn a_closure_in_a_copied_frame_runs_the_same_on_both_engines() {
+    let runs = engines::run_both(&data(), &entry("engines_multi_capture.wf"), &on_thread());
+    assert_eq!(runs.ast.len(), oracle::CONFIGS.len(), "{runs:?}");
+    assert_eq!(runs.ir.len(), oracle::CONFIGS.len(), "{runs:?}");
+    assert_eq!(runs.ir[0].fallback, None);
+    assert!(
+        runs.ast[0]
+            .output
+            .starts_with("true 1\ntrue 1\n[1]\n[5]\n[5, 10]\nfalse 1\n"),
+        "{}",
+        runs.ast[0].output
+    );
+    assert_eq!(engines::compare(&runs.ast, &runs.ir), None);
+}
+
 #[test]
 fn an_operand_read_where_it_is_written_differs_in_the_output() {
     let runs = engines::run_both(&data(), &entry("engines_choice_a.wf"), &on_thread());

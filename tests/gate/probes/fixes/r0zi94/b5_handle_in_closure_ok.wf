@@ -1,0 +1,18 @@
+// Issue #94 (ok, form C): a `handle` in a closure body. The handled body and the clause of `D`
+// name the captures through an environment view, so their frames and the handler mark name
+// the capture cells. Output: 2, 2 (the IR engine of main: 2, 4).
+effect C { multi fn c() -> bool }
+effect D { fn d() -> usize }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<usize> = Vec.new()
+        let f = || {
+            handle D { fn d() { resume(n.len()) } } in {
+                let b = c()
+                n.push(1)
+                d() + n.len()
+            }
+        }
+        print(f())
+    }
+}

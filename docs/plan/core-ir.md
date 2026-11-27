@@ -1925,7 +1925,7 @@ that comes into scope changes its `ir` record. So stage R0z writes a new baselin
 | R0i-b | The other old inputs, part b: `ValueProps`, W0502 of `keep_modes`, W0303 (design in the R0i design note; R0i-b as built, R0i-b fix as built) | | done (d698a8b; the fix of the review: this stage) |
 | R0j | The task fallbacks: a task that runs a callback more than once, a function variable that gets a new value, or code of a caller; a function value that runs a value of its arguments as a task, or that a function value of a callee runs as a task; a spawn on one of more than one scope (R0j design note, R0j as built) | E (TASK_AGAIN, TASK_LATE, TASK_CODE, E3b), C (VALUE_TASKS, R0e fix 2) | done (cb44033) |
 | R0k | The operation fallbacks and the task leftovers of R0j: R0k-b (probes, ledger, design note), R0k-a (C2, D3: call-site copies of the callees, R0k-a as built), R0k-a2 (static closure-body copies at run nodes, generic callees, the closure guard; R0k-a2 as built), R0k-b1 (closure-body copies with an environment local, design note), R0k-b1' (copy regions: closure-body copies with the handler environment of the maker; R0k-b1' as built), R0k-b2 (the environment local `CopyEnv` of a copy region, a value in a field or a variant; R0k-b2 as built), R0k-c (D1, D5, C8: resume points and copied clause frames); D4, A and the task forms stay (R0k design note) | C2, D3, D1, D5, C8, D4, A, F18, E2, E4, E5, R0e fix 2 | R0k-b done (5d8106c); R0k-a done (66123df, 6077076); R0k-a2 done (f8463fe, fix 6bab2f8, 8402500); R0k-b1 not built: the handler environment of a closure blocks the copy (R0k-b1 design check; the direction B1' is for R0z; the B1' design review: GO WITH CHANGES); R0k-b1' done (copy regions with the handler environment of the maker, the six changes of the review; the local `CopyEnv`, a value in a field and the probe run stay pending: R0k-b1' as built); R0k-b2 done (the local `CopyEnv`, a value in a field, a tuple or a variant; a value in a `Vec` or a `Box`, a `once` closure, the probe run and form 5 stay pending: R0k-b2 as built); R0k-c1 done (0b425d7); R0k-c2 (D5, C8): design note after the review (a1fdcca; the cheap step R0k-c2a is not possible), done (R0k-c2 as built: D5 and C8 in scope, a row that only the analysis finds stays; fix 1: a parameter of a clause at the re-entry, R0k-c2 fix 1 as built); R0k-d1 done (8be4ab5); R0k-d2 done (f90d76e); R0k-d3 not built: design check (E2 M-L; R0e fix 2 and `VALUE_TASKS` one L design; `TASK_CODE` with F18); HENV-SHADOW fix done (the closure of a callee in an outer local handler; "HENV-SHADOW fix" below) |
-| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (done after Z10: tier 1 2 rows (88, 89), 16 to 14 fallbacks of the census rows; tier 2 2 rows (the copies of 88 and 89), 9 to 7; a runtime resume node with no copy, no new language rule; "Z4b as built"), Z4 Part B M (done after Z4b: tier 1 2 rows (82, 83), 14 to 12 fallbacks of the census rows; tier 2 1 row (24, `p7154`), 7 to 6; a record of a handled body with a resume point of the clause, no copy, no new language rule; "Z4 Part B as built"), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L (done: tier 1 3 rows, 24 to 21 fallbacks of the census rows; tier 2 4 rows, 19 to 15; `c09_cc_during_ok` and `j01_again_ok` stay open (R-CODE); "Z9a as built"), Z9c L (part A done: change C1 of the design review, proof P1, the `with` check of the fact oracle; no row closes, eight old holes of main close; "Z9c-A as built"; part B done: late slots, capture slots, proof P2, the task cover of a late slot; tier 1 2 rows, 21 to 19 fallbacks of the census rows; tier 2 2 rows, 15 to 13; c16 stays open (R-VCODE); "Z9c-B as built"; part C done: the nested slots of a call; tier 1 2 rows, 19 to 17 fallbacks of the census rows; tier 2 0 rows, 13 stay; part 4 (c10) is out after review round 1, part 3 stays for Z9d; "Z9c-C as built"), Z9d M (done: part 3 of Z9c, the nested slot of a value that the run node knows and of a value of the callee; tier 1 1 row (99), 17 to 16 fallbacks of the census rows; tier 2 0 rows, 13 stay: rows 28, 29 and 31 keep `NESTED_TASK_RUN` (R-NREF of the locals); "Z9d as built"), Z10 M-L (done: the memo of the walk of a run node; tier 1 0 rows, 16 stay; tier 2 4 rows (32 to 35, `closure_chain_*`), 13 to 9 fallbacks of the census rows; the depth bound stays only as a limit of the resources (1024 levels, 4096 values at a run node of a chain deeper than 64); no W0706; "Z10 as built"); then the baseline S |
+| R0z | 0 fallbacks; a new committed baseline of tiers 1 and 2 that R3 compares against. The census after R0k-b2 (tier 1 105 fallbacks, tier 2 60) and the stages to 0: "R0z plan (census after R0k-b2)" below, the rows in `docs/plan/r0z-census.md` | all that stay: C2, D1, D3, RC, D5, A, E2, E4, F18, TASK_CODE, VALUE_TASKS, R0e fix 2, the chain of F12 | Z0 S (done), Z1 M (rules A to G: tier 1 34 rows, tier 2 37; done: tier 1 33 rows, 105 to 72 fallbacks of the census rows; tier 2 37 rows, 60 to 23; "Z0 and Z1 as built"), Z2 M (done: tier 1 8 rows, 72 to 64 fallbacks of the census rows; tier 2 0 rows; the clause form of the false W0301 stays open; "Z2 as built"), Z3 M (done but part b: tier 1 11 rows, 64 to 53 fallbacks of the census rows; tier 2 0 rows; a value in a `Vec` stays open; "Z3 as built"), Z5 M (done: tier 1 4 rows, 53 to 49 fallbacks of the census rows; tier 2 0 rows; "Z5 as built"), Z7 M (done: tier 1 2 rows, 49 to 47 fallbacks of the census rows; tier 2 1 row, 23 to 22; "Z7 as built"), Z6 L (done but part C: tier 1 10 rows, 47 to 37 fallbacks of the census rows; tier 2 0 rows; `a03_put_fns` stays open; "Z6 as built"), Z4 L (done but Part B, Part C and Z4b: tier 1 10 rows, 37 to 27 fallbacks of the census rows; tier 2 1 row, 22 to 21; "Z4 as built"), Z4b M (done after Z10: tier 1 2 rows (88, 89), 16 to 14 fallbacks of the census rows; tier 2 2 rows (the copies of 88 and 89), 9 to 7; a runtime resume node with no copy, no new language rule; "Z4b as built"), Z4 Part B M (done after Z4b: tier 1 2 rows (82, 83), 14 to 12 fallbacks of the census rows; tier 2 1 row (24, `p7154`), 7 to 6; a record of a handled body with a resume point of the clause, no copy, no new language rule; "Z4 Part B as built"), Z8 M (done: tier 1 2 rows, 27 to 25 fallbacks of the census rows; tier 2 2 rows, 21 to 19; `q01_85` stays open; "Z8 as built"), Z9b S-M (done: tier 1 1 row, 25 to 24 fallbacks of the census rows; tier 2 0 rows, 19 stay; "Z9b as built"), Z9a M-L (done: tier 1 3 rows, 24 to 21 fallbacks of the census rows; tier 2 4 rows, 19 to 15; `c09_cc_during_ok` and `j01_again_ok` stay open (R-CODE); "Z9a as built"), Z9c L (part A done: change C1 of the design review, proof P1, the `with` check of the fact oracle; no row closes, eight old holes of main close; "Z9c-A as built"; part B done: late slots, capture slots, proof P2, the task cover of a late slot; tier 1 2 rows, 21 to 19 fallbacks of the census rows; tier 2 2 rows, 15 to 13; c16 stays open (R-VCODE); "Z9c-B as built"; part C done: the nested slots of a call; tier 1 2 rows, 19 to 17 fallbacks of the census rows; tier 2 0 rows, 13 stay; part 4 (c10) is out after review round 1, part 3 stays for Z9d; "Z9c-C as built"), Z9d M (done: part 3 of Z9c, the nested slot of a value that the run node knows and of a value of the callee; tier 1 1 row (99), 17 to 16 fallbacks of the census rows; tier 2 0 rows, 13 stay: rows 28, 29 and 31 keep `NESTED_TASK_RUN` (R-NREF of the locals); "Z9d as built"), Z10 M-L (done: the memo of the walk of a run node; tier 1 0 rows, 16 stay; tier 2 4 rows (32 to 35, `closure_chain_*`), 13 to 9 fallbacks of the census rows; the depth bound stays only as a limit of the resources (1024 levels, 4096 values at a run node of a chain deeper than 64); no W0706; "Z10 as built"), I94 S-M (done: the engine fix of issue #94, the IR engine copies the capture cells of a closure value at a `multi` resume; no row closes, rows 86 and 87 keep R-ROW-K until Z4 Part C; form D (a closure in a kept cell of a frame that ended) stays on both engines; "I94 as built"); then the baseline S |
 
 Each stage gates as C3 did: tier 1 0 blockers; tier 2 (2 workers) 0 blockers and
 new-fp at most 0.1 %; fact oracle tier 1 0 failures; sigdiff tier 1 0 rows with no
@@ -8110,6 +8110,140 @@ review `weft-work/z4rev/notes.txt` (answers 5 and 6, changes 7, 8 and 9); the wo
   the IR does not keep) was missing in the first build. The A4 hook checks the frames below
   the handled body only while the rest runs; the code of the nested body after the `resume`
   is checked by the facts of the component, as for a scope body of Z5.
+
+I94 as built (the engine fix of issue #94: a `multi` resume copies the capture cells of a
+closure value of the IR engine; `docs/ir.md` 8.1, "As built (issue #94)", ADR 0010; the
+design and its review: `weft-work/i94/design.md`, `design-review.json`, the decisions
+`weft-work/decisions/i94.md`; the work files: `weft-work/i94/` outside the repository,
+binaries `i94/bin/weft-i94`, `weft-gate-i94`; main is 565a57e; the probes:
+`tests/gate/probes/fixes/r0zi94/`, and `crates/weft-interp/tests/multi_captures/`):
+
+- The cause on main. `MakeClosureIr` gives a closure of the IR engine a cell of its own for a
+  `ByRef` capture (it holds the reference), and for a `Cap` capture and a `Kont` capture of a
+  `multi` operation (it holds the copy). `copy_frames` did not copy these cells: a closure
+  value in a copied frame kept its reference into the frame before the copy (form A: the copy
+  read and wrote the frame before the copy, so the next resume started from a changed
+  state), and its continuation record of the frame before the copy (form B: the copy of the
+  clause frame resumed the record of the template, and its own record was dropped as "not
+  resumed"). A frame that runs a closure body names the cells in `caps`, and a handler mark
+  in a closure body names them in its clause cells, also when no cell holds the closure value
+  (form C: the block of `with_timeout` or `sim.run`, an argument that runs at the perform).
+  The AST engine has no such cells (a capture by reference is the cell of the variable).
+- The fix (no change of the IR, the analysis, the facts, the checker or the verified code;
+  `crates/weft-interp/src` only). A new cell kind `SlotKind::Capture` for the cells of
+  `CapHold::Ref` and `CapHold::Copied`. `Heap::owned_cells` takes the `Capture` cells of each
+  closure value that it finds (also in a `Vec`, a `Box`, a struct, a tuple or a payload).
+  `copy_frames` adds the `Capture` cells of the `caps` of each copied code frame and of the
+  clause cells of each copied handler mark (also of the nested continuations). A copy keeps
+  the kind of the cell, so a copy of a copy copies it again. The new cell gets
+  `remap_conts(remap(..))`: its reference points into the copy, and its continuation is the
+  record of the copy. A `debug_assert` in `MakeClosureIr` states what a capture cell holds:
+  a `Ref` hold holds a `Value::Ref`, a `Copied` hold a copy value (`Heap::is_copy`: no
+  `Vec`, `Box`, `Rc` or linear value, which a copy must count and an end must free). The
+  oracle names a `Capture` cell "local", so no message changes. The "defensive" rule of the
+  design (a `Ref` or `Loc` that names a capture cell) is not built: no program can reach it.
+- What stays the same on purpose, on both engines: the cell of a `ByMove` capture and of a
+  `Kont` capture of a `once` operation (W0503 rejects such a closure live across a `multi`
+  operation; `m1_bymove_bad`, `m2_once_kont_bad`), an `Rc` object, a local of the site
+  (`m5_site_shared_ok`, `c1_handle_in_site_closure_ok`).
+- Form D, the rest that stays (the design review, both reviewers): a closure value in a kept
+  cell that no copied frame owns (a local of a block that ended, a parameter of a callee that
+  returned, a moved cell) is not walked by either engine, so its captures still name the
+  frame before the copy. The two engines are equal there before and after the fix, and the
+  engine differential cannot see it. The pins (engine test
+  `a_closure_in_a_kept_cell_that_no_copied_frame_owns_keeps_its_capture_cells`):
+  `k9_kept_block_local_pin` and `k4_kept_wrapper_writes_pin` print `1 2` (the copy semantics
+  gives `1 1`), `k2_kept_closure_in_closure_pin` prints `0 0` (semantics `1 1`),
+  `k7_kont_in_kept_pin` (in the fallback) prints `[1] [1, 5] [1, 5, 10]` (semantics: the
+  output of `e01`, `[1] [5] [5, 10]`). So two claims of the design are corrected: the fix makes
+  the IR engine equal to the AST engine, not both engines equal to semantics.md 8.4; and a
+  copy can change the template through such a kept cell. The text of an issue (options: copy
+  such cells on both engines, a W0503-like rejection, or a stated semantics) is
+  `weft-work/i94/issue-form-d.md` (not posted; a decision of the user). For Z4 Part C: a
+  `Kont` closure that reaches the copied clause frame only through a kept cell of a wrapper
+  (`k7`) still resumes the record of the template after I94, so the check "fact oracle (kont
+  region)" would fail on it: Z4 Part C must keep that form refused and must probe it.
+- R-ROW-K and R-SITE stay (no file of `weft-sema` changes). The comments of
+  `crates/weft-sema/src/factgen/instantiate.rs` that give issue #94 as a live cause (the
+  doc of R-ROW-K near line 3606, R-SITE near 3730, and the notes near 3789 and 3942) stay as
+  they are; Z4 Part C updates them when it removes the refusals.
+  The experiment of design section 7 (R-ROW-K off, the fact oracle on `rev_r01` to `r06`)
+  did not run: its build got no slot on the shared machine.
+- The tests (each fails on main; the main binary gives the outputs of the design table):
+  `compile_ir.rs` (`a_multi_resume_copies_the_capture_cells_of_a_closure_value`, form A, also
+  a copy of a copy; `a_frame_that_runs_a_closure_gets_its_capture_cells_in_each_copy`, form C;
+  `a_closure_in_a_copied_clause_frame_resumes_the_copy_of_its_continuation`, form B, `e01`,
+  `r30` and census rows 86 and 87; `the_oracle_has_no_false_fault_in_a_copy`, `h1`, and
+  `x1_escape_value_bad`; `a_cell_outside_the_copied_frames_stays_shared`;
+  `a_moved_capture_stays_shared_between_the_copies`, which compares the fault message only
+  (the columns differ), with `w10`; the form D pins; and each program of the stage runs the
+  same on both engines, but `x1`, where rule CAPTURE gives a dangling reference on the IR
+  engine and a moved value on the AST engine), `fact_oracle.rs`
+  (`the_programs_of_issue_94_pass_the_fact_oracle`: each program in scope, workers 1 and 4),
+  the heap unit test `a_closure_value_owns_its_capture_cells` (only the `Capture` cell of a
+  closure, not its kept or moved cells; the copy keeps the kind), the interpreter program
+  `multi_closure_caps` and the engine test
+  `a_closure_in_a_copied_frame_runs_the_same_on_both_engines` (`engines_multi_capture.wf`,
+  the test that the issue asks for).
+- The probes. `fixes/r0zi94` (27 files): the forms of the design table and of both reviews
+  (`e01`, `e02`, `b2`, `b2s`, `b3`, `b4`, `b5`, `b8`, `x3`, `x4`, `m6`, `k6`, `r02`, `r03`, `r04`,
+  `r1`, `r20`, `r22`, `r30`, `p1`, `a4_wait_copy_w`), the controls (`m3`, `m5`, `c1`, `w10`) and
+  the bad programs `m1`, `m2` (W0503; both engines fault with the same message). The programs
+  that the old pipeline rejects with a false W0301 (`b6_vec`, `b7_struct`, `m7_box`,
+  `r21_enum`, `h1_direct_fault`) are in `crates/weft-interp/tests/multi_captures/` with the
+  pins of form D, `r2_vec_struct_box` and `r14b_two_multi` (W0301 with a clean run), `x1` and
+  `w10a` (W0503): in the gate set each would be a `lost-clean` row that a reviewer must sign.
+  `h1_direct_fault_ok` is in scope with 0 errors; on main the IR engine stops it with "a
+  reference into a local whose scope ended is used", a false fault of the oracle; after the
+  fix both engines print `0 7`.
+- `w10` (from the review of Z4 Part C): a `once` continuation closure in a clause frame that
+  a `multi` resume copies, and each copy drops it with no run (W0503 accepts it; in the
+  fallback). Main and I94: both engines print `[5, 6, 6]`. With a linear value with `on abort`
+  in the rest (`w10a`, W0503): both engines print `undo 7` one time, then `[5, 6, 6]`. The
+  copies share the moved cell, and each copy aborts the copy of the rest of its own record.
+- Results (binaries `i94/bin`). Tests: 1744 pass, 5 ignored (main 1733). The oracle caches
+  ran again (the interpreter sources change; each row has a new `interp` column): tier 1
+  `ir` 6506 runs (2787 fault, 22 timeout, 28 fail, 74 benign, 2889 clean, 706
+  not-runnable), `ast` 6506 runs. Against main (6478 common rows, the `interp` column left
+  out) the verdict or detail of 5 `ir` rows and 2 `ast` rows changes, each an HTTP probe that
+  could not listen on its port while other runs held it (`timeout` against `benign`): not of
+  the stage. The 28 new rows are the probes and `multi_closure_caps`. Tier 1: 0 blockers,
+  6506 programs (4929 same, 63 open, 429 fixed, 1 new-fp, 165 lost-clean, 151 moved, 768
+  changed; main 4901 same and the same other counts); sigdiff 0 rows with no entry (one `sig`
+  entry for `b2_timeout_block_ok` and `r20_scope_body_ok`, classes F19-SIG-NAMED and
+  F19-SIG-RAISES); the fact oracle of tier 1 0 failures. Tier 2 (alone; the `ir` cache ran again, 54184 runs: 16909 fault,
+  51 timeout, 413 fail, 1658 benign, 31460 clean): 0 blockers, 57393 programs, the counts of
+  main (39874 same, 6 open, 92 fixed, 12 new-fp, 3490 lost-clean, 1859 moved, 12060 changed).
+  Against the cache of main the verdict of 8 rows changes, each an HTTP program (`timeout`
+  against `benign` for the port), and no detail changes: no row goes from `fault` to `clean`
+  or from `clean` to `fault`.
+- The engine differential (`weft-gate engines --tier 1`, with `--repo` on the worktree, not
+  in `gates-t1.sh`): main 573 differences, 63 with no ledger entry; I94 544, 34 with no
+  entry. The 29 that go are the 7 programs of the design (`rev1_r03_recursive_rest_ok`,
+  `rev_b06_g_multi_after_ok`, `rev_r01`, `rev_r02`, `rev_r04`, `rev_r05`, `rev_r06` of
+  `fixes/r0z4`), `multi_closure_caps` and 21 new probes. No difference is new. The 34 that
+  stay are the same on main (`weft-work/i94/engines2/unledgered-both.txt`). `m1_bymove_bad` and
+  `m2_once_kont_bad` are not differences (the differential compares the line).
+- ev.sh with main and I94 on 201 files (the 90 candidates of the design, the probes, the
+  programs of `tests/multi_captures`, the review programs): the only change is `h1` (the
+  probe and the review program), from HOLE to `nofault`: the false fault of main. No row
+  goes to HOLE or from `nofault` to FP-IR. fo.sh (three configurations) on the 65 in-scope
+  candidates, the probes and the review programs: only `h1` changes (from the false fault to
+  ok); the frame counts of the fact oracle are the same but `x1` (5 to 4: the run stops at
+  the first call of `g`). The census (`check --reasons`): tier 1 356 fallbacks of 6506 files
+  with both binaries (main 352 of 6478; of the new files `e01`, `r30`, `w10` and
+  `multi_closure_caps` keep the fallback of group D); tier 2 (the Z8 list) 6 fallbacks and 5
+  time-outs with both binaries. No row of the census closes: rows 86 and 87 keep R-ROW-K.
+- Open (the same on main; `weft-work/i94/gaps.md`): form D above; the summary oracle (A4)
+  fails on clean programs in scope where a clause frame of an inner handler waits at its
+  `resume` with a reference into the handled body, and a `multi` resume of the outer handler
+  copies the frame ("the `Copy` node does not bind it again"; `weft-work/i94/review/rt/w1_wait_direct_ok.wf`,
+  no closure); the clause oracle (A5) fails on `r14_two_multi` (W0301); false positives on the
+  programs of the stage (W0301 with a clean run: `m4_outer_shared`, `r2_vec_struct_box`,
+  `r14b_two_multi`, and the old pipeline on `b6`, `b7`, `m7`, `r21`, `h1`, `k9`).
+- Integration: I94 changes the `interp` column of each row of both tier-1 caches. A stage that
+  rebases on I94 makes the caches again on the combined branch (no merge of the TSV files
+  by hand).
 
 R0k-c1 as built (copies of continuation closures in clauses, D1a and D1c; `docs/ir.md`
 6.1, "As built (plan stage R0k-c1)"):

@@ -787,8 +787,25 @@ impl super::Machine<'_, '_> {
                             cells.push(cell);
                             own.push(cell);
                         }
-                        (CapHold::Ref | CapHold::Copied, v) => {
-                            cells.push(self.heap.alloc(SlotKind::Local, v));
+                        // A capture cell is a part of the closure value: a
+                        // copy of a frame for a `multi` continuation copies
+                        // it (issue #94), and nothing ends it. So it must
+                        // hold a copy value: no `Vec`, `Box`, `Rc` or linear
+                        // value, which a copy must count and an end must
+                        // free.
+                        (CapHold::Ref, v) => {
+                            debug_assert!(
+                                matches!(v, Value::Ref(_)),
+                                "a capture by reference holds a reference"
+                            );
+                            cells.push(self.heap.alloc(SlotKind::Capture, v));
+                        }
+                        (CapHold::Copied, v) => {
+                            debug_assert!(
+                                self.heap.is_copy(&v),
+                                "a copied capture holds a copy value"
+                            );
+                            cells.push(self.heap.alloc(SlotKind::Capture, v));
                         }
                     }
                 }

@@ -1,0 +1,17 @@
+// Issue #94 (ok, form A): the closure `g` pushes a reference to `e` into `n`. On main the IR
+// engine pushes into the frame before the copy, so the second copy gets a reference into the
+// first copy, which ended: a false fault of the oracle on a program that the `ir` pipeline
+// accepts. Output: 0, 7 on both engines. The old pipeline rejects the program (W0301, a
+// false positive), so it is not a probe of the gate: it needs a signed `lost-clean` entry.
+effect C { multi fn c() -> bool }
+struct E { hp: u64 }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let e = E { hp: 7 }
+        let n: Vec<&E> = Vec.new()
+        let g = |r: &E| n.push(r)
+        let b = c()
+        g(&e)
+        if b { print(0) } else { print(n[0].hp) }
+    }
+}

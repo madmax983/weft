@@ -1,0 +1,30 @@
+// Issue #94 (ok, control; in the fallback; from the review of plan stage Z4 Part C): a closure
+// holds a `once` continuation in a clause frame that a `multi` resume copies. No copy runs
+// the closure: each copy drops it and returns with no resume. W0503 accepts the program (the
+// closure is not live across the `multi` operation). The copies share the cell of the moved
+// continuation on both engines; each copy aborts the copy of the rest of its own record.
+// Output: [5, 6, 6] on both engines, before and after the fix.
+effect Choice { multi fn choose() -> bool }
+effect Pick { fn pick() -> u64 }
+fn run(flag: bool) -> u64 / Choice {
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            if flag { k(1) } else {
+                let b = choose()
+                if b { 5 } else { 6 }
+            }
+        }
+    } in {
+        let v: Vec<u64> = Vec.new()
+        v.push(3)
+        let x = pick()
+        v.push(x)
+        x + v[0]
+    }
+}
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false); resume(false) } } in out.push(run(false))
+    print(out)
+}

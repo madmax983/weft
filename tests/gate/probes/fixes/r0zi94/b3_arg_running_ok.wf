@@ -1,0 +1,15 @@
+// Issue #94 (ok, form C): a closure argument runs at the `multi` operation, in the frame of
+// `apply`. Each copy writes its own `n`. Output: 1, 1 (the IR engine of main: 1, 2).
+effect C { multi fn c() -> bool }
+fn apply(f: fn() -> usize / C) -> usize / C { f() }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<usize> = Vec.new()
+        let r = apply(|| {
+            let b = c()
+            n.push(1)
+            n.len()
+        })
+        print(r)
+    }
+}

@@ -1,0 +1,45 @@
+// Issue #94: a closure value in a frame that a `multi` resume copies. The two
+// engines give the same output: each copy of the frame has its own `n`, and
+// each copy of the clause frame of `pick` resumes its own continuation.
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+
+fn by_ref() / Choice {
+    let n: Vec<u64> = Vec.new()
+    let f = || n.len()
+    let b = choose()
+    n.push(1)
+    print(b, f())
+}
+
+fn block() / Choice, Async, Fail {
+    let n: Vec<u64> = Vec.new()
+    with_timeout(1.s) {
+        let b = choose()
+        n.push(1)
+        print(b, n.len())
+    }
+}
+
+fn kont() -> u64 / Choice {
+    let acc: Vec<u64> = Vec.new()
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            let b = choose()
+            if b { k(1) } else { k(5); k(10) }
+        }
+    } in {
+        acc.push(pick())
+        print(acc)
+    }
+    0
+}
+
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        by_ref()
+        block()
+        let r = kont()
+    }
+}

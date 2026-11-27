@@ -136,7 +136,10 @@ pub struct ClosureVal {
     pub code: CodeId,
     /// The captured cells. A capture by reference is the cell of the variable. A
     /// capture that the closure moves is a cell of its own: the closure took the
-    /// value when it was made.
+    /// value when it was made. A closure of the IR engine also has a cell of
+    /// its own for the reference of a `ByRef` capture and for the copy of a
+    /// capability or of a `multi` continuation: a capture cell
+    /// (`SlotKind::Capture`), which a copy of a frame copies with the value.
     pub cells: Vec<CellId>,
     /// The cells of `cells` that the closure owns: the captures that it moved.
     /// The unwinder finishes the linear values in them (ADR 0010).

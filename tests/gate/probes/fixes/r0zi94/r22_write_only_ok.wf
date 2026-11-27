@@ -1,0 +1,12 @@
+// Issue #94 (ok, form A): the closure writes `n` through its reference. On main the IR engine
+// writes the frame before the copy, so the second resume starts from a changed state.
+// Output: 1, 1 (the IR engine of main: 1, 2).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || { n.push(1); n.len() }
+        let b = c()
+        print(f())
+    }
+}

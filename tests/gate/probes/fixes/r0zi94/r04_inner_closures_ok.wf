@@ -1,0 +1,20 @@
+// Issue #94 (ok, forms A and C): the closure `f` runs at the `multi` operation. Its inner
+// closures hold `cnt` as a kept capture of a capture of `f`, and `n` as a reference.
+// Output: 1 1 1, 1 1, 1 1 1, 1 1 (the IR engine of main: 1 1 1, 1 0, 1 2 2, 1 1).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let cnt = 0
+        let f = || {
+            let g = || cnt += 1
+            let h = || n.len()
+            let b = c()
+            g()
+            n.push(1)
+            print(cnt, h(), n.len())
+        }
+        f()
+        print(cnt, n.len())
+    }
+}

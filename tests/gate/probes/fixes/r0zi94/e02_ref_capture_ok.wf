@@ -1,0 +1,13 @@
+// Issue #94 (ok, form A): the closure `f` holds a reference to the local `n` of the handled
+// body, and a `multi` operation runs between the make and the run. Each copy of the frame
+// has its own `n`, and `f` of the copy reads it. Output: 1, 1 (the IR engine of main: 0, 0).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || n.len()
+        let b = c()
+        n.push(1)
+        print(f())
+    }
+}

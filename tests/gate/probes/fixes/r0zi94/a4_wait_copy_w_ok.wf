@@ -1,0 +1,17 @@
+// Issue #94 (ok, form A): the clause frame of `D` waits at its `resume` inside the copied
+// frames, and a closure of the copy writes the target of its reference parameter `r`. The
+// wait of the copy gets the write (A4 of the fact oracle). Output: 1, 0, 1, 0 (the IR engine
+// of main: 1, 0, 2, 0).
+effect C { multi fn c() -> bool }
+effect D { fn d(r: &Vec<u64>) -> u64 }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || { n.push(1); n.len() }
+        handle D { fn d(r: &Vec<u64>) { let x = r.len(); resume(7); print(x) } } in {
+            let v = d(&n)
+            let b = c()
+            print(f())
+        }
+    }
+}

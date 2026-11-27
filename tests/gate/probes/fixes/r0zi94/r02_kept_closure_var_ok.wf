@@ -1,0 +1,14 @@
+// Issue #94 (ok, form A): the closure `g` holds the local `f` as a kept capture and gives it
+// to a callee. Output: 1, 1 (the IR engine of main: 0, 0).
+effect C { multi fn c() -> bool }
+fn run(f: fn() -> usize) -> usize { f() }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || n.len()
+        let g = || run(f)
+        let b = c()
+        n.push(1)
+        print(g())
+    }
+}

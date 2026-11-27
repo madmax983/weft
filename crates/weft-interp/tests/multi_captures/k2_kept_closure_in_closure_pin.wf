@@ -1,0 +1,14 @@
+// Issue #94, the rest that stays (form D, a pin): as `k4`, but the closure only reads.
+// Output: 0, 0 on both engines, before and after the fix (the semantics gives 1, 1).
+effect C { multi fn c() -> bool }
+fn mk(f: fn() -> usize) -> fn() -> usize { || f() + 0 }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || n.len()
+        let g = mk(f)
+        let b = c()
+        n.push(1)
+        print(g())
+    }
+}

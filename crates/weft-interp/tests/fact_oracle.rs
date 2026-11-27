@@ -1957,6 +1957,36 @@ fn the_probes_of_the_handled_resumes_pass_the_fact_oracle() {
     );
 }
 
+/// The programs of issue #94 (`fixes/r0zi94` and `tests/multi_captures`: a
+/// closure value in a frame that a `multi` resume copies). After the fix a
+/// copy reads and writes its own cells, so the heap events of a copy name
+/// the cells of the copy, and a wait of a copied clause frame gets its hits
+/// (A4). Each program that the `ir` pipeline checks runs with no failure of
+/// the fact oracle (a bad program can fault in the memory oracle).
+#[test]
+fn the_programs_of_issue_94_pass_the_fact_oracle() {
+    let mut checked = 0;
+    for dir in [
+        "../../tests/gate/probes/fixes/r0zi94",
+        "tests/multi_captures",
+    ] {
+        for p in programs(&Path::new(env!("CARGO_MANIFEST_DIR")).join(dir)) {
+            let src = fs::read_to_string(&p).unwrap();
+            let c = check(&src);
+            if c.ir.is_none() {
+                continue;
+            }
+            for workers in [1, 4] {
+                let o = RunOptions { workers, ..opts() };
+                let r = run_main(&c, &o);
+                assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked >= 30, "{checked}");
+}
+
 /// A4 at a resume point in a handled body inside the clause (plan stage R0z
 /// Z4 Part B), the mutation. In `a02_param_after_ok` the parameter `r` of the
 /// clause points into a local of the handled body, and the rest of the

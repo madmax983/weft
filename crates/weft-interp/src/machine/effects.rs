@@ -1213,6 +1213,20 @@ impl super::Machine<'_, '_> {
     /// mark in them capture the copied cells. The fact oracle checks the
     /// state of the references of the copied frames at the copy (A4 of
     /// re-entries, stage R0k-c2).
+    ///
+    /// The frames also own the capture cells of the closure values of the IR
+    /// engine that they reach ([`SlotKind::Capture`], issue #94): the cells
+    /// of each closure value in an owned cell or on an operand stack
+    /// ([`crate::heap::Heap::owned_cells`]), and the capture cells that a
+    /// frame or a handler mark names (a frame that runs the closure body, and
+    /// a handled body, a clause or a scope body in it). So the reference of a
+    /// `ByRef` capture points into the copy, and the continuation of a `Kont`
+    /// capture is the record of the copy.
+    ///
+    /// The copies share each other cell: a local of the site, an `Rc` object,
+    /// the cell of a capture that a closure moved, and a kept cell that no
+    /// copied frame owns (the cell of a local or a parameter of a frame that
+    /// ended), with the closure values in them.
     fn copy_frames(&mut self, frames: &[Frame]) -> R<Vec<Frame>> {
         // The continuations of the clause frames, also inside those continuations.
         let mut nested: Vec<(ContId, Vec<Frame>)> = Vec::new();
@@ -1234,10 +1248,25 @@ impl super::Machine<'_, '_> {
             .collect();
         let mut owned: Vec<CellId> = Vec::new();
         for f in lists.iter().copied().flatten() {
-            if let Frame::Code(cf) = f {
-                owned.extend(cf.slots.iter().flatten().copied());
-                owned.extend(cf.temps.iter().copied());
-                owned.extend(cf.owned.iter().copied());
+            match f {
+                Frame::Code(cf) => {
+                    owned.extend(cf.slots.iter().flatten().copied());
+                    owned.extend(cf.temps.iter().copied());
+                    owned.extend(cf.owned.iter().copied());
+                    // The capture cells of the closure that the frame runs
+                    // (or of the closure around its handled body, clause or
+                    // scope body). It is possible that no cell holds the
+                    // closure value: a call can move it into the frame.
+                    let caps = cf.caps.iter().copied();
+                    owned.extend(caps.filter(|c| self.heap.is_capture(*c)));
+                }
+                Frame::Handle(h) => {
+                    for (_, _, cells) in h.clauses.iter() {
+                        let cells = cells.iter().copied();
+                        owned.extend(cells.filter(|c| self.heap.is_capture(*c)));
+                    }
+                }
+                _ => {}
             }
         }
         let mut extra = Vec::new();

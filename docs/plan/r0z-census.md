@@ -396,6 +396,20 @@ the counts.
   6 time-outs with Z4 Part B. The rows that stay in tier 1 (12): 25, 47, 48, 72, 73, 86, 87,
   93, 94, 102, 103 and 105, with the reasons of the earlier stages.
 
+## I94 (as built)
+
+- I94 (the engine fix of issue #94: a `multi` resume copies the capture cells of a closure
+  value of the IR engine; `docs/plan/core-ir.md`, "I94 as built") closes no row. It changes
+  no checker code, so no program changes its pipeline. Rows 86 and 87 (`fd2_v2`, `fd2_v3`,
+  both tiers) keep the fallback by R-ROW-K (and row 87 by Z3 part b): the engine cause of
+  R-ROW-K is gone (the copy of a clause frame resumes its own continuation record), and
+  Z4 Part C removes the refusal. Both rows print the same output on both engines before
+  and after the fix; after the fix the IR engine resumes the record of the copy.
+- Tier 1: 356 fallbacks of 6506 files with main and with I94 (no file changes; of the 28 new
+  files `e01_kont_record_ok`, `r30_kont_two_caps_ok`, `w10_once_dead_after_row_ok` and
+  `multi_closure_caps` keep the fallback of group D). Tier 2 (the rows of the Z8 list): 6
+  fallbacks and 5 time-outs with both binaries.
+
 ## Columns
 
 - Reason: the reason of the note. `C2` a function value that an operation gives to a
@@ -513,8 +527,8 @@ the counts.
 | 83 | `fixes/r0kc/c08_nested_ok.wf` | D1 | D1a refusal: a body inside the clause (clean twin) | clean | no fault | clean | yes | Z4 Part B (closed) |
 | 84 | `fixes/r0kc/c09_field_bad.wf` | D1 | D1a refusal: the closure goes through a field | W0301 | fault | rejected | yes | Z4 (closed) |
 | 85 | `fixes/r0kc/c09_field_ok.wf` | D1 | D1a refusal: a field (clean twin) | clean | no fault | clean | yes | Z4 (closed) |
-| 86 | `verify/s5/R2c: .../p/fd2_v2_closure_resume.wf` | D1 | D1a in a `multi` clause: a perform between, two runs | clean | no fault | clean | no | Z4 |
-| 87 | `verify/s5/R2c: .../p/fd2_v3_vec_of_closures.wf` | D1 | D1a through a `Vec` (heap slot), a perform between | clean | no fault | clean | no | Z4 |
+| 86 | `verify/s5/R2c: .../p/fd2_v2_closure_resume.wf` | D1 | D1a in a `multi` clause: a perform between, two runs | clean | no fault | clean | no | Z4 (open: R-ROW-K; I94 removes the engine cause, "I94 (as built)") |
+| 87 | `verify/s5/R2c: .../p/fd2_v3_vec_of_closures.wf` | D1 | D1a through a `Vec` (heap slot), a perform between | clean | no fault | clean | no | Z4 (open: R-ROW-K and Z3 part b; I94 removes the engine cause, "I94 (as built)") |
 | 88 | `verify/s5/R2c: .../p/rr3_v19_sim_run_closure.wf` | D1 | runtime run: `resume` in the block of `sim.run` | clean | no fault | clean | no | Z4b (closed) |
 | 89 | `verify/s5/R2c: .../p/rr3_v20_with_timeout.wf` | D1 | runtime run: `resume` in the block of `with_timeout` | clean | no fault | clean | no | Z4b (closed) |
 | 90 | `fixes/r0kd1/d02_multi_weak.wf` | esc | D4 multi: the update after a `multi` resume stays weak, so a closure seems to run outside its handler | clean | no fault | clean | yes | Z8 (closed) |
