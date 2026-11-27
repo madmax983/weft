@@ -67,11 +67,14 @@ pub enum CapHold {
     Moved,
     /// The operand is the reference that `&x` made: the closure holds it in
     /// a cell of its own (a `ByRef` capture). A call does not take it, so
-    /// each call reads through the reference.
+    /// each call reads through the reference. The cell is a capture cell
+    /// (`SlotKind::Capture`): a copy of a frame for a `multi` continuation
+    /// copies it with the closure value (issue #94).
     Ref,
     /// The operand is a copy of a capability or of a `multi` continuation:
     /// the closure holds it in a cell of its own (a `Cap` or a `Kont`
-    /// capture). A call does not take it.
+    /// capture). A call does not take it. The cell is a capture cell, as
+    /// for [`CapHold::Ref`].
     Copied,
 }
 

@@ -1,0 +1,32 @@
+// Issue #94 (control; W0503 rejects it: `l` is live across `pick`): as the probe
+// `w10_once_dead_after_row_ok`, with a linear value with `on abort` in the rest. Each copy of
+// the clause frame returns with no resume and aborts the copy of the rest. The copies share
+// the linear record, so `undo` runs one time. Output: undo 7, [5, 6, 6] on both engines,
+// before and after the fix.
+effect Choice { multi fn choose() -> bool }
+effect Pick { fn pick() -> u64 }
+linear struct L { id: u64 }
+    on abort = undo
+fn undo(l: L) { let L(id) = l; print("undo", id) }
+fn done(l: L) { let L(id) = l }
+fn run(flag: bool) -> u64 / Choice {
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            if flag { k(1) } else {
+                let b = choose()
+                if b { 5 } else { 6 }
+            }
+        }
+    } in {
+        let l = L { id: 7 }
+        let x = pick()
+        done(l)
+        x
+    }
+}
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false); resume(false) } } in out.push(run(false))
+    print(out)
+}

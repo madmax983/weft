@@ -138,7 +138,7 @@ fn each_interpreter_program_gives_its_output_with_the_ir_engine() {
             );
         }
     }
-    assert_eq!(count, 61, "the number of interpreter programs");
+    assert_eq!(count, 62, "the number of interpreter programs");
     let want: BTreeSet<String> = NO_IR.iter().map(|s| (*s).to_string()).collect();
     assert_eq!(fell_back, want, "the programs with no IR");
     assert!(failures.is_empty(), "{failures}");
@@ -1173,4 +1173,234 @@ fn main() {
     assert!(err.is_some(), "the run is clean");
     let (_, ast) = run_unchecked_oracle(tail, Engine::Ast);
     assert!(ast.is_some(), "the run is clean on the AST engine");
+}
+
+// ---------------------------------------------------------------------------
+// Issue #94: the capture cells of a closure value at a `multi` resume
+// ---------------------------------------------------------------------------
+
+/// The directories of the programs of issue #94: the probes of the gate, and
+/// the programs that only the tests here run (a program that the old
+/// pipeline rejects, and the pins of the form that stays).
+const I94_DIRS: [&str; 2] = [
+    "../../tests/gate/probes/fixes/r0zi94",
+    "tests/multi_captures",
+];
+
+/// Returns the source of program `name` of issue #94.
+fn i94(name: &str) -> String {
+    for dir in I94_DIRS {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(dir)
+            .join(format!("{name}.wf"));
+        if path.exists() {
+            return fs::read_to_string(path).unwrap();
+        }
+    }
+    panic!("no program `{name}` of issue #94");
+}
+
+/// Checks that each program of `table` gives its output with both engines,
+/// with no fault of the oracle.
+fn i94_outputs(table: &[(&str, &str)]) {
+    for (name, out) in table {
+        let src = i94(name);
+        for engine in [Engine::Ir, Engine::Ast] {
+            assert_eq!(
+                run_oracle(&src, engine),
+                ((*out).to_string(), None),
+                "{name}, {engine:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_multi_resume_copies_the_capture_cells_of_a_closure_value() {
+    // Form A of issue #94: a closure value in a copied frame holds a
+    // reference to a local of a copied frame in a cell of its own
+    // (`CapHold::Ref`). The copy of the frame gets a copy of the cell, and
+    // the reference in it points into the copy. Before the fix the closure
+    // of the copy read and wrote the frame before the copy.
+    i94_outputs(&[
+        ("e02_ref_capture_ok", "1\n1\n"),
+        ("b4_nested_closure_ok", "1\n1\n"),
+        ("r22_write_only_ok", "1\n1\n"),
+        ("k6_kept_local_closure_ok", "1\n1\n"),
+        ("r02_kept_closure_var_ok", "1\n1\n"),
+        ("r03_kept_and_ref_ok", "2 1\n2 1\n"),
+        ("r1_op_arg_closure_ok", "11\n0\n11\n0\n"),
+        ("a4_wait_copy_w_ok", "1\n0\n1\n0\n"),
+        ("m6_callee_frame_ok", "2\n1\n"),
+        ("x4_rec_ok", "3\n3\n"),
+        // The closure value is in a `Vec`, a struct, a `Box`, a payload.
+        ("b6_vec_ok", "1\n1\n"),
+        ("b7_struct_ok", "1\n1\n"),
+        ("m7_box_ok", "1\n1\n"),
+        ("r21_enum_ok", "1\n1\n"),
+        // A copy of a copy: the copy of a capture cell is a capture cell.
+        ("x3_loop_ok", "1\n2\n2\n1\n2\n2\n"),
+        ("r2_vec_struct_box", "1\n2\n2\n1\n2\n2\n"),
+        (
+            "r14b_two_multi",
+            "1 true 2\n2 true 3\n2\n2 false 3\n2\n1 false 2\n2 true 3\n2\n2 false 3\n2\n",
+        ),
+    ]);
+}
+
+#[test]
+fn a_frame_that_runs_a_closure_gets_its_capture_cells_in_each_copy() {
+    // Form C of issue #94: the frame of a closure body that runs at the
+    // `multi` operation names the capture cells (`CodeFrame::caps`), also
+    // when no cell holds the closure value (the block of `with_timeout` and
+    // of `sim.run`). A handled body, a clause and a scope body in a closure
+    // body name them through an environment view. Before the fix a write of
+    // a copy changed the frame before the copy, so the next resume started
+    // from a changed state.
+    i94_outputs(&[
+        ("b2_timeout_block_ok", "1\n1\n"),
+        ("b2s_sim_block_ok", "1\n1\n"),
+        ("b3_arg_running_ok", "1\n1\n"),
+        ("b8_two_closures_ok", "2\n2\n"),
+        ("b5_handle_in_closure_ok", "2\n2\n"),
+        ("r20_scope_body_ok", "1\n1\n"),
+        ("p1_ref_of_moved_ok", "1\n1\n1\n1\n"),
+        ("r04_inner_closures_ok", "1 1 1\n1 1\n1 1 1\n1 1\n"),
+    ]);
+}
+
+#[test]
+fn a_closure_in_a_copied_clause_frame_resumes_the_copy_of_its_continuation() {
+    // Form B of issue #94: a closure holds a `multi` continuation in a cell
+    // of its own (`CapHold::Copied`). A `multi` resume of an outer handler
+    // copies the clause frame and the record of its continuation: the
+    // closure of the copy resumes the record of the copy. Before the fix it
+    // resumed the record of the frame before the copy.
+    i94_outputs(&[
+        ("e01_kont_record_ok", "[1]\n[5]\n[5, 10]\n"),
+        ("r30_kont_two_caps_ok", "[1]\n[1]\n[5]\n[5, 10]\n[5, 10]\n"),
+    ]);
+    // Census rows 86 and 87: the output did not show the wrong record.
+    for (name, out) in [
+        ("fd2_v2_closure_resume", "[0, 32, 32]\n"),
+        ("fd2_v3_vec_of_closures", "[0, 11, 11]\n"),
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/gate/probes/verify/s5")
+            .join("R2c: effects, continuations, on abort and drops/p")
+            .join(format!("{name}.wf"));
+        let src = fs::read_to_string(path).unwrap();
+        for engine in [Engine::Ir, Engine::Ast] {
+            assert_eq!(
+                run_oracle(&src, engine),
+                (out.to_string(), None),
+                "{name}, {engine:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_oracle_has_no_false_fault_in_a_copy() {
+    // The closure pushes a reference to a local of the copy into `n`.
+    // Before the fix the IR engine pushed into the frame before the copy,
+    // so the second copy got a reference into the first copy, which ended:
+    // the oracle faulted on a program that the `ir` pipeline accepts.
+    i94_outputs(&[("h1_direct_fault_ok", "0\n7\n")]);
+    // The closure is the value of the handled body, and the clause runs it
+    // after the copy ended (W0301). The reference of the copy points into
+    // the ended frame, so the oracle of the IR engine stops the first run.
+    // Before the fix it read the frame before the copy and printed 0.
+    let src = i94("x1_escape_value_bad");
+    let (out, e) = run_oracle(&src, Engine::Ir);
+    assert_eq!(out, "");
+    assert!(e.expect("the run of `g` faults").contains("dangling"));
+    let (out, e) = run_oracle(&src, Engine::Ast);
+    assert_eq!(out, "");
+    assert!(e.expect("the run of `g` faults").contains("moved"));
+}
+
+#[test]
+fn a_cell_outside_the_copied_frames_stays_shared() {
+    // A capability capture has the same content in each copy. A closure
+    // that was made outside the handled body holds a reference to a local
+    // of the site, and the mark of a handler in a closure of the site names
+    // capture cells: the copies share the cells of the site (ADR 0005).
+    i94_outputs(&[
+        ("m3_cap_capture_ok", "[3]\n[3]\n"),
+        ("m5_site_shared_ok", "1\n2\n"),
+        (
+            "c1_handle_in_site_closure_ok",
+            "3 1\n3 1\n5 1\n5 1\n[9, 1, 9, 1, 9]\n",
+        ),
+    ]);
+}
+
+#[test]
+fn a_moved_capture_stays_shared_between_the_copies() {
+    // The cell of a capture that the closure moved (`CapHold::Moved`, also
+    // a `once` continuation) is not a capture cell: the copies share it, as
+    // on the AST engine. W0503 rejects a `once` closure that is live across
+    // a `multi` operation. The second run faults with the same message on
+    // both engines (the column of the fault is not the same).
+    for (name, out) in [("m1_bymove_bad", "1\n"), ("m2_once_kont_bad", "[1]\n")] {
+        let src = i94(name);
+        let (ir_out, ir) = run_oracle(&src, Engine::Ir);
+        let (ast_out, ast) = run_oracle(&src, Engine::Ast);
+        assert_eq!((ir_out.as_str(), ast_out.as_str()), (out, out), "{name}");
+        let ir = ir.expect("the second run faults");
+        assert_eq!(ir, "a value is used after it was moved", "{name}");
+        assert_eq!(Some(ir), ast, "{name}");
+    }
+    // No copy runs the `once` closure: each copy drops it and returns with
+    // no resume (from the review of plan stage Z4 Part C). The copies share
+    // the cell of the continuation, and each copy aborts the copy of the
+    // rest of its own record. With a linear value in the rest, the copies
+    // share the linear record: its `on abort` function runs one time.
+    i94_outputs(&[
+        ("w10_once_dead_after_row_ok", "[5, 6, 6]\n"),
+        ("w10a_once_dead_on_abort", "undo 7\n[5, 6, 6]\n"),
+    ]);
+}
+
+#[test]
+fn a_closure_in_a_kept_cell_that_no_copied_frame_owns_keeps_its_capture_cells() {
+    // The form that issue #94 does not close (form D, `docs/plan/core-ir.md`
+    // "I94 as built"): a closure holds another closure as a kept capture,
+    // and the frame of that local or parameter ended. No frame owns the
+    // kept cell, so no engine walks it at a copy, and the inner closure
+    // keeps its reference (or its continuation) of the frame before the
+    // copy. The semantics gives `1 1` for `k9` and `k4`, and the output of
+    // `e01` for `k7`. These are pins: the two engines must stay equal. A
+    // fix must change both engines.
+    i94_outputs(&[
+        ("k9_kept_block_local_pin", "1\n2\n"),
+        ("k4_kept_wrapper_writes_pin", "1\n2\n"),
+        ("k2_kept_closure_in_closure_pin", "0\n0\n"),
+        ("k7_kont_in_kept_pin", "[1]\n[1, 5]\n[1, 5, 10]\n"),
+    ]);
+}
+
+#[test]
+fn each_program_of_issue_94_runs_the_same_on_both_engines() {
+    // The output and the message of a fault are equal. The exception is
+    // `x1_escape_value_bad`: the IR engine reads a dangling reference where
+    // the AST engine reads a moved value (rule CAPTURE, `docs/ir.md` 5.1.7).
+    let mut n = 0;
+    for dir in I94_DIRS {
+        for p in programs(&Path::new(env!("CARGO_MANIFEST_DIR")).join(dir)) {
+            if stem(&p) == "x1_escape_value_bad" {
+                continue;
+            }
+            let src = fs::read_to_string(&p).unwrap();
+            assert_eq!(
+                run_oracle(&src, Engine::Ir),
+                run_oracle(&src, Engine::Ast),
+                "{}",
+                p.display()
+            );
+            n += 1;
+        }
+    }
+    assert!(n >= 35, "{n}");
 }

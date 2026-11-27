@@ -6927,6 +6927,31 @@ As built (plan stage I3, handlers and continuations):
 - A `multi` resume copies the frames of the continuation as before: the slots,
   the temporaries and the owned cells of the handled body get new cells, and
   the captured cells (the cells of the site) stay shared (probe J4).
+- As built (issue #94): the cell that a closure value has for a `ByRef`, a `Cap`
+  or a `Kont` capture of a `multi` operation (`CapHold::Ref`, `CapHold::Copied`)
+  is a capture cell (`SlotKind::Capture`). It is a part of the closure value:
+  nothing writes it after `MakeClosureIr`, and nothing ends it. A `multi` resume
+  copies each capture cell that the copied frames reach: the cells of each closure
+  value in a copied cell (also in a `Vec`, a `Box`, a struct, a tuple or a
+  payload) or on an operand stack, and the capture cells that a copied frame or
+  a copied handler mark names (the frame of a closure body, and a handled body,
+  a clause or a scope body in a closure body: no cell holds the closure value
+  of the block of `with_timeout` or `sim.run` while it runs). The reference in
+  the new cell points into the copy, and the continuation in it is the record of
+  the copy. So `(*env.k)` in a copy names the cell that the AST engine names
+  there, and a closure in a copied clause frame resumes the continuation of that
+  copy. Before the fix the capture cells stayed shared: a closure of a copy read
+  and wrote the frame before the copy (the next resume then started from a
+  changed state), and it resumed the continuation record of the frame before
+  the copy. The copies share each other cell, on both engines: the cell of a
+  `ByMove` capture and of a `Kont` capture of a `once` operation (W0503 rejects a
+  `once` closure that is live across a `multi` operation), an `Rc` object, and a
+  kept cell that no copied frame owns, with the closure values in it (the cell of
+  a local or a parameter of a frame that ended: `let g = { let f = || ..; || f() }`,
+  `mk(f)` with `fn mk(f) { || f() }`). In that last form a closure in the kept
+  cell keeps its reference, or its continuation, of the frame before the copy;
+  the two engines are equal there, and both differ from the copy of the handled
+  body that ADR 0005 states (`docs/plan/core-ir.md`, "I94 as built").
 - A perform through a capability place is the new op `PerformCap`: the place
   ops and `Read` push the capability, then the arguments. The machine finds the
   handler in the lexical handlers of the frame, as for a perform through the

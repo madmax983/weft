@@ -1,0 +1,14 @@
+// Issue #94 (ok, control): the closure is made outside the handled body and holds a reference
+// to a local of the site. The copies share the cell of the site (ADR 0005). Output: 1, 2 on
+// both engines, also on main.
+effect C { multi fn c() -> bool }
+fn main() {
+    let n: Vec<u64> = Vec.new()
+    let f = || n.len()
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let g = f
+        let b = c()
+        n.push(1)
+        print(g())
+    }
+}

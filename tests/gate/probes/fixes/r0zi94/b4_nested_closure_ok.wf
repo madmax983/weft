@@ -1,0 +1,15 @@
+// Issue #94 (ok, form A): the closure `f` makes the closure `g` at each run; both hold a
+// reference to `n`. Output: 1, 1 (the IR engine of main: 0, 0).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || {
+            let g = || n.len()
+            g()
+        }
+        let b = c()
+        n.push(1)
+        print(f())
+    }
+}

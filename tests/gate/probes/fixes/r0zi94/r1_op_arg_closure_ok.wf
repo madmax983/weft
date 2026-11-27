@@ -1,0 +1,13 @@
+// Issue #94 (ok, form A): the closure is the argument of the `multi` operation. The clause runs
+// its own value (it reads the frame before the copies); the copy runs its own value.
+// Output: 11, 0, 11, 0 (the IR engine of main: 10, 0, 10, 0).
+effect C { multi fn c(f: fn() -> usize) -> bool }
+fn main() {
+    handle C { fn c(f: fn() -> usize) { resume(true); print(f()); resume(false); print(f()) } } in {
+        let n: Vec<u64> = Vec.new()
+        let g = || n.len()
+        let b = c(g)
+        n.push(1)
+        print(g() + 10)
+    }
+}

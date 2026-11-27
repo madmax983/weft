@@ -1,0 +1,15 @@
+// Issue #94 (bad, W0301): the closure is the value of the handled body, and the clause runs
+// it after the copy ended. The reference of the copy points into the ended frame, so the
+// oracle of the IR engine stops the first run of `g` (on main it reads the frame before the
+// copy, prints 0, and faults later). The AST engine reads the moved cell of `n`.
+effect C { multi fn c() -> bool }
+fn main() {
+    let r = handle C { fn c() { let g = resume(true); let h = resume(false); print(g()); h } } in {
+        let n: Vec<u64> = Vec.new()
+        let f = || n.len()
+        let b = c()
+        n.push(1)
+        f
+    }
+    print(r())
+}

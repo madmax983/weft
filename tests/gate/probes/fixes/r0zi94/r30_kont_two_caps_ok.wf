@@ -1,0 +1,24 @@
+// Issue #94 (ok, forms A and B; in the fallback): one closure in a copied clause frame holds
+// the continuation and a reference to a local of the clause. Output: [1], [1], [5], [5, 10],
+// [5, 10] (the IR engine of main: [1], [], [1, 5], [1, 5, 10], [1]).
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn run() -> u64 / Choice {
+    let acc: Vec<u64> = Vec.new()
+    handle Pick {
+        fn pick() {
+            let loc: Vec<u64> = Vec.new()
+            let k = |x: u64| { loc.push(x); resume(x) }
+            let b = choose()
+            if b { k(1) } else { k(5); k(10) }
+            print(loc)
+        }
+    } in {
+        acc.push(pick())
+        print(acc)
+    }
+    0
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in { let r = run() }
+}

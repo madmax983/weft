@@ -12099,3 +12099,17 @@ files = ["tests/gate/probes/fixes/r0z4pb/h03_twin_s01d_late_linear_bad.wf"]
 finding = "R0z4pb-RESUME-LINEAR-LATE"
 reason = "plan stage R0z Z4 Part B (review round 1, N1): the nested twin of `s01d_resume_linear_late_direct_bad` of review round 3 of Z4b (the class of the late timeout, ADR 0010). The rest performs `o() -> T` inside a block of `with_timeout`; the clause sleeps past the deadline and resumes with a linear value. The late timeout cuts the rest at `o()` while the value is live, and the facts at the perform do not see it. The direct form is in scope on main with no error and the same fault (an old hole of main): the third sub-form of the late-timeout class of issue #78 (a linear value is live at a perform of the rest when the late deadline cuts there). The record of the stage brings the twin into scope; the `ir` pipeline accepts it, as main accepts the direct form (main keeps the twin in the fallback, and the old pipeline accepts it). The nested `resume` is not a cause"
 stage = "R0z"
+
+# Issue #94 (the engine fix of plan stage R0z I94; docs/plan/core-ir.md,
+# "I94 as built"). The stage changes no checker code. The two probes below are
+# new files with a body that the old inference and the `ir` summary give
+# different rows, of the classes of stage F19.
+[[entry]]
+class = "sig"
+parts = ["named", "raises"]
+files = [
+    "tests/gate/probes/fixes/r0zi94/b2_timeout_block_ok.wf",
+    "tests/gate/probes/fixes/r0zi94/r20_scope_body_ok.wf",
+]
+reason = "classes F19-SIG-NAMED and F19-SIG-RAISES (stage F19), for the probes of issue #94: `with_timeout` performs `Fail` (not `Async`) through the row and does not raise (`b2_timeout_block_ok`); a scope with no spawn cannot fail at its `ScopeWait` (`r20_scope_body_ok`); the old inference gives `Async` and `raises` to each `with_timeout` and `raises` to each scope. No check of the `ir` pipeline reads `raises` of these bodies but W0118"
+stage = "R0z"

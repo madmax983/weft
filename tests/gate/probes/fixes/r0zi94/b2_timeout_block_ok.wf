@@ -1,0 +1,14 @@
+// Issue #94 (ok, form C): the block of `with_timeout` runs at the `multi` operation. No cell
+// holds its closure value: only the frame of the block names the capture cells. Each copy
+// of the frame writes its own `n`. Output: 1, 1 (the IR engine of main: 1, 2).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        with_timeout(1.s) {
+            let b = c()
+            n.push(1)
+            print(n.len())
+        }
+    }
+}

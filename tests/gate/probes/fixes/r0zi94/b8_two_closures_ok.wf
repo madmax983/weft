@@ -1,0 +1,18 @@
+// Issue #94 (ok, forms A and C): the closure that runs at the `multi` operation writes `n` and
+// `m`, and the closure `g` in a local reads `m`. Output: 2, 2 (the IR engine of main: 2, 4).
+effect C { multi fn c() -> bool }
+fn apply(f: fn() -> usize / C) -> usize / C { f() }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let m: Vec<u64> = Vec.new()
+        let g = || m.len()
+        let r = apply(|| {
+            let b = c()
+            n.push(1)
+            m.push(2)
+            n.len() + g()
+        })
+        print(r)
+    }
+}

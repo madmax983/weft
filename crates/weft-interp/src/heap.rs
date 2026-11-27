@@ -22,6 +22,14 @@ pub enum SlotKind {
     Buf,
     /// The target of a `Box`.
     Boxed,
+    /// A cell of a closure value of the IR engine for a capture that a call
+    /// does not take: the reference of a `ByRef` capture, or the copy of a
+    /// capability or of a `multi` continuation (`CapHold::Ref` and
+    /// `CapHold::Copied`). The cell is a part of the closure value: nothing
+    /// writes it after the closure is made, and nothing ends it. So a copy of
+    /// a frame for a `multi` continuation copies it, as it copies the buffer
+    /// of a `Vec` (issue #94). It holds no `Vec`, `Box`, `Rc` or linear value.
+    Capture,
     /// The target of an `Rc`, with its counts.
     Rc {
         /// The strong count.
@@ -125,7 +133,7 @@ impl Heap {
     fn oracle_access(&self, cell: CellId, path: &[u32], write: bool) {
         if let Some(o) = &self.oracle {
             let what = match self.slots.get(cell).map(|s| s.kind) {
-                Some(SlotKind::Local) => "local",
+                Some(SlotKind::Local | SlotKind::Capture) => "local",
                 Some(SlotKind::Temp) => "temporary",
                 Some(SlotKind::Buf) => "buffer",
                 Some(SlotKind::Boxed) => "box",
@@ -593,7 +601,22 @@ impl Heap {
         }
     }
 
-    /// Collects the buffers and boxes that a value owns, recursively.
+    /// Returns true if cell `c` is a capture cell of a closure value
+    /// ([`SlotKind::Capture`]).
+    pub fn is_capture(&self, c: CellId) -> bool {
+        self.slots
+            .get(c)
+            .is_some_and(|s| s.kind == SlotKind::Capture)
+    }
+
+    /// Collects the cells that a value owns, recursively: its buffers and
+    /// boxes, and the capture cells of its closure values
+    /// ([`SlotKind::Capture`], issue #94).
+    ///
+    /// The walk does not go into a kept cell of a closure (the cell of a
+    /// variable: a frame owns it, or it is shared), into a cell of a capture
+    /// that the closure moved, or into an `Rc` object. A copy of a frame
+    /// shares these cells, as on the AST engine.
     pub fn owned_cells(&self, v: &Value, out: &mut Vec<CellId>) {
         let mut work = vec![v];
         while let Some(v) = work.pop() {
@@ -606,6 +629,13 @@ impl Heap {
                         if matches!(s.kind, SlotKind::Buf | SlotKind::Boxed) && !out.contains(c) {
                             out.push(*c);
                             work.push(&s.val);
+                        }
+                    }
+                }
+                Value::Closure(k) => {
+                    for c in &k.cells {
+                        if self.is_capture(*c) && !out.contains(c) {
+                            out.push(*c);
                         }
                     }
                 }
@@ -708,5 +738,51 @@ mod tests {
         h.end_cell(local);
         assert!(h.list(buf).is_err());
         assert!(h.slot(1000).is_err());
+    }
+
+    /// Issue #94: a copy of a frame takes the capture cells of a closure
+    /// value, and not its kept cells or its moved cells.
+    #[test]
+    fn a_closure_value_owns_its_capture_cells() {
+        let mut h = heap();
+        let var = h.alloc(SlotKind::Local, Value::Int(1));
+        let kept = h.alloc(SlotKind::Local, Value::Int(2));
+        let moved = h.alloc(SlotKind::Local, Value::Int(3));
+        let cap = h.alloc(SlotKind::Capture, Value::Ref(Place::root(var)));
+        assert!(h.is_capture(cap));
+        assert!(!h.is_capture(kept));
+        assert!(!h.is_capture(1000));
+        let closure = Value::Closure(Rc::new(ClosureVal {
+            code: 0,
+            cells: vec![kept, moved, cap],
+            owned: vec![moved],
+            henv: crate::value::HEnv::default(),
+            span: weft_syntax::ast::Span::default(),
+        }));
+        // The closure is in a tuple in a buffer: the walk finds it there.
+        let buf = h.alloc(
+            SlotKind::Buf,
+            Value::List(vec![Value::Tuple(vec![closure.clone(), Value::Int(0)])]),
+        );
+        let mut owned = Vec::new();
+        h.owned_cells(&Value::Vec(buf), &mut owned);
+        assert_eq!(owned, vec![buf, cap]);
+        // A second value with the same closure adds no cell.
+        h.owned_cells(&closure, &mut owned);
+        assert_eq!(owned, vec![buf, cap]);
+        // The copy: the capture cell and the variable get new cells. The new
+        // closure value names the new capture cell and the old kept and
+        // moved cells, and the reference in the new cell points into the copy.
+        let var2 = h.alloc(SlotKind::Local, Value::Int(1));
+        let cap2 = h.alloc(SlotKind::Capture, Value::Moved);
+        let map: BTreeMap<CellId, CellId> = [(var, var2), (cap, cap2)].into_iter().collect();
+        let old = h.slot(cap).map(|s| s.val.clone()).unwrap_or_default();
+        let new = h.remap(&old, &map);
+        assert!(matches!(&new, Value::Ref(p) if p.cell == var2));
+        let Value::Closure(c2) = h.remap(&closure, &map) else {
+            panic!("the copy of a closure is a closure");
+        };
+        assert_eq!(c2.cells, vec![kept, moved, cap2]);
+        assert_eq!(c2.owned, vec![moved]);
     }
 }

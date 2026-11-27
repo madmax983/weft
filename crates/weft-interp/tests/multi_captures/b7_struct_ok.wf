@@ -1,0 +1,15 @@
+// Issue #94 (ok, form A): the closure is in a field of a struct. Output: 1, 1 (the IR engine
+// of main: 0, 0). The old pipeline rejects the program (W0301, a false positive), so it is
+// not a probe of the gate.
+effect C { multi fn c() -> bool }
+struct S { f: fn() -> usize, k: usize }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<usize> = Vec.new()
+        let s = S { f: || n.len(), k: 1 }
+        let b = c()
+        n.push(1)
+        let g = s.f
+        print(g())
+    }
+}

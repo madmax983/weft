@@ -1,0 +1,16 @@
+// Issue #94, the rest that stays (form D, a pin): `g` holds the local `f` of a block that
+// ended as a kept capture. No frame owns the cell of `f`, so no engine walks it at a copy:
+// `f` keeps its reference into the frame before the copy. Output: 1, 2 on both engines,
+// before and after the fix (the semantics gives 1, 1). See "I94 as built".
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        let g = {
+            let f = || { n.push(1); n.len() }
+            || f() + 0
+        }
+        let b = c()
+        print(g())
+    }
+}

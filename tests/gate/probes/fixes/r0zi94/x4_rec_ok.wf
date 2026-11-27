@@ -1,0 +1,19 @@
+// Issue #94 (ok, form A): each frame of a recursive function in the continuation has a closure
+// with a reference to its own local. Output: 3, 3 (the IR engine of main: 0, 0).
+effect C { multi fn c() -> bool }
+fn go(d: u64) -> usize / C {
+    let n: Vec<u64> = Vec.new()
+    let f = || n.len()
+    if d == 0 {
+        let b = c()
+        n.push(1)
+        f()
+    } else {
+        let r = go(d - 1)
+        n.push(1)
+        r + f()
+    }
+}
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in { print(go(2)) }
+}

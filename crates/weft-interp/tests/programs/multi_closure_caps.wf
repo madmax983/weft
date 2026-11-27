@@ -1,0 +1,52 @@
+// Issue #94: a closure value in a frame that a `multi` resume copies. The
+// closure holds a reference, a capability or a continuation in a cell of its
+// own. Each copy of the frame gets a copy of these cells.
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+
+// The closure `f` holds a reference to `n`. Each run of the rest reads its
+// own `n`.
+fn by_ref() / Choice {
+    let n: Vec<u64> = Vec.new()
+    let f = || n.len()
+    let b = choose()
+    n.push(1)
+    print(b, f())
+}
+
+// The block of `with_timeout` runs at the operation. Only its frame names
+// the cells of the closure. Each run of the rest writes its own `n`.
+fn block() / Choice, Async, Fail {
+    let n: Vec<u64> = Vec.new()
+    with_timeout(1.s) {
+        let b = choose()
+        n.push(1)
+        print(b, n.len())
+    }
+}
+
+// The closure `k` holds the continuation of `pick`. Each copy of the clause
+// frame resumes its own copy of the continuation. The copies of one clause
+// frame share `acc`, a local outside the handled body of `Pick`.
+fn kont() -> u64 / Choice {
+    let acc: Vec<u64> = Vec.new()
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            let b = choose()
+            if b { k(1) } else { k(5); k(10) }
+        }
+    } in {
+        acc.push(pick())
+        print(acc)
+    }
+    0
+}
+
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        by_ref()
+        block()
+        let r = kont()
+    }
+}

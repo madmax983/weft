@@ -181,6 +181,13 @@ and plan stage R4 removes it.
   "a place does not exist (the value changed shape)", for example
   `r.hp * { v.clear(); 1 }` (`--engine=ir` prints 1). The IR engine is the reference
   semantics (the claims sem-N1 and sem-N2 hold only for it).
+- **Closure values at a `multi` resume (issue #94, `docs/ir.md` 8.1).** A closure of
+  the IR engine holds the reference of a `ByRef` capture, and the copy of a capability
+  or of a `multi` continuation, in a cell of its own. A `multi` resume copies these
+  cells with the frames that reach the closure value, so a closure of a copy reads and
+  writes the copy, and resumes the continuation of the copy, as on the AST engine. The
+  cell of a capture that the closure moved, and a closure in a kept cell of a frame
+  that ended, stay shared between the copies on both engines.
 - **The end of temporaries (`docs/ir.md` 5.1.2, 5.12).** A temporary ends at the end of
   its statement. The tail temporaries of a loop body end at each iteration. The
   temporaries of a branch of `if` or `match` end before the join.

@@ -1,0 +1,13 @@
+// Issue #94 (ok, form C): the block of `sim.run` runs at the `multi` operation. Each copy of
+// its frame writes its own `n`. Output: 1, 1 (the IR engine of main: 1, 2).
+effect C { multi fn c() -> bool }
+fn main() {
+    handle C { fn c() { resume(true); resume(false) } } in {
+        let n: Vec<u64> = Vec.new()
+        sim.run(seed: 1) {
+            let b = c()
+            n.push(1)
+            print(n.len())
+        }
+    }
+}

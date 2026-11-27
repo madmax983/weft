@@ -1,0 +1,23 @@
+// Issue #94 (ok, form B; in the fallback, R-ROW-K): the closure `k` holds the continuation of
+// `pick`, and the clause performs the `multi` operation of an outer handler. Each copy of the
+// clause frame has a copy of the continuation record, and `k` of the copy resumes that copy.
+// Output: [1], [5], [5, 10] (the IR engine of main: [1], [1, 5], [1, 5, 10]).
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn run() -> u64 / Choice {
+    let acc: Vec<u64> = Vec.new()
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            let b = choose()
+            if b { k(1) } else { k(5); k(10) }
+        }
+    } in {
+        acc.push(pick())
+        print(acc)
+    }
+    0
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in { let r = run() }
+}
